@@ -10,6 +10,10 @@
  */
 import { SeverityNumber } from '@opentelemetry/api-logs';
 import { AccessToken } from 'livekit-server-sdk';
+import { ATTRIBUTE_REDACTION_ENABLED } from '../types.js';
+import { resolveObservabilityUrl } from './observability_endpoint.js';
+import { REDACTED_EXCEPTION_MESSAGE, isPIIAttribute } from './redaction.js';
+import { fetchWithUploadGate, uploadGate } from './upload_gate.js';
 
 export interface PinoLogObject {
   level: number;
@@ -21,9 +25,22 @@ export interface PinoLogObject {
 }
 
 export interface PinoCloudExporterConfig {
+  /** @deprecated Pass `observabilityUrl` with `PinoCloudExporterUrlConfig`. */
   cloudHostname: string;
   roomId: string;
   jobId: string;
+  metadata?: Record<string, unknown>;
+  loggerName?: string;
+  batchSize?: number;
+  flushIntervalMs?: number;
+}
+
+export interface PinoCloudExporterUrlConfig {
+  /** Base URL for LiveKit Cloud observability, without a trailing slash. */
+  observabilityUrl: string;
+  roomId: string;
+  jobId: string;
+  metadata?: Record<string, unknown>;
   loggerName?: string;
   batchSize?: number;
   flushIntervalMs?: number;
@@ -69,6 +86,22 @@ function convertValue(value: unknown): unknown {
   return { stringValue: String(value) };
 }
 
+function redactSerializedException(value: unknown): unknown {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return value;
+  }
+
+  const exception = value as Record<string, unknown>;
+  if (typeof exception.type !== 'string' || typeof exception.message !== 'string') {
+    return value;
+  }
+
+  return {
+    type: exception.type,
+    message: REDACTED_EXCEPTION_MESSAGE,
+  };
+}
+
 /**
  * Standalone Pino log exporter for LiveKit Cloud.
  *
@@ -78,7 +111,7 @@ function convertValue(value: unknown): unknown {
  * @example
  * ```typescript
  * const exporter = new PinoCloudExporter({
- *   cloudHostname: 'cloud.livekit.io',
+ *   observabilityUrl: 'https://cloud.livekit.io',
  *   roomId: 'RM_xxx',
  *   jobId: 'AJ_xxx',
  * });
@@ -91,15 +124,16 @@ function convertValue(value: unknown): unknown {
  * ```
  */
 export class PinoCloudExporter {
-  private readonly config: PinoCloudExporterConfig;
+  private readonly config: PinoCloudExporterConfig | PinoCloudExporterUrlConfig;
   private readonly loggerName: string;
   private readonly batchSize: number;
   private readonly flushIntervalMs: number;
   private jwt: string | null = null;
   private pendingLogs: any[] = [];
   private flushTimer: NodeJS.Timeout | null = null;
+  private flushChain: Promise<void> = Promise.resolve();
 
-  constructor(config: PinoCloudExporterConfig) {
+  constructor(config: PinoCloudExporterConfig | PinoCloudExporterUrlConfig) {
     this.config = config;
     this.loggerName = config.loggerName || 'livekit.agents';
     this.batchSize = config.batchSize || 100;
@@ -123,12 +157,17 @@ export class PinoCloudExporter {
 
   private convertToOtlpRecord(logObj: PinoLogObject): any {
     const { severityNumber, severityText } = mapPinoLevelToSeverity(logObj.level);
+    const redactionEnabled = this.config.metadata?.[ATTRIBUTE_REDACTION_ENABLED] === true;
 
     const attributes: any[] = [
       { key: 'room_id', value: { stringValue: this.config.roomId } },
       { key: 'job_id', value: { stringValue: this.config.jobId } },
       { key: 'logger.name', value: { stringValue: this.loggerName } },
     ];
+
+    for (const [key, value] of Object.entries(this.config.metadata ?? {})) {
+      attributes.push({ key, value: convertValue(value) });
+    }
 
     if (logObj.pid !== undefined) {
       attributes.push({ key: 'process.pid', value: { intValue: String(logObj.pid) } });
@@ -138,9 +177,15 @@ export class PinoCloudExporter {
     }
 
     for (const [key, value] of Object.entries(logObj)) {
-      if (!EXCLUDE_FIELDS.has(key)) {
-        attributes.push({ key, value: convertValue(value) });
-      }
+      if (EXCLUDE_FIELDS.has(key)) continue;
+      // once the project mandates redaction the client filters the keys itself rather than
+      // relying on the collector to know them
+      if (redactionEnabled && isPIIAttribute(key)) continue;
+      const attributeValue =
+        redactionEnabled && (key === 'error' || key === 'err')
+          ? redactSerializedException(value)
+          : value;
+      attributes.push({ key, value: convertValue(attributeValue) });
     }
 
     return {
@@ -155,28 +200,35 @@ export class PinoCloudExporter {
     };
   }
 
-  async flush(): Promise<void> {
+  flush(): Promise<void> {
     if (this.flushTimer) {
       clearTimeout(this.flushTimer);
       this.flushTimer = null;
     }
 
-    if (this.pendingLogs.length === 0) {
-      return;
-    }
+    const flush = this.flushChain.then(() => this.flushPendingLogs());
+    this.flushChain = flush;
+    return flush;
+  }
 
-    const logs = this.pendingLogs;
-    this.pendingLogs = [];
+  private async flushPendingLogs(): Promise<void> {
+    while (this.pendingLogs.length > 0) {
+      const logs = this.pendingLogs;
+      this.pendingLogs = [];
 
-    try {
-      await this.sendLogs(logs);
-    } catch (error) {
-      this.pendingLogs = [...logs, ...this.pendingLogs];
-      console.error('[PinoCloudExporter] Failed to flush logs:', error);
+      try {
+        await this.sendLogs(logs);
+      } catch (error) {
+        this.pendingLogs = [...logs, ...this.pendingLogs];
+        console.error('[PinoCloudExporter] Failed to flush logs:', error);
+        return;
+      }
     }
   }
 
   private async sendLogs(logRecords: any[]): Promise<void> {
+    if (uploadGate.disabled) return;
+
     await this.ensureJwt();
 
     const payload = {
@@ -196,6 +248,10 @@ export class PinoCloudExporter {
                 attributes: [
                   { key: 'room_id', value: { stringValue: this.config.roomId } },
                   { key: 'job_id', value: { stringValue: this.config.jobId } },
+                  ...Object.entries(this.config.metadata ?? {}).map(([key, value]) => ({
+                    key,
+                    value: convertValue(value),
+                  })),
                 ],
               },
               logRecords,
@@ -205,9 +261,9 @@ export class PinoCloudExporter {
       ],
     };
 
-    const endpoint = `https://${this.config.cloudHostname}/observability/logs/otlp/v0`;
+    const endpoint = `${resolveObservabilityUrl(this.config)}/observability/logs/otlp/v0`;
 
-    const response = await fetch(endpoint, {
+    const response = await fetchWithUploadGate(endpoint, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${this.jwt}`,
@@ -217,8 +273,8 @@ export class PinoCloudExporter {
     });
 
     if (!response.ok) {
-      const text = await response.text();
-      throw new Error(`Log export failed: ${response.status} ${response.statusText} - ${text}`);
+      await response.body?.cancel().catch(() => undefined);
+      throw new Error(`Log export failed: status ${response.status}`);
     }
   }
 
@@ -244,7 +300,9 @@ export class PinoCloudExporter {
 
 let globalExporter: PinoCloudExporter | null = null;
 
-export function initPinoCloudExporter(config: PinoCloudExporterConfig): void {
+export function initPinoCloudExporter(
+  config: PinoCloudExporterConfig | PinoCloudExporterUrlConfig,
+): void {
   globalExporter = new PinoCloudExporter(config);
 }
 

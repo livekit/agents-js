@@ -6,7 +6,6 @@ import {
   AgentSession,
   AgentSessionEventTypes,
   type JobContext,
-  type JobProcess,
   ServerOptions,
   cli,
   defineAgent,
@@ -15,16 +14,14 @@ import {
   logMetrics,
   tool,
 } from '@livekit/agents';
-import * as livekit from '@livekit/agents-plugin-livekit';
-import * as silero from '@livekit/agents-plugin-silero';
-import { BackgroundVoiceCancellation } from '@livekit/noise-cancellation-node';
+import * as krisp from '@livekit/agents-plugin-krisp';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
+// No prewarm hook needed: the local EOT model runs in the shared inference
+// process (loaded once per host), and the silero VAD (~2MB, in-process)
+// lazy-loads on first stream.
 export default defineAgent({
-  prewarm: async (proc: JobProcess) => {
-    proc.userData.vad = await silero.VAD.load();
-  },
   entry: async (ctx: JobContext) => {
     const agent = Agent.create({
       instructions:
@@ -46,9 +43,6 @@ export default defineAgent({
     const logger = log();
 
     const session = new AgentSession({
-      // VAD and turn detection are used to determine when the user is speaking and when the agent should respond
-      // See more at https://docs.livekit.io/agents/build/turns
-      vad: ctx.proc.userData.vad! as silero.VAD,
       // Speech-to-text (STT) is your agent's ears, turning the user's speech into text that the LLM can understand
       // See all available models at https://docs.livekit.io/agents/models/stt/
       stt: new inference.STT({
@@ -65,14 +59,12 @@ export default defineAgent({
       tts: new inference.TTS({
         model: 'cartesia/sonic-3',
         voice: '9626c31c-bec5-4cca-baa8-f8ba9e84c8bc',
-        fallback: [
-          { model: 'elevenlabs/eleven_flash_v2', voice: '9626c31c-bec5-4cca-baa8-f8ba9e84c8bc' },
-          'rime/arcana',
-        ],
+        fallback: [{ model: 'rime/coda', voice: 'luna' }],
       }),
       ttsTextTransforms: ['filter_markdown', 'filter_emoji'],
       turnHandling: {
-        turnDetection: new livekit.turnDetector.MultilingualModel(),
+        // turn detection defaults to the audio inference.TurnDetector when unset.
+        // See https://docs.livekit.io/agents/build/turns
         interruption: {
           // Enable false-interruption auto-resume behavior.
           resumeFalseInterruption: true,
@@ -93,6 +85,14 @@ export default defineAgent({
           enabled: true,
         },
       },
+      // automatically detect keyterms and apply them to the STT per user turn
+      keytermsOptions: {
+        keyterms: ['LiveKit'],
+        keytermDetection: {
+          enabled: true,
+          turnInterval: 1, // increase to reduce LLM API calls
+        },
+      },
       useTtsAlignedTranscript: true,
       aecWarmupDuration: 3000,
       connOptions: {
@@ -107,6 +107,9 @@ export default defineAgent({
 
     // Log metrics as they are emitted
     session.on(AgentSessionEventTypes.MetricsCollected, (ev) => {
+      if (ev.metrics.type === 'stt_metrics') {
+        return;
+      }
       logMetrics(ev.metrics);
     });
 
@@ -129,7 +132,7 @@ export default defineAgent({
       room: ctx.room,
       inputOptions: {
         deleteRoomOnClose: true,
-        noiseCancellation: BackgroundVoiceCancellation(),
+        noiseCancellation: krisp.voiceIsolation(),
       },
     });
 

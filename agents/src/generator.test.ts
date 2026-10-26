@@ -17,3 +17,27 @@ describe('generator', () => {
     expect(isAgent({ entry: async () => {} })).toBe(false);
   });
 });
+
+describe('defineAgent onSimulationEnd', () => {
+  it('carries the callback through the definition', () => {
+    const onSimulationEnd = () => {};
+    const agent = defineAgent({
+      entry: async () => {},
+      onSimulationEnd,
+    });
+    expect(isAgent(agent)).toBe(true);
+    expect(agent.onSimulationEnd).toBe(onSimulationEnd);
+  });
+});
+
+describe('defineAgent onSessionEnd', () => {
+  it('carries the callback through the definition', () => {
+    const onSessionEnd = () => {};
+    const agent = defineAgent({
+      entry: async () => {},
+      onSessionEnd,
+    });
+    expect(isAgent(agent)).toBe(true);
+    expect(agent.onSessionEnd).toBe(onSessionEnd);
+  });
+});

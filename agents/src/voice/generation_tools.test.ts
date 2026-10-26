@@ -2,15 +2,23 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { ReadableStream as NodeReadableStream } from 'stream/web';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
-import { FunctionCall, ToolContext, ToolError, tool } from '../llm/index.js';
+import { FunctionCall, ToolContext, ToolError, handoff, tool } from '../llm/index.js';
 import { initializeLogger } from '../log.js';
 import type { Task } from '../utils.js';
 import { cancelAndWait, delay } from '../utils.js';
+import { Agent, AgentTask, StopResponse } from './agent.js';
 import type { AgentSession } from './agent_session.js';
-import { type _TextOut, performTextForwarding, performToolExecutions } from './generation.js';
+import {
+  type _TextOut,
+  _waitForToolExecutionResult,
+  createToolOutput,
+  performTextForwarding,
+  performToolExecutions,
+} from './generation.js';
 import type { SpeechHandle } from './speech_handle.js';
+import { ToolExecutor } from './tool_executor.js';
 
 function createStringStream(chunks: string[], delayMs: number = 0): NodeReadableStream<string> {
   return new NodeReadableStream<string>({
@@ -49,7 +57,86 @@ function createFunctionCallStreamFromArray(fcs: FunctionCall[]): NodeReadableStr
 describe('Generation + Tool Execution', () => {
   initializeLogger({ pretty: false, level: 'silent' });
 
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it.each([
+    { output: () => Symbol('invalid'), errorText: 'invalid output' },
+    {
+      output: () => [
+        handoff({ agent: new Agent({ instructions: 'first' }) }),
+        handoff({ agent: new Agent({ instructions: 'second' }) }),
+      ],
+      errorText: 'more than one agent',
+    },
+  ])('answers an unusable tool result as an error', ({ output, errorText }) => {
+    const result = createToolOutput({
+      toolCall: FunctionCall.create({ callId: 'call_unusable', name: 'doTheThing', args: '{}' }),
+      output: output(),
+    });
+
+    expect(result.agentTask).toBeUndefined();
+    expect(result.toolCallOutput.isError).toBe(true);
+    expect(result.toolCallOutput.output).toContain(errorText);
+  });
+
+  it('answers StopResponse and asks the realtime model for no reply', () => {
+    const result = createToolOutput({
+      toolCall: FunctionCall.create({ callId: 'call_stop', name: 'doTheThing', args: '{}' }),
+      exception: new StopResponse(),
+    });
+
+    expect(result.toolCallOutput).toMatchObject({
+      output: '',
+      isError: false,
+      replyRequired: false,
+    });
+  });
+
+  it('answers a bare handoff and asks the realtime model for no reply', () => {
+    const nextAgent = new Agent({ instructions: 'next' });
+    const result = createToolOutput({
+      toolCall: FunctionCall.create({ callId: 'call_handoff', name: 'transfer', args: '{}' }),
+      output: handoff({ agent: nextAgent }),
+    });
+
+    expect(result.agentTask).toBe(nextAgent);
+    expect(result.toolCallOutput).toMatchObject({
+      output: '',
+      isError: false,
+      replyRequired: false,
+    });
+  });
+
+  it.each([
+    {
+      label: 'alone',
+      output: (agent: Agent) => [handoff({ agent, returns: 'ok' })],
+      expected: 'ok',
+    },
+    {
+      label: 'with other values',
+      output: (agent: Agent) => ['first', handoff({ agent, returns: 'second' })],
+      expected: ['first', 'second'],
+    },
+  ])('keeps the returns of a handoff in a list $label', ({ output, expected }) => {
+    const nextAgent = new Agent({ instructions: 'next' });
+    const result = createToolOutput({
+      toolCall: FunctionCall.create({ callId: 'call_handoff', name: 'transfer', args: '{}' }),
+      output: output(nextAgent),
+    });
+
+    expect(result.agentTask).toBe(nextAgent);
+    expect(result.toolCallOutput).toMatchObject({
+      output: JSON.stringify(expected),
+      isError: false,
+      replyRequired: true,
+    });
+  });
+
   it('should not abort tool when preamble forwarders are cleaned up', async () => {
+    vi.useFakeTimers();
     const replyAbortController = new AbortController();
     const forwarderController = new AbortController();
 
@@ -97,9 +184,12 @@ describe('Generation + Tool Execution', () => {
 
     // Ensure tool has started, then cancel forwarders mid-stream (without aborting parent AbortController)
     await toolOutput.firstToolStartedFuture.await;
-    await delay(100);
-    await cancelAndWait([textForwardTask], 5000);
+    await vi.advanceTimersByTimeAsync(100);
+    const cancelForwarder = cancelAndWait([textForwardTask], 5000);
+    await vi.advanceTimersByTimeAsync(20);
+    await cancelForwarder;
 
+    await vi.advanceTimersByTimeAsync(6000);
     await execTask.result;
 
     expect(toolOutput.output.length).toBe(1);
@@ -183,6 +273,13 @@ describe('Generation + Tool Execution', () => {
     const replyAbortController = new AbortController();
 
     let aborted = false;
+    // Resolves once the tool body has begun and registered its abort listener. We cannot key off
+    // `firstToolStartedFuture` here: that future now resolves right after argument parsing (before
+    // execution), matching Python, so awaiting it does not guarantee the abort listener is wired.
+    let signalToolStarted!: () => void;
+    const toolStarted = new Promise<void>((resolve) => {
+      signalToolStarted = resolve;
+    });
     const longOp = tool({
       name: 'longOp',
       description: 'longOp',
@@ -191,6 +288,7 @@ describe('Generation + Tool Execution', () => {
         abortSignal.addEventListener('abort', () => {
           aborted = true;
         });
+        signalToolStarted();
         await delay(ms);
         return 'done';
       },
@@ -211,15 +309,181 @@ describe('Generation + Tool Execution', () => {
       controller: replyAbortController,
     });
 
-    await toolOutput.firstToolStartedFuture.await;
+    await toolStarted;
     replyAbortController.abort();
     await execTask.result;
 
     expect(aborted).toBe(true);
-    expect(toolOutput.output.length).toBe(1);
-    const out = toolOutput.output[0];
-    expect(out?.toolCallOutput?.isError).toBe(true);
+    expect(toolOutput.output).toHaveLength(0);
   }, 20_000);
+
+  it('keeps a settled tool result when abort is observed in the same tick', async () => {
+    const replyAbortController = new AbortController();
+    const settled = Promise.resolve('completed');
+    replyAbortController.abort();
+
+    await expect(
+      _waitForToolExecutionResult(settled, replyAbortController.signal),
+    ).resolves.toEqual({
+      result: 'completed',
+      isAborted: false,
+    });
+  });
+
+  it('keeps completed output while omitting interrupted regular tools and handoffs', async () => {
+    const replyAbortController = new AbortController();
+    const neverFinish = new Promise<void>(() => {});
+    let signalSlowStarted!: () => void;
+    const slowStarted = new Promise<void>((resolve) => {
+      signalSlowStarted = resolve;
+    });
+    let signalHandoffStarted!: () => void;
+    const handoffStarted = new Promise<void>((resolve) => {
+      signalHandoffStarted = resolve;
+    });
+    let signalCompleted!: () => void;
+    const completed = new Promise<void>((resolve) => {
+      signalCompleted = resolve;
+    });
+
+    const immediate = tool({
+      name: 'immediate',
+      description: 'Completes before interruption.',
+      parameters: z.object({}),
+      execute: async () => 'completed',
+    });
+    const slow = tool({
+      name: 'slow',
+      description: 'Remains in flight during interruption.',
+      parameters: z.object({}),
+      execute: async () => {
+        signalSlowStarted();
+        await neverFinish;
+        return 'unreachable';
+      },
+    });
+    const handoff = tool({
+      name: 'handoff',
+      description: 'Returns a handoff only if allowed to finish.',
+      parameters: z.object({}),
+      execute: async () => {
+        signalHandoffStarted();
+        await neverFinish;
+        return new AgentTask({ instructions: 'Handle the transferred request.' });
+      },
+    });
+    const calls = [
+      FunctionCall.create({ callId: 'call_completed', name: immediate.name, args: '{}' }),
+      FunctionCall.create({ callId: 'call_slow', name: slow.name, args: '{}' }),
+      FunctionCall.create({ callId: 'call_handoff', name: handoff.name, args: '{}' }),
+    ];
+    const completedCallIds: string[] = [];
+
+    const [execTask, toolOutput] = performToolExecutions({
+      session: {} as any,
+      speechHandle: { id: 'speech_mixed_abort', _itemAdded: () => {} } as any,
+      toolCtx: new ToolContext([immediate, slow, handoff]) as any,
+      toolCallStream: createFunctionCallStreamFromArray(calls),
+      controller: replyAbortController,
+      onToolExecutionCompleted: (output) => {
+        completedCallIds.push(output.toolCall.callId);
+        if (output.toolCall.callId === 'call_completed') signalCompleted();
+      },
+    });
+
+    await Promise.all([completed, slowStarted, handoffStarted]);
+    replyAbortController.abort();
+    await execTask.result;
+
+    expect(toolOutput.output.map((output) => output.toolCall.callId)).toEqual(['call_completed']);
+    expect(completedCallIds).toEqual(['call_completed']);
+  });
+
+  it('resolves firstToolStartedFuture even when the only tool call is duplicate-rejected', async () => {
+    const sharedExecutor = new ToolExecutor({ owningActivity: null });
+    const session = { _activity: { _toolExecutor: sharedExecutor } } as unknown as AgentSession;
+    const speechHandle = { id: 'speech_dup', _itemAdded: () => {} } as unknown as SpeechHandle;
+
+    let releaseFirst!: () => void;
+    const firstBlocked = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let signalFirstStarted!: () => void;
+    const firstStarted = new Promise<void>((resolve) => {
+      signalFirstStarted = resolve;
+    });
+    const slow = tool({
+      name: 'slow',
+      description: 'slow',
+      onDuplicate: 'reject',
+      parameters: z.object({}),
+      execute: async () => {
+        signalFirstStarted();
+        await firstBlocked;
+        return 'done';
+      },
+    });
+    const toolCtx = new ToolContext([slow]) as unknown as ToolContext;
+
+    // First call: starts and stays running so it occupies the executor's duplicate slot.
+    const fc1 = FunctionCall.create({ callId: 'dup_c1', name: 'slow', args: '{}' });
+    const [task1] = performToolExecutions({
+      session,
+      speechHandle,
+      toolCtx,
+      toolCallStream: createFunctionCallStream(fc1),
+      controller: new AbortController(),
+    });
+    await firstStarted;
+
+    // Second call: a duplicate of the still-running first call -> rejected by the executor.
+    const fc2 = FunctionCall.create({ callId: 'dup_c2', name: 'slow', args: '{}' });
+    const [task2, out2] = performToolExecutions({
+      session,
+      speechHandle,
+      toolCtx,
+      toolCallStream: createFunctionCallStream(fc2),
+      controller: new AbortController(),
+    });
+
+    // Would hang forever before the fix.
+    await out2.firstToolStartedFuture.await;
+    await task2.result;
+
+    // The duplicate produced a (rejection) output, and no real execution happened for it.
+    expect(out2.output.length).toBe(1);
+
+    releaseFirst();
+    await task1.result;
+  }, 20_000);
+
+  it('normalizes and commits an unknown tool call before its error output', async () => {
+    const events: string[] = [];
+    const fc = FunctionCall.create({
+      callId: 'call_unknown',
+      name: 'missing',
+      args: 'definitely not json',
+    });
+    const [execTask, toolOutput] = performToolExecutions({
+      session: {} as AgentSession,
+      speechHandle: { id: 'speech_unknown', _itemAdded: () => {} } as unknown as SpeechHandle,
+      toolCtx: ToolContext.empty(),
+      toolCallStream: createFunctionCallStream(fc),
+      controller: new AbortController(),
+      onToolExecutionStarted: (call) => events.push(`call:${call.callId}`),
+      onToolExecutionCompleted: (output) => events.push(`output:${output.toolCall.callId}`),
+    });
+
+    await execTask.result;
+
+    expect(events).toEqual(['call:call_unknown', 'output:call_unknown']);
+    expect(fc.args).toBe('{}');
+    expect(toolOutput.firstToolStartedFuture.done).toBe(true);
+    expect(toolOutput.output[0]?.toolCallOutput).toMatchObject({
+      callId: 'call_unknown',
+      isError: true,
+    });
+  });
 
   it('should surface zod validation errors to the LLM with field-level detail', async () => {
     const replyAbortController = new AbortController();
@@ -238,6 +502,7 @@ describe('Generation + Tool Execution', () => {
       args: JSON.stringify({ msg: 123 }),
     });
     const toolCallStream = createFunctionCallStream(fc);
+    const onToolExecutionStarted = vi.fn();
 
     const [execTask, toolOutput] = performToolExecutions({
       session: {} as any,
@@ -245,9 +510,12 @@ describe('Generation + Tool Execution', () => {
       toolCtx: new ToolContext([echo]) as any,
       toolCallStream,
       controller: replyAbortController,
+      onToolExecutionStarted,
     });
 
     await execTask.result;
+    expect(onToolExecutionStarted).toHaveBeenCalledWith(fc);
+    expect(JSON.parse(fc.args)).toEqual({ msg: 123 });
     expect(toolOutput.output.length).toBe(1);
     const out = toolOutput.output[0];
     expect(out?.toolCallOutput?.isError).toBe(true);
@@ -287,6 +555,7 @@ describe('Generation + Tool Execution', () => {
     });
 
     await execTask.result;
+    expect(fc.args).toBe('{}');
     expect(toolOutput.output.length).toBe(1);
     const out = toolOutput.output[0];
     expect(out?.toolCallOutput?.isError).toBe(true);

@@ -12,7 +12,8 @@ import {
   toError,
 } from '@livekit/agents';
 import OpenAI from 'openai';
-import type { ChatModels } from '../models.js';
+import type { ChatModels, Reasoning } from '../models.js';
+import { defaultReasoningEffort } from '../models.js';
 import { toResponsesTools } from '../tool_utils.js';
 import { WSLLM } from '../ws/llm.js';
 
@@ -31,6 +32,8 @@ export interface LLMOptions {
   serviceTier?: string;
   /** Upper bound for the number of tokens that can be generated for a response. */
   maxOutputTokens?: number;
+  /** Configuration options for reasoning models. */
+  reasoning?: Reasoning | null;
 
   /**
    * Whether to use the WebSocket API.
@@ -56,6 +59,13 @@ class ResponsesHttpLLM extends llm.LLM {
     super();
 
     this.#opts = { ...defaultLLMOptions, ...opts };
+    if (this.#opts.reasoning === undefined) {
+      const effort = defaultReasoningEffort(this.#opts.model);
+      if (effort !== undefined) {
+        this.#opts.reasoning = { effort };
+      }
+    }
+
     if (this.#opts.apiKey === undefined && this.#opts.client === undefined) {
       throw new Error('OpenAI API key is required, whether as an argument or as $OPENAI_API_KEY');
     }
@@ -64,6 +74,7 @@ class ResponsesHttpLLM extends llm.LLM {
       this.#opts.client ||
       new OpenAI({
         baseURL: this.#opts.baseURL,
+        maxRetries: 0,
         apiKey: this.#opts.apiKey,
       });
   }
@@ -85,7 +96,7 @@ class ResponsesHttpLLM extends llm.LLM {
     extraKwargs,
   }: {
     chatCtx: llm.ChatContext;
-    toolCtx?: llm.ToolCtxInput;
+    toolCtx?: llm.ToolContextLike;
     connOptions?: APIConnectOptions;
     parallelToolCalls?: boolean;
     toolChoice?: llm.ToolChoice;
@@ -130,6 +141,10 @@ class ResponsesHttpLLM extends llm.LLM {
 
     if (this.#opts.maxOutputTokens !== undefined) {
       modelOptions.max_output_tokens = this.#opts.maxOutputTokens;
+    }
+
+    if (this.#opts.reasoning !== undefined) {
+      modelOptions.reasoning = this.#opts.reasoning;
     }
 
     return new ResponsesHttpLLMStream(this, {
@@ -211,7 +226,6 @@ class ResponsesHttpLLMStream extends llm.LLMStream {
       );
 
       for await (const event of stream) {
-        retryable = false;
         let chunk: llm.ChatChunk | undefined;
 
         switch (event.type) {
@@ -233,10 +247,18 @@ class ResponsesHttpLLMStream extends llm.LLMStream {
           case 'response.failed':
             this.handleResponseFailed(event);
             break;
+          case 'response.incomplete':
+            this.handleResponseIncomplete(event);
+            break;
         }
 
         if (chunk) {
           this.queue.put(chunk);
+          // a retry only duplicates output the caller has already seen; the
+          // stream-opening event and the usage-bearing one are neither
+          if (llm.hasResponse(chunk)) {
+            retryable = false;
+          }
         }
       }
     } catch (error) {
@@ -280,6 +302,13 @@ class ResponsesHttpLLMStream extends llm.LLMStream {
   private handleResponseFailed(event: OpenAI.Responses.ResponseFailedEvent): void {
     throw new APIStatusError({
       message: event.response.error?.message ?? 'Response failed',
+      options: { statusCode: -1, retryable: false },
+    });
+  }
+
+  private handleResponseIncomplete(event: OpenAI.Responses.ResponseIncompleteEvent): void {
+    throw new APIStatusError({
+      message: `response incomplete: ${event.response.incomplete_details?.reason ?? 'reason unavailable'}`,
       options: { statusCode: -1, retryable: false },
     });
   }
@@ -420,7 +449,7 @@ export class LLM extends llm.LLM {
     extraKwargs,
   }: {
     chatCtx: llm.ChatContext;
-    toolCtx?: llm.ToolCtxInput;
+    toolCtx?: llm.ToolContextLike;
     connOptions?: APIConnectOptions;
     parallelToolCalls?: boolean;
     toolChoice?: llm.ToolChoice;

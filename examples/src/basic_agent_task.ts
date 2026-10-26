@@ -5,7 +5,6 @@ import {
   Agent,
   AgentTask,
   type JobContext,
-  type JobProcess,
   ServerOptions,
   cli,
   defineAgent,
@@ -15,14 +14,13 @@ import {
   voice,
 } from '@livekit/agents';
 import * as openai from '@livekit/agents-plugin-openai';
-import * as silero from '@livekit/agents-plugin-silero';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
 function createInfoTask(info: string): AgentTask<string> {
   const task = AgentTask.create<string>({
     instructions: `Collect the user's information. around ${info}. Once you have the information, call the saveUserInfo tool to save the information to the database IMMEDIATELY. DO NOT have chitchat with the user, just collect the information and call the saveUserInfo tool.`,
-    tts: 'elevenlabs/eleven_turbo_v2_5',
+    tts: 'deepgram/aura-2',
     tools: [
       llm.tool({
         name: 'saveUserInfo',
@@ -117,12 +115,8 @@ function createSurveyAgent(): Agent {
 }
 
 export default defineAgent({
-  prewarm: async (proc: JobProcess) => {
-    proc.userData.vad = await silero.VAD.load();
-  },
   entry: async (ctx: JobContext) => {
     const session = new voice.AgentSession({
-      vad: ctx.proc.userData.vad as silero.VAD,
       stt: new inference.STT({ model: 'deepgram/nova-3' }),
       llm: new openai.responses.LLM({ useWebSocket: true }),
       tts: new inference.TTS({

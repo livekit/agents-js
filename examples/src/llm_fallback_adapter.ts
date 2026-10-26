@@ -16,26 +16,14 @@
  * - Configurable timeouts and retry behavior
  * - Event emission when provider availability changes
  */
-import {
-  type JobContext,
-  type JobProcess,
-  ServerOptions,
-  cli,
-  defineAgent,
-  llm,
-  voice,
-} from '@livekit/agents';
+import { type JobContext, ServerOptions, cli, defineAgent, llm, voice } from '@livekit/agents';
 import * as deepgram from '@livekit/agents-plugin-deepgram';
 import * as elevenlabs from '@livekit/agents-plugin-elevenlabs';
 import * as openai from '@livekit/agents-plugin-openai';
-import * as silero from '@livekit/agents-plugin-silero';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
 export default defineAgent({
-  prewarm: async (proc: JobProcess) => {
-    proc.userData.vad = await silero.VAD.load();
-  },
   entry: async (ctx: JobContext) => {
     // Create multiple LLM instances for fallback
     // The FallbackAdapter will try them in order: primary -> secondary -> tertiary
@@ -86,7 +74,6 @@ export default defineAgent({
     });
 
     const session = new voice.AgentSession({
-      vad: ctx.proc.userData.vad! as silero.VAD,
       stt: new deepgram.STT(),
       tts: new elevenlabs.TTS(),
       llm: fallbackLLM, // Use the FallbackAdapter instead of a single LLM

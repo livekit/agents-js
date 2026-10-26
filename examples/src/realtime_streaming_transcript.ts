@@ -24,12 +24,12 @@ export default defineAgent({
     let lastPartialLength = 0;
     session.on(voice.AgentSessionEventTypes.UserInputTranscribed, (ev) => {
       if (ev.isFinal) {
-        logger.info({ transcript: ev.transcript }, '[user transcript FINAL]');
+        logger.info({ 'lk.pii.transcript': ev.transcript }, 'user transcript final');
         lastPartialLength = 0;
         return;
       }
       if (ev.transcript.length - lastPartialLength >= 6) {
-        logger.info({ transcript: ev.transcript }, '[user transcript partial]');
+        logger.info({ 'lk.pii.transcript': ev.transcript }, 'user transcript partial');
         lastPartialLength = ev.transcript.length;
       }
     });

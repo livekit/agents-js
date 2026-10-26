@@ -1,15 +1,53 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { AudioByteStream, type VADEvent, VADEventType, mergeFrames } from '@livekit/agents';
+import {
+  AudioByteStream,
+  type VADEvent,
+  VADEventType,
+  type VADStream,
+  log,
+  mergeFrames,
+} from '@livekit/agents';
+import { VAD_WINDOW_SAMPLES, createVad } from '@livekit/local-inference';
 import { AudioFrame, AudioResampler } from '@livekit/rtc-node';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
-import { VAD, type VADStream } from './vad.js';
+import type { InferenceSession } from 'onnxruntime-node';
+import { describe, expect, it, vi } from 'vitest';
+import { OnnxModel, newInferenceSession } from './onnx_model.js';
+import { VAD } from './vad.js';
 
 const TARGET_SAMPLE_RATE = 16000;
 const CHUNK_DURATION_MS = 10;
+const WINDOW_SAMPLES = 512;
+
+async function pushWindow(stream: VADStream, value: number): Promise<VADEvent[]> {
+  stream.pushFrame(
+    new AudioFrame(
+      new Int16Array(WINDOW_SAMPLES).fill(value),
+      TARGET_SAMPLE_RATE,
+      1,
+      WINDOW_SAMPLES,
+    ),
+  );
+  const events: VADEvent[] = [];
+  while (true) {
+    const { done, value: event } = await stream.next();
+    if (done) throw new Error('stream ended before INFERENCE_DONE');
+    events.push(event);
+    if (event.type === VADEventType.INFERENCE_DONE) return events;
+  }
+}
+
+const resizeCases = [
+  ['maxBufferedSpeech', 'shrink'],
+  ['maxBufferedSpeech', 'grow'],
+  ['maxBufferedSpeech', 'shrinkThenGrow'],
+  ['prefixPaddingDuration', 'shrink'],
+  ['prefixPaddingDuration', 'grow'],
+  ['prefixPaddingDuration', 'shrinkThenGrow'],
+] as const;
 
 /**
  * Build a short, deterministic clip: ~1.5s of real speech (from the shared test
@@ -61,6 +99,27 @@ function makeSpeechThenSilenceFrames(): AudioFrame[] {
   return frames;
 }
 
+function makeTestSpeechPcm(): Int16Array {
+  const sample = readFileSync(join(import.meta.dirname, '../../test/src/long.wav'));
+  const channels = sample.readUInt16LE(22);
+  const fileSampleRate = sample.readUInt32LE(24);
+  const dataSamples = sample.readUInt32LE(40) / 2;
+  if (channels !== 1) {
+    throw new Error(`expected mono test audio, got ${channels} channels`);
+  }
+
+  const pcm = new Int16Array(sample.buffer, sample.byteOffset + 44, dataSamples);
+  if (fileSampleRate === TARGET_SAMPLE_RATE) {
+    return pcm;
+  }
+
+  const resampler = new AudioResampler(fileSampleRate, TARGET_SAMPLE_RATE, channels);
+  const frame = new AudioFrame(pcm, fileSampleRate, channels, dataSamples);
+  const out = [...resampler.push(frame), ...resampler.flush()];
+  resampler.close();
+  return mergeFrames(out).data;
+}
+
 /**
  * Push every frame (synchronous + ordered relative to `flush()`), then consume
  * events until a complete speech segment has been observed.
@@ -86,6 +145,28 @@ async function drainSpeechSegment(
     }
   }
 }
+
+describe('Silero VADStream inference errors', () => {
+  it('closes the output when inference fails', async () => {
+    const error = new Error('inference failed');
+    const vad = await VAD.load();
+    const stream = vad.stream();
+    const runSpy = vi.spyOn(OnnxModel.prototype, 'run').mockRejectedValueOnce(error);
+    const closeSpy = vi.spyOn(stream, 'close');
+    const errorSpy = vi.spyOn(log(), 'error');
+
+    try {
+      stream.pushFrame(new AudioFrame(new Int16Array(512), TARGET_SAMPLE_RATE, 1, 512));
+      await expect(stream.next()).resolves.toEqual({ done: true, value: undefined });
+      expect(errorSpy).toHaveBeenCalledWith(error, 'Error in VAD inference task');
+    } finally {
+      if (!closeSpy.mock.calls.length) stream.close();
+      runSpy.mockRestore();
+      closeSpy.mockRestore();
+      errorSpy.mockRestore();
+    }
+  });
+});
 
 describe('Silero VADStream flush reset', () => {
   it(
@@ -113,4 +194,126 @@ describe('Silero VADStream flush reset', () => {
       }
     },
   );
+});
+
+describe('Silero VADStream buffer resize', () => {
+  it.each(resizeCases)('handles %s %s during speech', async (option, resize) => {
+    const runSpy = vi
+      .spyOn(OnnxModel.prototype, 'run')
+      .mockImplementation(async (samples) => (samples.some((sample) => sample !== 0) ? 1 : 0));
+    const vad = new VAD({} as InferenceSession, {
+      minSpeechDuration: 32,
+      // Silero uses a strict boundary, so 31ms ends speech after one 32ms window.
+      minSilenceDuration: 31,
+      prefixPaddingDuration: 64,
+      maxBufferedSpeech: 256,
+      activationThreshold: 0.5,
+      sampleRate: TARGET_SAMPLE_RATE,
+      forceCPU: true,
+    });
+    const stream = vad.stream();
+
+    try {
+      for (let value = 1; value < 10; value++) {
+        await pushWindow(stream, value);
+      }
+
+      let samples = Int16Array.from(
+        { length: 9 * WINDOW_SAMPLES },
+        (_, index) => Math.trunc(index / WINDOW_SAMPLES) + 1,
+      );
+      if (resize !== 'grow') {
+        vad.updateOptions({ [option]: 16 });
+        const retained = ((option === 'maxBufferedSpeech' ? 80 : 272) * TARGET_SAMPLE_RATE) / 1000;
+        samples = samples.slice(0, retained);
+      }
+      if (resize !== 'shrink') {
+        vad.updateOptions({ [option]: 512 });
+        const grown = new Int16Array(samples.length + WINDOW_SAMPLES);
+        grown.set(samples);
+        samples = grown;
+      }
+
+      await pushWindow(stream, 0);
+      let result = await stream.next();
+      expect(result.done).toBe(false);
+      expect(result.value?.type).toBe(VADEventType.END_OF_SPEECH);
+      expect(result.value?.frames[0]?.samplesPerChannel).toBe(samples.length);
+      expect(result.value?.frames[0]?.data).toEqual(samples);
+
+      for (const reset of [false, true]) {
+        if (reset) stream.flush();
+        await pushWindow(stream, 10);
+        const events = await pushWindow(stream, 0);
+        expect(events.some((event) => event.type === VADEventType.START_OF_SPEECH)).toBe(true);
+        result = await stream.next();
+        expect(result.value?.type).toBe(VADEventType.END_OF_SPEECH);
+        expect(result.value?.frames[0]?.samplesPerChannel).toBe(
+          result.value?.frames[0]?.data.length,
+        );
+        expect(result.value?.frames[0]?.data).toContain(10);
+      }
+    } finally {
+      stream.close();
+      runSpy.mockRestore();
+    }
+  });
+});
+
+describe('Silero VADStream remainder frames', () => {
+  it('runs every complete window when frames are not window-aligned', async () => {
+    const runSpy = vi.spyOn(OnnxModel.prototype, 'run').mockResolvedValue(0);
+    const vad = new VAD({} as InferenceSession, {
+      minSpeechDuration: 32,
+      minSilenceDuration: 31,
+      prefixPaddingDuration: 64,
+      maxBufferedSpeech: 256,
+      activationThreshold: 0.5,
+      sampleRate: TARGET_SAMPLE_RATE,
+      forceCPU: true,
+    });
+    const stream = vad.stream();
+
+    try {
+      // Five 20ms frames hold 1600 samples: three complete 512-sample windows and a 64-sample
+      // tail. The tail is carried over as a frame, so its sample count must not be halved.
+      for (let i = 0; i < 5; i++) {
+        stream.pushFrame(new AudioFrame(new Int16Array(320), TARGET_SAMPLE_RATE, 1, 320));
+      }
+      await vi.waitFor(() => expect(runSpy).toHaveBeenCalledTimes(3));
+    } finally {
+      stream.close();
+      runSpy.mockRestore();
+    }
+  });
+});
+
+// The plugin and inference.VAD ship the model separately, so this prevents them from drifting.
+describe('Silero VAD checkpoint', () => {
+  it('matches inference.VAD window by window', { timeout: 30000 }, async () => {
+    const pcm = makeTestSpeechPcm();
+    const session = await newInferenceSession(true);
+    const pluginModel = new OnnxModel(session, TARGET_SAMPLE_RATE);
+    const nativeModel = createVad();
+
+    let windows = 0;
+    try {
+      for (let i = 0; i + VAD_WINDOW_SAMPLES <= pcm.length; i += VAD_WINDOW_SAMPLES) {
+        const window = pcm.slice(i, i + VAD_WINDOW_SAMPLES);
+        const input = Float32Array.from(window, (sample) => sample / 32767);
+        const pluginProbability = await pluginModel.run(input);
+        const nativeProbability = await nativeModel.predict(window);
+
+        expect(
+          Math.abs(pluginProbability - nativeProbability),
+          `checkpoints diverge at window ${windows}`,
+        ).toBeLessThanOrEqual(1e-3);
+        windows += 1;
+      }
+    } finally {
+      await session.release();
+    }
+
+    expect(windows).toBeGreaterThan(100);
+  });
 });

@@ -5,11 +5,14 @@ import type { AudioFrame } from '@livekit/rtc-node';
 import { ReadableStream } from 'node:stream/web';
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
-import { ChatContext, ChatMessage, tool } from '../llm/index.js';
+import { ChatContext, ChatMessage, ToolError, tool } from '../llm/index.js';
 import { initializeLogger } from '../log.js';
+import { SynthesizeStream } from '../tts/index.js';
 import { Task } from '../utils.js';
 import { Agent, AgentTask, _setActivityTaskInfo } from './agent.js';
 import { AgentActivity, agentActivityStorage } from './agent_activity.js';
+import { AgentSession } from './agent_session.js';
+import { FakeLLM } from './testing/fake_llm.js';
 import { defaultEndpointingOptions } from './turn_config/endpointing.js';
 import { defaultInterruptionOptions } from './turn_config/interruption.js';
 
@@ -23,6 +26,34 @@ async function collectReadableStream<T>(stream: ReadableStream<T>): Promise<T[]>
     chunks.push(chunk);
   }
   return chunks;
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeout: number): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new TimeoutError(timeout)), timeout);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+class TimeoutError extends Error {
+  constructor(timeout: number) {
+    super(`timed out after ${timeout}ms`);
+  }
+}
+
+async function closeWithTimeout(session: AgentSession): Promise<void> {
+  try {
+    await withTimeout(session.close(), 30_000);
+  } catch (error) {
+    if (!(error instanceof TimeoutError)) throw error;
+  }
 }
 
 describe('Agent', () => {
@@ -340,6 +371,100 @@ describe('Agent', () => {
     });
   });
 
+  describe('AsyncIterable pipeline node inputs', () => {
+    it('accepts a plain AsyncIterable into Agent.create stream hooks without getReader crash', async () => {
+      const outputFrame = 'output-audio' as unknown as AudioFrame;
+      const agent = Agent.create({
+        instructions: 'factory instructions',
+        async *ttsNode(ctx, text) {
+          expect(ctx.agent).toBe(agent);
+          const chunks: string[] = [];
+          for await (const chunk of text) {
+            chunks.push(chunk);
+          }
+          expect(chunks).toEqual(['hello']);
+          yield outputFrame;
+        },
+      });
+
+      async function* textInput() {
+        yield 'hello';
+      }
+
+      // Before the fix the AgentV2 hook adapter called readStream(text).getReader()
+      // unconditionally, crashing with "getReader is not a function" on a plain iterable.
+      const result = await agent.ttsNode(textInput(), {});
+
+      expect(result).not.toBeNull();
+      await expect(collectReadableStream(result!)).resolves.toEqual([outputFrame]);
+    });
+
+    it('forwards transformed output through an Agent.create transcriptionNode hook', async () => {
+      const agent = Agent.create({
+        instructions: 'factory instructions',
+        async *transcriptionNode(ctx, text) {
+          expect(ctx.agent).toBe(agent);
+          for await (const chunk of text) {
+            yield `${chunk}!`;
+          }
+        },
+      });
+
+      async function* textInput() {
+        yield 'hello';
+        yield 'world';
+      }
+
+      // Before transcriptionNode was wired as an Agent.create hook the override didn't exist,
+      // so the base default returned the input unchanged instead of the transformed output.
+      const result = await agent.transcriptionNode(textInput(), {});
+
+      expect(result).not.toBeNull();
+      await expect(collectReadableStream(result!)).resolves.toEqual(['hello!', 'world!']);
+    });
+
+    it('accepts a plain AsyncIterable into Agent.default.ttsNode', async () => {
+      const frame = 'frame' as unknown as AudioFrame;
+      const agent = new Agent({ instructions: 'default instructions' });
+
+      let capturedInput: unknown;
+      const ttsStream = {
+        startTimeOffset: 0,
+        updateInputStream(input: unknown) {
+          capturedInput = input;
+        },
+        close() {},
+        async *[Symbol.asyncIterator]() {
+          yield { frame, timedTranscripts: [] };
+          yield SynthesizeStream.END_OF_STREAM;
+        },
+      };
+
+      (agent as any)._agentActivity = {
+        tts: {
+          capabilities: { streaming: true },
+          stream: () => ttsStream,
+          close: async () => {},
+          _setExpressive: () => {},
+        },
+        agentSession: { connOptions: { ttsConnOptions: {} } },
+        _resolveExpressiveOptions: () => undefined,
+      };
+
+      async function* textInput() {
+        yield 'hello';
+      }
+
+      const result = await Agent.default.ttsNode(agent, textInput(), {});
+
+      expect(result).not.toBeNull();
+      // The default must normalize the AsyncIterable into a real ReadableStream before
+      // handing it to the TTS stream (the stream calls .cancel() during cleanup).
+      expect(capturedInput).toBeInstanceOf(ReadableStream);
+      await expect(collectReadableStream(result!)).resolves.toEqual([frame]);
+    });
+  });
+
   it('should require AgentTask to run inside task context', async () => {
     class TestTask extends AgentTask<string> {
       constructor() {
@@ -391,6 +516,8 @@ describe('Agent', () => {
       agent: oldAgent,
       agentSession: mockSession,
       _onEnterTask: undefined,
+      _addDrainBlockedTasks: vi.fn(),
+      _withInlineTaskSlot: async ({ fn }: { fn: () => Promise<unknown> }) => fn(),
       llm: undefined,
       close: async () => {},
     };
@@ -432,6 +559,8 @@ describe('Agent', () => {
         agent: oldAgent,
         agentSession: mockSession,
         _onEnterTask: undefined,
+        _addDrainBlockedTasks: vi.fn(),
+        _withInlineTaskSlot: async ({ fn }: { fn: () => Promise<unknown> }) => fn(),
         llm: undefined,
         close: async () => {},
       };
@@ -544,6 +673,8 @@ describe('Agent', () => {
       agent: oldAgent,
       agentSession: mockSession,
       _onEnterTask: undefined,
+      _addDrainBlockedTasks: vi.fn(),
+      _withInlineTaskSlot: async ({ fn }: { fn: () => Promise<unknown> }) => fn(),
       llm: undefined,
       close: closeOldActivity,
     };
@@ -560,6 +691,183 @@ describe('Agent', () => {
     await expect(wrapper.result).resolves.toBe('ok');
     expect(closeOldActivity).toHaveBeenCalledTimes(1);
   });
+
+  it('runs parallel AgentTasks in turn', async () => {
+    class DialogTask extends AgentTask<void> {
+      constructor() {
+        super({
+          instructions: 'dialog task',
+          tools: [
+            tool({
+              name: 'finish',
+              description: 'Complete the dialog.',
+              parameters: z.object({}),
+              execute: async () => {
+                this.complete(undefined);
+                return 'done';
+              },
+            }),
+          ],
+        });
+      }
+
+      async onEnter() {
+        this.session.generateReply({ instructions: 'dialog_greeting' });
+      }
+    }
+
+    class ParallelDialogAgent extends Agent {
+      outcomes: string[] = [];
+
+      constructor() {
+        super({
+          instructions: 'root agent',
+          tools: [
+            tool({
+              name: 'open_name_dialog',
+              description: 'Collect the name.',
+              parameters: z.object({}),
+              execute: async () => this.open('name'),
+            }),
+            tool({
+              name: 'open_email_dialog',
+              description: 'Collect the email.',
+              parameters: z.object({}),
+              execute: async () => this.open('email'),
+            }),
+          ],
+        });
+      }
+
+      private async open(which: string): Promise<string> {
+        try {
+          await new DialogTask().run();
+        } catch (error) {
+          if (!(error instanceof ToolError)) throw error;
+          this.outcomes.push(`${which}:refused`);
+          return `${which} refused: ${error.message}`;
+        }
+        this.outcomes.push(`${which}:ran`);
+        return `${which} captured`;
+      }
+    }
+
+    const llm = new FakeLLM([
+      {
+        input: 'go',
+        toolCalls: [
+          { name: 'open_name_dialog', args: {} },
+          { name: 'open_email_dialog', args: {} },
+        ],
+      },
+      { input: 'instructions:dialog_greeting', content: 'what is it?' },
+      { input: 'done', toolCalls: [{ name: 'finish', args: {} }] },
+    ]);
+    const agent = new ParallelDialogAgent();
+    const session = new AgentSession({ llm });
+    try {
+      await session.start({ agent });
+
+      await withTimeout(session.run({ userInput: 'go' }).wait(), 5000);
+      const first = session.currentAgent;
+      expect(first).toBeInstanceOf(DialogTask);
+
+      await withTimeout(session.run({ userInput: 'done' }).wait(), 5000);
+      const second = session.currentAgent;
+      expect(second).toBeInstanceOf(DialogTask);
+      expect(second).not.toBe(first);
+
+      await withTimeout(session.run({ userInput: 'done' }).wait(), 5000);
+      expect(session.currentAgent).toBe(agent);
+    } finally {
+      await closeWithTimeout(session);
+    }
+
+    expect(agent.outcomes.sort()).toEqual(['email:ran', 'name:ran']);
+    const outputs = agent.chatCtx.items.filter(
+      (item) =>
+        item.type === 'function_call_output' &&
+        (item.callId === 'fake_call_0' || item.callId === 'fake_call_1'),
+    );
+    expect(new Set(outputs.map((item) => item.callId))).toEqual(
+      new Set(['fake_call_0', 'fake_call_1']),
+    );
+    expect(outputs.some((item) => item.output.includes('refused'))).toBe(false);
+  }, 35_000);
+
+  it('allows a nested AgentTask from a later turn', async () => {
+    class InnerTask extends AgentTask<void> {
+      constructor() {
+        super({ instructions: 'inner task' });
+      }
+
+      async onEnter() {
+        this.session.generateReply({ instructions: 'inner_greeting' });
+      }
+    }
+
+    class OuterTask extends AgentTask<void> {
+      constructor() {
+        super({
+          instructions: 'outer task',
+          tools: [
+            tool({
+              name: 'start_inner',
+              description: 'Transition into the inner task.',
+              parameters: z.object({}),
+              execute: async () => {
+                await new InnerTask().run();
+                this.complete(undefined);
+                return 'inner completed';
+              },
+            }),
+          ],
+        });
+      }
+
+      async onEnter() {
+        this.session.generateReply({ instructions: 'outer_greeting' });
+      }
+    }
+
+    class RootAgent extends Agent {
+      constructor() {
+        super({
+          instructions: 'root agent',
+          tools: [
+            tool({
+              name: 'start_outer',
+              description: 'Transition into the outer task.',
+              parameters: z.object({}),
+              execute: async () => {
+                await new OuterTask().run();
+                return 'outer completed';
+              },
+            }),
+          ],
+        });
+      }
+    }
+
+    const llm = new FakeLLM([
+      { input: 'go', toolCalls: [{ name: 'start_outer', args: {} }] },
+      { input: 'instructions:outer_greeting', content: 'what is your name?' },
+      { input: 'Dana', toolCalls: [{ name: 'start_inner', args: {} }] },
+      { input: 'instructions:inner_greeting', content: 'and your date of birth?' },
+    ]);
+    const session = new AgentSession({ llm });
+    try {
+      await session.start({ agent: new RootAgent() });
+
+      await withTimeout(session.run({ userInput: 'go' }).wait(), 5000);
+      expect(session.currentAgent).toBeInstanceOf(OuterTask);
+
+      await withTimeout(session.run({ userInput: 'Dana' }).wait(), 5000);
+      expect(session.currentAgent).toBeInstanceOf(InnerTask);
+    } finally {
+      await closeWithTimeout(session);
+    }
+  }, 35_000);
 
   describe('Agent constructor option migration', () => {
     it('should set allowInterruptions to false via deprecated constructor field', () => {
@@ -703,6 +1011,155 @@ describe('Agent', () => {
       }
     });
 
+    it.each([
+      ['word', true],
+      [false, true],
+      [false, false],
+    ] as const)(
+      'should resolve automatic adaptive interruption independently of STT alignment (%s, streaming=%s)',
+      (alignedTranscript, streaming) => {
+        const previousDevMode = process.env.LIVEKIT_DEV_MODE;
+        const previousApiKey = process.env.LIVEKIT_API_KEY;
+        const previousApiSecret = process.env.LIVEKIT_API_SECRET;
+        process.env.LIVEKIT_DEV_MODE = '1';
+        process.env.LIVEKIT_API_KEY = 'fake';
+        process.env.LIVEKIT_API_SECRET = 'fake-secret';
+
+        try {
+          const activity = Object.create(AgentActivity.prototype) as any;
+          activity.agent = {
+            _llm: {},
+            _stt: { capabilities: { alignedTranscript, streaming } },
+            _vad: {},
+            turnHandling: { interruption: { enabled: true }, turnDetection: 'stt' },
+          };
+          activity.agentSession = {
+            _textOnly: false,
+            interruptionDetection: undefined,
+            turnDetection: 'stt',
+          };
+          activity.logger = { warn: vi.fn() };
+          activity.onInterruptionMetricsCollected = vi.fn();
+          activity.onInterruptionError = vi.fn();
+
+          expect(activity.resolveInterruptionDetector()).toBeDefined();
+        } finally {
+          if (previousDevMode === undefined) delete process.env.LIVEKIT_DEV_MODE;
+          else process.env.LIVEKIT_DEV_MODE = previousDevMode;
+          if (previousApiKey === undefined) delete process.env.LIVEKIT_API_KEY;
+          else process.env.LIVEKIT_API_KEY = previousApiKey;
+          if (previousApiSecret === undefined) delete process.env.LIVEKIT_API_SECRET;
+          else process.env.LIVEKIT_API_SECRET = previousApiSecret;
+        }
+      },
+    );
+
+    it('should allow explicit adaptive interruption with an unaligned STT', () => {
+      const previousDevMode = process.env.LIVEKIT_DEV_MODE;
+      const previousRemoteEotUrl = process.env.LIVEKIT_REMOTE_EOT_URL;
+      const previousApiKey = process.env.LIVEKIT_API_KEY;
+      const previousApiSecret = process.env.LIVEKIT_API_SECRET;
+      delete process.env.LIVEKIT_DEV_MODE;
+      delete process.env.LIVEKIT_REMOTE_EOT_URL;
+      process.env.LIVEKIT_API_KEY = 'fake';
+      process.env.LIVEKIT_API_SECRET = 'fake-secret';
+
+      try {
+        const activity = Object.create(AgentActivity.prototype) as any;
+        activity.agent = {
+          _llm: {},
+          _stt: { capabilities: { alignedTranscript: false, streaming: true } },
+          _vad: {},
+          turnHandling: {
+            interruption: { enabled: true, mode: 'adaptive' },
+            turnDetection: 'stt',
+          },
+        };
+        activity.agentSession = {
+          _textOnly: false,
+          interruptionDetection: undefined,
+          turnDetection: 'stt',
+        };
+        activity.logger = { warn: vi.fn() };
+        activity.onInterruptionMetricsCollected = vi.fn();
+        activity.onInterruptionError = vi.fn();
+
+        expect(activity.resolveInterruptionDetector()).toBeDefined();
+      } finally {
+        if (previousDevMode !== undefined) process.env.LIVEKIT_DEV_MODE = previousDevMode;
+        if (previousRemoteEotUrl !== undefined) {
+          process.env.LIVEKIT_REMOTE_EOT_URL = previousRemoteEotUrl;
+        }
+        if (previousApiKey === undefined) delete process.env.LIVEKIT_API_KEY;
+        else process.env.LIVEKIT_API_KEY = previousApiKey;
+        if (previousApiSecret === undefined) delete process.env.LIVEKIT_API_SECRET;
+        else process.env.LIVEKIT_API_SECRET = previousApiSecret;
+      }
+    });
+
+    it('should keep automatic adaptive interruption off in plain production', () => {
+      const previousDevMode = process.env.LIVEKIT_DEV_MODE;
+      const previousRemoteEotUrl = process.env.LIVEKIT_REMOTE_EOT_URL;
+      delete process.env.LIVEKIT_DEV_MODE;
+      delete process.env.LIVEKIT_REMOTE_EOT_URL;
+
+      try {
+        const activity = Object.create(AgentActivity.prototype) as any;
+        activity.agent = {
+          _llm: {},
+          _stt: { capabilities: { alignedTranscript: 'word', streaming: true } },
+          _vad: {},
+          turnHandling: { interruption: { enabled: true }, turnDetection: 'stt' },
+        };
+        activity.agentSession = {
+          _textOnly: false,
+          interruptionDetection: undefined,
+          turnDetection: 'stt',
+        };
+        activity.logger = { info: vi.fn(), warn: vi.fn() };
+
+        expect(activity.resolveInterruptionDetector()).toBeUndefined();
+      } finally {
+        if (previousDevMode !== undefined) process.env.LIVEKIT_DEV_MODE = previousDevMode;
+        if (previousRemoteEotUrl !== undefined) {
+          process.env.LIVEKIT_REMOTE_EOT_URL = previousRemoteEotUrl;
+        }
+      }
+    });
+
+    it.each(['word', false] as const)(
+      'should keep VAD interruption when explicitly selected (%s alignment)',
+      (alignedTranscript) => {
+        const activity = Object.create(AgentActivity.prototype) as any;
+        activity.agent = {
+          _llm: {},
+          _stt: { capabilities: { alignedTranscript, streaming: true } },
+          _vad: {},
+          turnHandling: {
+            interruption: { enabled: true, mode: 'vad' },
+            turnDetection: 'stt',
+          },
+        };
+        activity.agentSession = {
+          _textOnly: false,
+          interruptionDetection: undefined,
+          turnDetection: 'stt',
+        };
+        activity.logger = { warn: vi.fn() };
+
+        expect(activity.resolveInterruptionDetector()).toBeUndefined();
+      },
+    );
+
+    it('should retain the session VAD for turn-detecting STT', () => {
+      const vad = {};
+      const activity = Object.create(AgentActivity.prototype) as any;
+      activity.agent = { _vad: undefined };
+      activity.agentSession = { _textOnly: false, vad };
+
+      expect(activity.vad).toBe(vad);
+    });
+
     it('should warn when session explicitly requests adaptive detection even if agent overrides it', () => {
       const activity = Object.create(AgentActivity.prototype) as any;
       activity.agent = {
@@ -732,9 +1189,9 @@ describe('Agent', () => {
             interruption: { enabled: false },
           },
           turnDetection: undefined,
-          stt: undefined,
-          vad: undefined,
-          llm: undefined,
+          _stt: undefined,
+          _vad: undefined,
+          _llm: undefined,
         };
         activity.agentSession = {
           interruptionDetection: undefined,

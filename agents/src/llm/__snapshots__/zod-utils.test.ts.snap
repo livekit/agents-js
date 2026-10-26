@@ -372,15 +372,19 @@ exports[`Zod Utils > zodSchemaToJsonSchema > strict parameter > should handle de
   "additionalProperties": false,
   "properties": {
     "active": {
-      "default": true,
-      "type": "boolean",
+      "type": [
+        "boolean",
+        "null",
+      ],
     },
     "name": {
       "type": "string",
     },
     "role": {
-      "default": "user",
-      "type": "string",
+      "type": [
+        "string",
+        "null",
+      ],
     },
   },
   "required": [

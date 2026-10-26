@@ -2,8 +2,15 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+export type { RealtimeModels } from '@livekit/agents/llm/openai_realtime/api_proto';
+
 export type ChatModels =
+  | 'gpt-5.6-luna'
+  | 'gpt-5.6-sol'
+  | 'gpt-5.6-terra'
+  | 'gpt-5.5'
   | 'gpt-5.4'
+  | 'gpt-5.4-mini'
   | 'gpt-5.3-chat-latest'
   | 'gpt-5.2'
   | 'gpt-5.2-chat-latest'
@@ -40,6 +47,14 @@ export type ChatModels =
   | 'gpt-3.5-turbo-16k-0613';
 
 export type WhisperModels = 'whisper-1';
+
+export type STTModels =
+  | WhisperModels
+  | 'gpt-transcribe'
+  | 'gpt-4o-transcribe'
+  | 'gpt-4o-mini-transcribe'
+  | 'gpt-live-transcribe'
+  | 'gpt-realtime-whisper';
 
 export type TTSModels = 'tts-1' | 'tts-1-hd' | 'gpt-4o-mini-tts';
 
@@ -80,16 +95,7 @@ export type TelnyxChatModels =
   | 'meta-llama/Meta-Llama-3.1-8B-Instruct'
   | 'meta-llama/Meta-Llama-3.1-70B-Instruct';
 
-export type CerebrasChatModels =
-  | 'llama3.1-8b'
-  | 'llama-3.3-70b'
-  | 'llama-4-scout-17b-16e-instruct'
-  | 'llama-4-maverick-17b-128e-instruct'
-  | 'qwen-3-32b'
-  | 'qwen-3-235b-a22b-instruct-2507'
-  | 'qwen-3-235b-a22b-thinking-2507'
-  | 'qwen-3-coder-480b'
-  | 'gpt-oss-120b';
+export type CerebrasChatModels = 'gpt-oss-120b' | 'qwen-3.8-27b' | 'zai-glm-4.7' | 'gemma-4-31b';
 
 export type PerplexityChatModels =
   | 'llama-3.1-sonar-small-128k-online'
@@ -205,16 +211,45 @@ export type MetaChatModels =
   | 'Llama-3.3-70B-Instruct'
   | 'Llama-3.3-8B-Instruct';
 
+export type ReasoningEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high';
+
+export type Reasoning = { effort?: ReasoningEffort | null; [key: string]: unknown };
+
 export function supportsReasoningEffort(model: ChatModels | string): boolean {
   return [
+    'gpt-5.6-luna',
+    'gpt-5.6-sol',
+    'gpt-5.6-terra',
+    'gpt-5.5',
     'gpt-5.4',
-    'gpt-5.3-chat-latest',
+    'gpt-5.4-mini',
     'gpt-5.2',
-    'gpt-5.2-chat-latest',
     'gpt-5.1',
-    'gpt-5.1-chat-latest',
     'gpt-5',
     'gpt-5-mini',
     'gpt-5-nano',
   ].includes(model);
+}
+
+export function defaultReasoningEffort(model: ChatModels | string): ReasoningEffort | undefined {
+  if (!supportsReasoningEffort(model)) {
+    return undefined;
+  }
+
+  if (
+    [
+      'gpt-5.1',
+      'gpt-5.2',
+      'gpt-5.4',
+      'gpt-5.4-mini',
+      'gpt-5.5',
+      'gpt-5.6-luna',
+      'gpt-5.6-sol',
+      'gpt-5.6-terra',
+    ].includes(model)
+  ) {
+    return 'none';
+  }
+
+  return 'minimal';
 }
