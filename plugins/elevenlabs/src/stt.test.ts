@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { log, mergeFrames, stt as sttLib } from '@livekit/agents';
+import { APIStatusError, log, mergeFrames, stt as sttLib } from '@livekit/agents';
 import { AudioFrame, AudioResampler } from '@livekit/rtc-node';
 import { once } from 'node:events';
 import { readFileSync } from 'node:fs';
@@ -10,6 +10,9 @@ import type { AddressInfo } from 'node:net';
 import { describe, expect, it, vi } from 'vitest';
 import { WebSocketServer } from 'ws';
 import { STT, type STTOptions } from './stt.js';
+
+// Scribe rejects a commit with less audio than this since the previous one
+const MIN_COMMIT_SAMPLES = 4800;
 
 function makeFrame(samplesPerChannel = 800, sampleRate = 16000): AudioFrame {
   const data = new Int16Array(samplesPerChannel);
@@ -369,6 +372,45 @@ describe('ElevenLabs STT', () => {
     expect(finals[0]?.alternatives?.[0]?.language).toBe('es');
   });
 
+  describe.each([
+    'partial_transcript',
+    'committed_transcript',
+    'committed_transcript_with_timestamps',
+  ] as const)('%s language', (messageType) => {
+    it.each([
+      ['es', {}, 'es'],
+      ['es', { language_code: null }, 'es'],
+      ['es', { language_code: '' }, 'es'],
+      ['es', { language_code: 'fra' }, 'fr'],
+      [undefined, {}, 'en'],
+      [undefined, { language_code: null }, 'en'],
+      [undefined, { language_code: '' }, 'en'],
+      [undefined, { language_code: 'fra' }, 'fr'],
+    ] as const)(
+      'falls back from $1 with configured language $0 to $2',
+      async (languageCode, languageData, expectedLanguage) => {
+        const events = await processStreamEvents(
+          [{ message_type: messageType, text: 'hola', ...languageData }],
+          2,
+          null,
+          {
+            languageCode,
+            includeTimestamps: messageType === 'committed_transcript_with_timestamps',
+            includeLanguageDetection: false,
+          },
+        );
+
+        const transcript = events.at(-1);
+        expect(transcript?.type).toBe(
+          messageType === 'partial_transcript'
+            ? sttLib.SpeechEventType.INTERIM_TRANSCRIPT
+            : sttLib.SpeechEventType.FINAL_TRANSCRIPT,
+        );
+        expect(transcript?.alternatives?.[0]?.language).toBe(expectedLanguage);
+      },
+    );
+  });
+
   it('forwards advancing partial transcripts', async () => {
     const events = await processStreamEvents(
       [partialTranscript('yeah'), partialTranscript('yeah please')],
@@ -578,6 +620,37 @@ describe('ElevenLabs STT', () => {
     }
   });
 
+  it.each([
+    {
+      body: JSON.stringify({
+        detail: { code: 'invalid_api_key', message: 'Invalid API key' },
+      }),
+      message: 'Invalid API key',
+      parsed: { detail: { code: 'invalid_api_key', message: 'Invalid API key' } },
+    },
+    { body: '', message: 'Unknown ElevenLabs error', parsed: '' },
+    { body: '{not json', message: '{not json', parsed: '{not json' },
+  ])('does not retry a client error with body $body', async ({ body, message, parsed }) => {
+    let requests = 0;
+    const { server, baseURL } = await startHttpServer((_req, res) => {
+      requests += 1;
+      res.writeHead(401, { 'content-type': 'application/json' });
+      res.end(body);
+    });
+
+    try {
+      const eleven = new STT({ apiKey: 'bad-key', baseURL });
+      eleven.on('error', () => {});
+      const error = await eleven.recognize(makeFrame()).catch((error: unknown) => error);
+
+      expect(error).toBeInstanceOf(APIStatusError);
+      expect(error).toMatchObject({ statusCode: 401, message, body: parsed });
+      expect(requests).toBe(1);
+    } finally {
+      await closeHttpServer(server);
+    }
+  });
+
   it('streams audio and maps realtime speech events', async () => {
     const { wss, baseURL } = await startWebSocketServer();
     const receivedMessages: Record<string, unknown>[] = [];
@@ -674,15 +747,15 @@ describe('ElevenLabs STT', () => {
       model: 'scribe_v2_realtime',
     }).stream();
     try {
-      // 50ms is exactly one repack chunk, so flush() returns no frames.
-      stream.pushFrame(makeFrame());
-      await waitUntil(() => sent.length === 1);
+      // 300ms is a whole number of repack chunks, so flush() returns no frames.
+      stream.pushFrame(makeFrame(MIN_COMMIT_SAMPLES));
+      await waitUntil(() => sent.length === 6);
 
       stream.flush();
-      await waitUntil(() => sent.length === 2);
+      await waitUntil(() => sent.length === 7);
 
-      expect(sent.map((message) => message.commit)).toEqual([false, true]);
-      expect(sent[1]?.audio_base_64).toBe('');
+      expect(sent.map((message) => message.commit)).toEqual([...Array(6).fill(false), true]);
+      expect(sent[6]?.audio_base_64).toBe('');
     } finally {
       stream.close();
       await closeWebSocketServer(wss);
@@ -702,17 +775,178 @@ describe('ElevenLabs STT', () => {
       model: 'scribe_v2_realtime',
     }).stream();
     try {
-      stream.pushFrame(makeFrame(480));
+      stream.pushFrame(makeFrame(MIN_COMMIT_SAMPLES + 480));
       stream.flush();
-      await waitUntil(() => sent.length === 2);
+      await waitUntil(() => sent.length === 8);
 
-      expect(sent.map((message) => message.commit)).toEqual([false, true]);
-      expect(sent[0]?.audio_base_64).not.toBe('');
+      expect(sent.map((message) => message.commit)).toEqual([...Array(7).fill(false), true]);
+      expect(sent[6]?.audio_base_64).not.toBe('');
     } finally {
       stream.close();
       await closeWebSocketServer(wss);
     }
   });
+
+  it('defaults audio chunks to 50ms', async () => {
+    const { wss, baseURL } = await startWebSocketServer();
+    const sent: Record<string, unknown>[] = [];
+    wss.on('connection', (ws) => {
+      ws.on('message', (raw) => sent.push(JSON.parse(raw.toString()) as Record<string, unknown>));
+    });
+
+    const stream = new STT({
+      apiKey: 'test-key',
+      baseURL,
+      model: 'scribe_v2_realtime',
+    }).stream();
+    try {
+      stream.pushFrame(makeFrame(MIN_COMMIT_SAMPLES + 784));
+      stream.flush();
+      await waitUntil(() => sent.some((message) => message.commit === true));
+      expect(sent.map((message) => message.commit)).toEqual([...Array(7).fill(false), true]);
+      expect(Buffer.from(sent[0]?.audio_base_64 as string, 'base64')).toHaveLength(1600);
+      expect(Buffer.from(sent[6]?.audio_base_64 as string, 'base64')).toHaveLength(1568);
+
+      stream.pushFrame(makeFrame());
+      await waitUntil(() => sent.length === 9);
+      expect(sent[8]?.commit).toBe(false);
+      expect(Buffer.from(sent[8]?.audio_base_64 as string, 'base64')).toHaveLength(1600);
+    } finally {
+      stream.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('pads a short turn with silence before committing', async () => {
+    // Scribe answers a commit with less than 300ms of audio since the previous one with
+    // commit_throttled and closes the session, dropping the uncommitted audio. The commit still
+    // has to go out on the flush: the caller waits on its final transcript, and no more audio
+    // may follow (push-to-talk, session close).
+    const { wss, baseURL } = await startWebSocketServer();
+    const sent: Record<string, unknown>[] = [];
+    wss.on('connection', (ws) => {
+      ws.on('message', (raw) => sent.push(JSON.parse(raw.toString()) as Record<string, unknown>));
+    });
+
+    const stream = new STT({
+      apiKey: 'test-key',
+      baseURL,
+      model: 'scribe_v2_realtime',
+    }).stream();
+    const speech = Int16Array.from({ length: 1600 }, (_, index) => index + 1);
+    try {
+      // the first commit on a connection counts the audio since the connect
+      stream.pushFrame(new AudioFrame(speech, 16000, 1, speech.length));
+      stream.flush();
+      await waitUntil(() => sent.filter((message) => message.commit).length === 1);
+
+      stream.flush();
+      await waitUntil(() => sent.filter((message) => message.commit).length === 2);
+
+      const samplesBeforeEachCommit: number[] = [];
+      let samples = 0;
+      for (const message of sent) {
+        if (message.commit) {
+          samplesBeforeEachCommit.push(samples);
+          samples = 0;
+        } else {
+          samples += Buffer.from(message.audio_base_64 as string, 'base64').length / 2;
+        }
+      }
+      expect(samplesBeforeEachCommit).toEqual([MIN_COMMIT_SAMPLES, MIN_COMMIT_SAMPLES]);
+
+      const audio = Buffer.concat(
+        sent.map((message) => Buffer.from(message.audio_base_64 as string, 'base64')),
+      );
+      const silenceSamples = MIN_COMMIT_SAMPLES - speech.length + MIN_COMMIT_SAMPLES;
+      expect(audio).toEqual(
+        Buffer.concat([Buffer.from(speech.buffer), Buffer.alloc(silenceSamples * 2)]),
+      );
+    } finally {
+      stream.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it.each([0, -1, 0.5, 100.5, true, false, null, '100'])(
+    'rejects invalid audio chunk duration %j',
+    (audioChunkDuration) => {
+      expect(
+        () =>
+          new STT({
+            apiKey: 'test-key',
+            audioChunkDuration: audioChunkDuration as number,
+          }),
+      ).toThrow('audioChunkDuration must be a positive integer');
+    },
+  );
+
+  for (const sampleRate of [8000, 16000, 48000] as const) {
+    for (const audioChunkDuration of [1, 50, 75, 100, 200]) {
+      for (const tailDuration of [0, 1]) {
+        it(`preserves ${sampleRate}Hz audio with ${audioChunkDuration}ms chunks and ${tailDuration}ms tail`, async () => {
+          const { wss, baseURL } = await startWebSocketServer();
+          const sent: Record<string, unknown>[] = [];
+          wss.on('connection', (ws) => {
+            ws.on('message', (raw) =>
+              sent.push(JSON.parse(raw.toString()) as Record<string, unknown>),
+            );
+          });
+
+          const stream = new STT({
+            apiKey: 'test-key',
+            baseURL,
+            model: 'scribe_v2_realtime',
+            sampleRate,
+            audioChunkDuration,
+          }).stream();
+          const totalSamples = Math.floor(
+            (sampleRate * (Math.max(audioChunkDuration * 2, 300) + tailDuration)) / 1000,
+          );
+          const audio = Buffer.from(
+            Array.from({ length: totalSamples * 2 }, (_, index) => index % 251),
+          );
+          const inputFrameBytes = Math.floor((sampleRate * 20) / 1000) * 2;
+          const chunkBytes = Math.floor((sampleRate * audioChunkDuration) / 1000) * 2;
+          const expectedChunks = Array.from(
+            { length: Math.ceil(audio.length / chunkBytes) },
+            (_, index) => audio.subarray(index * chunkBytes, (index + 1) * chunkBytes),
+          );
+
+          try {
+            for (let offset = 0; offset < audio.length; offset += inputFrameBytes) {
+              const data = audio.subarray(offset, offset + inputFrameBytes);
+              stream.pushFrame(
+                new AudioFrame(
+                  new Int16Array(data.buffer, data.byteOffset, data.byteLength / 2),
+                  sampleRate,
+                  1,
+                  data.byteLength / 2,
+                ),
+              );
+            }
+
+            await waitUntil(() => sent.length >= Math.floor(audio.length / chunkBytes));
+            stream.flush();
+            await waitUntil(() => sent.length >= expectedChunks.length + 1);
+
+            expect(sent.slice(0, -1).map((message) => message.audio_base_64)).toEqual(
+              expectedChunks.map((chunk) => chunk.toString('base64')),
+            );
+            expect(sent.map((message) => message.commit)).toEqual([
+              ...expectedChunks.map(() => false),
+              true,
+            ]);
+            expect(sent.every((message) => message.sample_rate === sampleRate)).toBe(true);
+            expect(sent.at(-1)?.audio_base_64).toBe('');
+          } finally {
+            stream.close();
+            await closeWebSocketServer(wss);
+          }
+        });
+      }
+    }
+  }
 
   it('builds realtime query params for language, timestamps, and server VAD', async () => {
     const { wss, baseURL } = await startWebSocketServer();

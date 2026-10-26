@@ -23,7 +23,7 @@ import {
   stt,
   waitForAbort,
 } from '@livekit/agents';
-import type { AudioFrame } from '@livekit/rtc-node';
+import { AudioFrame } from '@livekit/rtc-node';
 import { type RawData, WebSocket } from 'ws';
 import { PeriodicCollector } from './_utils.js';
 import type { STTRealtimeSampleRates } from './models.js';
@@ -55,6 +55,12 @@ export interface STTOptions {
   tagAudioEvents?: boolean;
   useRealtime?: boolean;
   sampleRate?: STTRealtimeSampleRates;
+  /**
+   * Duration of each outgoing realtime audio chunk in milliseconds. Must be a positive integer.
+   * Defaults to 50. Larger chunks reduce message frequency but increase buffering latency.
+   * Flushes send any shorter remaining chunk before committing. Only used for Scribe v2 realtime.
+   */
+  audioChunkDuration?: number;
   serverVad?: VADOptions | null;
   includeTimestamps?: boolean;
   httpSession?: STTHTTPSession;
@@ -91,6 +97,7 @@ interface ResolvedSTTOptions {
   tagAudioEvents: boolean;
   includeTimestamps: boolean;
   sampleRate: STTRealtimeSampleRates;
+  audioChunkDuration: number;
   serverVad?: VADOptions | null;
   keyterms?: string[];
   secondaryLanguages?: string[];
@@ -234,6 +241,11 @@ export class STT extends stt.STT {
   label = 'elevenlabs.STT';
 
   constructor(opts: STTOptions = {}) {
+    const audioChunkDuration = opts.audioChunkDuration === undefined ? 50 : opts.audioChunkDuration;
+    if (!Number.isInteger(audioChunkDuration) || audioChunkDuration <= 0) {
+      throw new Error('audioChunkDuration must be a positive integer');
+    }
+
     let model = opts.model;
     if (opts.modelId !== undefined) {
       if (model !== undefined) {
@@ -300,6 +312,7 @@ export class STT extends stt.STT {
       languageCode: opts.languageCode ? normalizeLanguage(opts.languageCode) : undefined,
       tagAudioEvents: opts.tagAudioEvents ?? true,
       sampleRate: opts.sampleRate ?? 16000,
+      audioChunkDuration,
       serverVad: opts.serverVad,
       includeTimestamps,
       modelId,
@@ -435,13 +448,26 @@ export class STT extends stt.STT {
           signal: abortSignal ?? null,
         },
       );
-      const responseJson = parseBatchResponse(await response.json());
       if (response.status !== 200) {
+        const text = await response.text();
+        let body: object | string | number | boolean | null = text;
+        try {
+          body = JSON.parse(text);
+        } catch {
+          // Error responses may be empty or not JSON.
+        }
+        const detail =
+          typeof body === 'object' && body !== null && 'detail' in body ? body.detail : undefined;
+        const message =
+          typeof detail === 'object' && detail !== null && 'message' in detail
+            ? detail.message
+            : detail;
         throw new APIStatusError({
-          message: responseJson.detail ?? 'Unknown ElevenLabs error',
-          options: { statusCode: response.status, requestId: null, body: responseJson },
+          message: String(message || text || 'Unknown ElevenLabs error'),
+          options: { statusCode: response.status, requestId: null, body },
         });
       }
+      const responseJson = parseBatchResponse(await response.json());
 
       const words = responseJson.words ?? [];
       const speakerId = words.length > 0 ? words[0]?.speaker_id ?? null : null;
@@ -464,7 +490,7 @@ export class STT extends stt.STT {
         throw error;
       }
       if (error instanceof APIStatusError) {
-        throw new APIConnectionError({ message: error.message });
+        throw error;
       }
       if (error instanceof Error && error.name === 'AbortError') {
         throw new APITimeoutError({});
@@ -672,10 +698,16 @@ export class SpeechStream extends stt.SpeechStream {
         }, sessionController);
 
         const sendTask = Task.from(async (controller) => {
-          const samples50Ms = Math.floor(this.#opts.sampleRate / 20);
-          const audioByteStream = new AudioByteStream(this.#opts.sampleRate, 1, samples50Ms);
+          const samplesPerChunk = Math.floor(
+            (this.#opts.sampleRate * this.#opts.audioChunkDuration) / 1000,
+          );
+          const audioByteStream = new AudioByteStream(this.#opts.sampleRate, 1, samplesPerChunk);
           const abortPromise = waitForAbort(controller.signal);
           const streamAbortPromise = waitForAbort(this.abortSignal);
+          // Scribe closes the session on a commit with less than 300ms of audio since the
+          // previous commit or the connect
+          const minCommitSamples = (this.#opts.sampleRate * 3) / 10;
+          let uncommittedSamples = 0;
           let hasEnded = false;
 
           try {
@@ -692,8 +724,13 @@ export class SpeechStream extends stt.SpeechStream {
               let frames: AudioFrame[];
               if (data === SpeechStream.FLUSH_SENTINEL) {
                 frames = audioByteStream.flush();
+                const missing = minCommitSamples - uncommittedSamples;
+                if (missing > 0) {
+                  frames.push(AudioFrame.create(this.#opts.sampleRate, 1, missing));
+                }
                 hasEnded = true;
               } else {
+                uncommittedSamples += data.samplesPerChannel;
                 frames = audioByteStream.write(data.data);
               }
 
@@ -724,6 +761,7 @@ export class SpeechStream extends stt.SpeechStream {
                     sample_rate: this.#opts.sampleRate,
                   }),
                 );
+                uncommittedSamples = 0;
                 hasEnded = false;
               }
             }
@@ -912,7 +950,7 @@ export class SpeechStream extends stt.SpeechStream {
     const words = data.words ?? [];
     const startTime = words.length > 0 ? words[0]?.start ?? 0 : 0;
     const endTime = words.length > 0 ? words[words.length - 1]?.end ?? 0 : 0;
-    const languageCode = data.language_code ?? this.#language;
+    const languageCode = data.language_code || this.#language;
     const normalizedLanguage = languageCode
       ? normalizeLanguage(languageCode)
       : normalizeLanguage('en');

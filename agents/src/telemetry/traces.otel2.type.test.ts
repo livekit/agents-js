@@ -171,9 +171,10 @@ describe('setupCloudTracer with an OpenTelemetry SDK 2.x provider', () => {
     });
 
     expect(tracer.getProvider()).toBe(provider);
-    // PII stripper + session metadata processor + built-in cloud span processor
-    expect(registered).toHaveLength(3);
+    // PII stripper + the loop monitor's blocked-span tracker + session metadata processor +
+    // built-in cloud span processor
+    expect(registered).toHaveLength(4);
     expect(registered[0]).toBeInstanceOf(PIIFilteringSpanProcessor);
-    expect(registered[2]).toBeInstanceOf(BatchSpanProcessor);
+    expect(registered[3]).toBeInstanceOf(BatchSpanProcessor);
   });
 });

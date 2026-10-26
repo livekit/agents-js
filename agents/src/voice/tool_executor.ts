@@ -10,17 +10,20 @@ import {
   type DuplicateMode,
   type FunctionTool,
   type JSONObject,
+  type ToolChoice,
   type ToolContextEntry,
   ToolError,
   ToolFlag,
   Toolset,
   isFunctionTool,
+  isToolError,
   tool,
 } from '../llm/tool_context.js';
 import { log } from '../log.js';
-import { Future } from '../utils.js';
+import { Future, Task, waitUntilAborted } from '../utils.js';
 import type { AgentSession } from './agent_session.js';
 import type { PromptTemplate, RunContext, UpdatePromptArgs } from './run_context.js';
+import { isStopResponse } from './stop_response.js';
 
 // Upper bound on how long `drain()` waits for in-flight tool promises to settle
 // after the executor has signalled abort.
@@ -123,7 +126,27 @@ type PendingUpdate = {
   ctx: RunContext<any>;
   items: [FunctionCall, FunctionCallOutput];
   target: ToolExecutorAgent;
+  /** What the reply may call: an update's request, or undefined for a result to act on. */
+  toolChoice?: ToolChoice;
 };
+
+/**
+ * The tool choice of one reply step answering several tool outputs.
+ *
+ * The step honours a single shared request, and is otherwise unconstrained: outputs that
+ * disagree cannot all be satisfied, and one of them wanting the tools is enough to need them.
+ * @internal
+ */
+export function _replyToolChoice(
+  requests: Iterable<ToolChoice | undefined>,
+): ToolChoice | undefined {
+  // a named choice is an object, so compare by value
+  const distinct = new Map<string, ToolChoice | undefined>();
+  for (const request of requests) {
+    distinct.set(JSON.stringify(request ?? null), request);
+  }
+  return distinct.size === 1 ? distinct.values().next().value : undefined;
+}
 
 const runningTasks = new WeakMap<AgentSession<any>, Map<string, RunningTask>>();
 
@@ -157,7 +180,7 @@ export class ToolExecutor {
   private runningTasks = new Map<string, RunningTask>();
   private duplicateLock = new Mutex();
   private pendingUpdates: PendingUpdate[] = [];
-  private _replyTask?: Promise<void>;
+  private _replyTask?: Task<void>;
   private _replyTaskDone = false;
   toolOptions: AsyncToolOptions;
 
@@ -175,7 +198,7 @@ export class ToolExecutor {
   private owningActivity: ToolExecutorActivity | null;
 
   get replyTask(): Promise<void> | undefined {
-    return this._replyTask;
+    return this._replyTask?.result;
   }
 
   setOwningActivity(activity: ToolExecutorActivity | null): void {
@@ -298,7 +321,7 @@ export class ToolExecutor {
 
   async waitForAll(): Promise<void> {
     await Promise.allSettled([...this.runningTasks.values()].map((task) => task.promise));
-    if (this._replyTask) await this._replyTask;
+    if (this._replyTask) await this._replyTask.result;
   }
 
   async cancel(callId: string): Promise<boolean> {
@@ -404,6 +427,8 @@ export class ToolExecutor {
 
   async aclose(): Promise<void> {
     this.pendingUpdates = [];
+    const replyTask = this._replyTask;
+    replyTask?.cancel();
     const tasks = [...this.runningTasks.values()];
     for (const task of tasks) {
       task.controller.abort();
@@ -414,33 +439,37 @@ export class ToolExecutor {
       void task.promise.catch(() => undefined);
     }
     this.runningTasks.clear();
+    await replyTask?.result;
   }
 
   async enqueueReply(
     ctx: RunContext<any>,
     items: [FunctionCall, FunctionCallOutput],
+    { silent = false, toolChoice }: { silent?: boolean; toolChoice?: ToolChoice } = {},
   ): Promise<void> {
     const target = this.owningActivity?.agent ?? getCurrentAgent(ctx.session);
     const chatCtx = target.chatCtx.copy();
     chatCtx.insert(items);
     await target.updateChatCtx(chatCtx);
     ctx.session.history.insert(items);
+    if (!items[1].replyRequired) return;
 
-    this.pendingUpdates.push({ ctx, items, target });
+    // recorded above for the model; a silent update is not queued to be voiced
+    if (silent) return;
+
+    this.pendingUpdates.push({ ctx, items, target, toolChoice });
     if (this._replyTask === undefined || this._replyTaskDone) {
       this._replyTaskDone = false;
-      this._replyTask = this.deliverReply(ctx.session).catch((error) => {
-        log().warn(
-          { error },
-          'deliverReply failed; async tool result may not trigger a follow-up reply',
-        );
-      });
-      const runState = (
-        ctx.session as unknown as {
-          _globalRunState?: { _watchHandle?: (p: Promise<void>) => void };
-        }
-      )._globalRunState;
-      runState?._watchHandle?.(this._replyTask);
+      // a Task, not a bare promise: an active RunResult watches it like a speech handle
+      this._replyTask = Task.from(({ signal }) =>
+        this.deliverReply(ctx.session, signal).catch((error) => {
+          log().warn(
+            { error },
+            'deliverReply failed; async tool result may not trigger a follow-up reply',
+          );
+        }),
+      );
+      ctx.session._globalRunState?._watchHandle(this._replyTask);
     }
   }
 
@@ -509,6 +538,7 @@ export class ToolExecutor {
     }
 
     if (exception !== undefined) {
+      if (isStopResponse(exception)) return;
       log().error(
         {
           function: runCtx.functionCall.name,
@@ -517,17 +547,20 @@ export class ToolExecutor {
         },
         'exception occurred while executing tool after a progress update',
       );
-      return;
-    }
-    if (output === undefined || output === null) {
-      return;
+      output = isToolError(exception)
+        ? exception.message
+        : 'An internal error occurred while executing the tool.';
     }
     if (!this.runningTasks.has(runCtx.functionCall.callId)) {
       return;
     }
     const pair = runCtx._makeUpdatePair(output, '_final');
+    pair[1].isError = exception !== undefined;
+    pair[1].replyRequired = output !== null && output !== undefined;
     runCtx._recordUpdatePair(pair);
-    await this.enqueueReply(runCtx, pair);
+    // a return is a result to act on, unlike a report, so the reply that phrases it is as free
+    // to call something as the reply to an ordinary tool would be
+    await this.enqueueReply(runCtx, pair, { toolChoice: undefined });
   }
 
   private async checkDuplicate(
@@ -580,13 +613,14 @@ export class ToolExecutor {
     return undefined;
   }
 
-  private async deliverReply(session: AgentSession): Promise<void> {
+  private async deliverReply(session: AgentSession, signal: AbortSignal): Promise<void> {
     try {
       if (this.owningActivity) {
-        await this.owningActivity.waitForIdle();
+        await waitUntilAborted(this.owningActivity.waitForIdle(), signal);
       } else if ('waitForIdle' in session && typeof session.waitForIdle === 'function') {
-        await session.waitForIdle();
+        await waitUntilAborted(session.waitForIdle(), signal);
       }
+      if (signal.aborted) return;
 
       const updates = [...this.pendingUpdates];
       this.pendingUpdates = [];
@@ -619,7 +653,7 @@ export class ToolExecutor {
 
       session.generateReply({
         instructions,
-        toolChoice: 'none',
+        toolChoice: _replyToolChoice(updates.map((update) => update.toolChoice)),
         chatCtx,
       });
     } finally {
