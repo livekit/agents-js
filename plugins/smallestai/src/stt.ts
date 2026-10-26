@@ -289,9 +289,11 @@ export class SpeechStream extends stt.SpeechStream {
     const samplesPerChunk = Math.floor(this.#opts.sampleRate / 20);
     const audioStream = new AudioByteStream(this.#opts.sampleRate, NUM_CHANNELS, samplesPerChunk);
 
+    // create the abort promise once; waitForAbort registers a listener per call
+    const abortPromise = waitForAbort(abortSignal);
     while (!abortSignal.aborted) {
       this.#pendingInput ??= this.input.next();
-      const result = await Promise.race([this.#pendingInput, waitForAbort(abortSignal)]);
+      const result = await Promise.race([this.#pendingInput, abortPromise]);
       if (result === undefined || result.done) break;
       this.#pendingInput = undefined;
       const data = result.value;
