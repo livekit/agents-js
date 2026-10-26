@@ -164,8 +164,11 @@ export class SpeechStream extends stt.SpeechStream {
 
   protected async run(): Promise<void> {
     const ws = await this.#connectWS();
+    const state = { closing: false };
     try {
-      await Promise.race([this.#sendAudio(ws), this.#receiveEvents(ws)]);
+      // Wait for both sides: after close_stream the server still sends the final
+      // transcripts and is_last, so the receiver must outlive the sender.
+      await Promise.all([this.#sendAudio(ws, state), this.#receiveEvents(ws, state)]);
     } finally {
       ws.close();
     }
@@ -215,11 +218,14 @@ export class SpeechStream extends stt.SpeechStream {
     return ws;
   }
 
-  async #sendAudio(ws: WebSocket): Promise<void> {
+  async #sendAudio(ws: WebSocket, state: { closing: boolean }): Promise<void> {
     const samplesPerChunk = Math.floor(this.#opts.sampleRate / 20);
     const audioStream = new AudioByteStream(this.#opts.sampleRate, NUM_CHANNELS, samplesPerChunk);
 
     for await (const data of this.input) {
+      // the receiver failed or the socket was closed; stop sending into a dead connection
+      if (ws.readyState !== WebSocket.OPEN) return;
+
       if (data === SpeechStream.FLUSH_SENTINEL) {
         for (const frame of audioStream.flush()) {
           ws.send(frame.data);
@@ -232,14 +238,27 @@ export class SpeechStream extends stt.SpeechStream {
       }
     }
 
+    if (ws.readyState !== WebSocket.OPEN) return;
+    state.closing = true;
     ws.send(CLOSE_STREAM_MESSAGE);
   }
 
-  async #receiveEvents(ws: WebSocket): Promise<void> {
+  async #receiveEvents(ws: WebSocket, state: { closing: boolean }): Promise<void> {
     const messages = new AsyncQueue<RawData>();
     ws.on('message', (data) => messages.push(data));
     ws.on('error', (error) => messages.throw(error));
-    ws.on('close', () => messages.close());
+    ws.on('close', (code, reason) => {
+      if (state.closing) {
+        messages.close();
+      } else {
+        messages.throw(
+          new APIStatusError({
+            message: 'SmallestAI STT connection closed unexpectedly',
+            options: { statusCode: code || -1, body: { reason: reason.toString() } },
+          }),
+        );
+      }
+    });
 
     for await (const raw of messages) {
       let data: Record<string, unknown>;
@@ -452,5 +471,6 @@ class AsyncQueue<T> implements AsyncIterable<T> {
       const item = this.#items.shift();
       if (item !== undefined) yield item;
     }
+    if (this.#error) throw this.#error;
   }
 }
