@@ -1,5 +1,4 @@
 ---
-'@livekit/agents': patch
 '@livekit/agents-plugin-mistralai': patch
 ---
 
