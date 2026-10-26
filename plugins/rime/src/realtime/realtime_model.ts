@@ -191,6 +191,8 @@ interface Generation {
   ended: boolean;
   abandoned: boolean;
   toolsDisabled: boolean;
+  // Requested responses are private until requestReply returns them to LiveKit.
+  pendingEvents?: r.SessionEvent<r.NormalizedRealtimeFault>[];
 }
 
 /** One Prism conversation managed through LiveKit's realtime session interface. */
@@ -590,9 +592,10 @@ export class RealtimeSession extends llm.RealtimeSession {
             }
           }
           this.emit('session_updated', this.sessionInfo);
-          // Settle admission before restoring tools, even if the caller stops waiting.
+          // The SDK prevents unsent requests and cancels late acceptance after abort.
+          // Release the settings queue without waiting for that acceptance.
           options.signal?.throwIfAborted();
-          const created = await this.requestReply(instructions, parent, report);
+          const created = await this.requestReply(instructions, parent, report, options.signal);
           if (options.signal?.aborted) {
             await this.abandon(this.generations.get(created.responseId!)!);
             options.signal.throwIfAborted();
@@ -655,6 +658,18 @@ export class RealtimeSession extends llm.RealtimeSession {
       await this.abandon(generation);
       signal.throwIfAborted();
     }
+    const pending = generation.pendingEvents;
+    generation.pendingEvents = undefined;
+    // An abandoned request must not replace a newer automatic response as the
+    // interruption target. Claim requested responses only when returning them.
+    const latest = [...this.generations.values()]
+      .reverse()
+      .find((value) => !value.pendingEvents && !value.abandoned);
+    if (latest === generation) {
+      this.latest = this.active = ref;
+      this.parent = this.report = undefined;
+    }
+    for (const event of pending ?? []) this.handleEvent(event);
     return generation.event;
   }
   private async abandon(generation: Generation): Promise<void> {
@@ -735,6 +750,27 @@ export class RealtimeSession extends llm.RealtimeSession {
       payload,
       'itemId' in payload ? this.turnStarted.get(payload.itemId) : undefined,
     );
+    const responseId =
+      'output' in payload
+        ? payload.output.response.responseId
+        : payload.kind === 'tool.call'
+          ? payload.call.responseId
+          : payload.kind === 'response.ended'
+            ? payload.response.responseId
+            : undefined;
+    const pending = responseId && this.generations.get(responseId)?.pendingEvents;
+    if (pending) {
+      // The SDK may publish output before requestReply settles or before it reports
+      // late acceptance as abandoned. Do not expose that output or record its history.
+      if (pending.length >= 256)
+        throw new llm.RealtimeError('Prism pending response exceeds 256 queued events');
+      pending.push(event);
+      return;
+    }
+    this.handleEvent(event);
+  }
+  private handleEvent(event: r.SessionEvent<r.NormalizedRealtimeFault>): void {
+    const payload = event.payload;
     switch (payload.kind) {
       case 'speech.started':
         this.latest = this.parent = undefined;
@@ -813,6 +849,7 @@ export class RealtimeSession extends llm.RealtimeSession {
           outputs: new Map(),
           ended: false,
           abandoned: false,
+          pendingEvents: event.requestId === null ? undefined : [],
           toolsDisabled:
             payload.settingsRevision != null
               ? this.suppressedRevisions.has(payload.settingsRevision) ||
@@ -821,11 +858,13 @@ export class RealtimeSession extends llm.RealtimeSession {
               : this.suppressTools,
         };
         this.generations.set(payload.response.responseId, generation);
-        this.latest = this.active = payload.response;
-        this.parent = this.report = undefined;
         this.generationWaiters.get(payload.response.responseId)?.resolve(generation);
         this.generationWaiters.delete(payload.response.responseId);
-        if (event.requestId === null) this.emit('generation_created', created);
+        if (event.requestId === null) {
+          this.latest = this.active = payload.response;
+          this.parent = this.report = undefined;
+          this.emit('generation_created', created);
+        }
         break;
       }
       case 'response.abandoned': {
@@ -919,6 +958,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     if (generation.ended && !discard) return;
     const alreadyEnded = generation.ended;
     generation.ended = true;
+    generation.pendingEvents = undefined;
     for (const [id, message] of generation.outputs) {
       if (!alreadyEnded)
         this.history?.recordAssistant(id, message.playedTranscript ?? message.transcript);

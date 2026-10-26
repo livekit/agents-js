@@ -55,8 +55,9 @@ To add filler speech, use the registered tool name:
 `toolFillers: { lookup: { type: 'text', text: 'Checking your order.' } }`.
 
 Updates are not atomic. Each accepted setting remains applied if a later update fails.
-With `toolChoice: 'none'`, the plugin removes tools until Prism accepts the reply,
-then restores them. An automatic speech reply can start during that gap with no tools.
+With `toolChoice: 'none'`, the plugin removes tools until Prism accepts the reply or
+the request is cancelled, then restores them. The SDK cancels responses accepted after
+cancellation. An automatic speech reply can start during that gap with no tools.
 This also applies when LiveKit reaches `maxToolSteps`. Failed tool restoration or a
 partially applied history edit closes the session.
 
