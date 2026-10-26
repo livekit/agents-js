@@ -21,7 +21,7 @@
 import { describe, expect, it } from 'vitest';
 import { TurnDetector } from '../inference/eot/detector.js';
 import type { VADStream } from '../vad.js';
-import { VAD as BaseVAD } from '../vad.js';
+import { VAD as BaseVAD, VADEventType } from '../vad.js';
 import { Agent } from './agent.js';
 import { AgentActivity } from './agent_activity.js';
 import { AgentSession } from './agent_session.js';
@@ -110,6 +110,53 @@ describe('AgentSession endpointing defaults', () => {
       await session.close().catch(() => {});
     }
   });
+
+  it.each([
+    { sessionMinDelay: 200, agentMinDelay: 1000, replyHeld: true },
+    { sessionMinDelay: 1000, agentMinDelay: 200, replyHeld: false },
+  ])(
+    'reply hold-off uses agent minDelay: $agentMinDelay',
+    async ({ sessionMinDelay, agentMinDelay, replyHeld }) => {
+      const session = new AgentSession({
+        vad: new FakeVAD(),
+        turnHandling: {
+          turnDetection: 'vad',
+          endpointing: { minDelay: sessionMinDelay },
+        },
+      });
+      try {
+        const activity = new AgentActivity(
+          new Agent({
+            instructions: 'test',
+            turnHandling: { endpointing: { minDelay: agentMinDelay } },
+          }),
+          session,
+        );
+        const activityInternals = activity as unknown as {
+          userSilenceEvent: { isSet: boolean };
+        };
+        expect(activity.endpointingOpts.minDelay).toBe(agentMinDelay);
+
+        activity.onVADInferenceDone({
+          type: VADEventType.INFERENCE_DONE,
+          samplesIndex: 0,
+          timestamp: 0,
+          speechDuration: 0,
+          silenceDuration: 250,
+          frames: [],
+          probability: 0,
+          inferenceDuration: 0,
+          speaking: true,
+          rawAccumulatedSilence: 250,
+          rawAccumulatedSpeech: 0,
+        });
+
+        expect(activityInternals.userSilenceEvent.isSet).toBe(!replyHeld);
+      } finally {
+        await session.close().catch(() => {});
+      }
+    },
+  );
 
   it('runtime updateOptions changes survive a handoff via overrides', async () => {
     const session = new AgentSession({ vad: new FakeVAD() });

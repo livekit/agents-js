@@ -3,23 +3,27 @@
 // SPDX-License-Identifier: Apache-2.0
 import { Mutex } from '@livekit/mutex';
 import { z } from 'zod';
-import { ChatContext, FunctionCall, FunctionCallOutput } from '../llm/chat_context.js';
+import type { ChatContext, FunctionCallOutput } from '../llm/chat_context.js';
+import { FunctionCall } from '../llm/chat_context.js';
 import {
   CONFIRM_DUPLICATE_PARAM,
   type DuplicateMode,
   type FunctionTool,
   type JSONObject,
+  type ToolChoice,
   type ToolContextEntry,
   ToolError,
   ToolFlag,
   Toolset,
   isFunctionTool,
+  isToolError,
   tool,
 } from '../llm/tool_context.js';
 import { log } from '../log.js';
-import { Future } from '../utils.js';
+import { Future, Task, waitUntilAborted } from '../utils.js';
 import type { AgentSession } from './agent_session.js';
 import type { PromptTemplate, RunContext, UpdatePromptArgs } from './run_context.js';
+import { isStopResponse } from './stop_response.js';
 
 // Upper bound on how long `drain()` waits for in-flight tool promises to settle
 // after the executor has signalled abort.
@@ -111,6 +115,7 @@ type RunningTask = {
   controller: AbortController;
   firstUpdateFuture: Future<unknown>;
   executor: ToolExecutor;
+  attachment: object;
   allowCancellation: boolean;
   // Guarded handle to the raw user `execute()` promise (never rejects). `drain()`
   // waits on this to detect tools that keep running after being aborted.
@@ -121,14 +126,35 @@ type PendingUpdate = {
   ctx: RunContext<any>;
   items: [FunctionCall, FunctionCallOutput];
   target: ToolExecutorAgent;
+  /** What the reply may call: an update's request, or undefined for a result to act on. */
+  toolChoice?: ToolChoice;
 };
+
+/**
+ * The tool choice of one reply step answering several tool outputs.
+ *
+ * The step honours a single shared request, and is otherwise unconstrained: outputs that
+ * disagree cannot all be satisfied, and one of them wanting the tools is enough to need them.
+ * @internal
+ */
+export function _replyToolChoice(
+  requests: Iterable<ToolChoice | undefined>,
+): ToolChoice | undefined {
+  // a named choice is an object, so compare by value
+  const distinct = new Map<string, ToolChoice | undefined>();
+  for (const request of requests) {
+    distinct.set(JSON.stringify(request ?? null), request);
+  }
+  return distinct.size === 1 ? distinct.values().next().value : undefined;
+}
 
 const runningTasks = new WeakMap<AgentSession<any>, Map<string, RunningTask>>();
 
 export const getRunningTasksTool = tool({
   name: 'lk_agents_get_running_tasks',
   description: 'Get the list of running tool calls that are cancellable.',
-  execute: async (_, { ctx }) => getRunningTasks(ctx.session).map((call) => call.toJSON(true)),
+  execute: async (_, { ctx }) =>
+    _getCancellableRunningTasks(ctx.session).map((call) => call.toJSON(true)),
 });
 
 export const cancelTaskTool = tool({
@@ -154,7 +180,7 @@ export class ToolExecutor {
   private runningTasks = new Map<string, RunningTask>();
   private duplicateLock = new Mutex();
   private pendingUpdates: PendingUpdate[] = [];
-  private _replyTask?: Promise<void>;
+  private _replyTask?: Task<void>;
   private _replyTaskDone = false;
   toolOptions: AsyncToolOptions;
 
@@ -172,7 +198,7 @@ export class ToolExecutor {
   private owningActivity: ToolExecutorActivity | null;
 
   get replyTask(): Promise<void> | undefined {
-    return this._replyTask;
+    return this._replyTask?.result;
   }
 
   setOwningActivity(activity: ToolExecutorActivity | null): void {
@@ -222,7 +248,7 @@ export class ToolExecutor {
       }
 
       const firstUpdateFuture = new Future<unknown>();
-      runCtx._attachExecutor(this, firstUpdateFuture);
+      const attachment = runCtx._attachExecutor(this, firstUpdateFuture);
 
       const controller = new AbortController();
       const abort = () => {
@@ -258,10 +284,15 @@ export class ToolExecutor {
         controller,
         toolPromiseRef,
       }).finally(() => {
-        this.runningTasks.delete(callId);
-        runningTasks.get(runCtx.session)?.delete(callId);
+        if (this.runningTasks.get(callId)?.attachment === attachment) {
+          this.runningTasks.delete(callId);
+        }
+        const sessionTasks = runningTasks.get(runCtx.session);
+        if (sessionTasks?.get(callId)?.attachment === attachment) {
+          sessionTasks.delete(callId);
+        }
         abortSignal?.removeEventListener('abort', abort);
-        runCtx._detachExecutor();
+        runCtx._detachExecutor(attachment);
       });
 
       const task: RunningTask = {
@@ -270,6 +301,7 @@ export class ToolExecutor {
         controller,
         firstUpdateFuture,
         executor: this,
+        attachment,
         allowCancellation: Boolean(tool.flags & ToolFlag.CANCELLABLE),
         toolPromiseRef,
       };
@@ -289,7 +321,7 @@ export class ToolExecutor {
 
   async waitForAll(): Promise<void> {
     await Promise.allSettled([...this.runningTasks.values()].map((task) => task.promise));
-    if (this._replyTask) await this._replyTask;
+    if (this._replyTask) await this._replyTask.result;
   }
 
   async cancel(callId: string): Promise<boolean> {
@@ -319,10 +351,9 @@ export class ToolExecutor {
     if (!task.firstUpdateFuture.done) {
       task.firstUpdateFuture.resolve(undefined);
     }
+    task.ctx._detachExecutor(task.attachment);
 
     this.runningTasks.delete(callId);
-    runningTasks.get(task.ctx.session)?.delete(callId);
-    task.ctx._detachExecutor();
     void task.promise.catch(() => undefined);
     // We've abandoned the wait, but the user's execute() may ignore the abort
     // signal and keep running. Error if it hasn't stopped by the deadline.
@@ -396,44 +427,49 @@ export class ToolExecutor {
 
   async aclose(): Promise<void> {
     this.pendingUpdates = [];
+    const replyTask = this._replyTask;
+    replyTask?.cancel();
     const tasks = [...this.runningTasks.values()];
     for (const task of tasks) {
       task.controller.abort();
       if (!task.firstUpdateFuture.done) {
         task.firstUpdateFuture.resolve(undefined);
       }
-      runningTasks.get(task.ctx.session)?.delete(task.ctx.functionCall.callId);
-      task.ctx._detachExecutor();
+      task.ctx._detachExecutor(task.attachment);
       void task.promise.catch(() => undefined);
     }
     this.runningTasks.clear();
+    await replyTask?.result;
   }
 
   async enqueueReply(
     ctx: RunContext<any>,
     items: [FunctionCall, FunctionCallOutput],
+    { silent = false, toolChoice }: { silent?: boolean; toolChoice?: ToolChoice } = {},
   ): Promise<void> {
     const target = this.owningActivity?.agent ?? getCurrentAgent(ctx.session);
     const chatCtx = target.chatCtx.copy();
     chatCtx.insert(items);
     await target.updateChatCtx(chatCtx);
     ctx.session.history.insert(items);
+    if (!items[1].replyRequired) return;
 
-    this.pendingUpdates.push({ ctx, items, target });
+    // recorded above for the model; a silent update is not queued to be voiced
+    if (silent) return;
+
+    this.pendingUpdates.push({ ctx, items, target, toolChoice });
     if (this._replyTask === undefined || this._replyTaskDone) {
       this._replyTaskDone = false;
-      this._replyTask = this.deliverReply(ctx.session).catch((error) => {
-        log().warn(
-          { error },
-          'deliverReply failed; async tool result may not trigger a follow-up reply',
-        );
-      });
-      const runState = (
-        ctx.session as unknown as {
-          _globalRunState?: { _watchHandle?: (p: Promise<void>) => void };
-        }
-      )._globalRunState;
-      runState?._watchHandle?.(this._replyTask);
+      // a Task, not a bare promise: an active RunResult watches it like a speech handle
+      this._replyTask = Task.from(({ signal }) =>
+        this.deliverReply(ctx.session, signal).catch((error) => {
+          log().warn(
+            { error },
+            'deliverReply failed; async tool result may not trigger a follow-up reply',
+          );
+        }),
+      );
+      ctx.session._globalRunState?._watchHandle(this._replyTask);
     }
   }
 
@@ -502,6 +538,7 @@ export class ToolExecutor {
     }
 
     if (exception !== undefined) {
+      if (isStopResponse(exception)) return;
       log().error(
         {
           function: runCtx.functionCall.name,
@@ -510,17 +547,20 @@ export class ToolExecutor {
         },
         'exception occurred while executing tool after a progress update',
       );
-      return;
-    }
-    if (output === undefined || output === null) {
-      return;
+      output = isToolError(exception)
+        ? exception.message
+        : 'An internal error occurred while executing the tool.';
     }
     if (!this.runningTasks.has(runCtx.functionCall.callId)) {
       return;
     }
     const pair = runCtx._makeUpdatePair(output, '_final');
+    pair[1].isError = exception !== undefined;
+    pair[1].replyRequired = output !== null && output !== undefined;
     runCtx._recordUpdatePair(pair);
-    await this.enqueueReply(runCtx, pair);
+    // a return is a result to act on, unlike a report, so the reply that phrases it is as free
+    // to call something as the reply to an ordinary tool would be
+    await this.enqueueReply(runCtx, pair, { toolChoice: undefined });
   }
 
   private async checkDuplicate(
@@ -573,13 +613,14 @@ export class ToolExecutor {
     return undefined;
   }
 
-  private async deliverReply(session: AgentSession): Promise<void> {
+  private async deliverReply(session: AgentSession, signal: AbortSignal): Promise<void> {
     try {
       if (this.owningActivity) {
-        await this.owningActivity.waitForIdle();
+        await waitUntilAborted(this.owningActivity.waitForIdle(), signal);
       } else if ('waitForIdle' in session && typeof session.waitForIdle === 'function') {
-        await session.waitForIdle();
+        await waitUntilAborted(session.waitForIdle(), signal);
       }
+      if (signal.aborted) return;
 
       const updates = [...this.pendingUpdates];
       this.pendingUpdates = [];
@@ -612,7 +653,7 @@ export class ToolExecutor {
 
       session.generateReply({
         instructions,
-        toolChoice: 'none',
+        toolChoice: _replyToolChoice(updates.map((update) => update.toolChoice)),
         chatCtx,
       });
     } finally {
@@ -659,8 +700,15 @@ export function buildExecutorMap({
 }
 
 export function getRunningTasks(session: AgentSession): FunctionCall[] {
+  return [...(runningTasks.get(session)?.values() ?? [])].map((task) =>
+    FunctionCall.create({ ...task.ctx.functionCall }),
+  );
+}
+
+/** @internal */
+export function _getCancellableRunningTasks(session: AgentSession): FunctionCall[] {
   return [...(runningTasks.get(session)?.values() ?? [])]
-    .filter((task) => task.allowCancellation)
+    .filter((task) => task.allowCancellation && !task.controller.signal.aborted)
     .map((task) => FunctionCall.create({ ...task.ctx.functionCall }));
 }
 

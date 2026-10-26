@@ -3,7 +3,21 @@
 // SPDX-License-Identifier: Apache-2.0
 import { initializeLogger, llm as llmlib } from '@livekit/agents';
 import { describe, expect, it } from 'vitest';
+import { z as z3 } from 'zod/v3';
 import { z } from 'zod/v4';
+
+const zod3ToolCtx = new llmlib.ToolContext([
+  llmlib.tool({
+    name: 'bookFlight',
+    description: 'Book a flight for the user.',
+    parameters: z3.object({
+      origin: z3.string().describe('Departure city or airport code.'),
+      destination: z3.string().describe('Arrival city or airport code.'),
+      date: z3.string().describe('Travel date (YYYY-MM-DD).'),
+    }),
+    execute: async () => {},
+  }),
+]);
 
 const toolCtx = new llmlib.ToolContext([
   llmlib.tool({
@@ -146,6 +160,17 @@ export const llm = async (llm: llmlib.LLM, skipOptionalArgs: boolean) => {
       expect(text.length).toBeGreaterThan(0);
     });
     describe('function calling', async () => {
+      it('should handle Zod 3 function schemas', async () => {
+        const calls = await requestFncCall(
+          llm,
+          'Call bookFlight to book a flight from Boston to Paris on 2026-08-15.',
+          zod3ToolCtx,
+        );
+
+        expect(calls).toHaveLength(1);
+        expect(calls[0]!.name).toBe('bookFlight');
+      });
+
       it('should handle function calling', async () => {
         const calls = await requestFncCall(
           llm,

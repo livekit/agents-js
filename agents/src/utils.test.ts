@@ -2,10 +2,15 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { AudioFrame } from '@livekit/rtc-node';
+import { once } from 'node:events';
+import type { AddressInfo } from 'node:net';
 import { ReadableStream } from 'node:stream/web';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { WebSocket, WebSocketServer } from 'ws';
+import { APIStatusError } from '../src/_exceptions.js';
 import { initializeLogger } from '../src/log.js';
 import {
+  AsyncIterableQueue,
   Event,
   Queue,
   Task,
@@ -15,6 +20,8 @@ import {
   isPending,
   resampleStream,
   toStream,
+  waitForWebSocketOpen,
+  waitUntilAborted,
 } from '../src/utils.js';
 
 describe('utils', () => {
@@ -34,6 +41,49 @@ describe('utils', () => {
       controller.abort();
 
       await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    });
+  });
+
+  describe('waitForWebSocketOpen', () => {
+    it('removes handshake listeners after opening', async () => {
+      const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+      await once(server, 'listening');
+      const { port } = server.address() as AddressInfo;
+      const ws = new WebSocket(`ws://127.0.0.1:${port}`);
+
+      try {
+        await waitForWebSocketOpen(ws, 'Test');
+        expect(ws.listenerCount('open')).toBe(0);
+        expect(ws.listenerCount('unexpected-response')).toBe(0);
+        expect(ws.listenerCount('error')).toBe(0);
+        expect(ws.listenerCount('close')).toBe(0);
+      } finally {
+        ws.close();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      }
+    });
+
+    it('redacts credentials from rejected handshakes', async () => {
+      const secret = 'secret-api-key-do-not-log';
+      const server = new WebSocketServer({
+        host: '127.0.0.1',
+        port: 0,
+        verifyClient: (_info, done) => done(false, 401, 'Unauthorized'),
+      });
+      await once(server, 'listening');
+      const { port } = server.address() as AddressInfo;
+      const ws = new WebSocket(`ws://127.0.0.1:${port}`, {
+        headers: { Authorization: `Bearer ${secret}` },
+      });
+
+      try {
+        const error = await waitForWebSocketOpen(ws, 'Test').catch((error: unknown) => error);
+        expect(error).toBeInstanceOf(APIStatusError);
+        expect((error as APIStatusError).statusCode).toBe(401);
+        expect(String(error)).not.toContain(secret);
+      } finally {
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      }
     });
   });
 
@@ -932,5 +982,223 @@ world
 
       expect(outputFrames).toEqual([]);
     });
+  });
+
+  describe('Task.cancelled', () => {
+    it('is false for a task that completes normally', async () => {
+      const task = Task.from(async () => {});
+      await task.result;
+      expect(task.cancelled).toBe(false);
+    });
+
+    it('is false for a task that rejects without being cancelled', async () => {
+      const task = Task.from(async () => {
+        throw new Error('boom');
+      });
+      await task.result.catch(() => undefined);
+      expect(task.cancelled).toBe(false);
+    });
+
+    it('is true once a cancelled task that returns normally has finished', async () => {
+      let release: () => void = () => {};
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      // Mirrors the codebase convention of observing the signal and returning rather
+      // than rejecting.
+      const task = Task.from(async (controller) => {
+        await gate;
+        if (controller.signal.aborted) return;
+        throw new Error('should not reach here');
+      });
+
+      task.cancel();
+      // Still running, so not yet cancelled — matching asyncio's Task.cancelled().
+      expect(task.cancelled).toBe(false);
+
+      release();
+      await task.result;
+      expect(task.cancelled).toBe(true);
+    });
+
+    it('stays true for an ignored abort, so a body that returns anyway still reads cancelled', async () => {
+      let release: () => void = () => {};
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      // Deliberate semantics, not an accident: the EOU bounce observes the abort and returns
+      // normally, and Python treats that as cancelled. Reporting it as a plain completion
+      // would reinstate the resume-on-a-torn-down-decision bug.
+      const task = Task.from(async (controller) => {
+        await gate;
+        void controller.signal.aborted;
+        return;
+      });
+
+      task.cancel();
+      release();
+      await task.result;
+
+      expect(task.cancelled).toBe(true);
+      // ...and it is stable once settled.
+      task.cancel();
+      expect(task.cancelled).toBe(true);
+    });
+
+    it('does not retroactively mark a completed task cancelled when aborted later', async () => {
+      const task = Task.from(async () => {});
+      await task.result;
+      expect(task.cancelled).toBe(false);
+
+      task.cancel();
+
+      expect(task.cancelled).toBe(false);
+    });
+
+    it('keeps the disposition stable when cancelled between settling and its done callback', async () => {
+      // Models the real callsite: runEOUDetection unconditionally cancels the previous bounce
+      // (audio_recognition.ts), which can land after that task settled but before the queued
+      // done callback that reads its disposition runs.
+      const task = Task.from(async () => {});
+      await task.result;
+
+      let observed: boolean | undefined;
+      task.addDoneCallback(() => {
+        observed = task.cancelled;
+      });
+      task.cancel();
+      await delay(0);
+
+      expect(observed).toBe(false);
+    });
+
+    it('is false when an aborted task fails for an unrelated reason', async () => {
+      let release: () => void = () => {};
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const task = Task.from(async () => {
+        await gate;
+        throw new Error('unrelated failure');
+      });
+
+      task.cancel();
+      release();
+      await task.result.catch(() => undefined);
+
+      // asyncio reports exceptional completion, not cancellation, when a task swallows the
+      // cancellation and raises something else.
+      expect(task.cancelled).toBe(false);
+    });
+
+    it('is true when an aborted task rejects with an AbortError', async () => {
+      let release: () => void = () => {};
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const task = Task.from(async () => {
+        await gate;
+        const error = new Error('aborted');
+        error.name = 'AbortError';
+        throw error;
+      });
+
+      task.cancel();
+      release();
+      await task.result.catch(() => undefined);
+
+      expect(task.cancelled).toBe(true);
+    });
+
+    it('does not reclassify a completed task when a shared controller is aborted later', async () => {
+      const controller = new AbortController();
+      const first = Task.from(async () => {}, controller);
+      const second = Task.from(async () => {}, controller);
+      await first.result;
+      await second.result;
+
+      // Cancelling a sibling that shares the controller must not rewrite a disposition that
+      // was already decided.
+      second.cancel();
+
+      expect(first.cancelled).toBe(false);
+      expect(second.cancelled).toBe(false);
+    });
+
+    it('reports siblings still running under a shared controller as cancelled', async () => {
+      // Documented limitation rather than a defect: a shared controller broadcasts the abort
+      // to every task holding it, which is the whole point of the shared-controller contract,
+      // so `cancelled` means "a cancellation was in effect when this task settled".
+      const controller = new AbortController();
+      let release: () => void = () => {};
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const first = Task.from(async () => gate, controller);
+      const second = Task.from(async () => gate, controller);
+
+      second.cancel();
+      release();
+      await first.result;
+      await second.result;
+
+      expect(first.cancelled).toBe(true);
+    });
+  });
+});
+
+describe('waitUntilAborted', () => {
+  it('installs one abort listener per call and removes it once the promise settles', async () => {
+    const controller = new AbortController();
+    const added = vi.spyOn(controller.signal, 'addEventListener');
+    const removed = vi.spyOn(controller.signal, 'removeEventListener');
+
+    for (let index = 0; index < 100; index += 1) {
+      const outcome = await waitUntilAborted(Promise.resolve(index), controller.signal);
+      expect(outcome).toEqual({ result: index, isAborted: false });
+    }
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(added).toHaveBeenCalledTimes(100);
+    expect(removed).toHaveBeenCalledTimes(100);
+  });
+
+  it('resolves the abort marker when the signal fires first, and still removes its listener', async () => {
+    const controller = new AbortController();
+    const removed = vi.spyOn(controller.signal, 'removeEventListener');
+    const pending = new Promise<never>(() => {});
+
+    const outcome = waitUntilAborted(pending, controller.signal);
+    controller.abort();
+
+    await expect(outcome).resolves.toEqual({ result: undefined, isAborted: true });
+    expect(removed).toHaveBeenCalledTimes(0);
+  });
+});
+
+describe('AsyncIterableQueue.next with a signal', () => {
+  it('leaves the next item in the queue when the read is cancelled, so a torn-down reader cannot steal it', async () => {
+    const queue = new AsyncIterableQueue<number>();
+    const controller = new AbortController();
+    const cancelled = queue.next({ signal: controller.signal });
+
+    controller.abort();
+    await expect(cancelled).rejects.toBeDefined();
+    queue.put(1);
+
+    await expect(queue.next()).resolves.toEqual({ value: 1, done: false });
+  });
+
+  it('rejects a read whose signal is already aborted even when items are buffered, leaving them for the next reader', async () => {
+    const queue = new AsyncIterableQueue<number>();
+    queue.put(1);
+    queue.put(2);
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(queue.next({ signal: controller.signal })).rejects.toBeDefined();
+
+    await expect(queue.next()).resolves.toEqual({ value: 1, done: false });
+    await expect(queue.next()).resolves.toEqual({ value: 2, done: false });
   });
 });

@@ -33,6 +33,7 @@ export {
   withMockTools,
   type MockToolFn,
   type MockToolsMap,
+  type RunOutputOptions,
 } from './run_result.js';
 
 export {

@@ -10,6 +10,11 @@ import {
   getUniqueHash,
 } from './calendar_api.js';
 
+const infoMock = vi.hoisted(() => vi.fn());
+vi.mock('@livekit/agents', () => ({
+  log: () => ({ child: () => ({ info: infoMock }) }),
+}));
+
 describe('Calendar API', () => {
   describe('createAvailableSlot', () => {
     it('should create a valid AvailableSlot', () => {
@@ -167,6 +172,7 @@ describe('Calendar API', () => {
     let calendar: CalComCalendar;
 
     beforeEach(() => {
+      infoMock.mockClear();
       calendar = new CalComCalendar({
         apiKey: 'test-api-key',
         timezone: 'America/New_York',
@@ -197,15 +203,14 @@ describe('Calendar API', () => {
           }),
         } as Response);
 
-        const consoleSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
-
         await calendar.initialize();
 
         expect(mockFetch).toHaveBeenCalledTimes(2);
-        expect(consoleSpy).toHaveBeenCalledWith('[cal.com] using cal.com username: testuser');
-        expect(consoleSpy).toHaveBeenCalledWith('[cal.com] event type id: 123');
-
-        consoleSpy.mockRestore();
+        expect(infoMock).toHaveBeenCalledWith(
+          { 'lk.pii.username': 'testuser' },
+          'using cal.com username',
+        );
+        expect(infoMock).toHaveBeenCalledWith({ eventTypeId: 123 }, 'cal.com event type found');
       });
 
       it('should create new event type when not exists', async () => {
@@ -232,18 +237,18 @@ describe('Calendar API', () => {
           }),
         } as Response);
 
-        const consoleSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
-
         await calendar.initialize();
 
         expect(mockFetch).toHaveBeenCalledTimes(3);
-        expect(consoleSpy).toHaveBeenCalledWith('[cal.com] using cal.com username: testuser');
-        expect(consoleSpy).toHaveBeenCalledWith(
-          '[cal.com] successfully added livekit-front-desk event type',
+        expect(infoMock).toHaveBeenCalledWith(
+          { 'lk.pii.username': 'testuser' },
+          'using cal.com username',
         );
-        expect(consoleSpy).toHaveBeenCalledWith('[cal.com] event type id: 456');
-
-        consoleSpy.mockRestore();
+        expect(infoMock).toHaveBeenCalledWith(
+          { eventType: 'livekit-front-desk' },
+          'successfully added cal.com event type',
+        );
+        expect(infoMock).toHaveBeenCalledWith({ eventTypeId: 456 }, 'cal.com event type found');
       });
 
       it('should handle API errors', async () => {

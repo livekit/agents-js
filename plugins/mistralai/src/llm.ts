@@ -94,6 +94,10 @@ export class LLM extends llm.LLM {
     return 'api.mistral.ai';
   }
 
+  protected override async _prewarmImpl(signal: AbortSignal): Promise<void> {
+    await this.#client.models.list(undefined, { signal });
+  }
+
   updateOptions(opts: {
     model?: MistralChatModels | string;
     maxCompletionTokens?: number;
