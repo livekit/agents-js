@@ -191,7 +191,8 @@ export class LLM extends llm.LLM {
 
     return new LLMStream(this, {
       client: this.#client,
-      opts: this.#opts,
+      // Snapshot so updateOptions() after chat() cannot change this stream's model or API mode.
+      opts: { ...this.#opts },
       chatCtx,
       toolCtx,
       connOptions,
