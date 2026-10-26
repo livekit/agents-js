@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import type { TTSMetrics } from '../metrics/base.js';
-import { type SentenceStream, type SentenceTokenizer, basic } from '../tokenize/index.js';
+import { type SentenceStream, type SentenceTokenizer, blingfire } from '../tokenize/index.js';
 import type { APIConnectOptions } from '../types.js';
 import { USERDATA_TIMED_TRANSCRIPT } from '../types.js';
 import { Task } from '../utils.js';
@@ -30,7 +30,8 @@ export class StreamAdapter extends TTS {
     super(tts.sampleRate, tts.numChannels, { streaming: true, alignedTranscript: true });
     this.#tts = tts;
     this.#explicitTokenizer = sentenceTokenizer !== undefined;
-    this.#sentenceTokenizer = sentenceTokenizer ?? new basic.SentenceTokenizer();
+    this.#sentenceTokenizer =
+      sentenceTokenizer ?? new blingfire.SentenceTokenizer({ retainFormat: true });
     this.label = this.#tts.label;
     this.label = `tts.StreamAdapter<${this.#tts.label}>`;
 
@@ -70,7 +71,10 @@ export class StreamAdapter extends TTS {
     if (!options.lowering || this.#explicitTokenizer) {
       return this.#sentenceTokenizer;
     }
-    this.#markupTokenizer ??= new basic.SentenceTokenizer({ xmlAware: true });
+    this.#markupTokenizer ??= new blingfire.SentenceTokenizer({
+      retainFormat: true,
+      xmlAware: true,
+    });
     return this.#markupTokenizer;
   }
 
@@ -78,6 +82,14 @@ export class StreamAdapter extends TTS {
     this.#tts.off('metrics_collected', this.#forwardMetrics);
     this.#tts.off('error', this.#forwardError);
     await super.close();
+  }
+
+  override get _wrappedTts(): readonly TTS[] {
+    return [this.#tts];
+  }
+
+  override async releaseIdleConnections(): Promise<void> {
+    await this.#tts.releaseIdleConnections();
   }
 
   synthesize(
@@ -100,9 +112,11 @@ export class StreamAdapter extends TTS {
 }
 
 export class StreamAdapterWrapper extends SynthesizeStream {
+  protected override emitMetrics = false;
   #tts: TTS;
   #sentenceStream: SentenceStream;
   #expressive: boolean;
+  #sentenceError?: Error;
   label: string;
 
   constructor(tts: TTS, sentenceTokenizer: SentenceTokenizer, connOptions?: APIConnectOptions) {
@@ -122,6 +136,16 @@ export class StreamAdapterWrapper extends SynthesizeStream {
    */
   get expressive(): boolean {
     return this.#expressive;
+  }
+
+  /**
+   * Falls back to the first error a sentence failed with. A failed sentence is
+   * skipped rather than failing this stream, so without this a consumer would
+   * never learn that part of the speech is missing, or why.
+   * @internal
+   */
+  override get error(): Error | undefined {
+    return super.error ?? this.#sentenceError;
   }
 
   protected async run() {
@@ -211,6 +235,7 @@ export class StreamAdapterWrapper extends SynthesizeStream {
 
         this.queue.put(audio);
       }
+      this.#sentenceError ??= audioStream.error;
     };
 
     await ThrowsPromise.all([forwardInput(), synthesizeSentenceStream()]);

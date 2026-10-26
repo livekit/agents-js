@@ -77,6 +77,13 @@ export const langFields = (
   return fields;
 };
 
+/**
+ * Accumulates token metadata (text, language, speaker, timing, confidence).
+ *
+ * Tokens are assumed to arrive in chronological order, but individual tokens may omit timing
+ * keys. `startTime` is the earliest `start_ms` seen and `endTime` the latest `end_ms` seen, so a
+ * token that carries timing late (or regresses) cannot collapse the span onto itself.
+ */
 export class TokenAccumulator {
   text = '';
   language: stt.SpeechData['language'] = '' as stt.SpeechData['language'];
@@ -112,12 +119,14 @@ export class TokenAccumulator {
     if (token.speaker !== undefined && this.speakerId === undefined) {
       this.speakerId = String(token.speaker);
     }
-    if (token.start_ms !== undefined && !this.#hasStartTime) {
-      this.#hasStartTime = true;
-      this.startTime = token.start_ms;
+    if (token.start_ms !== undefined) {
+      if (!this.#hasStartTime || token.start_ms < this.startTime) {
+        this.#hasStartTime = true;
+        this.startTime = token.start_ms;
+      }
     }
     if (token.end_ms !== undefined) {
-      this.endTime = token.end_ms;
+      this.endTime = Math.max(this.endTime, token.end_ms);
     }
     if (token.confidence !== undefined) {
       this.#confidenceSum += token.confidence;
@@ -188,14 +197,16 @@ export class TokenAccumulator {
 /**
  * Per-session state mutated across calls to {@link processMessage}.
  * `final` and `finalOriginal` accumulate finalized tokens until an endpoint
- * is reached; `isSpeaking` gates the START_OF_SPEECH event; `reportedDurationMs`
- * tracks audio-duration usage already emitted.
+ * is reached; `isSpeaking` gates the START_OF_SPEECH event; the remaining fields
+ * track cumulative and already-emitted usage.
  */
 export interface ProcessMessageState {
   final: TokenAccumulator;
   finalOriginal: TokenAccumulator;
   isSpeaking: boolean;
   reportedDurationMs: number;
+  numOutputTokens: number;
+  reportedOutputTokens: number;
 }
 
 export const newProcessMessageState = (): ProcessMessageState => ({
@@ -203,6 +214,8 @@ export const newProcessMessageState = (): ProcessMessageState => ({
   finalOriginal: new TokenAccumulator(),
   isSpeaking: false,
   reportedDurationMs: 0,
+  numOutputTokens: 0,
+  reportedOutputTokens: 0,
 });
 
 export interface ProcessMessageOptions {
@@ -241,19 +254,22 @@ function* sendEndpointTranscript(
   }
 }
 
-function* reportProcessedAudioDuration(
+function* reportProcessedUsage(
   totalAudioProcMs: number,
   state: ProcessMessageState,
 ): Generator<stt.SpeechEvent> {
   const toReportMs = totalAudioProcMs - state.reportedDurationMs;
-  if (toReportMs <= 0) return;
+  const toReportOutputTokens = state.numOutputTokens - state.reportedOutputTokens;
+  if (toReportMs <= 0 && toReportOutputTokens <= 0) return;
   yield {
     type: stt.SpeechEventType.RECOGNITION_USAGE,
     recognitionUsage: {
-      audioDuration: toReportMs / 1000,
+      audioDuration: Math.max(toReportMs, 0) / 1000,
+      outputTokens: Math.max(toReportOutputTokens, 0),
     },
   };
-  state.reportedDurationMs = Math.trunc(totalAudioProcMs);
+  state.reportedDurationMs = Math.max(Math.trunc(totalAudioProcMs), state.reportedDurationMs);
+  state.reportedOutputTokens = state.numOutputTokens;
 }
 
 /**
@@ -272,6 +288,10 @@ export function* processMessage(
   const totalAudioProcMs = content.total_audio_proc_ms ?? 0;
 
   for (const token of tokens) {
+    // Non-final tokens are re-sent as final later, and control markers are not billable output.
+    if (token.is_final && !isEndToken(token)) {
+      state.numOutputTokens += 1;
+    }
     const isTranslated = token.translation_status === 'translation';
     if (options.isTranslationMode && !isEndToken(token) && !isTranslated) {
       if (token.is_final) {
@@ -324,5 +344,5 @@ export function* processMessage(
   }
 
   // Report every frame so processed audio that never reaches an endpoint is not dropped.
-  yield* reportProcessedAudioDuration(totalAudioProcMs, state);
+  yield* reportProcessedUsage(totalAudioProcMs, state);
 }

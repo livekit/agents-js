@@ -14,7 +14,7 @@
  */
 import { InferenceRunner } from '../../inference_runner.js';
 import { log } from '../../log.js';
-import { _getLocalInferenceModule } from '../_warmup.js';
+import { _getLocalInferenceModule, _shouldPreloadLocalInference } from '../_warmup.js';
 
 /** Inference method id used to register + dispatch the audio EOT runner. */
 export const EOT_INFERENCE_METHOD = 'lk_eot_audio';
@@ -34,28 +34,33 @@ export default class EotRunner extends InferenceRunner<EotInferenceInput, EotInf
   #mod: ReturnType<typeof _getLocalInferenceModule>;
 
   async initialize(): Promise<void> {
-    this.#mod = _getLocalInferenceModule();
-    if (this.#mod === undefined) {
+    if (!_shouldPreloadLocalInference()) return;
+    this.#loadModel();
+  }
+
+  #loadModel(): NonNullable<ReturnType<typeof _getLocalInferenceModule>> {
+    const mod = _getLocalInferenceModule();
+    if (mod === undefined) {
       throw new Error(
         'EotRunner: @livekit/local-inference native binding unavailable in the inference process',
       );
     }
-    // Eagerly page in the EOT model singleton (~138 MB) so the first
-    // request doesn't pay the load on the hot path.
-    this.#mod.initEot();
+    // Page in the EOT model singleton (~138 MB). During preload this keeps the
+    // first request off the hot path; otherwise the first request loads it lazily.
+    mod.initEot();
+    this.#mod = mod;
+    return mod;
   }
 
   async run(data: EotInferenceInput): Promise<EotInferenceOutput> {
-    if (this.#mod === undefined) {
-      throw new Error('EotRunner not initialized');
-    }
+    const mod = this.#mod ?? this.#loadModel();
     // base64 → bytes → Int16Array view (PCM is 16 kHz s16le)
     const bytes = Buffer.from(data.pcm, 'base64');
     const pcm = new Int16Array(bytes.buffer, bytes.byteOffset, Math.floor(bytes.byteLength / 2));
     const t0 = performance.now();
     let probability = 0.0;
     try {
-      probability = await this.#mod.predict(pcm);
+      probability = await mod.predict(pcm);
     } catch (err) {
       this.#logger.error(
         { err: err instanceof Error ? err.message : String(err) },

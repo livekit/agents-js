@@ -1,16 +1,27 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { AudioFrame, LocalAudioTrack, TrackPublishOptions, TrackSource } from '@livekit/rtc-node';
+import {
+  AudioFrame,
+  LocalAudioTrack,
+  ParticipantKind,
+  TrackPublishOptions,
+  TrackSource,
+} from '@livekit/rtc-node';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  ATTRIBUTE_PUBLISH_ON_BEHALF,
   ATTRIBUTE_TRANSCRIPTION_EXPRESSION,
   ATTRIBUTE_TRANSCRIPTION_FINAL,
 } from '../../constants.js';
 import { TranscriptMarkupStripper } from '../../tts/provider_format.js';
 import { Future } from '../../utils.js';
 import type { PlaybackProgressedEvent } from '../io.js';
-import { ParticipantAudioOutput, ParticipantTranscriptionOutput } from './_output.js';
+import {
+  ParticipantAudioOutput,
+  ParticipantLegacyTranscriptionOutput,
+  ParticipantTranscriptionOutput,
+} from './_output.js';
 
 type CaptureFrameArg = Parameters<ParticipantAudioOutput['captureFrame']>[0];
 
@@ -995,5 +1006,289 @@ describe('ParticipantTranscriptionOutput markup stripping', () => {
       await output.flushTask.result;
       expect(writes.join('')).toBe('3 <');
     });
+  });
+});
+
+// -- legacy transcription gate ------------------------------------------------
+
+type FakeRoom = ReturnType<typeof createFakeRoom>;
+
+/**
+ * A room stand-in for the legacy transcription gate. `isConnected` must be true, otherwise
+ * `publishTranscription` never reaches the local participant and every test passes for the
+ * wrong reason.
+ */
+function createFakeRoom() {
+  return {
+    isConnected: true,
+    remoteParticipants: new Map<string, ReturnType<typeof fakeRemote>>(),
+    localParticipant: { identity: 'agent', publishTranscription: vi.fn() },
+  };
+}
+
+/**
+ * A remote participant stand-in. `kind` is always set: the real getter falls back to STANDARD
+ * when the field is absent, so an under-specified fake would silently not test its own case.
+ */
+function fakeRemote(
+  identity: string,
+  options: {
+    clientProtocol?: number;
+    kind?: ParticipantKind;
+    onBehalf?: string;
+  } = {},
+) {
+  const attributes: Record<string, string> = {};
+  if (options.onBehalf !== undefined) {
+    attributes[ATTRIBUTE_PUBLISH_ON_BEHALF] = options.onBehalf;
+  }
+
+  return {
+    identity,
+    kind: options.kind ?? ParticipantKind.STANDARD,
+    attributes,
+    info: { clientProtocol: options.clientProtocol },
+  };
+}
+
+/**
+ * A legacy sink wired up without running the constructor, which would attach listeners to a
+ * real Room. Mirrors the private state the gate and the publish path read.
+ */
+function makeLegacyOutput(room: FakeRoom) {
+  const output = Object.create(
+    ParticipantLegacyTranscriptionOutput.prototype,
+  ) as ParticipantLegacyTranscriptionOutput & {
+    room: FakeRoom;
+    participantIdentity: string | null;
+    trackId?: string;
+    isDeltaStream: boolean;
+    capturing: boolean;
+    currentId: string;
+    pushedText: string;
+    legacyStatusLogged: boolean | null;
+    expressiveEnabled: () => boolean;
+    logger: { debug: (...args: unknown[]) => void };
+    handleCaptureText: (text: string) => Promise<void>;
+    handleFlush: () => void;
+    flushTask: Promise<void> | null;
+  };
+
+  output.room = room;
+  output.participantIdentity = 'agent';
+  output.trackId = 'TR_legacy';
+  output.isDeltaStream = true;
+  output.capturing = false;
+  output.currentId = 'SG_test';
+  output.pushedText = '';
+  output.legacyStatusLogged = null;
+  // the publish path reads visibleText(), which calls expressiveEnabled(). The constructor
+  // normally sets it, and Object.create skips the constructor.
+  output.expressiveEnabled = () => false;
+  output.logger = { debug: vi.fn() };
+  output.flushTask = null;
+
+  return output;
+}
+
+/** Push text through the sink and settle the flush task, as a real segment would. */
+async function captureAndFlush(output: ReturnType<typeof makeLegacyOutput>, text: string) {
+  await output.handleCaptureText(text);
+  output.handleFlush();
+  if (output.flushTask) {
+    await output.flushTask;
+  }
+}
+
+/** The segments of every publishTranscription call the fake room received. */
+function publishedSegments(room: FakeRoom) {
+  return room.localParticipant.publishTranscription.mock.calls.map(
+    (call) =>
+      (call[0] as { segments: { id: string; text: string; final: boolean }[] }).segments[0]!,
+  );
+}
+
+describe('ParticipantLegacyTranscriptionOutput client protocol threshold', () => {
+  it('publishes nothing when every client rebuilds from streams', async () => {
+    const room = createFakeRoom();
+    room.remoteParticipants.set('a', fakeRemote('a', { clientProtocol: 3 }));
+    room.remoteParticipants.set('b', fakeRemote('b', { clientProtocol: 3 }));
+
+    await captureAndFlush(makeLegacyOutput(room), 'hello');
+
+    expect(room.localParticipant.publishTranscription).not.toHaveBeenCalled();
+  });
+
+  it('publishes when one client still reads legacy transcriptions', async () => {
+    const room = createFakeRoom();
+    room.remoteParticipants.set('modern', fakeRemote('modern', { clientProtocol: 3 }));
+    room.remoteParticipants.set('legacy', fakeRemote('legacy', { clientProtocol: 0 }));
+
+    await captureAndFlush(makeLegacyOutput(room), 'hello');
+
+    const [partial, final] = publishedSegments(room);
+    expect(partial).toMatchObject({ text: 'hello', final: false });
+    expect(final).toMatchObject({ text: 'hello', final: true });
+    expect(final!.id).toBe(partial!.id);
+  });
+
+  it('treats an absent client protocol as a legacy client', async () => {
+    // protobuf-es types clientProtocol as optional, and `undefined < 3` is false in JS. Without
+    // the coalesce in the gate this participant would read as modern and lose its transcripts.
+    const room = createFakeRoom();
+    room.remoteParticipants.set('unknown', fakeRemote('unknown', { clientProtocol: undefined }));
+
+    await captureAndFlush(makeLegacyOutput(room), 'hello');
+
+    expect(room.localParticipant.publishTranscription).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('ParticipantLegacyTranscriptionOutput participant selection', () => {
+  it('publishes nothing when the room has no standard participant', async () => {
+    // an empty considered set means skip: a SIP-only room has nobody who renders transcripts
+    for (const remotes of [
+      [],
+      [fakeRemote('sip', { clientProtocol: 0, kind: ParticipantKind.SIP })],
+    ]) {
+      const room = createFakeRoom();
+      for (const remote of remotes) {
+        room.remoteParticipants.set(remote.identity, remote);
+      }
+
+      await captureAndFlush(makeLegacyOutput(room), 'hello');
+
+      expect(room.localParticipant.publishTranscription).not.toHaveBeenCalled();
+    }
+  });
+
+  it.each([
+    ['sip', ParticipantKind.SIP],
+    ['ingress', ParticipantKind.INGRESS],
+    ['agent', ParticipantKind.AGENT],
+    ['connector', ParticipantKind.CONNECTOR],
+  ])('ignores a legacy %s participant', async (_name, kind) => {
+    const room = createFakeRoom();
+    room.remoteParticipants.set('user', fakeRemote('user', { clientProtocol: 3 }));
+    room.remoteParticipants.set('service', fakeRemote('service', { clientProtocol: 0, kind }));
+
+    await captureAndFlush(makeLegacyOutput(room), 'hello');
+
+    expect(room.localParticipant.publishTranscription).not.toHaveBeenCalled();
+  });
+
+  it('publishes for a legacy standard participant', async () => {
+    const room = createFakeRoom();
+    room.remoteParticipants.set('user', fakeRemote('user', { clientProtocol: 0 }));
+
+    await captureAndFlush(makeLegacyOutput(room), 'hello');
+
+    expect(room.localParticipant.publishTranscription).toHaveBeenCalledTimes(2);
+  });
+
+  it('ignores our own avatar worker', async () => {
+    const room = createFakeRoom();
+    room.remoteParticipants.set('user', fakeRemote('user', { clientProtocol: 3 }));
+    room.remoteParticipants.set(
+      'avatar',
+      fakeRemote('avatar', { clientProtocol: 0, onBehalf: 'agent' }),
+    );
+
+    await captureAndFlush(makeLegacyOutput(room), 'hello');
+
+    expect(room.localParticipant.publishTranscription).not.toHaveBeenCalled();
+  });
+
+  it('counts the avatar worker of another agent', async () => {
+    const room = createFakeRoom();
+    room.remoteParticipants.set('user', fakeRemote('user', { clientProtocol: 3 }));
+    room.remoteParticipants.set(
+      'avatar',
+      fakeRemote('avatar', { clientProtocol: 0, onBehalf: 'other-agent' }),
+    );
+
+    await captureAndFlush(makeLegacyOutput(room), 'hello');
+
+    expect(room.localParticipant.publishTranscription).toHaveBeenCalledTimes(2);
+  });
+
+  it('counts a legacy participant when the local identity is unknown', async () => {
+    // an absent attribute and an absent local identity are both undefined; comparing them
+    // directly would exclude every participant that carries no publish-on-behalf attribute
+    const room = createFakeRoom();
+    room.localParticipant.identity = undefined as unknown as string;
+    room.remoteParticipants.set('user', fakeRemote('user', { clientProtocol: 0 }));
+
+    await captureAndFlush(makeLegacyOutput(room), 'hello');
+
+    expect(room.localParticipant.publishTranscription).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('ParticipantLegacyTranscriptionOutput gate dynamics', () => {
+  it('keeps segment state warm for a client that joins mid-segment', async () => {
+    // the load-bearing case for the gate sitting at the publish site rather than in
+    // handleCaptureText: the late joiner must receive the whole segment, not just the tail
+    const room = createFakeRoom();
+    room.remoteParticipants.set('modern', fakeRemote('modern', { clientProtocol: 3 }));
+
+    const output = makeLegacyOutput(room);
+
+    await output.handleCaptureText('hello ');
+    expect(room.localParticipant.publishTranscription).not.toHaveBeenCalled();
+
+    room.remoteParticipants.set('legacy', fakeRemote('legacy', { clientProtocol: 0 }));
+
+    await output.handleCaptureText('world');
+    expect(room.localParticipant.publishTranscription).toHaveBeenCalledTimes(1);
+
+    output.handleFlush();
+    if (output.flushTask) {
+      await output.flushTask;
+    }
+
+    const [partial, final] = publishedSegments(room);
+    expect(partial).toMatchObject({ text: 'hello world', final: false });
+    expect(final).toMatchObject({ text: 'hello world', final: true });
+    expect(final!.id).toBe(partial!.id);
+  });
+
+  it('still publishes the lk.transcription stream when the legacy packet is skipped', async () => {
+    const room = createFakeRoom();
+    room.remoteParticipants.set('modern', fakeRemote('modern', { clientProtocol: 3 }));
+
+    // mirrors the makeOutput helper in the markup-stripping suite above: Object.create skips
+    // the constructor, so the stripper, segmentTags and expressiveEnabled must be set by hand.
+    const chunks: string[] = [];
+    const modern = Object.create(
+      ParticipantTranscriptionOutput.prototype,
+    ) as ParticipantTranscriptionOutput & Record<string, any>;
+
+    modern.room = room;
+    modern.participantIdentity = 'agent';
+    modern.isDeltaStream = true;
+    modern.capturing = false;
+    modern.currentId = 'SG_test';
+    modern.latestText = '';
+    modern.writer = null;
+    modern.flushTask = null;
+    modern.jsonFormat = false;
+    modern.expressiveEnabled = () => false;
+    modern.stripper = new TranscriptMarkupStripper();
+    modern.segmentTags = [];
+    modern.logger = { error: vi.fn(), warn: vi.fn() };
+    modern.createTextWriter = async () => ({
+      write: async (text: string) => {
+        chunks.push(text);
+      },
+      close: async () => {},
+    });
+
+    const legacy = makeLegacyOutput(room);
+
+    await Promise.all([modern.captureText('hello'), legacy.handleCaptureText('hello')]);
+
+    expect(chunks.join('')).toBe('hello');
+    expect(room.localParticipant.publishTranscription).not.toHaveBeenCalled();
   });
 });

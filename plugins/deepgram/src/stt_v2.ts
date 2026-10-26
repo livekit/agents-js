@@ -4,6 +4,7 @@
 import {
   type APIConnectOptions,
   APIConnectionError,
+  APIError,
   APIStatusError,
   AudioByteStream,
   Event,
@@ -511,7 +512,7 @@ class SpeechStreamv2 extends stt.SpeechStream {
   async #recvTask() {
     if (!this.#ws) return;
 
-    return new Promise<void>((resolve) => {
+    return new Promise<void>((resolve, reject) => {
       if (!this.#ws) return resolve();
 
       this.#ws.on('message', (data: Buffer, isBinary: boolean) => {
@@ -523,6 +524,10 @@ class SpeechStreamv2 extends stt.SpeechStream {
           const msg = JSON.parse(data.toString());
           this.#processStreamEvent(msg);
         } catch (error) {
+          if (error instanceof APIError) {
+            reject(error);
+            return;
+          }
           this.#logger.error('Failed to parse Deepgram message', { error });
         }
       });
@@ -578,7 +583,7 @@ class SpeechStreamv2 extends stt.SpeechStream {
     } else if (data.type === 'Error') {
       this.#logger.warn({ 'lk.pii.data': data }, 'deepgram sent an error');
       const desc = (data.description as string) || 'unknown error from deepgram';
-      throw new Error(`Deepgram API Error: ${desc}`);
+      throw new APIStatusError({ message: `Deepgram API Error: ${desc}`, options: { body: data } });
     }
   }
 

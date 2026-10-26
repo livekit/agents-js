@@ -7,7 +7,6 @@ import {
   APIStatusError,
   type AudioBuffer,
   AudioByteStream,
-  AudioEnergyFilter,
   Future,
   Task,
   createTimedString,
@@ -269,7 +268,6 @@ export class STT extends stt.STT {
 
 export class SpeechStream extends stt.SpeechStream {
   #opts: STTOptions;
-  #audioEnergyFilter: AudioEnergyFilter;
   #logger = log();
   #speaking = false;
   #resetWS = new Future();
@@ -284,7 +282,6 @@ export class SpeechStream extends stt.SpeechStream {
     super(stt, opts.sampleRate, connOptions);
     this.#opts = opts;
     this.closed = false;
-    this.#audioEnergyFilter = new AudioEnergyFilter();
     this.#audioDurationCollector = new PeriodicCollector(
       (duration) => this.onAudioDurationReport(duration),
       { duration: 5.0 },
@@ -342,7 +339,7 @@ export class SpeechStream extends stt.SpeechStream {
       } catch (e) {
         if (!this.closed && !this.input.closed) {
           if (retries >= maxRetry) {
-            throw new Error(`failed to connect to Deepgram after ${retries} attempts: ${e}`);
+            throw e;
           }
 
           const delay = Math.min(retries * 5, 10);
@@ -467,11 +464,9 @@ export class SpeechStream extends stt.SpeechStream {
           }
 
           for await (const frame of frames) {
-            if (this.#audioEnergyFilter.pushFrame(frame)) {
-              const frameDuration = frame.samplesPerChannel / frame.sampleRate;
-              this.#audioDurationCollector.push(frameDuration);
-              ws.send(frame.data.buffer);
-            }
+            const frameDuration = frame.samplesPerChannel / frame.sampleRate;
+            this.#audioDurationCollector.push(frameDuration);
+            ws.send(frame.data.buffer);
           }
 
           if (hasEnded) {
