@@ -715,7 +715,10 @@ export function performLLMInference(
       JSON.stringify(toSnakeCaseDeep(delta.chatCtx.toJSON())),
     );
     inputDelta.setAttributes(span, delta);
-    span.setAttribute(traceTypes.ATTR_FUNCTION_TOOLS, JSON.stringify(Object.keys(toolCtx.functionTools)));
+    span.setAttribute(
+      traceTypes.ATTR_FUNCTION_TOOLS,
+      JSON.stringify(Object.keys(toolCtx.functionTools)),
+    );
 
     let nodeError: Error | string | undefined;
 

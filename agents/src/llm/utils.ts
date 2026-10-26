@@ -15,11 +15,7 @@ import {
   FunctionCallOutput,
   type ImageContent,
 } from './chat_context.js';
-import {
-  type ToolContext,
-  type ToolInputSchema,
-  type ToolOptions,
-} from './tool_context.js';
+import { type ToolContext, type ToolInputSchema, type ToolOptions } from './tool_context.js';
 import {
   isZodSchema,
   jsonSchemaAllowsNull,
