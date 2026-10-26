@@ -713,6 +713,38 @@ describe('toResponsesChatCtx', () => {
     expect(result[1]).toEqual({ role: 'assistant', content: 'Hi there!' });
   });
 
+  it('should resend the assistant phase captured from the Responses API', async () => {
+    const ctx = ChatContext.empty();
+    ctx.addMessage({ role: 'user', content: 'hello' });
+    ctx.addMessage({
+      role: 'assistant',
+      content: 'thinking out loud',
+      extra: { openai: { phase: 'commentary' } },
+    });
+    ctx.addMessage({
+      role: 'assistant',
+      content: 'the answer',
+      extra: { openai: { phase: 'final_answer' } },
+    });
+
+    const result = await toResponsesChatCtx(ctx);
+
+    const assistantItems = result.filter((item) => item.role === 'assistant');
+    expect(assistantItems.map((item) => item.phase)).toEqual(['commentary', 'final_answer']);
+  });
+
+  it('should not add a phase key when the assistant message has no phase', async () => {
+    const ctx = ChatContext.empty();
+    ctx.addMessage({ role: 'user', content: 'hello' });
+    ctx.addMessage({ role: 'assistant', content: 'hi there' });
+
+    const result = await toResponsesChatCtx(ctx);
+
+    const assistantItems = result.filter((item) => item.role === 'assistant');
+    expect(assistantItems).not.toHaveLength(0);
+    expect(assistantItems.every((item) => !('phase' in item))).toBe(true);
+  });
+
   it('should handle system messages', async () => {
     const ctx = ChatContext.empty();
     ctx.addMessage({ role: 'system', content: 'You are a helpful assistant' });

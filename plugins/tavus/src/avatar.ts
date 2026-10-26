@@ -18,6 +18,30 @@ const ATTRIBUTE_PUBLISH_ON_BEHALF = 'lk.publish_on_behalf';
 const SAMPLE_RATE = 24000;
 const AVATAR_AGENT_IDENTITY = 'tavus-avatar-agent';
 const AVATAR_AGENT_NAME = 'tavus-avatar-agent';
+const APP_MESSAGES_TOPIC = 'app_messages';
+
+/**
+ * The facial emotions the Tavus avatar can express, e.g. for a tool's `z.enum(EMOTIONS)`.
+ *
+ * @public
+ */
+export const EMOTIONS = [
+  'neutral',
+  'happiness',
+  'sadness',
+  'anger',
+  'fear',
+  'surprise',
+  'disgust',
+  'contempt',
+] as const;
+
+/**
+ * A facial emotion the Tavus avatar can express.
+ *
+ * @public
+ */
+export type Emotion = (typeof EMOTIONS)[number];
 
 /**
  * Options for configuring an AvatarSession.
@@ -25,9 +49,13 @@ const AVATAR_AGENT_NAME = 'tavus-avatar-agent';
  * @public
  */
 export interface AvatarSessionOptions {
-  /** Tavus replica id. Falls back to `TAVUS_REPLICA_ID`. */
+  /** Tavus face id. Falls back to `TAVUS_FACE_ID`. */
+  faceId?: string;
+  /** Tavus pal id. Falls back to `TAVUS_PAL_ID`; defaults to a stock pal when omitted. */
+  palId?: string;
+  /** @deprecated Use {@link AvatarSessionOptions.faceId | faceId} instead. */
   replicaId?: string;
-  /** Tavus persona id. Falls back to `TAVUS_PERSONA_ID`; created automatically when omitted. */
+  /** @deprecated Use {@link AvatarSessionOptions.palId | palId} instead. */
   personaId?: string;
   /** Override the Tavus API base URL. */
   apiUrl?: string;
@@ -61,11 +89,15 @@ export interface StartOptions {
  * @public
  */
 export class AvatarSession extends voice.AvatarSession {
+  private faceId?: string;
+  private palId?: string;
+  // Deprecated aliases for faceId/palId; resolved in TavusAPI.createConversation.
   private replicaId?: string;
   private personaId?: string;
   private avatarParticipantIdentity: string;
   private avatarParticipantName: string;
   private api: TavusAPI;
+  private room?: Room;
 
   conversationId: string | null = null;
 
@@ -73,6 +105,8 @@ export class AvatarSession extends voice.AvatarSession {
 
   constructor(options: AvatarSessionOptions = {}) {
     super();
+    this.faceId = options.faceId;
+    this.palId = options.palId;
     this.replicaId = options.replicaId;
     this.personaId = options.personaId;
     this.avatarParticipantIdentity = options.avatarParticipantIdentity || AVATAR_AGENT_IDENTITY;
@@ -98,6 +132,7 @@ export class AvatarSession extends voice.AvatarSession {
     options: StartOptions = {},
   ): Promise<void> {
     await super.start(agentSession, room);
+    this.room = room;
 
     const livekitUrl = options.livekitUrl || process.env.LIVEKIT_URL;
     const livekitApiKey = options.livekitApiKey || process.env.LIVEKIT_API_KEY;
@@ -144,8 +179,10 @@ export class AvatarSession extends voice.AvatarSession {
 
     this.#logger.debug('starting avatar session');
     this.conversationId = await this.api.createConversation({
-      personaId: this.personaId,
+      faceId: this.faceId,
+      palId: this.palId,
       replicaId: this.replicaId,
+      personaId: this.personaId,
       properties: { livekit_ws_url: livekitUrl, livekit_room_token: livekitToken },
     });
 
@@ -155,5 +192,33 @@ export class AvatarSession extends voice.AvatarSession {
       sampleRate: SAMPLE_RATE,
       waitRemoteTrack: TrackKind.KIND_VIDEO,
     });
+  }
+
+  /**
+   * Set the avatar's facial emotion. The avatar keeps it until the next call;
+   * an unsupported emotion sets `'neutral'`. Call it after `waitForJoin()`: an
+   * emotion sent before the avatar joins the room is dropped.
+   *
+   * @param emotion - The emotion to express, e.g. `'neutral'`, `'happiness'`, `'sadness'`.
+   */
+  async setEmotion(emotion: Emotion): Promise<void> {
+    if (!this.room?.localParticipant) {
+      this.#logger.warn('setEmotion() called before start()');
+      return;
+    }
+
+    const message = {
+      message_type: 'conversation',
+      event_type: 'conversation.set_emotion',
+      properties: { emotion },
+    };
+    await this.room.localParticipant.publishData(
+      new TextEncoder().encode(JSON.stringify(message)),
+      {
+        reliable: true,
+        topic: APP_MESSAGES_TOPIC,
+        destination_identities: [this.avatarIdentity],
+      },
+    );
   }
 }

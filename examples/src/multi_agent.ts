@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import {
   type JobContext,
-  type JobProcess,
   ServerOptions,
   cli,
   dedent,
@@ -12,8 +11,6 @@ import {
   llm,
   voice,
 } from '@livekit/agents';
-import * as livekit from '@livekit/agents-plugin-livekit';
-import * as silero from '@livekit/agents-plugin-silero';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
@@ -32,26 +29,27 @@ class IntroAgent extends voice.Agent<StoryData> {
     });
   }
 
-  static create() {
+  static createIntroAgent() {
     return new IntroAgent({
       instructions: `You are a story teller. Your goal is to gather a few pieces of information from the user to make the story personalized and engaging. Ask the user for their name and where they are from.`,
-      tools: {
-        informationGathered: llm.tool({
+      tools: [
+        llm.tool({
+          name: 'informationGathered',
           description:
             'Called when the user has provided the information needed to make the story personalized and engaging.',
           parameters: z.object({
             name: z.string().describe('The name of the user'),
             location: z.string().describe('The location of the user'),
           }),
-          execute: async ({ name, location }, { ctx }) => {
+          execute: async ({ name, location }, { ctx }: llm.ToolOptions<StoryData>) => {
             ctx.userData.name = name;
             ctx.userData.location = location;
 
-            const storyAgent = StoryAgent.create(name, location);
+            const storyAgent = StoryAgent.createStoryAgent(name, location);
             return llm.handoff({ agent: storyAgent, returns: "Let's start the story!" });
           },
         }),
-      },
+      ],
     });
   }
 }
@@ -61,7 +59,7 @@ class StoryAgent extends voice.Agent<StoryData> {
     this.session.generateReply();
   }
 
-  static create(name: string, location: string) {
+  static createStoryAgent(name: string, location: string) {
     return new StoryAgent({
       instructions: dedent`
         You are a storyteller. Use the user's information in order to make the story personalized.
@@ -72,14 +70,10 @@ class StoryAgent extends voice.Agent<StoryData> {
 }
 
 export default defineAgent({
-  prewarm: async (proc: JobProcess) => {
-    proc.userData.vad = await silero.VAD.load();
-  },
   entry: async (ctx: JobContext) => {
     const userdata: StoryData = {};
 
     const session = new voice.AgentSession({
-      vad: ctx.proc.userData.vad! as silero.VAD,
       stt: new inference.STT({ model: 'deepgram/nova-3', language: 'en' }),
       tts: new inference.TTS({
         model: 'cartesia/sonic-3',
@@ -89,11 +83,10 @@ export default defineAgent({
       // to use realtime model, replace the stt, llm, tts and vad with the following
       // llm: new openai.realtime.RealtimeModel(),
       userData: userdata,
-      turnDetection: new livekit.turnDetector.EnglishModel(),
     });
 
     await session.start({
-      agent: IntroAgent.create(),
+      agent: IntroAgent.createIntroAgent(),
       room: ctx.room,
     });
 

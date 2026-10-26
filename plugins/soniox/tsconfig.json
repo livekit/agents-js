@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.json",
+  "include": ["./src"],
+  "exclude": ["./src/**/*.test.ts"],
+  "compilerOptions": {
+    "rootDir": "./src",
+    "declarationDir": "./dist",
+    "outDir": "./dist"
+  },
+  "typedocOptions": {
+    "name": "plugins/agents-plugin-soniox",
+    "entryPointStrategy": "resolve",
+    "readme": "none",
+    "entryPoints": ["src/index.ts"]
+  }
+}

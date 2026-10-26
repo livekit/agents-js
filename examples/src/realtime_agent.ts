@@ -1,17 +1,8 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import {
-  type JobContext,
-  type JobProcess,
-  ServerOptions,
-  cli,
-  defineAgent,
-  llm,
-  voice,
-} from '@livekit/agents';
+import { type JobContext, ServerOptions, cli, defineAgent, llm, voice } from '@livekit/agents';
 import * as openai from '@livekit/agents-plugin-openai';
-import * as silero from '@livekit/agents-plugin-silero';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
@@ -19,11 +10,9 @@ import { z } from 'zod';
 const roomNameSchema = z.enum(['bedroom', 'living room', 'kitchen', 'bathroom', 'office']);
 
 export default defineAgent({
-  prewarm: async (proc: JobProcess) => {
-    proc.userData.vad = await silero.VAD.load();
-  },
   entry: async (ctx: JobContext) => {
     const getWeather = llm.tool({
+      name: 'getWeather',
       description: ' Called when the user asks about the weather.',
       parameters: z.object({
         location: z.string().describe('The location to get the weather for'),
@@ -34,6 +23,7 @@ export default defineAgent({
     });
 
     const toggleLight = llm.tool({
+      name: 'toggleLight',
       description: 'Called when the user asks to turn on or off the light.',
       parameters: z.object({
         room: roomNameSchema.describe('The room to turn the light in'),
@@ -65,10 +55,7 @@ export default defineAgent({
       instructions:
         "You are a helpful assistant created by LiveKit, always speaking English, you can hear the user's message and respond to it.",
       chatCtx,
-      tools: {
-        getWeather,
-        toggleLight,
-      },
+      tools: [getWeather, toggleLight],
     });
 
     const session = new voice.AgentSession({

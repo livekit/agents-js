@@ -4,7 +4,7 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { initializeLogger } from '../../log.js';
 import { defaultAgentSessionOptions } from '../agent_session.js';
-import { defaultEndpointingOptions } from './endpointing.js';
+import { streamingEndpointingOptions } from './endpointing.js';
 import { defaultInterruptionOptions } from './interruption.js';
 import { defaultPreemptiveGenerationOptions } from './preemptive_generation.js';
 import { defaultTurnHandlingOptions } from './turn_handling.js';
@@ -21,7 +21,9 @@ describe('migrateLegacyOptions', () => {
 
     expect(result.turnHandling).toEqual({
       turnDetection: defaultTurnHandlingOptions.turnDetection,
-      endpointing: defaultEndpointingOptions,
+      // omitted turnDetection auto-provisions a streaming detector → streaming defaults
+      endpointing: streamingEndpointingOptions,
+      endpointingOverrides: {},
       interruption: defaultInterruptionOptions,
       preemptiveGeneration: defaultPreemptiveGenerationOptions,
       userTurnLimit: defaultUserTurnLimitOptions,

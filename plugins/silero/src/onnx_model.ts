@@ -58,6 +58,12 @@ export class OnnxModel {
     return this.#contextSize;
   }
 
+  reset(): void {
+    this.#context.fill(0);
+    this.#rnnState.fill(0);
+    this.#inputBuffer.fill(0);
+  }
+
   async run(x: Float32Array): Promise<number> {
     this.#inputBuffer.set(this.#context, 0);
     this.#inputBuffer.set(x, this.#contextSize);

@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import {
   type JobContext,
-  type JobProcess,
   ServerOptions,
   cli,
   defineAgent,
@@ -11,7 +10,6 @@ import {
   initializeLogger,
   voice,
 } from '@livekit/agents';
-import * as silero from '@livekit/agents-plugin-silero';
 import type { ChatContext, ChatMessage } from 'agents/dist/llm/chat_context.js';
 import { fileURLToPath } from 'node:url';
 
@@ -25,14 +23,10 @@ class MyAgent extends voice.Agent {
 }
 
 export default defineAgent({
-  prewarm: async (proc: JobProcess) => {
-    proc.userData.vad = await silero.VAD.load();
-  },
   entry: async (ctx: JobContext) => {
     initializeLogger({ pretty: true });
 
     const session = new voice.AgentSession({
-      vad: ctx.proc.userData.vad! as silero.VAD,
       stt: new inference.STT({ model: 'deepgram/nova-3', language: 'en' }),
       llm: new inference.LLM({ model: 'openai/gpt-4.1-mini' }),
       tts: new inference.TTS({

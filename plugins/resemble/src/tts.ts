@@ -133,25 +133,31 @@ export class ChunkedStream extends tts.ChunkedStream {
             }
 
             const audioBytes = Buffer.from(audioContentB64, 'base64');
+            let lastFrame: AudioFrame | undefined;
+            const sendLastFrame = (final: boolean) => {
+              if (lastFrame) {
+                this.queue.put({
+                  requestId,
+                  frame: lastFrame,
+                  final,
+                  segmentId: requestId,
+                });
+                lastFrame = undefined;
+              }
+            };
 
             for (const frame of bstream.write(audioBytes)) {
-              this.queue.put({
-                requestId,
-                frame,
-                final: false,
-                segmentId: requestId,
-              });
+              sendLastFrame(false);
+              lastFrame = frame;
             }
 
             for (const frame of bstream.flush()) {
-              this.queue.put({
-                requestId,
-                frame,
-                final: false,
-                segmentId: requestId,
-              });
+              if (frame.samplesPerChannel === 0) continue;
+              sendLastFrame(false);
+              lastFrame = frame;
             }
 
+            sendLastFrame(true);
             this.queue.close();
             doneFut.resolve();
           } catch (error) {
@@ -188,7 +194,7 @@ export class ChunkedStream extends tts.ChunkedStream {
 export class SynthesizeStream extends tts.SynthesizeStream {
   #opts: TTSOptions;
   #logger = log();
-  #tokenizer = new tokenize.basic.SentenceTokenizer({
+  #tokenizer = new tokenize.blingfire.SentenceTokenizer({
     minSentenceLength: BUFFERED_WORDS_COUNT,
   }).stream();
   #websocket: WebSocket | null = null;
@@ -216,6 +222,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
         activeRequests.add(reqId);
 
+        this.markStarted();
         ws.send(JSON.stringify(packet));
       }
     };

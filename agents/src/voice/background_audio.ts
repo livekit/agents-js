@@ -21,6 +21,7 @@ import { AgentSessionEventTypes, type AgentStateChangedEvent } from './events.js
 const TASK_TIMEOUT_MS = 500;
 
 export enum BuiltinAudioClip {
+  HOLD_MUSIC = 'hold_music.ogg',
   OFFICE_AMBIENCE = 'office-ambience.ogg',
   KEYBOARD_TYPING = 'keyboard-typing.ogg',
   KEYBOARD_TYPING2 = 'keyboard-typing2.ogg',
