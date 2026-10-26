@@ -5,6 +5,7 @@ import { Plugin } from '@livekit/agents';
 
 export * from './models.js';
 export * from './tts.js';
+export * as realtime from './realtime/index.js';
 
 class RimePlugin extends Plugin {
   constructor() {

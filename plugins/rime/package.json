@@ -17,6 +17,9 @@
   },
   "author": "LiveKit",
   "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
   "repository": "git@github.com:livekit/agents-js.git",
   "license": "Apache-2.0",
   "files": [
@@ -48,6 +51,7 @@
     "@bufbuild/protobuf": "^2.14.1",
     "@livekit/av": "^10.0.0",
     "@rimelabs/api": "0.0.1",
+    "@rimelabs/sdk": "0.1.0-alpha.22",
     "ws": "catalog:"
   },
   "peerDependencies": {
