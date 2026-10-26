@@ -38,14 +38,16 @@ describe('toResponsesTools', () => {
     ]);
   });
 
-  it('serializes function tools', () => {
+  it('serializes function tools without application metadata', () => {
     const fn = llm.tool({
       name: 'lookup_weather',
       description: 'Look up weather',
       parameters: z.object({ city: z.string() }),
+      meta: { guardrails: ['check_location'] },
       execute: async () => 'sunny',
     });
 
+    expect(fn.meta).toEqual({ guardrails: ['check_location'] });
     expect(toResponsesTools(new llm.ToolContext([fn]), true)).toEqual([
       {
         type: 'function',

@@ -52,6 +52,7 @@ import {
 import { version } from '../version.js';
 import { type SessionReport, sessionReportToJSON } from '../voice/report.js';
 import { blockedSpanTracker } from './blocked_span_tracker.js';
+import { conversationId } from './gen_ai.js';
 import type { ObservabilityEndpoint } from './observability_endpoint.js';
 import { resolveObservabilityUrl } from './observability_endpoint.js';
 import { type SimpleLogRecord, SimpleOTLPHttpLogExporter } from './otel_http_exporter.js';
@@ -60,7 +61,12 @@ import { flushPinoLogs, initPinoCloudExporter } from './pino_otel_transport.js';
 import { uploadRecording } from './recording_upload.js';
 import { allowPiiFromEnv, redactionEnabledFromAttributes } from './redaction.js';
 import { JobSpanGateExporter } from './span_gate.js';
-import { ATTR_AGENT_NAME, ATTR_CLOUD_AGENT_ID, ATTR_DEPLOYMENT_ID } from './trace_types.js';
+import {
+  ATTR_AGENT_NAME,
+  ATTR_CLOUD_AGENT_ID,
+  ATTR_DEPLOYMENT_ID,
+  ATTR_GEN_AI_CONVERSATION_ID,
+} from './trace_types.js';
 import { UploadGateMetricExporter, UploadGateTraceExporter, uploadGate } from './upload_gate.js';
 import { recordException } from './utils.js';
 
@@ -96,6 +102,12 @@ export interface DescribesOptions {
 
 /** @deprecated Use OpenTelemetry SDK 2.x's `SpanProcessor` type directly. */
 export type SpanProcessorLike = SpanProcessor;
+
+function withConversationId(attributes: Attributes | undefined): Attributes | undefined {
+  const id = conversationId();
+  if (!id) return attributes;
+  return { [ATTR_GEN_AI_CONVERSATION_ID]: id, ...(attributes ?? {}) };
+}
 
 /**
  * A dynamic tracer that allows the tracer provider to be changed at runtime.
@@ -149,7 +161,7 @@ class DynamicTracer {
     const span = this.tracer.startSpan(
       options.name,
       {
-        attributes: options.attributes,
+        attributes: withConversationId(options.attributes),
         startTime: options.startTime,
         kind: options.kind,
       },
@@ -171,7 +183,7 @@ class DynamicTracer {
     const ctx = options.context || otelContext.active();
     const endOnExit = options.endOnExit === undefined ? true : options.endOnExit; // default true
     const opts: SpanOptions = {
-      attributes: options.attributes,
+      attributes: withConversationId(options.attributes),
       startTime: options.startTime,
       kind: options.kind,
     };
@@ -220,7 +232,7 @@ class DynamicTracer {
     const ctx = options.context || otelContext.active();
     const endOnExit = options.endOnExit === undefined ? true : options.endOnExit; // default true
     const opts: SpanOptions = {
-      attributes: options.attributes,
+      attributes: withConversationId(options.attributes),
       startTime: options.startTime,
       kind: options.kind,
     };

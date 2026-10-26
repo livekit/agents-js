@@ -67,6 +67,67 @@ describe('AssemblyAI streaming configuration', () => {
     });
   });
 
+  it('sends PII redaction and filtering options on connection', async () => {
+    await withProvider(
+      {
+        redactPii: true,
+        redactPiiPolicies: ['person_name', 'phone_number'],
+        redactPiiSub: 'entity_name',
+        includePartialTurns: true,
+        filterProfanity: false,
+      },
+      async (_provider, query) => {
+        expect(query.get('redact_pii')).toBe('true');
+        expect(JSON.parse(query.get('redact_pii_policies')!)).toEqual([
+          'person_name',
+          'phone_number',
+        ]);
+        expect(query.get('redact_pii_sub')).toBe('entity_name');
+        expect(query.get('include_partial_turns')).toBe('true');
+        expect(query.get('filter_profanity')).toBe('false');
+      },
+    );
+  });
+
+  it('omits PII redaction options by default', async () => {
+    await withProvider({ redactPii: true, redactPiiPolicies: [] }, async (_provider, query) => {
+      expect(query.get('redact_pii')).toBe('true');
+      for (const key of [
+        'redact_pii_policies',
+        'redact_pii_sub',
+        'include_partial_turns',
+        'filter_profanity',
+      ]) {
+        expect(query.has(key)).toBe(false);
+      }
+    });
+  });
+
+  it.each([{ redactPiiPolicies: ['person_name'] }, { redactPiiSub: 'hash' as const }])(
+    'rejects %o without redactPii',
+    async (option) => {
+      expect(() => new STT({ apiKey: 'test', ...option })).toThrow(/requires 'redactPii'/);
+      await withProvider({ redactPii: true, ...option }, async (provider, _q, _m, stream) => {
+        expect(() => provider.updateOptions({ redactPii: false })).toThrow(/requires 'redactPii'/);
+        expect(() => stream.updateOptions({ redactPii: false })).toThrow(/requires 'redactPii'/);
+      });
+    },
+  );
+
+  it('leaves max turn silence to the mode preset when only min is set', async () => {
+    await withProvider({ mode: 'max_accuracy', minTurnSilence: 200 }, async (_p, query) => {
+      expect(query.get('min_turn_silence')).toBe('200');
+      expect(query.has('max_turn_silence')).toBe(false);
+    });
+  });
+
+  it('defaults both turn silences to 100ms without a mode preset', async () => {
+    await withProvider({}, async (_p, query) => {
+      expect(query.get('min_turn_silence')).toBe('100');
+      expect(query.get('max_turn_silence')).toBe('100');
+    });
+  });
+
   it('sends both partial controls in a live update', async () => {
     await withProvider({}, async (provider, _query, messages) => {
       provider.updateOptions({ continuousPartials: false, interruptionDelay: 0 });
@@ -92,6 +153,24 @@ describe('AssemblyAI streaming configuration', () => {
         });
       },
     );
+  });
+
+  it('reports interim results only when partial turns are emitted', () => {
+    expect(new STT({ apiKey: 'test' }).capabilities.interimResults).toBe(true);
+    expect(new STT({ apiKey: 'test', redactPii: true }).capabilities.interimResults).toBe(false);
+    expect(
+      new STT({ apiKey: 'test', redactPii: true, includePartialTurns: true }).capabilities
+        .interimResults,
+    ).toBe(true);
+    expect(
+      new STT({ apiKey: 'test', includePartialTurns: false }).capabilities.interimResults,
+    ).toBe(false);
+
+    const updated = new STT({ apiKey: 'test' });
+    updated.updateOptions({ redactPii: true });
+    expect(updated.capabilities.interimResults).toBe(false);
+    updated.updateOptions({ includePartialTurns: true });
+    expect(updated.capabilities.interimResults).toBe(true);
   });
 
   it('enables carryover for the existing default model, with explicit opt-out', () => {

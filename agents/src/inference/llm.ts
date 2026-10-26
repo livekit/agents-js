@@ -13,13 +13,17 @@ import {
 import type { APIConnectOptions } from '../types.js';
 import { DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import { type Expand, toError } from '../utils.js';
+import { DuplexModel, isDuplexModel } from './duplex.js';
+import { RealtimeModel, isRealtimeModel } from './realtime.js';
 import {
   type AnyString,
   INFERENCE_PRIORITY_HEADER,
   INFERENCE_PROVIDER_HEADER,
+  type InferenceClass,
   buildMetadataHeaders,
   createAccessToken,
   getDefaultInferenceUrl,
+  resolveCredentials,
 } from './utils.js';
 
 export type OpenAIModels =
@@ -47,6 +51,7 @@ export type OpenAIModels =
   | 'openai/gpt-oss-120b';
 
 export type GoogleModels =
+  | 'google/gemini-4-argon'
   | 'google/gemini-3.1-pro'
   | 'google/gemini-3-flash'
   | 'google/gemini-3.1-flash-lite'
@@ -178,8 +183,6 @@ function dropUnsupportedParams(
  * Scheduling class for a request. `low` yields to voice traffic, so it is only
  * appropriate for work no caller is waiting on.
  */
-export type InferenceClass = 'priority' | 'standard' | 'low';
-
 export interface InferenceLLMOptions {
   model: LLMModels;
   provider?: string;
@@ -227,16 +230,7 @@ export class LLM extends llm.LLM {
     } = opts;
 
     const lkBaseURL = baseURL || getDefaultInferenceUrl();
-    const lkApiKey = apiKey || process.env.LIVEKIT_INFERENCE_API_KEY || process.env.LIVEKIT_API_KEY;
-    if (!lkApiKey) {
-      throw new Error('apiKey is required: pass apiKey or set LIVEKIT_API_KEY');
-    }
-
-    const lkApiSecret =
-      apiSecret || process.env.LIVEKIT_INFERENCE_API_SECRET || process.env.LIVEKIT_API_SECRET;
-    if (!lkApiSecret) {
-      throw new Error('apiSecret is required: pass apiSecret or set LIVEKIT_API_SECRET');
-    }
+    const { apiKey: lkApiKey, apiSecret: lkApiSecret } = resolveCredentials(apiKey, apiSecret);
 
     this.opts = {
       model,
@@ -723,4 +717,14 @@ export class LLMStream extends llm.LLMStream {
     }
     return undefined;
   }
+}
+
+/**
+ * Create the inference model an `llm` string names: a {@link DuplexModel} for duplex
+ * models, a {@link RealtimeModel} for realtime models, or an {@link LLM} for everything else.
+ */
+export function llmFromModelString(model: string): LLM | RealtimeModel | DuplexModel {
+  if (isDuplexModel(model)) return DuplexModel.fromModelString(model);
+  if (isRealtimeModel(model)) return RealtimeModel.fromModelString(model);
+  return LLM.fromModelString(model);
 }
