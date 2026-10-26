@@ -6162,11 +6162,12 @@ export type RemoteSessionCallbacks = {
     eot_prediction: (ev: AgentSession_2.AgentSessionEvent_EotPrediction) => void;
     session_usage: (ev: AgentSession_2.AgentSessionEvent_SessionUsageUpdated) => void;
     debug_message: (ev: AgentSession_2.DebugMessage) => void;
+    session_closed: (ev: AgentSession_2.AgentSessionEvent_SessionClosed) => void;
     error: (ev: AgentSession_2.AgentSessionEvent_Error) => void;
 };
 
 // @public (undocumented)
-export type RemoteSessionEventTypes = 'agent_false_interruption' | 'agent_state_changed' | 'user_state_changed' | 'conversation_item_added' | 'user_input_transcribed' | 'function_tools_executed' | 'overlapping_speech' | 'amd_prediction' | 'eot_prediction' | 'session_usage' | 'debug_message' | 'error';
+export type RemoteSessionEventTypes = 'agent_false_interruption' | 'agent_state_changed' | 'user_state_changed' | 'conversation_item_added' | 'user_input_transcribed' | 'function_tools_executed' | 'overlapping_speech' | 'amd_prediction' | 'eot_prediction' | 'session_usage' | 'debug_message' | 'session_closed' | 'error';
 
 // @public (undocumented)
 function replace(replacements: Record<string, string>, options?: {

@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { AgentSession as pb } from '@livekit/protocol';
 import type { Room } from '@livekit/rtc-node';
+import { EventEmitter } from 'node:events';
 import * as net from 'node:net';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { InferenceExecutor } from '../ipc/inference_executor.js';
@@ -15,6 +16,7 @@ import {
 import { initializeLogger, log } from '../log.js';
 import type { SimulationContext } from '../simulation.js';
 import type { AgentSession } from './agent_session.js';
+import { AgentSessionEventTypes, CloseReason, createCloseEvent } from './events.js';
 import { FinalizeSimulationError } from './index.js';
 import {
   NO_ACTIVE_SESSION_ERROR,
@@ -37,6 +39,7 @@ beforeAll(() => {
 const FORWARDED_EVENTS = new Set([
   'agent_false_interruption',
   'agent_state_changed',
+  'close',
   'conversation_item_added',
   'debug_message',
   'eot_prediction',
@@ -419,6 +422,71 @@ describe('SessionHost without an attached session', () => {
 
     expect(new Set(off.mock.calls.map(([event]) => event))).toEqual(FORWARDED_EVENTS);
     expect(host.attachedSession).toBeUndefined();
+  });
+});
+
+describe('SessionHost session_closed', () => {
+  it('tells the client the attached session closed, and why', async () => {
+    const [clientTransport, hostTransport] = createConnectedTransportPair();
+    const session = new EventEmitter();
+    const host = new SessionHost(hostTransport);
+    host.attach(session as unknown as AgentSession);
+    await host.start();
+    const client = new RemoteSession(clientTransport);
+    await client.start();
+    const closed = new Promise<pb.AgentSessionEvent_SessionClosed>((resolve) =>
+      client.once('session_closed', resolve),
+    );
+
+    session.emit(AgentSessionEventTypes.Close, createCloseEvent(CloseReason.USER_INITIATED, null));
+
+    expect((await closed).reason).toBe(pb.CloseReason.CR_USER_INITIATED);
+    await client.close();
+    await host.close();
+  });
+});
+
+describe('SessionHost send order', () => {
+  it('sends the reply to a run the close cut short after session_closed', async () => {
+    // an event still on the wire holds back everything sent after it
+    class SlowEventsTransport extends FakeTransport {
+      override async sendMessage(msg: pb.AgentSessionMessage): Promise<void> {
+        if (msg.message.case === 'event') await new Promise((r) => setTimeout(r, 10));
+        await super.sendMessage(msg);
+      }
+    }
+    const transport = new SlowEventsTransport();
+    let failRun!: (error: Error) => void;
+    const run = new Promise<void>((_, reject) => {
+      failRun = reject;
+    });
+    const session = Object.assign(new EventEmitter(), {
+      interrupt: () => ({ await: Promise.resolve() }),
+      run: () => ({ wait: () => run, events: [] }),
+    });
+    const host = new SessionHost(transport);
+    host.attach(session as unknown as AgentSession);
+    await host.start();
+
+    transport.push(
+      new pb.AgentSessionMessage({
+        message: {
+          case: 'request',
+          value: new pb.SessionRequest({
+            requestId: 'r1',
+            request: { case: 'runInput', value: new pb.SessionRequest_RunInput({ text: 'bye' }) },
+          }),
+        },
+      }),
+    );
+    await new Promise((r) => setTimeout(r, 0));
+    session.emit(AgentSessionEventTypes.Close, createCloseEvent(CloseReason.USER_INITIATED, null));
+    failRun(new Error('session closed'));
+    await vi.waitFor(() => expect(transport.sent.length).toBe(2));
+
+    expect(transport.sent.map((m) => m.message.case)).toEqual(['event', 'response']);
+    expect((transport.sent[1]!.message.value as pb.SessionResponse).error).toBe('session closed');
+    await host.close();
   });
 });
 
