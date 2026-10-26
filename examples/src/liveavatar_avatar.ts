@@ -67,7 +67,7 @@ export default defineAgent({
 
     session.on(voice.AgentSessionEventTypes.UserInputTranscribed, (ev) => {
       logger.info(
-        { final: ev.isFinal, transcript: ev.transcript, language: ev.language },
+        { final: ev.isFinal, 'lk.pii.transcript': ev.transcript, language: ev.language },
         'User transcript received',
       );
     });

@@ -117,12 +117,12 @@ export function convertMidConversationInstructions(
       item.type === 'message' &&
       (item.role === 'system' || item.role === 'developer') &&
       firstSystemSeen &&
-      item.textContent
+      item.rawTextContent
     ) {
       items.push(
         ChatMessage.create({
           role,
-          content: template.replace('{instructions}', item.textContent),
+          content: template.replace('{instructions}', item.rawTextContent),
           id: item.id,
           createdAt: item.createdAt,
         }),

@@ -77,13 +77,27 @@ export default defineAgent({
       if (data.wordAlignment) {
         const { words, starts, ends } = data.wordAlignment;
         for (let i = 0; i < words.length; i++) {
-          console.log(`[Inworld TTS] Word: "${words[i]}", Start: ${starts[i]}, End: ${ends[i]}`);
+          logger.info(
+            {
+              'lk.pii.word': words[i],
+              startTime: starts[i],
+              endTime: ends[i],
+            },
+            'Inworld TTS word alignment',
+          );
         }
       }
       if (data.characterAlignment) {
         const { chars, starts, ends } = data.characterAlignment;
         for (let i = 0; i < chars.length; i++) {
-          console.log(`[Inworld TTS] Char: "${chars[i]}", Start: ${starts[i]}, End: ${ends[i]}`);
+          logger.info(
+            {
+              'lk.pii.character': chars[i],
+              startTime: starts[i],
+              endTime: ends[i],
+            },
+            'Inworld TTS character alignment',
+          );
         }
       }
     });
