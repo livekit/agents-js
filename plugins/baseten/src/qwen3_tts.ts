@@ -627,16 +627,29 @@ export class Qwen3SynthesizeStream extends tts.SynthesizeStream {
   }
 }
 
+/** Options for {@link registerVoice}. */
 export interface RegisterVoiceOptions {
+  /** Qwen3-TTS WebSocket endpoint of the deployment. */
   modelEndpoint: string;
+  /** Name to register the cloned voice under. */
   name: string;
+  /** Path to 10-20 seconds of clean reference speech. */
   refAudioPath: string;
+  /** Transcript of the reference audio. Omitting it gives a less faithful clone. */
   refText?: string;
+  /** Baseten API key. Defaults to `BASETEN_API_KEY`. */
   apiKey?: string;
+  /** Consent identifier sent with the request. */
   consent?: string;
+  /** Request timeout in milliseconds. */
   timeoutMs?: number;
 }
 
+/**
+ * Clone a voice on a Qwen3-TTS deployment from 10-20 seconds of clean speech.
+ *
+ * The clone lives on one replica's local disk and is lost when the container restarts.
+ */
 export async function registerVoice({
   modelEndpoint,
   name,
@@ -662,13 +675,21 @@ export async function registerVoice({
   return isRecord(response.voice) ? response.voice : response;
 }
 
+/** Options for {@link listVoices}. */
 export interface ListVoicesOptions {
+  /** Qwen3-TTS WebSocket endpoint of the deployment. */
   modelEndpoint: string;
+  /** Baseten API key. Defaults to `BASETEN_API_KEY`. */
   apiKey?: string;
+  /** Request timeout in milliseconds. */
   timeoutMs?: number;
 }
 
-/** `voices` contains built-ins; `uploaded_voices` contains replica-local clones. */
+/**
+ * List the voices available on a Qwen3-TTS deployment.
+ *
+ * `voices` contains built-ins; `uploaded_voices` contains replica-local clones.
+ */
 export async function listVoices({
   modelEndpoint,
   apiKey,
