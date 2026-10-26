@@ -30,7 +30,7 @@ import type {
 } from '../metrics/model_usage.js';
 import { encodeChatItem, msToTimestamp } from '../proto.js';
 import type { SimulationContext } from '../simulation.js';
-import { AsyncIterableQueue, Future, Task, asError, delay, shortuuid } from '../utils.js';
+import { AsyncIterableQueue, Event, Future, Task, asError, delay, shortuuid } from '../utils.js';
 import { version } from '../version.js';
 import type { AgentSession, AgentSessionUsage } from './agent_session.js';
 import { AMDCategory, type AMDPredictionEvent } from './amd.js';
@@ -739,6 +739,16 @@ function protoSerializeOptions(opts: {
 // ===========================================================================
 // SessionHost (protobuf-based server-side handler)
 // ===========================================================================
+export const NO_ACTIVE_SESSION_ERROR = 'no active session';
+
+/**
+ * Serves a `RemoteSession` client for the whole job.
+ *
+ * The host outlives any one `AgentSession`: at most one session is attached at a time, and
+ * none once it has closed. Session requests go to the attached session and fail with
+ * `NO_ACTIVE_SESSION_ERROR` while none is; `finalize_simulation` needs only the job, so
+ * it is answered either way.
+ */
 export class SessionHost {
   private readonly transport: SessionTransport;
   private readonly audioInput: TcpAudioInput | undefined;
@@ -750,6 +760,7 @@ export class SessionHost {
   private readonly tasks = new Set<Task<void>>();
   private readonly eventMessages = new AsyncIterableQueue<pb.AgentSessionMessage>();
   private writeTask: Task<void> | undefined;
+  private readonly simulationFinalized = new Event();
 
   constructor(
     transport: SessionTransport,
@@ -812,6 +823,11 @@ export class SessionHost {
     this.recvTask = Task.from(async ({ signal }) => this.recvLoop(signal));
   }
 
+  /** @internal Resolves once the simulator has been answered for `finalize_simulation`. */
+  async _waitForSimulationFinalized(): Promise<void> {
+    await this.simulationFinalized.wait();
+  }
+
   /**
    * Drain accepted responses for three seconds, then allow three seconds for cancellation.
    * Hooks that ignore cancellation may outlive transport closure; their cleanup stays observed.
@@ -862,16 +878,14 @@ export class SessionHost {
         if (done || signal.aborted || !this.started) break;
         switch (msg.message.case) {
           case 'request':
-            if (this.session) {
-              this.trackTask(
-                Task.from(
-                  async ({ signal }) =>
-                    this.handleRequestSafe(msg.message.value as pb.SessionRequest, signal),
-                  undefined,
-                  (msg.message.value as pb.SessionRequest).request.case ?? 'unknown',
-                ),
-              );
-            }
+            this.trackTask(
+              Task.from(
+                async ({ signal }) =>
+                  this.handleRequestSafe(msg.message.value as pb.SessionRequest, signal),
+                undefined,
+                (msg.message.value as pb.SessionRequest).request.case ?? 'unknown',
+              ),
+            );
             break;
           case 'audioInput':
             this.audioInput?.pushFrame(msg.message.value);
@@ -1116,7 +1130,15 @@ export class SessionHost {
 
   private async handleRequest(req: pb.SessionRequest, signal: AbortSignal): Promise<void> {
     signal.throwIfAborted();
-    if (!this.session) return;
+    if (req.request.case === 'finalizeSimulation') {
+      return this.handleFinalizeSimulation(req.requestId, req.request.value, signal);
+    }
+
+    // an unregisterSession() while this request is in flight must not swap its session out
+    const session = this.session;
+    if (!session) {
+      return this.sendResponse(signal, req.requestId, { case: undefined }, NO_ACTIVE_SESSION_ERROR);
+    }
 
     switch (req.request.case) {
       case 'ping':
@@ -1125,13 +1147,13 @@ export class SessionHost {
           value: new pb.SessionResponse_Pong(),
         });
       case 'getChatHistory':
-        return this.handleGetChatHistory(req.requestId, signal);
+        return this.handleGetChatHistory(session, req.requestId, signal);
       case 'getAgentInfo':
-        return this.handleGetAgentInfo(req.requestId, signal);
+        return this.handleGetAgentInfo(session, req.requestId, signal);
       case 'runInput':
-        return this.handleRunInput(req.requestId, req.request.value, signal);
+        return this.handleRunInput(session, req.requestId, req.request.value, signal);
       case 'getSessionState':
-        return this.handleGetSessionState(req.requestId, signal);
+        return this.handleGetSessionState(session, req.requestId, signal);
       case 'getRtcStats':
         return this.sendResponse(signal, req.requestId, {
           case: 'getRtcStats',
@@ -1141,7 +1163,7 @@ export class SessionHost {
           }),
         });
       case 'getSessionUsage':
-        return this.handleGetSessionUsage(req.requestId, signal);
+        return this.handleGetSessionUsage(session, req.requestId, signal);
       case 'getFrameworkInfo':
         return this.sendResponse(signal, req.requestId, {
           case: 'getFrameworkInfo',
@@ -1151,9 +1173,7 @@ export class SessionHost {
           }),
         });
       case 'updateIo':
-        return this.handleUpdateIo(req.requestId, req.request.value, signal);
-      case 'finalizeSimulation':
-        return this.handleFinalizeSimulation(req.requestId, req.request.value, signal);
+        return this.handleUpdateIo(session, req.requestId, req.request.value, signal);
     }
   }
 
@@ -1195,7 +1215,7 @@ export class SessionHost {
         reason: simCtx.userVerdict.reason,
       });
     }
-    return this.sendResponse(
+    await this.sendResponse(
       signal,
       requestId,
       {
@@ -1204,14 +1224,15 @@ export class SessionHost {
       },
       simError,
     );
+    this.simulationFinalized.set();
   }
 
   private async handleUpdateIo(
+    session: AgentSession,
     requestId: string,
     update: pb.SessionRequest_UpdateIO,
     signal: AbortSignal,
   ): Promise<void> {
-    const session = this.session!;
     // Each field is proto3 `optional`; only apply the ones the peer actually set.
     // JS `AgentInput`/`AgentOutput` expose no video toggle, so video_enabled is ignored.
     if (update.input?.audioEnabled !== undefined) {
@@ -1232,16 +1253,24 @@ export class SessionHost {
     });
   }
 
-  private async handleGetChatHistory(requestId: string, signal: AbortSignal): Promise<void> {
-    const items = chatItemsToProto(this.session!.history.items);
+  private async handleGetChatHistory(
+    session: AgentSession,
+    requestId: string,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const items = chatItemsToProto(session.history.items);
     return this.sendResponse(signal, requestId, {
       case: 'getChatHistory',
       value: new pb.SessionResponse_GetChatHistoryResponse({ items }),
     });
   }
 
-  private async handleGetAgentInfo(requestId: string, signal: AbortSignal): Promise<void> {
-    const agent = this.session!.currentAgent;
+  private async handleGetAgentInfo(
+    session: AgentSession,
+    requestId: string,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const agent = session.currentAgent;
     return this.sendResponse(signal, requestId, {
       case: 'getAgentInfo',
       value: new pb.SessionResponse_GetAgentInfoResponse({
@@ -1254,6 +1283,7 @@ export class SessionHost {
   }
 
   private async handleRunInput(
+    session: AgentSession,
     requestId: string,
     input: pb.SessionRequest_RunInput,
     signal: AbortSignal,
@@ -1272,13 +1302,13 @@ export class SessionHost {
       // always return empty responses to the remote driver. This mirrors the
       // Python SessionHost behavior.
       try {
-        await abortable(this.session!.interrupt({ force: true }).await, signal);
+        await abortable(session.interrupt({ force: true }).await, signal);
       } catch {
         // ignore
       }
 
       signal.throwIfAborted();
-      const result = this.session!.run({ userInput: text });
+      const result = session.run({ userInput: text });
       try {
         await abortable(result.wait(), signal);
       } catch (e) {
@@ -1307,32 +1337,40 @@ export class SessionHost {
     );
   }
 
-  private async handleGetSessionState(requestId: string, signal: AbortSignal): Promise<void> {
-    const agent = this.session!.currentAgent;
-    const startedAt = this.session!._startedAt ?? Date.now();
+  private async handleGetSessionState(
+    session: AgentSession,
+    requestId: string,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const agent = session.currentAgent;
+    const startedAt = session._startedAt ?? Date.now();
     return this.sendResponse(signal, requestId, {
       case: 'getSessionState',
       value: new pb.SessionResponse_GetSessionStateResponse({
-        agentState: AGENT_STATE_MAP[this.session!.agentState],
-        userState: USER_STATE_MAP[this.session!.userState],
+        agentState: AGENT_STATE_MAP[session.agentState],
+        userState: USER_STATE_MAP[session.userState],
         agentId: agent.id,
         options: protoSerializeOptions({
-          turnHandling: this.session!.sessionOptions.turnHandling,
-          maxToolSteps: this.session!.sessionOptions.maxToolSteps,
-          userAwayTimeout: this.session!.sessionOptions.userAwayTimeout,
-          transcriptionTimeout: this.session!.sessionOptions.transcriptionTimeout,
-          useTtsAlignedTranscript: this.session!.sessionOptions.useTtsAlignedTranscript,
+          turnHandling: session.sessionOptions.turnHandling,
+          maxToolSteps: session.sessionOptions.maxToolSteps,
+          userAwayTimeout: session.sessionOptions.userAwayTimeout,
+          transcriptionTimeout: session.sessionOptions.transcriptionTimeout,
+          useTtsAlignedTranscript: session.sessionOptions.useTtsAlignedTranscript,
         }),
         createdAt: msToTimestamp(startedAt),
       }),
     });
   }
 
-  private async handleGetSessionUsage(requestId: string, signal: AbortSignal): Promise<void> {
+  private async handleGetSessionUsage(
+    session: AgentSession,
+    requestId: string,
+    signal: AbortSignal,
+  ): Promise<void> {
     return this.sendResponse(signal, requestId, {
       case: 'getSessionUsage',
       value: new pb.SessionResponse_GetSessionUsageResponse({
-        usage: sessionUsageToProto(this.session!.usage),
+        usage: sessionUsageToProto(session.usage),
         createdAt: nowTimestamp(),
       }),
     });

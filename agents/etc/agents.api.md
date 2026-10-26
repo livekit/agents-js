@@ -4813,6 +4813,8 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
     get sessionDirectory(): string;
     // @internal (undocumented)
     _sessionDirectory: string;
+    // @internal
+    _sessionHost?: SessionHost;
     shutdown(reason?: string): void;
     // @internal (undocumented)
     shutdownCallbacks: (() => Promise<void>)[];
@@ -7045,7 +7047,7 @@ export interface SessionConnectOptions {
     ttsConnOptions?: Partial<APIConnectOptions>;
 }
 
-// @public (undocumented)
+// @public
 export class SessionHost {
     constructor(transport: SessionTransport, audioInput?: TcpAudioInput, audioOutput?: TcpAudioOutput);
     get attachedSession(): AgentSession | undefined;
@@ -7059,6 +7061,8 @@ export class SessionHost {
     // (undocumented)
     start(): Promise<void>;
     unregisterSession(): void;
+    // @internal
+    _waitForSimulationFinalized(): Promise<void>;
 }
 
 // @public (undocumented)
