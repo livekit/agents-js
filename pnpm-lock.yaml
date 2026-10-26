@@ -78,7 +78,7 @@ importers:
         version: 8.10.0(eslint@8.57.0)
       eslint-config-standard:
         specifier: ^17.1.0
-        version: 17.1.0(eslint-plugin-import@2.29.1)(eslint-plugin-n@16.6.2(eslint@8.57.0))(eslint-plugin-promise@6.1.1(eslint@8.57.0))(eslint@8.57.0)
+        version: 17.1.0(eslint-plugin-import@2.29.1(@typescript-eslint/parser@6.21.0(eslint@8.57.0)(typescript@5.9.3))(eslint@8.57.0))(eslint-plugin-n@16.6.2(eslint@8.57.0))(eslint-plugin-promise@6.1.1(eslint@8.57.0))(eslint@8.57.0)
       eslint-config-turbo:
         specifier: ^2.9.14
         version: 2.10.1(eslint@8.57.0)(turbo@2.9.14)
@@ -219,7 +219,7 @@ importers:
         version: 1.5.1
       openai:
         specifier: ^6.8.1
-        version: 6.8.1(ws@8.21.3)(zod@3.25.76)
+        version: 6.8.1(ws@8.21.3)(zod@4.6.6)
       pidusage:
         specifier: ^4.0.1
         version: 4.0.1
@@ -237,7 +237,7 @@ importers:
         version: 8.21.3
       zod-to-json-schema:
         specifier: ^3.24.6
-        version: 3.25.2(zod@3.25.76)
+        version: 3.25.2(zod@4.6.6)
     devDependencies:
       '@livekit/rtc-node':
         specifier: 'catalog:'
@@ -267,8 +267,8 @@ importers:
         specifier: ^5.0.0
         version: 5.9.3
       zod:
-        specifier: ^3.25.76
-        version: 3.25.76
+        specifier: ^4.0.0
+        version: 4.6.6
 
   examples:
     dependencies:
@@ -419,7 +419,7 @@ importers:
         version: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@22.19.1)(@vitest/coverage-v8@4.1.11)(vite@7.3.6(@types/node@22.19.1)(tsx@4.23.1))
       zod:
         specifier: ^4.1.12
-        version: 4.3.6
+        version: 4.6.6
 
   plugins/anam:
     dependencies:
@@ -481,7 +481,7 @@ importers:
         version: 5.9.3
       zod:
         specifier: ^3.25.76 || ^4.1.8
-        version: 4.3.6
+        version: 4.6.6
 
   plugins/assemblyai:
     dependencies:
@@ -543,7 +543,7 @@ importers:
         version: 17.2.3
       openai:
         specifier: ^6.8.1
-        version: 6.8.1(ws@8.21.3)(zod@4.3.6)
+        version: 6.8.1(ws@8.21.3)(zod@4.6.6)
       ws:
         specifier: 'catalog:'
         version: 8.21.3
@@ -645,7 +645,7 @@ importers:
         version: 3.1.3
       openai:
         specifier: ^6.8.1
-        version: 6.8.1(ws@8.21.3)(zod@4.3.6)
+        version: 6.8.1(ws@8.21.3)(zod@4.6.6)
     devDependencies:
       '@livekit/agents':
         specifier: workspace:*
@@ -670,7 +670,7 @@ importers:
         version: 5.9.3
       zod:
         specifier: ^3.25.76 || ^4.1.8
-        version: 4.3.6
+        version: 4.6.6
 
   plugins/deepgram:
     dependencies:
@@ -818,7 +818,7 @@ importers:
         version: 0.4.0
       openai:
         specifier: ^6.8.1
-        version: 6.8.1(ws@8.21.3)(zod@4.3.6)
+        version: 6.8.1(ws@8.21.3)(zod@4.6.6)
     devDependencies:
       '@livekit/agents':
         specifier: workspace:*
@@ -843,7 +843,7 @@ importers:
         version: 5.9.3
       zod:
         specifier: ^3.25.76 || ^4.1.8
-        version: 4.3.6
+        version: 4.6.6
 
   plugins/hume:
     devDependencies:
@@ -1165,13 +1165,13 @@ importers:
     dependencies:
       openai:
         specifier: ^6.8.1
-        version: 6.8.1(ws@8.21.3)(zod@4.3.6)
+        version: 6.8.1(ws@8.21.3)(zod@4.6.6)
       ws:
         specifier: 'catalog:'
         version: 8.21.3
       zod:
         specifier: ^3.25.76 || ^4.1.8
-        version: 4.3.6
+        version: 4.6.6
     devDependencies:
       '@livekit/agents':
         specifier: workspace:*
@@ -1202,10 +1202,10 @@ importers:
     dependencies:
       openai:
         specifier: ^6.8.1
-        version: 6.8.1(ws@8.21.3)(zod@4.3.6)
+        version: 6.8.1(ws@8.21.3)(zod@4.6.6)
       zod:
         specifier: ^3.25.76 || ^4.1.8
-        version: 4.3.6
+        version: 4.6.6
     devDependencies:
       '@livekit/agents':
         specifier: workspace:*
@@ -1568,7 +1568,7 @@ importers:
         version: 5.9.3
       zod:
         specifier: ^3.25.76
-        version: 3.25.76
+        version: 4.6.6
 
   plugins/trugen:
     dependencies:
@@ -1599,7 +1599,7 @@ importers:
     dependencies:
       openai:
         specifier: ^6.8.1
-        version: 6.8.1(ws@8.21.3)(zod@4.3.6)
+        version: 6.8.1(ws@8.21.3)(zod@4.6.6)
       ws:
         specifier: 'catalog:'
         version: 8.21.3
@@ -2747,12 +2747,14 @@ packages:
   '@opentelemetry/sdk-trace-base@2.9.0':
     resolution: {integrity: sha512-cp9zmTl62R8PJrpvFcmc8N2JQU/xfa0S+61q511Nji+QxCfZ8Ifvg7H27G8cANe4crg4RTrWsVvanHiXjSp6ag==}
     engines: {node: ^18.19.0 || >=20.6.0}
+    deprecated: Use @opentelemetry/sdk-trace package
     peerDependencies:
       '@opentelemetry/api': '>=1.3.0 <1.10.0'
 
   '@opentelemetry/sdk-trace-node@2.9.0':
     resolution: {integrity: sha512-ec9a7ps37huy5itYk0MalaZdSLlM6AXWp/FhtEjgMpp5leEGojBDvAl/UWttQnkMZOvFHKzRESn8TD3yKTF5nQ==}
     engines: {node: ^18.19.0 || >=20.6.0}
+    deprecated: Use @opentelemetry/sdk-trace package
     peerDependencies:
       '@opentelemetry/api': '>=1.0.0 <1.10.0'
 
@@ -5652,11 +5654,11 @@ packages:
     peerDependencies:
       zod: ^3.25.28 || ^4
 
-  zod@3.25.76:
-    resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
-
   zod@4.3.6:
     resolution: {integrity: sha512-rftlrkhHZOcjDwkGlnUtZZkvaPHCsDATp4pGpuOOMDaTdDDXF91wuVDJoWoPsKX/3YPQ5fHuF3STjcYyKr+Qhg==}
+
+  zod@4.6.6:
+    resolution: {integrity: sha512-4UmzQUF5fxvfcYHlbjBmejU+w+hbDnWFx4aS8kBx7nPBHcO2SqPbpAG8snbdg+Xse4pRefR98hgjFgIMCI/UhA==}
 
 snapshots:
 
@@ -6607,11 +6609,11 @@ snapshots:
       eventsource-parser: 3.1.1
       jose: 6.2.12
       pkce-challenge: 5.0.1
-      zod: 4.3.6
+      zod: 4.6.6
 
   '@modelcontextprotocol/core@2.3.1':
     dependencies:
-      zod: 4.3.6
+      zod: 4.6.6
 
   '@msgpack/msgpack@3.1.3': {}
 
@@ -7866,7 +7868,7 @@ snapshots:
       '@typescript-eslint/parser': 6.21.0(eslint@8.57.0)(typescript@5.9.3)
       eslint: 8.57.0
       eslint-import-resolver-node: 0.3.9
-      eslint-import-resolver-typescript: 3.6.1(@typescript-eslint/parser@6.21.0(eslint@8.57.0)(typescript@5.9.3))(eslint-import-resolver-node@0.3.9)(eslint-plugin-import@2.29.1)(eslint@8.57.0)
+      eslint-import-resolver-typescript: 3.6.1(@typescript-eslint/parser@6.21.0(eslint@8.57.0)(typescript@5.9.3))(eslint-import-resolver-node@0.3.9)(eslint-plugin-import@2.29.1(@typescript-eslint/parser@6.21.0(eslint@8.57.0)(typescript@5.9.3))(eslint@8.57.0))(eslint@8.57.0)
       eslint-plugin-import: 2.29.1(@typescript-eslint/parser@6.21.0(eslint@8.57.0)(typescript@5.9.3))(eslint-import-resolver-typescript@3.6.1)(eslint@8.57.0)
       eslint-plugin-jsx-a11y: 6.8.0(eslint@8.57.0)
       eslint-plugin-react: 7.34.1(eslint@8.57.0)
@@ -7881,7 +7883,7 @@ snapshots:
     dependencies:
       eslint: 8.57.0
 
-  eslint-config-standard@17.1.0(eslint-plugin-import@2.29.1)(eslint-plugin-n@16.6.2(eslint@8.57.0))(eslint-plugin-promise@6.1.1(eslint@8.57.0))(eslint@8.57.0):
+  eslint-config-standard@17.1.0(eslint-plugin-import@2.29.1(@typescript-eslint/parser@6.21.0(eslint@8.57.0)(typescript@5.9.3))(eslint@8.57.0))(eslint-plugin-n@16.6.2(eslint@8.57.0))(eslint-plugin-promise@6.1.1(eslint@8.57.0))(eslint@8.57.0):
     dependencies:
       eslint: 8.57.0
       eslint-plugin-import: 2.29.1(@typescript-eslint/parser@6.21.0(eslint@8.57.0)(typescript@5.9.3))(eslint-import-resolver-typescript@3.6.1)(eslint@8.57.0)
@@ -7902,12 +7904,12 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  eslint-import-resolver-typescript@3.6.1(@typescript-eslint/parser@6.21.0(eslint@8.57.0)(typescript@5.9.3))(eslint-import-resolver-node@0.3.9)(eslint-plugin-import@2.29.1)(eslint@8.57.0):
+  eslint-import-resolver-typescript@3.6.1(@typescript-eslint/parser@6.21.0(eslint@8.57.0)(typescript@5.9.3))(eslint-import-resolver-node@0.3.9)(eslint-plugin-import@2.29.1(@typescript-eslint/parser@6.21.0(eslint@8.57.0)(typescript@5.9.3))(eslint@8.57.0))(eslint@8.57.0):
     dependencies:
       debug: 4.4.3
       enhanced-resolve: 5.16.1
       eslint: 8.57.0
-      eslint-module-utils: 2.8.1(@typescript-eslint/parser@6.21.0(eslint@8.57.0)(typescript@5.9.3))(eslint-import-resolver-node@0.3.9)(eslint-import-resolver-typescript@3.6.1)(eslint@8.57.0)
+      eslint-module-utils: 2.8.1(@typescript-eslint/parser@6.21.0(eslint@8.57.0)(typescript@5.9.3))(eslint-import-resolver-node@0.3.9)(eslint-import-resolver-typescript@3.6.1(@typescript-eslint/parser@6.21.0(eslint@8.57.0)(typescript@5.9.3))(eslint-import-resolver-node@0.3.9)(eslint-plugin-import@2.29.1(@typescript-eslint/parser@6.21.0(eslint@8.57.0)(typescript@5.9.3))(eslint@8.57.0))(eslint@8.57.0))(eslint@8.57.0)
       eslint-plugin-import: 2.29.1(@typescript-eslint/parser@6.21.0(eslint@8.57.0)(typescript@5.9.3))(eslint-import-resolver-typescript@3.6.1)(eslint@8.57.0)
       fast-glob: 3.3.2
       get-tsconfig: 4.7.5
@@ -7919,14 +7921,14 @@ snapshots:
       - eslint-import-resolver-webpack
       - supports-color
 
-  eslint-module-utils@2.8.1(@typescript-eslint/parser@6.21.0(eslint@8.57.0)(typescript@5.9.3))(eslint-import-resolver-node@0.3.9)(eslint-import-resolver-typescript@3.6.1)(eslint@8.57.0):
+  eslint-module-utils@2.8.1(@typescript-eslint/parser@6.21.0(eslint@8.57.0)(typescript@5.9.3))(eslint-import-resolver-node@0.3.9)(eslint-import-resolver-typescript@3.6.1(@typescript-eslint/parser@6.21.0(eslint@8.57.0)(typescript@5.9.3))(eslint-import-resolver-node@0.3.9)(eslint-plugin-import@2.29.1(@typescript-eslint/parser@6.21.0(eslint@8.57.0)(typescript@5.9.3))(eslint@8.57.0))(eslint@8.57.0))(eslint@8.57.0):
     dependencies:
       debug: 3.2.7
     optionalDependencies:
       '@typescript-eslint/parser': 6.21.0(eslint@8.57.0)(typescript@5.9.3)
       eslint: 8.57.0
       eslint-import-resolver-node: 0.3.9
-      eslint-import-resolver-typescript: 3.6.1(@typescript-eslint/parser@6.21.0(eslint@8.57.0)(typescript@5.9.3))(eslint-import-resolver-node@0.3.9)(eslint-plugin-import@2.29.1)(eslint@8.57.0)
+      eslint-import-resolver-typescript: 3.6.1(@typescript-eslint/parser@6.21.0(eslint@8.57.0)(typescript@5.9.3))(eslint-import-resolver-node@0.3.9)(eslint-plugin-import@2.29.1(@typescript-eslint/parser@6.21.0(eslint@8.57.0)(typescript@5.9.3))(eslint@8.57.0))(eslint@8.57.0)
     transitivePeerDependencies:
       - supports-color
 
@@ -7947,7 +7949,7 @@ snapshots:
       doctrine: 2.1.0
       eslint: 8.57.0
       eslint-import-resolver-node: 0.3.9
-      eslint-module-utils: 2.8.1(@typescript-eslint/parser@6.21.0(eslint@8.57.0)(typescript@5.9.3))(eslint-import-resolver-node@0.3.9)(eslint-import-resolver-typescript@3.6.1)(eslint@8.57.0)
+      eslint-module-utils: 2.8.1(@typescript-eslint/parser@6.21.0(eslint@8.57.0)(typescript@5.9.3))(eslint-import-resolver-node@0.3.9)(eslint-import-resolver-typescript@3.6.1(@typescript-eslint/parser@6.21.0(eslint@8.57.0)(typescript@5.9.3))(eslint-import-resolver-node@0.3.9)(eslint-plugin-import@2.29.1(@typescript-eslint/parser@6.21.0(eslint@8.57.0)(typescript@5.9.3))(eslint@8.57.0))(eslint@8.57.0))(eslint@8.57.0)
       hasown: 2.0.4
       is-core-module: 2.13.1
       is-glob: 4.0.3
@@ -8971,15 +8973,10 @@ snapshots:
       platform: 1.3.6
       protobufjs: 7.6.5
 
-  openai@6.8.1(ws@8.21.3)(zod@3.25.76):
+  openai@6.8.1(ws@8.21.3)(zod@4.6.6):
     optionalDependencies:
       ws: 8.21.3
-      zod: 3.25.76
-
-  openai@6.8.1(ws@8.21.3)(zod@4.3.6):
-    optionalDependencies:
-      ws: 8.21.3
-      zod: 4.3.6
+      zod: 4.6.6
 
   optionator@0.9.4:
     dependencies:
@@ -10007,14 +10004,14 @@ snapshots:
 
   yocto-queue@0.1.0: {}
 
-  zod-to-json-schema@3.25.2(zod@3.25.76):
-    dependencies:
-      zod: 3.25.76
-
   zod-to-json-schema@3.25.2(zod@4.3.6):
     dependencies:
       zod: 4.3.6
 
-  zod@3.25.76: {}
+  zod-to-json-schema@3.25.2(zod@4.6.6):
+    dependencies:
+      zod: 4.6.6
 
   zod@4.3.6: {}
+
+  zod@4.6.6: {}
