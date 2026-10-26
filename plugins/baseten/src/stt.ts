@@ -69,16 +69,17 @@ export class STT extends stt.STT {
 
     const apiKey = opts.apiKey ?? process.env.BASETEN_API_KEY;
     const modelId = opts.modelId;
+    const environment = opts.environment ?? defaultSTTOptions.environment!;
     const modelEndpoint =
       opts.modelEndpoint ??
       (modelId
-        ? `wss://model-${modelId}.api.baseten.co/environments/production/websocket`
+        ? `wss://model-${modelId}.api.baseten.co/environments/${environment}/websocket`
         : undefined) ??
       (opts.chainId
-        ? `wss://chain-${opts.chainId}.api.baseten.co/environments/production/websocket`
+        ? `wss://chain-${opts.chainId}.api.baseten.co/environments/${environment}/websocket`
         : undefined) ??
       (process.env.BASETEN_STT_MODEL_ID
-        ? `wss://model-${process.env.BASETEN_STT_MODEL_ID}.api.baseten.co/environments/production/websocket`
+        ? `wss://model-${process.env.BASETEN_STT_MODEL_ID}.api.baseten.co/environments/${environment}/websocket`
         : undefined) ??
       process.env.BASETEN_MODEL_ENDPOINT;
 
