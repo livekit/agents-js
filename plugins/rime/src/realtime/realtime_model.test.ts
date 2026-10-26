@@ -18,7 +18,7 @@ const cleanup: (() => Promise<void>)[] = [];
 afterEach(async () => {
   for (const close of cleanup.splice(0).reverse()) await close();
 });
-async function setup() {
+async function setup(timeouts: { requestTimeout?: number; readyTimeout?: number } = {}) {
   const peer = await new PrismPeer().start();
   cleanup.push(() => peer.close());
   const model = new RealtimeModel({
@@ -26,6 +26,7 @@ async function setup() {
     endpoint: peer.endpoint,
     requestTimeout: 300,
     readyTimeout: 500,
+    ...timeouts,
   });
   cleanup.push(() => model.close());
   const session = model.session();
@@ -250,29 +251,34 @@ describe('Prism SDK adapter', () => {
     await vi.waitFor(() => expect(errors.filter((value) => !value.recoverable)).toHaveLength(1));
     expect(session.chatCtx.items.some((item) => item.type === 'function_call')).toBe(false);
   });
-  it('fails on restoration refusal and keeps provider text out of errors', async () => {
-    const { peer, session, errors } = await setup();
-    await session.updateTools(
-      new llm.ToolContext({
-        lookup: llm.tool({ description: 'Lookup', execute: async () => '42' }),
-      }),
-    );
-    session.updateOptions({ toolChoice: 'none' });
-    const pending = session.generateReply();
-    const rejected = expect(pending).rejects.toThrow('invalid_settings');
-    const q = await request(peer);
-    peer.onRequest = (value) => {
-      if (value.type === 'session.update') {
-        peer.fault(value, 'invalid_settings');
-        return true;
-      }
-    };
-    peer.accepted(q);
-    await rejected;
-    await session.close();
-    expect(errors.filter((value) => !value.recoverable)).toHaveLength(1);
-    expect(errors[0]!.error.message).not.toContain('secret');
-  });
+  it.each(['acceptance', 'cancellation'] as const)(
+    'fails on restoration refusal after %s and keeps provider text out of errors',
+    async (outcome) => {
+      const { peer, session, errors } = await setup();
+      await session.updateTools(
+        new llm.ToolContext({
+          lookup: llm.tool({ description: 'Lookup', execute: async () => '42' }),
+        }),
+      );
+      session.updateOptions({ toolChoice: 'none' });
+      const controller = new AbortController();
+      const pending = session.generateReply(undefined, { signal: controller.signal });
+      const rejected = expect(pending).rejects.toThrow('invalid_settings');
+      const q = await request(peer);
+      peer.onRequest = (value) => {
+        if (value.type === 'session.update') {
+          peer.fault(value, 'invalid_settings');
+          return true;
+        }
+      };
+      if (outcome === 'cancellation') controller.abort();
+      else peer.accepted(q);
+      await rejected;
+      await session.close();
+      expect(errors.filter((value) => !value.recoverable)).toHaveLength(1);
+      expect(errors[0]!.error.message).not.toContain('secret');
+    },
+  );
   it('does not let stale truncation cancel a newer reply', async () => {
     const { peer, session, errors } = await setup();
     const first = session.generateReply();
@@ -423,26 +429,95 @@ describe('Prism SDK adapter', () => {
     peer.reply(q, 'reply-2');
     await next;
   });
-  it('snapshots none and restores tools after late acceptance', async () => {
-    const { peer, session } = await setup();
+  it('cancels a tool-free reply before readiness without submitting it', async () => {
+    const { peer, session, errors } = await setup({ readyTimeout: 5000 });
     await session.updateTools(
       new llm.ToolContext({
         lookup: llm.tool({ description: 'Lookup', execute: async () => '42' }),
       }),
     );
+    peer.autoReady = false;
+    const speechStarted = vi.fn();
+    session.on('input_speech_started', speechStarted);
+    peer.emit('input_audio_buffer.speech_started', { item_id: 'speech-1', audio_start_ms: 0 });
+    await vi.waitFor(() => expect(speechStarted).toHaveBeenCalledOnce());
     session.updateOptions({ toolChoice: 'none' });
     const controller = new AbortController();
     const pending = session.generateReply(undefined, { signal: controller.signal });
     const rejected = expect(pending).rejects.toThrow();
-    session.updateOptions({ toolChoice: 'auto' });
-    const q = await request(peer);
-    expect(peer.settings.tools).toEqual([]);
+    await vi.waitFor(() => expect(peer.settings.tools).toEqual([]));
     controller.abort();
-    expect(peer.settings.tools).toEqual([]);
-    peer.accepted(q);
+    const update = session.updateInstructions('After cancellation');
+    await vi.waitFor(() => expect(peer.settings.instructions).toBe('After cancellation'));
     await rejected;
+    await update;
     expect(peer.settings.tools).toHaveLength(1);
+    expect(peer.requests.some((q) => q.type === 'response.create')).toBe(false);
+    session.updateOptions({ toolChoice: 'auto' });
+    peer.ready();
+    const next = session.generateReply();
+    peer.reply(await request(peer), 'next');
+    await next;
+    expect(errors).toEqual([]);
   });
+  it.each(['suppressed', 'restored'] as const)(
+    'restores tools on cancellation and discards a late reply with %s settings',
+    async (settings) => {
+      const { peer, session, errors } = await setup({ requestTimeout: 5000 });
+      await session.updateTools(
+        new llm.ToolContext({
+          lookup: llm.tool({ description: 'Lookup', execute: async () => '42' }),
+        }),
+      );
+      session.updateOptions({ toolChoice: 'none' });
+      const controller = new AbortController();
+      const pending = session.generateReply(undefined, { signal: controller.signal });
+      const rejected = expect(pending).rejects.toThrow();
+      session.updateOptions({ toolChoice: 'auto' });
+      const q = await request(peer);
+      const suppressedRevision = peer.revision;
+      expect(peer.settings.tools).toEqual([]);
+      controller.abort();
+      const update = session.updateInstructions('After cancellation');
+      await vi.waitFor(() => expect(peer.settings.instructions).toBe('After cancellation'));
+      await rejected;
+      await update;
+      expect(peer.settings.tools).toHaveLength(1);
+      const automatic = vi.fn();
+      session.on('generation_created', automatic);
+      peer.accepted(undefined, 'automatic');
+      peer.message('automatic');
+      peer.audio('automatic');
+      await vi.waitFor(() => expect(automatic).toHaveBeenCalledOnce());
+      peer.accepted(q, 'late', settings === 'suppressed' ? suppressedRevision : peer.revision);
+      // A late acceptance can include output before the cancellation roundtrip finishes.
+      peer.message('late');
+      peer.text('Cancelled output', 'late');
+      peer.audio('late');
+      if (settings === 'restored') peer.tool('late', 'cancelled-call');
+      await vi.waitFor(() =>
+        expect(
+          peer.requests.some((q) => q.type === 'response.cancel' && q.response_id === 'late'),
+        ).toBe(true),
+      );
+      expect(automatic).toHaveBeenCalledOnce();
+      expect(session.chatCtx.items.some((item) => item.type === 'function_call')).toBe(false);
+      expect(
+        session.chatCtx.items.some(
+          (item) => item.type === 'message' && item.textContent === 'Cancelled output',
+        ),
+      ).toBe(false);
+      await session.interrupt();
+      expect(
+        peer.requests.some((q) => q.type === 'response.cancel' && q.response_id === 'automatic'),
+      ).toBe(true);
+      peer.ready();
+      const next = session.generateReply();
+      peer.reply(await request(peer, 2), 'next');
+      await next;
+      expect(errors).toEqual([]);
+    },
+  );
   it('reports failures after response creation', async () => {
     const { peer, session, errors } = await setup();
     const pending = session.generateReply();

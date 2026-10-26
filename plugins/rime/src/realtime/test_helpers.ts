@@ -29,6 +29,7 @@ export class PrismPeer {
   revision = 0;
   settings: Record<string, unknown> = {};
   autoInitialize = true;
+  autoReady = true;
   onRequest?: (request: Request) => boolean | void;
   private count = 0;
 
@@ -53,7 +54,7 @@ export class PrismPeer {
               truncation: this.settings.truncation ?? 'auto',
             },
           });
-          this.ready();
+          if (this.autoReady) this.ready();
         } else if (request.type === 'conversation.item.create') {
           const item = { ...request.item!, id: `history-${++this.count}` };
           this.history.push(item);
