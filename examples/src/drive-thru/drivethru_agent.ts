@@ -1,20 +1,10 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import {
-  type JobContext,
-  type JobProcess,
-  ServerOptions,
-  cli,
-  defineAgent,
-  llm,
-  voice,
-} from '@livekit/agents';
+import { type JobContext, ServerOptions, cli, defineAgent, llm, voice } from '@livekit/agents';
 import * as deepgram from '@livekit/agents-plugin-deepgram';
 import * as elevenlabs from '@livekit/agents-plugin-elevenlabs';
-import * as livekit from '@livekit/agents-plugin-livekit';
 import * as openai from '@livekit/agents-plugin-openai';
-import * as silero from '@livekit/agents-plugin-silero';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import {
@@ -57,23 +47,24 @@ export class DriveThruAgent extends voice.Agent<UserData> {
 
     super({
       instructions,
-      tools: {
-        orderComboMeal: DriveThruAgent.buildComboOrderTool(
+      tools: [
+        DriveThruAgent.buildComboOrderTool(
           userdata.comboItems,
           userdata.drinkItems,
           userdata.sauceItems,
         ),
-        orderHappyMeal: DriveThruAgent.buildHappyOrderTool(
+        DriveThruAgent.buildHappyOrderTool(
           userdata.happyItems,
           userdata.drinkItems,
           userdata.sauceItems,
         ),
-        orderRegularItem: DriveThruAgent.buildRegularOrderTool(
+        DriveThruAgent.buildRegularOrderTool(
           userdata.regularItems,
           userdata.drinkItems,
           userdata.sauceItems,
         ),
-        removeOrderItem: llm.tool({
+        llm.tool({
+          name: 'removeOrderItem',
           description: `Removes one or more items from the user's order using their \`orderId\`s.
 
 Useful when the user asks to cancel or delete existing items (e.g., "Remove the cheeseburger").
@@ -100,7 +91,8 @@ If the \`orderId\`s are unknown, call \`listOrderItems\` first to retrieve them.
             return 'Removed items:\n' + removedItems.map((item) => JSON.stringify(item)).join('\n');
           },
         }),
-        listOrderItems: llm.tool({
+        llm.tool({
+          name: 'listOrderItems',
           description: `Retrieves the current list of items in the user's order, including each item's internal \`orderId\`.
 
 Helpful when:
@@ -120,7 +112,7 @@ Examples:
             return items.map((item) => JSON.stringify(item)).join('\n');
           },
         }),
-      },
+      ],
     });
   }
 
@@ -134,6 +126,7 @@ Examples:
     const availableSauceIds = [...new Set(sauceItems.map((item) => item.id))];
 
     return llm.tool({
+      name: 'orderComboMeal',
       description: `Call this when the user orders a **Combo Meal**, like: "Number 4b with a large Sprite" or "I'll do a medium meal."
 
 Do not call this tool unless the user clearly refers to a known combo meal by name or number.
@@ -222,6 +215,7 @@ If the user says just "a large meal," assume both drink and fries are that size.
     const availableSauceIds = [...new Set(sauceItems.map((item) => item.id))];
 
     return llm.tool({
+      name: 'orderHappyMeal',
       description: `Call this when the user orders a **Happy Meal**, typically for children. These meals come with a main item, a drink, and a sauce.
 
 The user must clearly specify a valid Happy Meal option (e.g., "Can I get a Happy Meal?").
@@ -299,6 +293,7 @@ Assume Small as default only if the user says "Happy Meal" and gives no size pre
     const availableIds = [...new Set(allItems.map((item) => item.id))];
 
     return llm.tool({
+      name: 'orderRegularItem',
       description: `Call this when the user orders **a single item on its own**, not as part of a Combo Meal or Happy Meal.
 
 The customer must provide clear and specific input. For example, item variants such as flavor must **always** be explicitly stated.
@@ -376,19 +371,13 @@ export async function newUserData(): Promise<UserData> {
 }
 
 export default defineAgent({
-  prewarm: async (proc: JobProcess) => {
-    proc.userData.vad = await silero.VAD.load();
-  },
   entry: async (ctx: JobContext) => {
     const userdata = await newUserData();
 
-    const vad = ctx.proc.userData.vad! as silero.VAD;
     const session = new voice.AgentSession({
-      vad,
       stt: new deepgram.STT(),
       llm: new openai.LLM({ model: 'gpt-4.1', temperature: 0.45 }),
       tts: new elevenlabs.TTS(),
-      turnDetection: new livekit.turnDetector.MultilingualModel(),
       userData: userdata,
       voiceOptions: {
         maxToolSteps: 10,

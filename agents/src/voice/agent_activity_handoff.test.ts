@@ -8,7 +8,7 @@ import { ChatContext } from '../llm/chat_context.js';
 import { type RealtimeCapabilities, RealtimeModel, type RealtimeSession } from '../llm/realtime.js';
 import { initializeLogger, log } from '../log.js';
 import type { SpeechEvent } from '../stt/stt.js';
-import { Agent, type ModelSettings } from './agent.js';
+import { Agent, AgentTask, type ModelSettings } from './agent.js';
 import {
   AgentActivity,
   type ReusableResources,
@@ -28,8 +28,8 @@ type FakeActivity = {
   realtimeSession: unknown;
 };
 
-function createFakeActivity(agent: Agent, stt: unknown) {
-  const detachedPipeline = { id: Symbol('pipeline') };
+function createFakeActivity(agent: Agent, stt: unknown, inputStartedAt?: number) {
+  const detachedPipeline = { id: Symbol('pipeline'), inputStartedAt };
   const activity = {
     agent,
     audioRecognition: {
@@ -67,6 +67,22 @@ describe('AgentActivity STT handoff reuse eligibility', () => {
 
     expect(resources.sttPipeline).toBe(oldActivity.detachedPipeline);
     expect(oldActivity.activity.audioRecognition?.detachSttPipeline).toHaveBeenCalledTimes(1);
+  });
+
+  it('carries the original input start time with a reused STT pipeline', async () => {
+    const sharedStt = { id: 'shared-stt' };
+    const oldInputStartedAt = Date.now() - 60_000;
+    const oldActivity = createFakeActivity(
+      new Agent({ instructions: 'a' }),
+      sharedStt,
+      oldInputStartedAt,
+    );
+    const newActivity = createFakeActivity(new Agent({ instructions: 'b' }), sharedStt);
+
+    const resources = await detachResources(oldActivity.activity, newActivity.activity);
+
+    expect(resources.sttPipeline).toBe(oldActivity.detachedPipeline);
+    expect(resources.sttPipeline?.inputStartedAt).toBe(oldInputStartedAt);
   });
 
   it('does not reuse when the STT instances differ', async () => {
@@ -114,7 +130,7 @@ describe('AgentActivity STT handoff reuse eligibility', () => {
     expect(oldActivity.activity.audioRecognition?.detachSttPipeline).not.toHaveBeenCalled();
   });
 
-  it('reuses when the new agent inherits the same sttNode implementation', async () => {
+  it('does not reuse when the new agent inherits the same custom sttNode implementation', async () => {
     const sharedStt = { id: 'shared-stt' };
 
     class AgentA extends Agent {
@@ -130,8 +146,8 @@ describe('AgentActivity STT handoff reuse eligibility', () => {
 
     const resources = await detachResources(oldActivity.activity, newActivity.activity);
 
-    expect(resources.sttPipeline).toBe(oldActivity.detachedPipeline);
-    expect(oldActivity.activity.audioRecognition?.detachSttPipeline).toHaveBeenCalledTimes(1);
+    expect(resources.sttPipeline).toBeUndefined();
+    expect(oldActivity.activity.audioRecognition?.detachSttPipeline).not.toHaveBeenCalled();
   });
 
   it('does not reuse when the old activity has no audioRecognition', async () => {
@@ -297,6 +313,7 @@ describe('AgentActivity blockNewTurns (handoff transition)', () => {
     activity.logger = { warn: vi.fn(), debug: vi.fn(), info: vi.fn(), error: vi.fn() };
     activity.cancelPreemptiveGeneration = vi.fn();
     activity.createSpeechTask = vi.fn(() => ({ cancel: vi.fn() }));
+    activity.speechQueue = { clone: () => [] };
     return activity;
   }
 
@@ -367,9 +384,9 @@ describe('AgentActivity blockNewTurns (handoff transition)', () => {
     expect(activity.createSpeechTask).toHaveBeenCalledTimes(1);
   });
 
-  // Parity with Python `_user_turn_completed` (agent_activity.py:2025): when new turns are
-  // blocked before the turn completes, the reply must be skipped *before* onUserTurnCompleted
-  // runs. When the session is not closing, the message is dropped (not added to chat ctx).
+  // When new turns are blocked before the turn completes, the reply must be skipped
+  // before onUserTurnCompleted runs. When the session is not closing, the message
+  // is dropped instead of being added to the chat context.
   it('userTurnCompleted skips before the callback when new turns are blocked (not closing)', async () => {
     const activity = createBareActivity();
     activity._schedulingPaused = false;
@@ -387,8 +404,8 @@ describe('AgentActivity blockNewTurns (handoff transition)', () => {
     expect(activity.createSpeechTask).not.toHaveBeenCalled();
   });
 
-  // Parity with Python `_user_turn_completed` (agent_activity.py:2025): the skipped message is
-  // still committed to the chat context when the session is closing, so it is not lost.
+  // The skipped message is still committed to the chat context when the session is
+  // closing, so it is not lost.
   it('userTurnCompleted commits the skipped message to chat ctx when closing', async () => {
     const activity = createBareActivity();
     activity._schedulingPaused = false;
@@ -416,9 +433,9 @@ describe('AgentActivity blockNewTurns (handoff transition)', () => {
     expect(activity.createSpeechTask).not.toHaveBeenCalled();
   });
 
-  // Parity with Python `_user_turn_completed` (agent_activity.py:2059): the post-callback
-  // re-check catches a handoff triggered *inside* onUserTurnCompleted, so no reply is scheduled
-  // against the outgoing agent even though new turns were not blocked when the turn started.
+  // The post-callback re-check catches a handoff triggered inside
+  // onUserTurnCompleted, so no reply is scheduled against the outgoing agent even
+  // though new turns were not blocked when the turn started.
   it('userTurnCompleted re-checks after the callback when a handoff blocks new turns mid-callback', async () => {
     const activity = createBareActivity();
     activity._schedulingPaused = false;
@@ -473,5 +490,47 @@ describe('cleanupReusableResources', () => {
     const resources: ReusableResources = {};
     await cleanupReusableResources(resources, log());
     // should not throw
+  });
+});
+
+describe('AgentActivity STT handoff reuse with Agent.create', () => {
+  it('reuses the pipeline between Agent.create agents without an sttNode hook', async () => {
+    const sharedStt = { id: 'shared-stt' };
+    const oldActivity = createFakeActivity(Agent.create({ instructions: 'a' }), sharedStt);
+    const newActivity = createFakeActivity(Agent.create({ instructions: 'b' }), sharedStt);
+
+    const resources = await detachResources(oldActivity.activity, newActivity.activity);
+
+    expect(resources.sttPipeline).toBe(oldActivity.detachedPipeline);
+  });
+
+  it('reuses the pipeline between a class agent and an AgentTask.create task', async () => {
+    const sharedStt = { id: 'shared-stt' };
+    const oldActivity = createFakeActivity(new Agent({ instructions: 'a' }), sharedStt);
+    const newActivity = createFakeActivity(
+      AgentTask.create<string>({ instructions: 'task' }),
+      sharedStt,
+    );
+
+    const resources = await detachResources(oldActivity.activity, newActivity.activity);
+
+    expect(resources.sttPipeline).toBe(oldActivity.detachedPipeline);
+  });
+
+  it('does not reuse the pipeline when an Agent.create agent provides an sttNode hook', async () => {
+    const sharedStt = { id: 'shared-stt' };
+    const oldActivity = createFakeActivity(new Agent({ instructions: 'a' }), sharedStt);
+    const newActivity = createFakeActivity(
+      Agent.create({
+        instructions: 'b',
+        sttNode: async function* () {},
+      }),
+      sharedStt,
+    );
+
+    const resources = await detachResources(oldActivity.activity, newActivity.activity);
+
+    expect(resources.sttPipeline).toBeUndefined();
+    expect(oldActivity.activity.audioRecognition?.detachSttPipeline).not.toHaveBeenCalled();
   });
 });

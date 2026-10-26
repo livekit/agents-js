@@ -44,7 +44,7 @@ export const wsFunctionCallItemSchema = z.object({
 
 export const wsOutputItemSchema = z.discriminatedUnion('type', [
   wsFunctionCallItemSchema,
-  z.object({ type: z.literal('message') }).passthrough(),
+  z.object({ type: z.literal('message'), phase: z.string().optional() }).passthrough(),
   z.object({ type: z.literal('reasoning') }).passthrough(),
   z.object({ type: z.literal('file') }).passthrough(),
   z.object({ type: z.literal('computer_call') }).passthrough(),
@@ -98,9 +98,26 @@ export const wsResponseFailedEventSchema = z.object({
     .passthrough(),
 });
 
+export const wsResponseIncompleteEventSchema = z.object({
+  type: z.literal('response.incomplete'),
+  response: z
+    .object({
+      id: z.string(),
+      incomplete_details: z
+        .object({
+          reason: z.string().optional(),
+        })
+        .nullable()
+        .optional(),
+    })
+    .passthrough(),
+});
+
 export const wsErrorEventSchema = z.object({
   type: z.literal('error'),
   status: z.number().optional(),
+  code: z.string().optional(),
+  param: z.string().optional(),
   error: z
     .object({
       type: z.string().optional(),
@@ -118,6 +135,7 @@ export const wsServerEventSchema = z.discriminatedUnion('type', [
   wsOutputTextDeltaEventSchema,
   wsResponseCompletedEventSchema,
   wsResponseFailedEventSchema,
+  wsResponseIncompleteEventSchema,
   wsErrorEventSchema,
 ]);
 
@@ -128,5 +146,6 @@ export type WsOutputItemDoneEvent = z.infer<typeof wsOutputItemDoneEventSchema>;
 export type WsOutputTextDeltaEvent = z.infer<typeof wsOutputTextDeltaEventSchema>;
 export type WsResponseCompletedEvent = z.infer<typeof wsResponseCompletedEventSchema>;
 export type WsResponseFailedEvent = z.infer<typeof wsResponseFailedEventSchema>;
+export type WsResponseIncompleteEvent = z.infer<typeof wsResponseIncompleteEventSchema>;
 export type WsErrorEvent = z.infer<typeof wsErrorEventSchema>;
 export type WsServerEvent = z.infer<typeof wsServerEventSchema>;

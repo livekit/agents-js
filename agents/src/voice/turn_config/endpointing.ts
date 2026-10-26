@@ -15,14 +15,15 @@ export interface EndpointingOptions {
   mode: 'fixed' | 'dynamic';
   /**
    * Minimum time in milliseconds since the last detected speech before the agent declares the user's
-   * turn complete. In VAD mode this effectively behaves like `max(VAD silence, minDelay)`;
-   * in STT mode it is applied after the STT end-of-speech signal, so it can be additive with
-   * the STT provider's endpointing delay.
+   * turn complete. In dynamic mode this is the learned floor. In VAD mode this effectively behaves
+   * like `max(VAD silence, minDelay)`; in STT mode it is applied after the STT end-of-speech signal,
+   * so it can be additive with the STT provider's endpointing delay.
    * @defaultValue 500
    */
   minDelay: number;
   /**
-   * Maximum time in milliseconds the agent will wait before terminating the turn.
+   * Maximum time in milliseconds the agent will wait before terminating the turn. In dynamic mode
+   * this is a fixed ceiling.
    * @defaultValue 3000
    */
   maxDelay: number;
@@ -38,6 +39,18 @@ export const defaultEndpointingOptions = {
   mode: 'fixed',
   minDelay: 500,
   maxDelay: 3000,
+  alpha: 0.9,
+} as const satisfies EndpointingOptions;
+
+/**
+ * Tighter endpointing defaults used when the turn detector is a streaming
+ * ("audio model") detector. Keys the caller does not provide fall back to
+ * these instead of the legacy {@link defaultEndpointingOptions}.
+ */
+export const streamingEndpointingOptions = {
+  mode: 'fixed',
+  minDelay: 300,
+  maxDelay: 2500,
   alpha: 0.9,
 } as const satisfies EndpointingOptions;
 
@@ -78,7 +91,7 @@ export class BaseEndpointing {
     this._overlapping = overlapping;
   }
 
-  onEndOfSpeech(_endedAt: number, _shouldIgnore = false): void {
+  onEndOfSpeech(_endedAt: number, _interruption?: boolean): void {
     this._overlapping = false;
   }
 
@@ -89,11 +102,11 @@ export class BaseEndpointing {
 
 export class DynamicEndpointing extends BaseEndpointing {
   #utterancePause: ExpFilter;
-  #turnPause: ExpFilter;
   #utteranceStartedAt?: number;
   #utteranceEndedAt?: number;
   #agentSpeechStartedAt?: number;
   #agentSpeechEndedAt?: number;
+  #agentSpeaking = false;
   #speaking = false;
 
   constructor({
@@ -112,20 +125,10 @@ export class DynamicEndpointing extends BaseEndpointing {
       minVal: minDelay,
       maxVal: maxDelay,
     });
-    this.#turnPause = new ExpFilter({
-      alpha,
-      initial: maxDelay,
-      minVal: minDelay,
-      maxVal: maxDelay,
-    });
   }
 
   override get minDelay(): number {
-    return this.#utterancePause.value ?? this._minDelay;
-  }
-
-  override get maxDelay(): number {
-    return Math.max(this.#turnPause.value ?? this._maxDelay, this.minDelay);
+    return Math.min(this.#utterancePause.value ?? this._minDelay, this.maxDelay);
   }
 
   get betweenUtteranceDelay(): number {
@@ -150,19 +153,29 @@ export class DynamicEndpointing extends BaseEndpointing {
   }
 
   override onStartOfAgentSpeech(startedAt: number): void {
+    // Agent speech started before the current user utterance ended, so the stored end still
+    // belongs to the previous utterance. Move it just before agent speech to exclude this overlap.
+    if (
+      !this.#agentSpeaking &&
+      this.#speaking &&
+      this.#utteranceStartedAt !== undefined &&
+      this.#utteranceEndedAt !== undefined &&
+      this.#utteranceEndedAt < this.#utteranceStartedAt
+    ) {
+      this.#utteranceEndedAt = startedAt - 1;
+    }
+
     this.#agentSpeechStartedAt = startedAt;
     this.#agentSpeechEndedAt = undefined;
-    this._overlapping = false;
+    this.#agentSpeaking = true;
+    this._overlapping = this.#speaking;
   }
 
   override onEndOfAgentSpeech(endedAt: number): void {
-    if (
-      this.#agentSpeechStartedAt !== undefined &&
-      (this.#agentSpeechEndedAt === undefined ||
-        this.#agentSpeechEndedAt < this.#agentSpeechStartedAt)
-    ) {
+    if (this.#agentSpeaking) {
       this.#agentSpeechEndedAt = endedAt;
     }
+    this.#agentSpeaking = false;
     this._overlapping = false;
   }
 
@@ -171,26 +184,13 @@ export class DynamicEndpointing extends BaseEndpointing {
       return;
     }
 
-    // Audio-activity interruption can arrive before the previous utterance's end timestamp is
-    // finalized. In that case the stored end appears earlier than its start, so pin it just before
-    // agent speech to keep the immediate-interruption pause calculation meaningful.
-    if (
-      this.#utteranceStartedAt !== undefined &&
-      this.#utteranceEndedAt !== undefined &&
-      this.#agentSpeechStartedAt !== undefined &&
-      this.#utteranceEndedAt < this.#utteranceStartedAt &&
-      overlapping
-    ) {
-      this.#utteranceEndedAt = this.#agentSpeechStartedAt - 1;
-    }
-
     this.#utteranceStartedAt = startedAt;
     this._overlapping = overlapping;
     this.#speaking = true;
   }
 
-  override onEndOfSpeech(endedAt: number, shouldIgnore = false): void {
-    if (shouldIgnore && this._overlapping) {
+  override onEndOfSpeech(endedAt: number, interruption?: boolean): void {
+    if (interruption === false && this._overlapping) {
       if (
         this.#utteranceStartedAt === undefined ||
         this.#agentSpeechStartedAt === undefined ||
@@ -208,7 +208,6 @@ export class DynamicEndpointing extends BaseEndpointing {
     const agentStillSpeaking =
       this.#agentSpeechStartedAt !== undefined && this.#agentSpeechEndedAt === undefined;
     const betweenUtteranceDelay = this.betweenUtteranceDelay;
-    const betweenTurnDelay = this.betweenTurnDelay;
 
     if (this._overlapping || agentStillSpeaking) {
       const [turnDelay, interruptionDelay] = this.immediateInterruptionDelay;
@@ -223,14 +222,7 @@ export class DynamicEndpointing extends BaseEndpointing {
         // User resumed almost immediately after the agent started, so the prior pause was probably
         // part of the same user turn. Learn it as minDelay to avoid cutting in next time.
         this.#utterancePause.apply(1, betweenUtteranceDelay);
-      } else if (betweenTurnDelay > 0) {
-        // User spoke after a more substantial agent-start gap. Treat it as a new turn boundary and
-        // learn that gap as maxDelay.
-        this.#turnPause.apply(1, betweenTurnDelay);
       }
-    } else if (betweenTurnDelay > 0) {
-      // Normal case: user ended, agent eventually started. Learn that turn-boundary wait.
-      this.#turnPause.apply(1, betweenTurnDelay);
     } else {
       const noAgentSpeechAroundPause =
         this.#agentSpeechEndedAt === undefined && this.#agentSpeechStartedAt === undefined;
@@ -242,8 +234,11 @@ export class DynamicEndpointing extends BaseEndpointing {
     }
 
     this.#utteranceEndedAt = endedAt;
-    this.#agentSpeechStartedAt = undefined;
-    this.#agentSpeechEndedAt = undefined;
+    // Preserve an active agent interval until its end is recorded.
+    if (!this.#agentSpeaking) {
+      this.#agentSpeechStartedAt = undefined;
+      this.#agentSpeechEndedAt = undefined;
+    }
     this.#speaking = false;
     this._overlapping = false;
   }
@@ -260,16 +255,13 @@ export class DynamicEndpointing extends BaseEndpointing {
     if (minDelay !== undefined) {
       this._minDelay = minDelay;
       this.#utterancePause.reset({ initial: minDelay, minVal: minDelay });
-      this.#turnPause.reset({ minVal: minDelay });
     }
     if (maxDelay !== undefined) {
       this._maxDelay = maxDelay;
-      this.#turnPause.reset({ initial: maxDelay, maxVal: maxDelay });
       this.#utterancePause.reset({ maxVal: maxDelay });
     }
     if (alpha !== undefined) {
       this.#utterancePause.reset({ alpha });
-      this.#turnPause.reset({ alpha });
     }
   }
 }

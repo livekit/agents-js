@@ -12,7 +12,9 @@ import { createSilenceFrame, createSilenceFrameLike } from './utils.js';
 
 function createHooks(): RecognitionHooks {
   return {
-    onInterruption: vi.fn(),
+    interruptionByAudioActivityEnabled: false,
+    onOverlapSpeech: vi.fn(),
+    onBackchannelConfirmed: vi.fn(),
     onStartOfSpeech: vi.fn(),
     onVADInferenceDone: vi.fn(),
     onEndOfSpeech: vi.fn(),
@@ -20,6 +22,7 @@ function createHooks(): RecognitionHooks {
     onFinalTranscript: vi.fn(),
     onEndOfTurn: vi.fn(async () => true),
     onPreemptiveGeneration: vi.fn(),
+    onAgentBackchannelOpportunity: vi.fn(),
     retrieveChatCtx: () => ChatContext.empty(),
   };
 }

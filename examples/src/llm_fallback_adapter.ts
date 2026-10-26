@@ -16,26 +16,14 @@
  * - Configurable timeouts and retry behavior
  * - Event emission when provider availability changes
  */
-import {
-  type JobContext,
-  type JobProcess,
-  ServerOptions,
-  cli,
-  defineAgent,
-  llm,
-  voice,
-} from '@livekit/agents';
+import { type JobContext, ServerOptions, cli, defineAgent, llm, voice } from '@livekit/agents';
 import * as deepgram from '@livekit/agents-plugin-deepgram';
 import * as elevenlabs from '@livekit/agents-plugin-elevenlabs';
 import * as openai from '@livekit/agents-plugin-openai';
-import * as silero from '@livekit/agents-plugin-silero';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
 export default defineAgent({
-  prewarm: async (proc: JobProcess) => {
-    proc.userData.vad = await silero.VAD.load();
-  },
   entry: async (ctx: JobContext) => {
     // Create multiple LLM instances for fallback
     // The FallbackAdapter will try them in order: primary -> secondary -> tertiary
@@ -71,8 +59,9 @@ export default defineAgent({
     const agent = new voice.Agent({
       instructions:
         'You are a helpful assistant. Demonstrate that you are working by responding to user queries.',
-      tools: {
-        getWeather: llm.tool({
+      tools: [
+        llm.tool({
+          name: 'getWeather',
           description: 'Get the weather for a given location.',
           parameters: z.object({
             location: z.string().describe('The location to get the weather for'),
@@ -81,11 +70,10 @@ export default defineAgent({
             return `The weather in ${location} is sunny with a temperature of 72°F.`;
           },
         }),
-      },
+      ],
     });
 
     const session = new voice.AgentSession({
-      vad: ctx.proc.userData.vad! as silero.VAD,
       stt: new deepgram.STT(),
       tts: new elevenlabs.TTS(),
       llm: fallbackLLM, // Use the FallbackAdapter instead of a single LLM

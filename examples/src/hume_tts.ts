@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import {
   type JobContext,
-  type JobProcess,
   ServerOptions,
   cli,
   defineAgent,
@@ -12,15 +11,10 @@ import {
   voice,
 } from '@livekit/agents';
 import * as hume from '@livekit/agents-plugin-hume';
-import * as livekit from '@livekit/agents-plugin-livekit';
-import * as silero from '@livekit/agents-plugin-silero';
 import { BackgroundVoiceCancellation } from '@livekit/noise-cancellation-node';
 import { fileURLToPath } from 'node:url';
 
 export default defineAgent({
-  prewarm: async (proc: JobProcess) => {
-    proc.userData.vad = await silero.VAD.load();
-  },
   entry: async (ctx: JobContext) => {
     const agent = new voice.Agent({
       instructions:
@@ -39,8 +33,6 @@ export default defineAgent({
       stt: 'deepgram/nova-3',
       llm: 'openai/gpt-4.1-mini',
       tts,
-      vad: ctx.proc.userData.vad! as silero.VAD,
-      turnDetection: new livekit.turnDetector.MultilingualModel(),
       voiceOptions: {
         preemptiveGeneration: true,
       },

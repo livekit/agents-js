@@ -12,10 +12,13 @@ export interface HealthCheckResult {
 
 interface WorkerResponse {
   agent_name: string;
+  agent_name_is_env: boolean;
+  deployment: string;
   worker_type: string;
   active_jobs: number;
   sdk_version: string;
   project_type: string;
+  protocol_version: number;
 }
 
 export class HTTPServer {

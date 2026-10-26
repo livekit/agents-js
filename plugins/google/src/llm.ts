@@ -2,21 +2,90 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type * as types from '@google/genai';
-import { FunctionCallingConfigMode, type GenerateContentConfig, GoogleGenAI } from '@google/genai';
+import {
+  FunctionCallingConfigMode,
+  type GenerateContentConfig,
+  GoogleGenAI,
+  ThinkingLevel,
+} from '@google/genai';
 import type { APIConnectOptions } from '@livekit/agents';
 import {
   APIConnectionError,
   APIStatusError,
   DEFAULT_API_CONNECT_OPTIONS,
   llm,
+  log,
   shortuuid,
 } from '@livekit/agents';
 import type { ChatModels } from './models.js';
 import type { LLMTools } from './tools.js';
-import { toFunctionDeclarations } from './utils.js';
+import { toToolsConfig } from './utils.js';
 
 interface GoogleFormatData {
   systemMessages: string[] | null;
+}
+
+function isGemini3Model(model: string): boolean {
+  const modelLower = model.toLowerCase();
+  return modelLower.includes('gemini-3');
+}
+
+function isGemini4Model(model: string): boolean {
+  return model.toLowerCase().includes('gemini-4');
+}
+
+function isGemini3OrNewer(model: string): boolean {
+  return isGemini3Model(model) || isGemini4Model(model);
+}
+
+function isGemma4Model(model: string): boolean {
+  return model.toLowerCase().includes('gemma-4-');
+}
+
+function supportsThinkingLevel(model: string): boolean {
+  return isGemini3OrNewer(model) || isGemma4Model(model);
+}
+
+export const LONG_DECODE_MIN_OUTPUT_TOKENS = 32768;
+export const LONG_DECODE_HTTP_TIMEOUT_MS = 20 * 60 * 1000;
+export const LONG_DECODE_MAX_REQUESTS = 32;
+export const LONG_DECODE_CONTEXT_WINDOW = 1_000_000;
+const callerSetMaxOutputTokensConfigs = new WeakSet<GenerateContentConfig>();
+
+function toFunctionCallingConfig(
+  toolChoice: llm.ToolChoice | undefined,
+  toolCtx: llm.ToolContext | undefined,
+): types.FunctionCallingConfig | undefined {
+  if (toolChoice === undefined) {
+    return undefined;
+  }
+
+  if (typeof toolChoice === 'object' && toolChoice.type === 'function') {
+    return {
+      mode: FunctionCallingConfigMode.ANY,
+      allowedFunctionNames: [toolChoice.function.name],
+    };
+  }
+  if (toolChoice === 'required') {
+    const toolNames = Object.keys(toolCtx?.functionTools ?? {});
+    return {
+      mode: FunctionCallingConfigMode.ANY,
+      allowedFunctionNames: toolNames.length > 0 ? toolNames : undefined,
+    };
+  }
+  if (toolChoice === 'auto') {
+    return { mode: FunctionCallingConfigMode.AUTO };
+  }
+  if (toolChoice === 'none') {
+    return { mode: FunctionCallingConfigMode.NONE };
+  }
+
+  throw new Error(`Invalid tool choice: ${toolChoice}`);
+}
+
+function isGemini3FlashModel(model: string): boolean {
+  const modelLower = model.toLowerCase();
+  return modelLower.includes('gemini-3') && modelLower.includes('flash');
 }
 
 export interface LLMOptions {
@@ -38,6 +107,7 @@ export interface LLMOptions {
   httpOptions?: types.HttpOptions;
   seed?: number;
   serviceTier?: types.ServiceTier;
+  cachedContent?: string;
   mediaResolution?: types.MediaResolution;
 }
 
@@ -58,6 +128,11 @@ export class LLM extends llm.LLM {
       return 'Vertex AI';
     }
     return 'Gemini';
+  }
+
+  protected override async _prewarmImpl(signal: AbortSignal): Promise<void> {
+    // Also fetches auth tokens ahead of time on Vertex AI.
+    await this.#client.models.list({ config: { pageSize: 1, abortSignal: signal } });
   }
 
   /**
@@ -88,6 +163,7 @@ export class LLM extends llm.LLM {
    * @param httpOptions - The HTTP options to use for the session.
    * @param seed - Random seed for reproducible results. Defaults to undefined.
    * @param serviceTier - The service tier for the request (e.g. ServiceTier.PRIORITY). Defaults to undefined.
+   * @param cachedContent - Resource name of an explicit context cache to attach to every request from this LLM instance, e.g. `cachedContents/abc123` for the Gemini API or `projects/<project>/locations/<location>/cachedContents/abc123` for VertexAI. The cache must already exist. When set, `systemInstruction`, `tools`, and `toolConfig` are omitted from outgoing requests because Gemini requires those fields to live inside the cached content resource.
    * @param mediaResolution - The media resolution for the request. Defaults to undefined.
    */
   constructor(
@@ -110,6 +186,7 @@ export class LLM extends llm.LLM {
       httpOptions,
       seed,
       serviceTier,
+      cachedContent,
       mediaResolution,
     }: LLMOptions = {
       model: 'gemini-2.0-flash-001',
@@ -152,6 +229,19 @@ export class LLM extends llm.LLM {
       }
     }
 
+    if (
+      thinkingConfig?.thinkingLevel !== undefined &&
+      isGemma4Model(model) &&
+      ![ThinkingLevel.MINIMAL, ThinkingLevel.HIGH].includes(
+        thinkingConfig.thinkingLevel.toUpperCase() as ThinkingLevel,
+      )
+    ) {
+      throw new Error(
+        `Model ${model} only supports thinkingLevel 'minimal' (thinking off) ` +
+          `or 'high' (thinking on), got ${JSON.stringify(thinkingConfig.thinkingLevel)}.`,
+      );
+    }
+
     const clientOptions: types.GoogleGenAIOptions = useVertexAI
       ? {
           vertexai: true,
@@ -182,6 +272,7 @@ export class LLM extends llm.LLM {
       httpOptions,
       seed,
       serviceTier,
+      cachedContent,
       mediaResolution,
       apiKey,
     };
@@ -189,72 +280,128 @@ export class LLM extends llm.LLM {
 
   chat({
     chatCtx,
-    toolCtx,
+    toolCtx: toolCtxInput,
     connOptions = DEFAULT_API_CONNECT_OPTIONS,
     toolChoice,
     extraKwargs,
     geminiTools,
   }: {
     chatCtx: llm.ChatContext;
-    toolCtx?: llm.ToolContext;
+    toolCtx?: llm.ToolContextLike;
     connOptions?: APIConnectOptions;
     parallelToolCalls?: boolean;
     toolChoice?: llm.ToolChoice;
     extraKwargs?: Record<string, unknown>;
     geminiTools?: LLMTools;
   }): LLMStream {
+    const toolCtx = llm.toToolContext(toolCtxInput);
     const extras: GenerateContentConfig = { ...extraKwargs } as GenerateContentConfig;
 
+    if (this.#opts.httpOptions !== undefined && extras.httpOptions === undefined) {
+      extras.httpOptions = this.#opts.httpOptions;
+    }
+
     toolChoice = toolChoice !== undefined ? toolChoice : this.#opts.toolChoice;
+    geminiTools = geminiTools !== undefined ? geminiTools : this.#opts.geminiTools;
 
-    if (toolChoice) {
-      let geminiToolConfig: types.ToolConfig;
+    // Mixing built-in (provider) tools with function tools is only supported on Gemini 3+
+    // Developer API, not Vertex AI. https://ai.google.dev/gemini-api/docs/tool-combination
+    const allowMixedTools = isGemini3OrNewer(this.#opts.model) && !this.#opts.vertexai;
+    const usingCache = this.#opts.cachedContent !== undefined || 'cachedContent' in extras;
 
-      if (typeof toolChoice === 'object' && toolChoice.type === 'function') {
-        geminiToolConfig = {
-          functionCallingConfig: {
-            mode: FunctionCallingConfigMode.ANY,
-            allowedFunctionNames: [toolChoice.function.name],
-          },
+    if (usingCache) {
+      const dropped = ['tools', 'toolConfig'].filter((key) => key in extras);
+      delete extras.tools;
+      delete extras.toolConfig;
+
+      const hasTools =
+        (toolCtx !== undefined &&
+          (Object.keys(toolCtx.functionTools).length > 0 || toolCtx.providerTools.length > 0)) ||
+        geminiTools !== undefined ||
+        dropped.length > 0;
+      if (hasTools) {
+        log().warn(
+          { model: this.#opts.model },
+          'gemini llm: ignoring tools; bake them into the CachedContent resource',
+        );
+      }
+    } else {
+      const [toolsConfig, mixed] = toToolsConfig({ toolCtx, geminiTools, allowMixedTools });
+      const functionCallingConfig = toFunctionCallingConfig(toolChoice, toolCtx);
+
+      if (functionCallingConfig !== undefined || mixed) {
+        extras.toolConfig = {
+          ...(extras.toolConfig ?? {}),
+          ...(functionCallingConfig !== undefined ? { functionCallingConfig } : {}),
+          includeServerSideToolInvocations: mixed || undefined,
         };
-      } else if (toolChoice === 'required') {
-        const toolNames = Object.entries(toolCtx || {}).map(([name]) => name);
-        geminiToolConfig = {
-          functionCallingConfig: {
-            mode: FunctionCallingConfigMode.ANY,
-            allowedFunctionNames: toolNames.length > 0 ? toolNames : undefined,
-          },
-        };
-      } else if (toolChoice === 'auto') {
-        geminiToolConfig = {
-          functionCallingConfig: {
-            mode: FunctionCallingConfigMode.AUTO,
-          },
-        };
-      } else if (toolChoice === 'none') {
-        geminiToolConfig = {
-          functionCallingConfig: {
-            mode: FunctionCallingConfigMode.NONE,
-          },
-        };
-      } else {
-        throw new Error(`Invalid tool choice: ${toolChoice}`);
       }
 
-      extras.toolConfig = geminiToolConfig;
+      if (toolsConfig !== undefined) {
+        extras.tools = toolsConfig;
+      }
+    }
+
+    if (isGemini4Model(this.#opts.model)) {
+      const ignored: string[] = [];
+      for (const name of ['temperature', 'topP', 'topK'] as const) {
+        if (this.#opts[name] !== undefined) {
+          ignored.push(name);
+          this.#opts[name] = undefined;
+        }
+        if (extras[name] !== undefined && !ignored.includes(name)) {
+          ignored.push(name);
+        }
+        delete extras[name];
+      }
+      if (ignored.length > 0) {
+        log().warn(
+          { model: this.#opts.model, dropped: ignored.sort() },
+          'gemini llm: model ignores sampling parameters, dropping them from the request',
+        );
+      }
     }
 
     if (this.#opts.temperature !== undefined) {
       extras.temperature = this.#opts.temperature;
-    }
-    if (this.#opts.maxOutputTokens !== undefined) {
-      extras.maxOutputTokens = this.#opts.maxOutputTokens;
     }
     if (this.#opts.topP !== undefined) {
       extras.topP = this.#opts.topP;
     }
     if (this.#opts.topK !== undefined) {
       extras.topK = this.#opts.topK;
+    }
+
+    if (isGemini4Model(this.#opts.model) && extras.automaticContinuation) {
+      log().warn(
+        { model: this.#opts.model },
+        'gemini llm: automaticContinuation is driven by this plugin for long decode and cannot be turned back on; ignoring it',
+      );
+    }
+    if (isGemini4Model(this.#opts.model)) {
+      delete extras.automaticContinuation;
+    }
+
+    if (this.#opts.maxOutputTokens !== undefined) {
+      extras.maxOutputTokens = this.#opts.maxOutputTokens;
+    }
+    const callerSetMaxOutputTokens = extras.maxOutputTokens !== undefined;
+    if (callerSetMaxOutputTokens) {
+      callerSetMaxOutputTokensConfigs.add(extras);
+    }
+    if (isGemini4Model(this.#opts.model)) {
+      if (extras.maxOutputTokens === undefined) {
+        extras.maxOutputTokens = LONG_DECODE_MIN_OUTPUT_TOKENS;
+      } else if (extras.maxOutputTokens < LONG_DECODE_MIN_OUTPUT_TOKENS) {
+        log().warn(
+          {
+            model: this.#opts.model,
+            maxOutputTokens: extras.maxOutputTokens,
+            recommendedMinimum: LONG_DECODE_MIN_OUTPUT_TOKENS,
+          },
+          'gemini llm: maxOutputTokens is below the recommended floor for this model; thinking shares the budget, so the turn may finish with no answer',
+        );
+      }
     }
     if (this.#opts.presencePenalty !== undefined) {
       extras.presencePenalty = this.#opts.presencePenalty;
@@ -267,7 +414,42 @@ export class LLM extends llm.LLM {
     }
 
     if (this.#opts.thinkingConfig !== undefined) {
-      extras.thinkingConfig = this.#opts.thinkingConfig;
+      const { includeThoughts, thinkingBudget, thinkingLevel } = this.#opts.thinkingConfig;
+
+      if (supportsThinkingLevel(this.#opts.model)) {
+        // Gemini 3 and Gemma 4 configure thinking with a level, not a token budget.
+        if (thinkingBudget !== undefined && thinkingLevel === undefined) {
+          log().warn(
+            `Model ${this.#opts.model} does not support thinkingBudget. ` +
+              `Please use thinkingLevel instead. Ignoring thinkingBudget.`,
+          );
+        }
+        extras.thinkingConfig = {
+          includeThoughts,
+          thinkingLevel:
+            thinkingLevel ??
+            (isGemini3Model(this.#opts.model)
+              ? isGemini3FlashModel(this.#opts.model)
+                ? ThinkingLevel.MINIMAL
+                : ThinkingLevel.LOW
+              : undefined),
+        };
+      } else {
+        // Gemini 2.5 and earlier: only supports thinkingBudget
+        if (thinkingLevel !== undefined && thinkingBudget === undefined) {
+          log().warn(
+            `Model ${this.#opts.model} does not support thinkingLevel. ` +
+              `Please use thinkingBudget (number) instead for Gemini 2.5 and earlier models. ` +
+              `Ignoring thinkingLevel.`,
+          );
+          extras.thinkingConfig = { includeThoughts };
+        } else if (thinkingBudget !== undefined) {
+          // Preserve includeThoughts so callers relying on visible reasoning keep receiving it.
+          extras.thinkingConfig = { thinkingBudget, includeThoughts };
+        } else {
+          extras.thinkingConfig = this.#opts.thinkingConfig;
+        }
+      }
     }
 
     if (this.#opts.automaticFunctionCallingConfig !== undefined) {
@@ -278,11 +460,13 @@ export class LLM extends llm.LLM {
       extras.serviceTier = this.#opts.serviceTier;
     }
 
+    if (this.#opts.cachedContent !== undefined) {
+      extras.cachedContent = this.#opts.cachedContent;
+    }
+
     if (this.#opts.mediaResolution !== undefined) {
       extras.mediaResolution = this.#opts.mediaResolution;
     }
-
-    geminiTools = geminiTools !== undefined ? geminiTools : this.#opts.geminiTools;
 
     return new LLMStream(this, {
       client: this.#client,
@@ -290,7 +474,6 @@ export class LLM extends llm.LLM {
       chatCtx,
       toolCtx,
       connOptions,
-      geminiTools,
       extraKwargs: extras,
     });
   }
@@ -308,8 +491,8 @@ const BLOCKED_REASONS = [
 export class LLMStream extends llm.LLMStream {
   #client: GoogleGenAI;
   #model: string;
-  #geminiTools?: LLMTools;
   #extraKwargs: GenerateContentConfig;
+  #callerSetMaxOutputTokens: boolean;
 
   constructor(
     llm: LLM,
@@ -319,7 +502,6 @@ export class LLMStream extends llm.LLMStream {
       chatCtx,
       toolCtx,
       connOptions,
-      geminiTools,
       extraKwargs,
     }: {
       client: GoogleGenAI;
@@ -327,7 +509,6 @@ export class LLMStream extends llm.LLMStream {
       chatCtx: llm.ChatContext;
       toolCtx?: llm.ToolContext;
       connOptions: APIConnectOptions;
-      geminiTools?: LLMTools;
       extraKwargs: GenerateContentConfig;
     },
   ) {
@@ -335,8 +516,8 @@ export class LLMStream extends llm.LLMStream {
     super(llm, { chatCtx, toolCtx, connOptions });
     this.#client = client;
     this.#model = model;
-    this.#geminiTools = geminiTools;
     this.#extraKwargs = extraKwargs;
+    this.#callerSetMaxOutputTokens = callerSetMaxOutputTokensConfigs.has(extraKwargs);
   }
 
   protected async run(): Promise<void> {
@@ -354,12 +535,6 @@ export class LLMStream extends llm.LLMStream {
         parts: turn.parts as types.Part[],
       }));
 
-      const functionDeclarations = this.toolCtx ? toFunctionDeclarations(this.toolCtx) : undefined;
-      const tools =
-        functionDeclarations && functionDeclarations.length > 0
-          ? [{ functionDeclarations }]
-          : undefined;
-
       let systemInstruction: types.Content | undefined = undefined;
       if (extraData.systemMessages && extraData.systemMessages.length > 0) {
         systemInstruction = {
@@ -367,100 +542,243 @@ export class LLMStream extends llm.LLMStream {
         };
       }
 
-      const response = await this.#client.models.generateContentStream({
-        model: this.#model,
-        contents,
-        config: {
-          ...this.#extraKwargs,
-          systemInstruction,
-          httpOptions: this.#extraKwargs.httpOptions ?? {
-            timeout: Math.floor(this.connOptions.timeoutMs),
-          },
-          tools,
-        },
-      });
+      // Gemini's API rejects `generateContent` requests that pass `cachedContent` together with
+      // `systemInstruction`; it must live inside the CachedContent resource.
+      const cachedContent = this.#extraKwargs.cachedContent;
+      const usingCache = cachedContent !== undefined;
+      const requestConfig: GenerateContentConfig = { ...this.#extraKwargs };
 
-      for await (const chunk of response) {
-        if (chunk.promptFeedback) {
-          throw new APIStatusError({
-            message: `Prompt feedback error: ${JSON.stringify(chunk.promptFeedback)}`,
-            options: {
-              retryable: false,
-              requestId,
-            },
-          });
+      if (!usingCache) {
+        requestConfig.systemInstruction = systemInstruction;
+      } else {
+        const dropped: string[] = [];
+        if ('systemInstruction' in requestConfig) {
+          delete requestConfig.systemInstruction;
+          dropped.push('systemInstruction');
         }
-
-        // Check for blocked reasons first — safety-blocked responses often lack content.parts,
-        // so this must run before the no-content guard to avoid wasting retries.
-        if (
-          chunk.candidates?.[0]?.finishReason &&
-          BLOCKED_REASONS.includes(chunk.candidates[0].finishReason)
-        ) {
-          throw new APIStatusError({
-            message: `Google LLM: generation blocked - ${chunk.candidates[0].finishReason}`,
-            options: {
-              retryable: false,
-              requestId,
-            },
-          });
+        if (systemInstruction && !dropped.includes('systemInstruction')) {
+          dropped.push('systemInstruction');
         }
-
-        if (!chunk.candidates || !chunk.candidates[0]?.content?.parts) {
-          this.logger.warn(`No content in the response: ${JSON.stringify(chunk)}`);
-          if (retryable) {
-            throw new APIStatusError({
-              message: 'Google LLM: no content in the response',
-              options: {
-                retryable: true,
-                requestId,
-              },
-            });
-          }
-          continue;
-        }
-
-        if (chunk.candidates.length > 1) {
+        if (dropped.length > 0) {
           this.logger.warn(
-            'Google LLM: there are multiple candidates in the response, returning response from the first one.',
+            { dropped, cachedContent },
+            'dropping systemInstruction from Gemini request because cachedContent is set; this field must be baked into the CachedContent resource',
           );
         }
+      }
 
-        const candidate = chunk.candidates[0];
-        const finishReason = candidate.finishReason;
+      const longDecode = isGemini4Model(this.#model);
+      const timeout = longDecode
+        ? Math.max(this.connOptions.timeoutMs, LONG_DECODE_HTTP_TIMEOUT_MS)
+        : this.connOptions.timeoutMs;
+      const httpOptions = {
+        ...this.#extraKwargs.httpOptions,
+        timeout: this.#extraKwargs.httpOptions?.timeout ?? Math.floor(timeout),
+      };
+      requestConfig.httpOptions = httpOptions;
+      // a caller's signal must not stand in for the stream's own: closing the stream has to
+      // cancel every request, continuation hops included
+      requestConfig.abortSignal = requestConfig.abortSignal
+        ? AbortSignal.any([requestConfig.abortSignal, this.abortController.signal])
+        : this.abortController.signal;
+      if (longDecode) {
+        requestConfig.automaticContinuation = false;
+      }
 
-        let chunksYielded = false;
-        for (const part of candidate.content!.parts!) {
-          const chatChunk = this.#parsePart(requestId, part);
-          if (chatChunk) {
-            chunksYielded = true;
-            retryable = false;
-            this.queue.put(chatChunk);
+      let responseGenerated = false;
+      let continuationToken: string | undefined;
+      let maxOutputTokens = requestConfig.maxOutputTokens;
+      let initialPromptTokens: number | undefined;
+      let settledUsage: llm.CompletionUsage = {
+        completionTokens: 0,
+        promptTokens: 0,
+        promptCachedTokens: 0,
+        totalTokens: 0,
+      };
+      let requestLimitReached = true;
+
+      for (let requestNo = 0; requestNo < LONG_DECODE_MAX_REQUESTS; requestNo++) {
+        const config =
+          requestNo === 0
+            ? requestConfig
+            : { ...requestConfig, continuationToken, maxOutputTokens };
+        let terminal: types.Candidate | undefined;
+        let checkpoint: string | undefined;
+        // output already handed to the caller that the checkpoint does not cover; resuming
+        // from it would generate that output again
+        let emittedSinceCheckpoint = false;
+        let hopUsage: llm.CompletionUsage | undefined;
+        let streamError: unknown;
+
+        try {
+          const response = await this.#client.models.generateContentStream({
+            model: this.#model,
+            contents,
+            config,
+          });
+
+          for await (const chunk of response) {
+            if (chunk.promptFeedback) {
+              throw new APIStatusError({
+                message: `Prompt feedback error: ${JSON.stringify(chunk.promptFeedback)}`,
+                options: { retryable: false, requestId },
+              });
+            }
+
+            if (chunk.usageMetadata) {
+              const usage = chunk.usageMetadata;
+              initialPromptTokens ??= usage.promptTokenCount;
+              hopUsage = {
+                completionTokens: usage.candidatesTokenCount || 0,
+                promptTokens: usage.promptTokenCount || 0,
+                promptCachedTokens: usage.cachedContentTokenCount || 0,
+                totalTokens: usage.totalTokenCount || 0,
+              };
+              this.queue.put({
+                id: requestId,
+                usage: {
+                  completionTokens: settledUsage.completionTokens + hopUsage.completionTokens,
+                  promptTokens: settledUsage.promptTokens + hopUsage.promptTokens,
+                  promptCachedTokens: settledUsage.promptCachedTokens + hopUsage.promptCachedTokens,
+                  totalTokens: settledUsage.totalTokens + hopUsage.totalTokens,
+                },
+              });
+            }
+
+            if (!chunk.candidates?.[0]) {
+              continue;
+            }
+            if (chunk.candidates.length > 1) {
+              this.logger.warn(
+                'Google LLM: there are multiple candidates in the response, returning response from the first one.',
+              );
+            }
+
+            const candidate = chunk.candidates[0];
+            if (candidate.finishReason !== undefined) {
+              terminal = candidate;
+              if (BLOCKED_REASONS.includes(candidate.finishReason)) {
+                throw new APIStatusError({
+                  message: `Google LLM: generation blocked - ${candidate.finishReason}`,
+                  options: { retryable: false, requestId },
+                });
+              }
+            }
+
+            for (const part of candidate.content?.parts ?? []) {
+              const chatChunk = this.#parsePart(requestId, part);
+              if (chatChunk) {
+                responseGenerated = true;
+                retryable = false;
+                emittedSinceCheckpoint = true;
+                this.queue.put(chatChunk);
+              }
+            }
+            // a token marks the stream up to and including the chunk that carries it
+            if (candidate.continuationToken) {
+              checkpoint = candidate.continuationToken;
+              emittedSinceCheckpoint = false;
+            }
           }
+        } catch (error: unknown) {
+          if (error instanceof APIStatusError || error instanceof APIConnectionError) {
+            throw error;
+          }
+          streamError = error;
         }
 
-        if (finishReason === 'STOP' && !chunksYielded && retryable) {
-          throw new APIStatusError({
-            message: 'Google LLM: no response generated',
-            options: {
-              retryable,
-              requestId,
-            },
-          });
+        if (this.abortController.signal.aborted) {
+          return;
+        }
+        if (config.abortSignal?.aborted && streamError !== undefined) {
+          throw streamError;
         }
 
-        if (chunk.usageMetadata) {
-          const usage = chunk.usageMetadata;
-          this.queue.put({
-            id: requestId,
-            usage: {
-              completionTokens: usage.candidatesTokenCount || 0,
-              promptTokens: usage.promptTokenCount || 0,
-              promptCachedTokens: usage.cachedContentTokenCount || 0,
-              totalTokens: usage.totalTokenCount || 0,
-            },
-          });
+        if (hopUsage) {
+          settledUsage = {
+            completionTokens: settledUsage.completionTokens + hopUsage.completionTokens,
+            promptTokens: settledUsage.promptTokens + hopUsage.promptTokens,
+            promptCachedTokens: settledUsage.promptCachedTokens + hopUsage.promptCachedTokens,
+            totalTokens: settledUsage.totalTokens + hopUsage.totalTokens,
+          };
         }
+
+        const unfinished = terminal === undefined || terminal.finishReason === 'CONTINUATION';
+        if (longDecode && checkpoint && unfinished && emittedSinceCheckpoint) {
+          this.logger.warn(
+            { model: this.#model },
+            'gemini llm: output arrived after the last checkpoint, not resuming so it is not repeated',
+          );
+        } else if (longDecode && checkpoint && unfinished) {
+          if (streamError !== undefined) {
+            this.logger.warn(
+              { model: this.#model, error: String(streamError) },
+              'gemini llm: the stream ended early, resuming from the last checkpoint',
+            );
+          }
+          continuationToken = checkpoint;
+          continue;
+        }
+        if (streamError !== undefined) {
+          throw streamError;
+        }
+        if (terminal === undefined) {
+          this.logger.warn(
+            { model: this.#model },
+            'gemini llm: the stream ended without a finish reason, the answer may be incomplete',
+          );
+          requestLimitReached = false;
+          break;
+        }
+        if (!longDecode || !terminal.continuationToken || terminal.finishReason !== 'MAX_TOKENS') {
+          requestLimitReached = false;
+          break;
+        }
+        if (this.#callerSetMaxOutputTokens) {
+          this.logger.warn(
+            { model: this.#model, maxOutputTokens },
+            'gemini llm: the answer is truncated, the output budget ran out; raise maxOutputTokens to let the model finish',
+          );
+          requestLimitReached = false;
+          break;
+        }
+        if (initialPromptTokens === undefined) {
+          this.logger.warn(
+            { model: this.#model, maxOutputTokens },
+            'gemini llm: the answer is truncated, maxOutputTokens cannot be raised without a prompt token count',
+          );
+          requestLimitReached = false;
+          break;
+        }
+
+        const nextBudget = Math.min(
+          (maxOutputTokens ?? LONG_DECODE_MIN_OUTPUT_TOKENS) * 2,
+          LONG_DECODE_CONTEXT_WINDOW - initialPromptTokens,
+        );
+        if (nextBudget <= (maxOutputTokens ?? 0)) {
+          this.logger.warn(
+            { model: this.#model, maxOutputTokens, promptTokens: initialPromptTokens },
+            'gemini llm: the answer is truncated, the prompt leaves no room to raise maxOutputTokens any further',
+          );
+          requestLimitReached = false;
+          break;
+        }
+        maxOutputTokens = nextBudget;
+        continuationToken = terminal.continuationToken;
+      }
+
+      if (requestLimitReached) {
+        this.logger.warn(
+          { model: this.#model, requests: LONG_DECODE_MAX_REQUESTS },
+          'gemini llm: long decode did not finish within its request limit, returning the answer truncated',
+        );
+      }
+
+      if (!responseGenerated) {
+        throw new APIStatusError({
+          message: 'Google LLM: no response generated',
+          options: { retryable, requestId },
+        });
       }
     } catch (error: unknown) {
       if (error instanceof APIStatusError || error instanceof APIConnectionError) {
@@ -533,6 +851,11 @@ export class LLMStream extends llm.LLMStream {
     }
 
     if (!part.text) {
+      return null;
+    }
+
+    // Drop thought summaries so TTS never speaks Gemini's internal reasoning.
+    if (part.thought) {
       return null;
     }
 
