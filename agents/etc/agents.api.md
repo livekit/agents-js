@@ -6188,6 +6188,7 @@ export interface RealtimeCapabilities {
     nativeTranscriptSync?: boolean;
     perResponseToolChoice?: boolean;
     supportsOverlappingSpeech?: boolean;
+    supportsSay?: boolean;
     turnDetection: boolean;
     userTranscription: boolean;
 }
@@ -6332,6 +6333,9 @@ export abstract class RealtimeSession extends EventEmitter {
     get realtimeModel(): RealtimeModel;
     // (undocumented)
     protected _realtimeModel: RealtimeModel;
+    say(_text: string | ReadableStream_2<string>, _options?: {
+        signal?: AbortSignal;
+    }): Promise<GenerationCreatedEvent>;
     // (undocumented)
     setInputAudioStream(audioStream: ReadableStream_2<AudioFrame>): void;
     startUserActivity(): void;

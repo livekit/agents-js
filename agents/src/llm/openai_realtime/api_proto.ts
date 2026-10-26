@@ -434,7 +434,7 @@ export interface ConversationItemCreateEvent extends BaseClientEvent {
   item: ConversationItemCreateContent;
 }
 
-/** `conversation.item.create` event carrying an xAI {@link ForceMessageItemCreate}. */
+/** `conversation.item.create` event carrying an xAI `force_message` item. */
 export interface ForceMessageCreateEvent extends BaseClientEvent {
   type: 'conversation.item.create';
   item: ForceMessageItemCreate;

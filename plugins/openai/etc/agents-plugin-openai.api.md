@@ -139,7 +139,7 @@ export class ChunkedStream extends tts_2.ChunkedStream {
 // Warning: (ae-missing-release-tag) "ClientEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-type ClientEvent = SessionUpdateEvent | InputAudioBufferAppendEvent | InputAudioBufferCommitEvent | InputAudioBufferClearEvent | ConversationItemCreateEvent | ConversationItemTruncateEvent | ConversationItemDeleteEvent | ResponseCreateEvent | ResponseCancelEvent;
+type ClientEvent = SessionUpdateEvent | InputAudioBufferAppendEvent | InputAudioBufferCommitEvent | InputAudioBufferClearEvent | ConversationItemCreateEvent | ForceMessageCreateEvent | ConversationItemTruncateEvent | ConversationItemDeleteEvent | ResponseCreateEvent | ResponseCancelEvent;
 
 // @public
 type ClientEvent_2 = {
@@ -363,6 +363,24 @@ interface ConversationResource {
     object: 'realtime.conversation';
 }
 
+// Warning: (ae-missing-release-tag) "CreateResponseHandle" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+class CreateResponseHandle {
+    constructor(input: {
+        instructions?: string;
+    });
+    // Warning: (ae-forgotten-export) The symbol "Future" needs to be exported by the entry point index.d.ts
+    // Warning: (ae-forgotten-export) The symbol "llm_2" needs to be exported by the entry point index.d.ts
+    //
+    // (undocumented)
+    doneFut: Future<llm_2.GenerationCreatedEvent>;
+    // (undocumented)
+    instructions?: string;
+    // (undocumented)
+    timeout?: ReturnType<typeof setTimeout>;
+}
+
 // Warning: (ae-missing-release-tag) "DalleModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
@@ -451,6 +469,28 @@ export interface FileSearchOptions {
     maxNumResults?: number;
     rankingOptions?: OpenAI.Responses.FileSearchTool.RankingOptions;
     vectorStoreIds?: string[];
+}
+
+// Warning: (ae-missing-release-tag) "ForceMessageCreateEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+interface ForceMessageCreateEvent extends BaseClientEvent {
+    // (undocumented)
+    item: ForceMessageItemCreate;
+    // (undocumented)
+    type: 'conversation.item.create';
+}
+
+// Warning: (ae-missing-release-tag) "ForceMessageItemCreate" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+interface ForceMessageItemCreate {
+    // (undocumented)
+    content: OutputTextContent[];
+    // (undocumented)
+    role: 'assistant';
+    // (undocumented)
+    type: 'force_message';
 }
 
 // Warning: (ae-missing-release-tag) "FunctionCallItem" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -542,8 +582,6 @@ interface GPTLiveModelOptions {
     voice?: GPTLiveVoices | (string & NonNullable<unknown>) | Record<string, unknown>;
 }
 
-// Warning: (ae-forgotten-export) The symbol "llm_2" needs to be exported by the entry point index.d.ts
-//
 // @public
 class GPTLiveSession extends llm_2.DuplexSession<{
     openai_server_event_received: (event: ServerEvent_2) => void;
@@ -983,8 +1021,6 @@ interface MessageGeneration_2 {
     audioTranscript: string;
     // (undocumented)
     messageId: string;
-    // Warning: (ae-forgotten-export) The symbol "Future" needs to be exported by the entry point index.d.ts
-    //
     // (undocumented)
     modalities: Future<('text' | 'audio')[]>;
     // Warning: (ae-forgotten-export) The symbol "stream" needs to be exported by the entry point index.d.ts
@@ -1173,10 +1209,12 @@ declare namespace realtime {
         InputAudioBufferClearEvent,
         UserItemCreate,
         AssistantItemCreate,
+        ForceMessageItemCreate,
         SystemItemCreate,
         FunctionCallOutputItemCreate,
         ConversationItemCreateContent,
         ConversationItemCreateEvent,
+        ForceMessageCreateEvent,
         ConversationItemTruncateEvent,
         ConversationItemDeleteEvent,
         ResponseCreateEvent,
@@ -1219,6 +1257,7 @@ declare namespace realtime {
         MessageGeneration_2 as MessageGeneration,
         ResponseGeneration,
         DiscardedGeneration,
+        CreateResponseHandle,
         RealtimeModel_3 as RealtimeModel,
         RealtimeSession_2 as RealtimeSession,
         GPTLiveDelegation,
@@ -1369,6 +1408,8 @@ class RealtimeSession_2 extends llm_2.RealtimeSession {
     // (undocumented)
     protected currentGeneration?: ResponseGeneration | DiscardedGeneration;
     // (undocumented)
+    protected discardedEventIds: Set<string>;
+    // (undocumented)
     generateReply(instructions?: string, options?: {
         signal?: AbortSignal;
     }): Promise<llm_2.GenerationCreatedEvent>;
@@ -1389,11 +1430,17 @@ class RealtimeSession_2 extends llm_2.RealtimeSession {
     // (undocumented)
     protected isFatalError(error: unknown): boolean;
     // (undocumented)
+    protected _options: RealtimeOptions;
+    // (undocumented)
     pushAudio(frame: AudioFrame): void;
     // (undocumented)
     protected remoteChatCtx: llm_2.RemoteChatContext;
     // (undocumented)
     protected resetInputTurnState(): void;
+    // (undocumented)
+    protected responseCreatedFutures: {
+        [id: string]: CreateResponseHandle;
+    };
     // (undocumented)
     sendEvent(command: api_proto.ClientEvent): void;
     // (undocumented)

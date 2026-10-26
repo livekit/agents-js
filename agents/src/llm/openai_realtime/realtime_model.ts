@@ -98,7 +98,8 @@ export function isFatalError(error: unknown): boolean {
   return typeof errorCode === 'string' && FATAL_ERROR_CODES.has(errorCode);
 }
 
-class CreateResponseHandle {
+/** Pending `response.created` waiter, keyed by client event id on the session. */
+export class CreateResponseHandle {
   instructions?: string;
   doneFut: Future<llm.GenerationCreatedEvent>;
   timeout?: ReturnType<typeof setTimeout>;
