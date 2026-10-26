@@ -69,7 +69,10 @@ export class WebSocketMonitor {
         this.close();
         return;
       }
-      this.#schedule(Math.max(1, this.#livenessTimeoutMs - elapsed));
+      // A busy event loop can delay the probe itself. Give the peer the intended
+      // response window from when the PING was actually sent instead of failing
+      // immediately because our local timer woke late.
+      this.#schedule(this.#livenessTimeoutMs - this.#pingIntervalMs);
       return;
     }
 
