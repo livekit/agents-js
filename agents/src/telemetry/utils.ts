@@ -153,12 +153,9 @@ export function recordRealtimeMetrics(span: Span, metrics: RealtimeModelMetrics)
     const spanContext = trace.setSpan(currentContext, span);
 
     // Create a dedicated child span for orphaned metrics
-    tracer.getTracer().startActiveSpan('realtime_metrics', {}, spanContext, (child) => {
-      try {
-        child.setAttributes(attrs);
-      } finally {
-        child.end();
-      }
+    tracer.startActiveSpanSync((child) => child.setAttributes(attrs), {
+      name: 'realtime_metrics',
+      context: spanContext,
     });
   }
 }

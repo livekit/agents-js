@@ -24,6 +24,7 @@ export {
   type PinoLogObject,
 } from './pino_otel_transport.js';
 export * as genAI from './gen_ai.js';
+export * as inputDelta from './input_delta.js';
 export { REDACTED_EXCEPTION_MESSAGE } from './redaction.js';
 export * as loopMonitor from './loop_monitor.js';
 export * as rpc from './rpc.js';

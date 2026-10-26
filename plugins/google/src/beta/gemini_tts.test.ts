@@ -64,10 +64,8 @@ function lastRequest(): RequestArgs {
   return generateContentStream.mock.lastCall![0] as RequestArgs;
 }
 
-/** The contents the SDK will actually send, after extraBody is merged in. */
 function sentContents(): unknown {
-  const { contents, config } = lastRequest();
-  return config.httpOptions?.extraBody?.contents ?? contents;
+  return lastRequest().contents;
 }
 
 async function synthesize(tts: TTS, text: string): Promise<void> {
@@ -112,7 +110,7 @@ describe('Google Gemini TTS expressive markup', () => {
           parts: [
             {
               text: '"Sienna?"',
-              speech_metadata: { style: 'Thoughtful, Quiet, American accent' },
+              speechMetadata: { style: 'Thoughtful, Quiet, American accent' },
             },
           ],
         },
@@ -122,8 +120,7 @@ describe('Google Gemini TTS expressive markup', () => {
 
   it('keeps the plain prompt for unmarked text', async () => {
     await synthesize(new TTS({ apiKey: 'k', model: 'gemini-3.8-flash-tts' }), 'Hello world');
-    // nothing to style, so contents is left alone and the words go as they are
-    expect(lastRequest().config.httpOptions?.extraBody?.contents).toBeUndefined();
+    // nothing to style, so the words go as they are
     expect(lastRequest().contents).toEqual([{ role: 'user', parts: [{ text: 'Hello world' }] }]);
   });
 
@@ -152,7 +149,7 @@ describe('Google Gemini TTS expressive markup', () => {
     expect(sentContents()).toEqual([
       {
         role: 'user',
-        parts: [{ text: '"Hey there."', speech_metadata: { style: 'Warm, Welcoming' } }],
+        parts: [{ text: '"Hey there."', speechMetadata: { style: 'Warm, Welcoming' } }],
       },
     ]);
   });
@@ -172,7 +169,7 @@ describe('Google Gemini TTS expressive markup', () => {
     expect(sentContents()).toEqual([
       {
         role: 'user',
-        parts: [{ text: '"Sienna?"', speech_metadata: { style: 'Speak slowly, Wistful' } }],
+        parts: [{ text: '"Sienna?"', speechMetadata: { style: 'Speak slowly, Wistful' } }],
       },
     ]);
   });
@@ -192,7 +189,7 @@ describe('Google Gemini TTS expressive markup', () => {
         parts: [
           {
             text: '"Yeah, <chuckle> I get that a lot."',
-            speech_metadata: { style: 'Easygoing, Warm' },
+            speechMetadata: { style: 'Easygoing, Warm' },
           },
         ],
       },
@@ -221,9 +218,9 @@ describe('Google Gemini TTS expressive markup', () => {
       {
         role: 'user',
         parts: [
-          { text: '"Hello."', speech_metadata: { style: 'Warm' } },
+          { text: '"Hello."', speechMetadata: { style: 'Warm' } },
           // the inline event stays in the words it belongs to
-          { text: '"<sigh> Goodbye."', speech_metadata: { style: 'Sad' } },
+          { text: '"<sigh> Goodbye."', speechMetadata: { style: 'Sad' } },
         ],
       },
     ]);
@@ -241,7 +238,7 @@ describe('Google Gemini TTS expressive markup', () => {
         role: 'user',
         parts: [
           { text: '"Hello."' }, // no direction of its own, and no metadata key
-          { text: '"Goodbye."', speech_metadata: { style: 'Sad' } },
+          { text: '"Goodbye."', speechMetadata: { style: 'Sad' } },
         ],
       },
     ]);
@@ -330,7 +327,7 @@ describe('Google Gemini TTS multi-speaker', () => {
       'Sienna?',
     );
     expect(sentContents()).toEqual([
-      { role: 'user', parts: [{ text: '"Sienna?"', speech_metadata: { speaker: 'Sienna' } }] },
+      { role: 'user', parts: [{ text: '"Sienna?"', speechMetadata: { speaker: 'Sienna' } }] },
     ]);
 
     const speech = lastRequest().config.speechConfig!;
@@ -356,7 +353,7 @@ describe('Google Gemini TTS multi-speaker', () => {
       // drain
     }
     expect(sentContents()).toEqual([
-      { role: 'user', parts: [{ text: '"Sienna?"', speech_metadata: { speaker: 'Sienna' } }] },
+      { role: 'user', parts: [{ text: '"Sienna?"', speechMetadata: { speaker: 'Sienna' } }] },
     ]);
   });
 
@@ -368,7 +365,7 @@ describe('Google Gemini TTS multi-speaker', () => {
     expect(sentContents()).toEqual([
       {
         role: 'user',
-        parts: [{ text: '"Sienna?"', speech_metadata: { style: 'Wistful', speaker: 'Sienna' } }],
+        parts: [{ text: '"Sienna?"', speechMetadata: { style: 'Wistful', speaker: 'Sienna' } }],
       },
     ]);
   });

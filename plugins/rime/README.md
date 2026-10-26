@@ -18,21 +18,30 @@ about the framework as a whole.
 
 ## WebSocket v1 streaming
 
-Set `RIME_API_KEY` and pass the model endpoint in `websocketURL`:
+WebSocket v1 requires both `websocketURL` and `modelId` at construction. The URL selects
+the deployment. The model sets the plugin's defaults and available options. Set `RIME_API_KEY`
+and pass both options:
 
 ```ts
 import { TTS } from '@livekit/agents-plugin-rime';
 
 const rime = new TTS({
-  websocketURL: 'wss://api.rime.ai/coda/ws',
+  websocketURL: 'wss://coda.api.rime.ai/ws',
+  modelId: 'coda',
   speaker: 'lyra',
 });
 ```
 
-The endpoint selects the model. Do not pass `modelId` for a route such as
-`/coda/ws` or `/mist/ws`. For a dedicated endpoint ending in `/ws`, pass `modelId`.
-The default speaker is `lyra` for Coda and `cove` for Mist. The public v1 endpoint
-currently supports Coda. The Mist route is `/mist/ws`.
+Use `modelId: 'coda'` with `wss://coda.api.rime.ai/ws`, or `modelId: 'mistv3'` with
+`wss://mist.api.rime.ai/ws`. Both public endpoints use port 443.
+
+If your configuration relied on a model in the URL path, add `modelId` to the constructor.
+The plugin does not read the model from the URL hostname or path.
+
+Custom deployments can use any URL path. Pass the deployment URL and its model in
+`websocketURL` and `modelId`.
+
+For Coda, the default speaker is `lyra`. Mist uses `cove`. Pass `speaker` to use another voice.
 
 `websocketProtocol` defaults to `binary`, with the `rime.v1.binary` subprotocol.
 Set it to `json` for `rime.v1.json` and canonical protobuf JSON. Both modes use

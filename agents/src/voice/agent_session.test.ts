@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import { ParticipantKind, type RemoteParticipant } from '@livekit/rtc-node';
 import { describe, expect, it, vi } from 'vitest';
+import { APIConnectionError } from '../_exceptions.js';
+import { type JobContext, runWithJobContext } from '../job.js';
 import type { STTError } from '../stt/stt.js';
 import { Future } from '../utils.js';
 import { AgentSession, resolveRecordingOptions } from './agent_session.js';
@@ -143,6 +145,28 @@ describe('AgentSession AEC warmup', () => {
     },
   );
 
+  it.each([
+    [undefined, null],
+    [1500, 1500],
+  ] as const)(
+    'uses the expected AEC warmup in a simulation when configured as %s',
+    (explicit, expectedDuration) => {
+      const session = new AgentSession({ vad: null, aecWarmupDuration: explicit });
+      const participant = {
+        info: { kind: ParticipantKind.STANDARD },
+        attributes: {},
+      } as RemoteParticipant;
+      const jobContext = {
+        simulationContext: () => ({}),
+      } as unknown as JobContext;
+
+      runWithJobContext(jobContext, () => session._onRoomIOParticipantLinked(participant));
+
+      expect(session.sessionOptions.aecWarmupDuration).toBe(expectedDuration);
+      expect(session._aecWarmupRemaining).toBe(expectedDuration ?? 0);
+    },
+  );
+
   it('cancels AEC warmup that already started for outbound SIP', () => {
     const session = new AgentSession({ vad: null });
     const internals = session as AgentSessionInternals;
@@ -188,6 +212,7 @@ describe('resolveRecordingOptions', () => {
       logs: true,
       transcript: true,
       redaction: false,
+      inputDelta: false,
     });
     expect(resolveRecordingOptions(false)).toEqual({
       audio: false,
@@ -195,6 +220,7 @@ describe('resolveRecordingOptions', () => {
       logs: false,
       transcript: false,
       redaction: false,
+      inputDelta: false,
     });
   });
 
@@ -205,6 +231,7 @@ describe('resolveRecordingOptions', () => {
       logs: true,
       transcript: true,
       redaction: false,
+      inputDelta: false,
     });
 
     expect(resolveRecordingOptions({ redaction: true })).toEqual({
@@ -213,6 +240,7 @@ describe('resolveRecordingOptions', () => {
       logs: true,
       transcript: true,
       redaction: true,
+      inputDelta: false,
     });
 
     // The granular form from the docs: keep audio, drop everything else.
@@ -230,7 +258,10 @@ describe('resolveRecordingOptions', () => {
       logs: false,
       transcript: false,
       redaction: true,
+      inputDelta: false,
     });
+
+    expect(resolveRecordingOptions({ inputDelta: true }).inputDelta).toBe(true);
   });
 
   it('returns a fresh object so callers cannot corrupt the shared defaults', () => {
@@ -315,14 +346,14 @@ describe('AgentSession STT error tolerance', () => {
       type: 'stt_error',
       timestamp: Date.now(),
       label: 'test',
-      error: new Error('stt unavailable'),
+      error: new APIConnectionError({ message: 'stt unavailable' }),
       recoverable: false,
     };
   }
 
   type Internals = AgentSessionCloseInternals & { sttErrorCounts: number };
 
-  it('tolerates unrecoverable STT errors up to maxUnrecoverableErrors, like LLM and TTS', async () => {
+  it('tolerates STT connection failures up to maxUnrecoverableErrors', async () => {
     const session = new AgentSession({ vad: null, connOptions: { maxUnrecoverableErrors: 1 } });
     const internals = session as unknown as Internals;
 

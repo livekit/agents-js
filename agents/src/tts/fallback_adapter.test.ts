@@ -9,6 +9,8 @@ import { ReadableStream } from 'node:stream/web';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { APIConnectionError, APIError, APIStatusError } from '../_exceptions.js';
 import { initializeLogger, log } from '../log.js';
+import type { TTSMetrics } from '../metrics/base.js';
+import { ModelUsageCollector } from '../metrics/model_usage.js';
 import { setTracerProvider, traceTypes, tracer } from '../telemetry/index.js';
 import { basic } from '../tokenize/index.js';
 import type { APIConnectOptions } from '../types.js';
@@ -178,6 +180,77 @@ describe('TTS FallbackAdapter', () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
+
+  it.each(['chunked', 'streaming', 'non-streaming provider', 'stream adapter'] as const)(
+    'counts provider usage once for %s synthesis',
+    async (mode) => {
+      const exporter = new InMemorySpanExporter();
+      const tracerProvider = new NodeTracerProvider({
+        spanProcessors: [new SimpleSpanProcessor(exporter)],
+      });
+      tracerProvider.register();
+      const previous = tracer.getProvider();
+      setTracerProvider(tracerProvider);
+      const primary = new MockTTS('primary', SAMPLE_RATE, mode === 'streaming');
+      vi.spyOn(primary, 'model', 'get').mockReturnValue('sonic-3.6');
+      vi.spyOn(primary, 'provider', 'get').mockReturnValue('cartesia');
+      const adapter =
+        mode === 'stream adapter'
+          ? new StreamAdapter(primary)
+          : new FallbackAdapter({ ttsInstances: [primary] });
+      const metrics: TTSMetrics[] = [];
+      const usage = new ModelUsageCollector();
+      adapter.on('metrics_collected', (metric) => {
+        metrics.push(metric);
+        usage.collect(metric);
+      });
+
+      const text = 'hello world';
+      const stream = mode === 'chunked' ? adapter.synthesize(text) : adapter.stream();
+      try {
+        if (stream instanceof SynthesizeStream) {
+          stream.updateInputStream(
+            new ReadableStream<string>({
+              start(controller) {
+                controller.enqueue(text);
+                controller.close();
+              },
+            }),
+          );
+        }
+        let frames = 0;
+        for await (const event of stream) {
+          if (event !== SynthesizeStream.END_OF_STREAM) frames++;
+        }
+
+        expect(frames).toBe(1);
+        expect(metrics.map((metric) => metric.label)).toEqual([primary.label]);
+        expect(usage.flatten()).toEqual([
+          {
+            type: 'tts_usage',
+            provider: 'cartesia',
+            model: 'sonic-3.6',
+            inputTokens: 0,
+            outputTokens: 0,
+            charactersCount: text.length,
+            audioDurationMs: Math.round((160 / SAMPLE_RATE) * 1000),
+          },
+        ]);
+        const tracedMetrics = exporter
+          .getFinishedSpans()
+          .filter((span) => traceTypes.ATTR_TTS_METRICS in span.attributes)
+          .map((span) => JSON.parse(span.attributes[traceTypes.ATTR_TTS_METRICS] as string));
+        expect(tracedMetrics).toEqual(metrics);
+      } finally {
+        stream.close();
+        await adapter.close();
+        setTracerProvider(previous);
+        await tracerProvider.shutdown();
+        trace.disable();
+        otelContext.disable();
+      }
+    },
+  );
 
   it('should fall back to the next TTS when the primary stream fails before any pushText', async () => {
     const primary = new MockTTS('primary');
@@ -875,12 +948,13 @@ describe('TTS FallbackAdapter', () => {
     adapter.status[0]!.available = true;
     await delay(20);
 
-    const own = metrics.filter((m) => m.label === adapter.label);
-    expect(own.length).toBeGreaterThan(0);
-    for (const m of own) {
-      expect(m.metadata?.modelName).toBe('secondary-model');
-      expect(m.metadata?.modelProvider).toBe('secondary');
-    }
+    expect(metrics.some((metric) => metric.label === adapter.label)).toBe(false);
+    expect(metrics.filter((metric) => metric.label === secondary.label)).toEqual([
+      expect.objectContaining({
+        label: secondary.label,
+        metadata: { modelName: 'secondary-model', modelProvider: 'secondary' },
+      }),
+    ]);
     stream.close();
     await adapter.close();
   });

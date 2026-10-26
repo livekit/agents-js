@@ -391,7 +391,7 @@ describe.sequential('event loop stall stacks', () => {
     return reports.filter((report) => report.cause === 'code');
   }
 
-  it('samples after the first stall by default, and names the blocking function', async () => {
+  it('adaptive samples after the first stall, and names the blocking function', async () => {
     const { monitor, reports } = startMonitor('adaptive');
     await watchdogReady(monitor, false);
     expect(monitor.stackSamplingActive).toBe(false);
@@ -565,13 +565,14 @@ describe.sequential('event loop stall stacks', () => {
     expect((call![0] as { stack?: string }).stack).toContain('at burnCpuForTest (');
   });
 
-  it('reads env: adaptive by default, 1/always, 0/never', () => {
-    expect(stackSamplingModeFromEnv({})).toBe('adaptive');
+  it('reads env: never by default, 1/always, 0/never, adaptive', () => {
+    expect(stackSamplingModeFromEnv({})).toBe('never');
+    expect(stackSamplingModeFromEnv({ [ENV_STACKS]: 'adaptive' })).toBe('adaptive');
     expect(stackSamplingModeFromEnv({ [ENV_STACKS]: '1' })).toBe('always');
     expect(stackSamplingModeFromEnv({ [ENV_STACKS]: 'always' })).toBe('always');
     expect(stackSamplingModeFromEnv({ [ENV_STACKS]: '0' })).toBe('never');
     expect(stackSamplingModeFromEnv({ [ENV_STACKS]: 'never' })).toBe('never');
-    expect(stackSamplingModeFromEnv({ [ENV_STACKS]: 'sometimes' })).toBe('adaptive');
+    expect(stackSamplingModeFromEnv({ [ENV_STACKS]: 'sometimes' })).toBe('never');
   });
 });
 

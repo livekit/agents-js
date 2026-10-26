@@ -34,12 +34,7 @@ import { setTracerProvider, traceTypes, tracer } from '../telemetry/index.js';
 import * as otelMetrics from '../telemetry/otel_metrics.js';
 import { assertTraceWellFormed } from '../telemetry/testing/trace_schema.js';
 import { Agent } from './agent.js';
-import {
-  AutoToolReplyTurnHold,
-  continueDiscardedTurn,
-  continueToolReplyTurn,
-  withAgentTurn,
-} from './agent_activity.js';
+import { AutoToolReplyTurnHold, continueDiscardedTurn, withAgentTurn } from './agent_activity.js';
 import { AgentSession } from './agent_session.js';
 import { AudioOutput } from './io.js';
 import { SpeechHandle } from './speech_handle.js';
@@ -331,90 +326,10 @@ describe.sequential('agent_turn span', () => {
     expect(turn!.attributes[traceTypes.ATTR_AGENT_TURN_ID]).toBe(`${reply.id}_1`);
   });
 
-  it('a realtime tool reply continues the tool call turn as its next generation', async () => {
-    // the framework runs the reply on a new handle; python runs it on the same one as step 2.
-    // Either way the trace is one turn: the reply's generation numbered after the tool call's
-    // and parented to it, under the tool call's speech id
-    const root = tracer.startSpan({ name: 'agent_session' });
-    const rootCtx = trace.setSpan(ROOT_CONTEXT, root);
-    const opts = { rootContext: rootCtx, agentLabel: 'a' };
-    const speech = SpeechHandle.create({ allowInterruptions: true });
-    let reply: SpeechHandle | undefined;
-    await withAgentTurn(speech, opts, async () => {
-      // the tool calls ran; the framework creates the reply inside the tool call's turn
-      speech._numSteps += 1; // as the realtime path does before scheduling the reply
-      reply = SpeechHandle.create({ allowInterruptions: true, parent: speech });
-      continueToolReplyTurn(speech, reply);
-    });
-    speech._markDone(); // the tool call's own handle ends: the span must survive it
-    expect(spansNamed(exporter, 'agent_turn')).toEqual([]);
-    await withAgentTurn(reply!, opts, async () => {});
-    reply!._markDone();
-    root.end();
-
-    const turns = spansNamed(exporter, 'agent_turn');
-    expect(turns).toHaveLength(1);
-    const [turn] = turns;
-    const attrs = turn!.attributes;
-    expect(attrs[traceTypes.ATTR_SPEECH_ID]).toBe(speech.id);
-    // what the reply's own step stamps on the turn: the tool call's id, not the new handle's
-    expect(reply!._turnSpeechId).toBe(speech.id);
-    expect(speech._turnSpeechId).toBe(speech.id);
-    expect(attrs[traceTypes.ATTR_GENERATION_COUNT]).toBe(2);
-    expect(attrs[traceTypes.ATTR_AGENT_TURN_ID]).toBe(`${speech.id}_2`);
-    const generations = turn!.events.filter((event) => event.name === 'generation');
-    expect(generations.map((event) => event.attributes?.[traceTypes.ATTR_AGENT_TURN_ID])).toEqual([
-      `${speech.id}_1`,
-      `${speech.id}_2`,
-    ]);
-    expect(generations[1]!.attributes?.[traceTypes.ATTR_AGENT_PARENT_TURN_ID]).toBe(
-      `${speech.id}_1`,
-    );
-    expect(turn!.events.some((event) => event.name === 'preemptive_generation_discarded')).toBe(
-      false,
-    );
-    // no handoff to make: the same handle
-    continueToolReplyTurn(reply!, reply!);
-  });
-
-  it('numbers chained realtime tool replies in order', async () => {
-    // a reply that calls another tool is answered by a further reply: generations 1, 2, 3 on
-    // one turn, each parented to the one before
-    const root = tracer.startSpan({ name: 'agent_session' });
-    const opts = { rootContext: trace.setSpan(ROOT_CONTEXT, root), agentLabel: 'a' };
+  it('a handle that adopted a turn but never ran passes the numbering on', () => {
+    // a cancelled handle continues from where it stood, so the next id follows a generation
+    // that exists
     const first = SpeechHandle.create({ allowInterruptions: true });
-    let speech = first;
-    for (let i = 0; i < 2; i++) {
-      const current = speech;
-      await withAgentTurn(current, opts, async () => {
-        current._numSteps += 1;
-        const reply = SpeechHandle.create({ allowInterruptions: true, parent: current });
-        continueToolReplyTurn(current, reply);
-        speech = reply;
-      });
-      current._markDone();
-    }
-    await withAgentTurn(speech, opts, async () => {});
-    speech._markDone();
-    root.end();
-
-    const [turn, ...rest] = spansNamed(exporter, 'agent_turn');
-    expect(rest).toEqual([]);
-    expect(turn!.attributes[traceTypes.ATTR_SPEECH_ID]).toBe(first.id);
-    expect(turn!.attributes[traceTypes.ATTR_GENERATION_COUNT]).toBe(3);
-    const generations = turn!.events.filter((event) => event.name === 'generation');
-    expect(
-      generations.map((event) => [
-        event.attributes?.[traceTypes.ATTR_AGENT_TURN_ID],
-        event.attributes?.[traceTypes.ATTR_AGENT_PARENT_TURN_ID],
-      ]),
-    ).toEqual([
-      [`${first.id}_1`, undefined],
-      [`${first.id}_2`, `${first.id}_1`],
-      [`${first.id}_3`, `${first.id}_2`],
-    ]);
-    // a handle that adopted the turn but never ran (cancelled first) passes the numbering on
-    // from where it stood, so the next id follows a generation that exists
     const idle = SpeechHandle.create({ allowInterruptions: true });
     idle._generationBaseId = first.id;
     idle._generationStepBase = 3;
