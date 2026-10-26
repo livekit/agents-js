@@ -7048,15 +7048,17 @@ export interface SessionConnectOptions {
 // @public (undocumented)
 export class SessionHost {
     constructor(transport: SessionTransport, audioInput?: TcpAudioInput, audioOutput?: TcpAudioOutput);
+    get attachedSession(): AgentSession | undefined;
+    // (undocumented)
     close(): Promise<void>;
     // @internal
     _onAmdPrediction(event: AMDPredictionEvent): void;
     // @internal
     _onEotPrediction(event: EotPredictionEvent): void;
-    // (undocumented)
     registerSession(session: AgentSession): void;
     // (undocumented)
     start(): Promise<void>;
+    unregisterSession(): void;
 }
 
 // @public (undocumented)
