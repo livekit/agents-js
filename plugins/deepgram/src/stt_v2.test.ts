@@ -84,6 +84,16 @@ describe('Deepgram STTv2 audio chunk duration', () => {
     ).toThrow(/audioChunkDurationMs/);
   });
 
+  it('ignores runtime duration updates and rejects sample rates below one sample', () => {
+    const stt = new STTv2({ apiKey: 'test-key', audioChunkDurationMs: 1 });
+    expect(() =>
+      stt.updateOptions({ audioChunkDurationMs: 0 } as unknown as Parameters<
+        STTv2['updateOptions']
+      >[0]),
+    ).not.toThrow();
+    expect(() => stt.updateOptions({ sampleRate: 100 })).toThrow(/audioChunkDurationMs/);
+  });
+
   const cases = [undefined, 20, 80].flatMap((audioChunkDurationMs) =>
     [8000, 16000, 48000].flatMap((sampleRate) =>
       [400, 410].map((durationMs) => ({ audioChunkDurationMs, sampleRate, durationMs })),

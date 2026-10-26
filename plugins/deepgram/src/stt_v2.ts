@@ -64,6 +64,16 @@ export interface STTv2Options {
   languageHint?: string[];
 }
 
+function validateAudioChunkDuration(sampleRate: number, audioChunkDurationMs: number): void {
+  if (
+    !Number.isInteger(audioChunkDurationMs) ||
+    audioChunkDurationMs <= 0 ||
+    Math.floor((sampleRate * audioChunkDurationMs) / 1000) < 1
+  ) {
+    throw new Error('audioChunkDurationMs must be a positive integer yielding at least one sample');
+  }
+}
+
 const defaultSTTv2Options: Omit<STTv2Options, 'apiKey'> = {
   model: 'flux-general-en',
   sampleRate: 16000,
@@ -148,15 +158,7 @@ export class STTv2 extends stt.STT {
       language: opts.language ? normalizeLanguage(opts.language) : defaultSTTv2Options.language,
     };
 
-    if (
-      !Number.isInteger(this.#opts.audioChunkDurationMs) ||
-      this.#opts.audioChunkDurationMs <= 0 ||
-      Math.floor((this.#opts.sampleRate * this.#opts.audioChunkDurationMs) / 1000) < 1
-    ) {
-      throw new Error(
-        'audioChunkDurationMs must be a positive integer yielding at least one sample',
-      );
-    }
+    validateAudioChunkDuration(this.#opts.sampleRate, this.#opts.audioChunkDurationMs);
     this.#userKeyterms = [...this.#opts.keyterms];
 
     const apiKey = opts.apiKey || process.env.DEEPGRAM_API_KEY;
@@ -218,7 +220,11 @@ export class STTv2 extends stt.STT {
    * @param opts - Partial options to update
    */
   updateOptions(opts: Partial<Omit<STTv2Options, 'audioChunkDurationMs'>>) {
-    const nextOpts = { ...opts };
+    // audioChunkDurationMs is creation-time only; drop it if passed at runtime.
+    const { audioChunkDurationMs: _ignored, ...nextOpts } = opts as Partial<STTv2Options>;
+    if (nextOpts.sampleRate !== undefined) {
+      validateAudioChunkDuration(nextOpts.sampleRate, this.#opts.audioChunkDurationMs);
+    }
     if (nextOpts.keyterms !== undefined) {
       this.#userKeyterms = [...nextOpts.keyterms];
       nextOpts.keyterms = [...new Set([...this.#userKeyterms, ...this.#sessionKeyterms])];
@@ -326,9 +332,13 @@ class SpeechStreamv2 extends stt.SpeechStream {
 
   updateOptions(opts: Partial<Omit<STTv2Options, 'audioChunkDurationMs'>>) {
     this.#logger.debug('Stream received option update', opts);
+    const { audioChunkDurationMs: _ignored, ...nextOpts } = opts as Partial<STTv2Options>;
+    if (nextOpts.sampleRate !== undefined) {
+      validateAudioChunkDuration(nextOpts.sampleRate, this.#opts.audioChunkDurationMs);
+    }
     this.#opts = {
       ...this.#opts,
-      ...opts,
+      ...nextOpts,
       language:
         opts.language !== undefined ? normalizeLanguage(opts.language) : this.#opts.language,
     };
