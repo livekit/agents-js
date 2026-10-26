@@ -52,7 +52,6 @@ const V4_PARAM_BOUNDS = {
   loudness: [0.1, 2.5],
   temperature: [0.01, 1.0],
 } as const;
-const MODULE_LOGGER = log();
 
 const CODEC_TO_MIME_TYPE: Record<TTSOutputAudioCodec, string> = {
   wav: 'audio/wav',
@@ -215,7 +214,7 @@ function validateParam(model: TTSModels, param: ParamName, value: number): void 
 function clampPitch(model: TTSModels, pitch: number): number {
   const [low, high] = paramBounds(model, 'pitch');
   if (pitch >= low && pitch <= high) return pitch;
-  MODULE_LOGGER.warn(
+  log().warn(
     { pitch, model, low, high },
     'pitch is outside the Sarvam API accepted range; clamping to the nearest bound',
   );
