@@ -315,7 +315,7 @@ export class WebSearch extends MistralTool {
 
 // Warnings were encountered during analysis:
 //
-// src/llm.ts:225:7 - (ae-forgotten-export) The symbol "LLMOpts" needs to be exported by the entry point index.d.ts
+// src/llm.ts:226:7 - (ae-forgotten-export) The symbol "LLMOpts" needs to be exported by the entry point index.d.ts
 
 // (No @packageDocumentation comment for this package)
 
