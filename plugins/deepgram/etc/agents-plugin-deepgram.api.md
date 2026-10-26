@@ -176,7 +176,7 @@ export class STTv2 extends stt.STT {
     stream(options?: {
         connOptions?: APIConnectOptions;
     }): stt.SpeechStream;
-    updateOptions(opts: Partial<STTv2Options>): void;
+    updateOptions(opts: Partial<Omit<STTv2Options, 'audioChunkDurationMs'>>): void;
     // (undocumented)
     _updateSessionKeyterms(keyterms: string[]): void;
 }
@@ -187,6 +187,7 @@ export class STTv2 extends stt.STT {
 export interface STTv2Options {
     // (undocumented)
     apiKey?: string;
+    audioChunkDurationMs: number;
     // (undocumented)
     eagerEotThreshold?: number;
     // (undocumented)
