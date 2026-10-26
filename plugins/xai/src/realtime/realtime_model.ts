@@ -40,11 +40,48 @@ export interface RealtimeModelOptions extends Omit<OpenAIRealtimeModelOptions, '
   apiKey?: string;
 }
 
+/**
+ * xAI Grok Voice Agent API model, ready to pass to `AgentSession`.
+ *
+ * Produces audio directly, so a separate TTS plugin is not required for `session.say()`.
+ *
+ * @public
+ */
 export class RealtimeModel extends OpenAIRealtimeModel {
   override label(): string {
     return 'xai.RealtimeModel';
   }
 
+  /**
+   * Creates an xAI Grok Voice Agent API client.
+   *
+   * @param options - Model configuration:
+   * - `model`: Grok voice model ID. Defaults to `grok-voice-think-fast-1.0`.
+   * - `voice`: Voice used for audio responses. Defaults to `ara`.
+   * - `apiKey`: xAI API key. When omitted, reads `XAI_API_KEY`.
+   * - `baseURL`: Base URL of the xAI Realtime API. Defaults to `wss://api.x.ai/v1`.
+   * - `turnDetection`: Server-side turn detection. Defaults to server VAD with a `0.5`
+   *   threshold, `300` ms prefix padding, and `200` ms silence duration.
+   * - `inputAudioTranscription`: Input transcription configuration. xAI transcription updates
+   *   are emitted as interim, non-final transcripts until the turn is committed.
+   * - `reasoning`: Reasoning configuration. When omitted, the server default applies.
+   * - `speed`: Audio playback speed multiplier. Defaults to `1.0`.
+   * - `maxSessionDuration`: Milliseconds before recycling the connection. Defaults to 20 minutes.
+   *   Set to `null` to disable recycling.
+   * - `connOptions`: Retry, backoff, and connection settings.
+   *
+   * @throws Error if an API key cannot be resolved.
+   *
+   * @example
+   * ```ts
+   * import { voice } from '@livekit/agents';
+   * import { realtime } from '@livekit/agents-plugin-xai';
+   *
+   * const session = new voice.AgentSession({
+   *   llm: new realtime.RealtimeModel({ voice: 'ara' }),
+   * });
+   * ```
+   */
   constructor(options: RealtimeModelOptions = {}) {
     super({
       baseURL: XAI_BASE_URL,

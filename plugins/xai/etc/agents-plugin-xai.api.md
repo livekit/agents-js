@@ -74,9 +74,8 @@ declare namespace realtime {
 }
 
 // Warning: (ae-forgotten-export) The symbol "OpenAIRealtimeModel" needs to be exported by the entry point index.d.ts
-// Warning: (ae-missing-release-tag) "RealtimeModel" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
-// @public (undocumented)
+// @public
 class RealtimeModel_4 extends OpenAIRealtimeModel {
     constructor(options?: RealtimeModelOptions);
     // (undocumented)
