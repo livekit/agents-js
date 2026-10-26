@@ -37,6 +37,7 @@ export interface STTOptions {
   phraseList?: string[] | null;
   explicitPunctuation: boolean;
   trueTextPostProcessing: boolean;
+  pronunciationAssessment?: speechsdk.PronunciationAssessmentConfig;
 }
 
 /** @public */
@@ -62,6 +63,12 @@ export interface STTConstructorOptions extends STTUpdateOptions {
   phraseList?: string[] | null;
   explicitPunctuation?: boolean;
   trueTextPostProcessing?: boolean;
+  /**
+   * Assess pronunciation during streaming recognition. Final transcripts include Azure's scores
+   * and per-word breakdown in `SpeechData.metadata.pronunciationAssessment`.
+   * Leave `referenceText` empty for unscripted assessment.
+   */
+  pronunciationAssessment?: speechsdk.PronunciationAssessmentConfig;
 }
 
 /** @internal */
@@ -167,6 +174,7 @@ export class STT extends stt.STT {
       speechAuthToken,
       speechEndpoint,
       language: normalizeLanguages(opts.language),
+      pronunciationAssessment: opts.pronunciationAssessment,
     };
   }
 
@@ -255,11 +263,13 @@ export class SpeechStream extends stt.SpeechStream {
       const recognizer = createSpeechRecognizer(this._opts, pushStream);
       this.#connectRecognizerEvents(recognizer);
 
-      await new Promise<void>((resolve, reject) => {
-        recognizer.startContinuousRecognitionAsync(resolve, (error) => reject(new Error(error)));
-      });
-
+      let inputClosed = false;
       try {
+        await new Promise<void>((resolve, reject) => {
+          recognizer.startContinuousRecognitionAsync(resolve, (error) =>
+            reject(new APIConnectionError({ message: error })),
+          );
+        });
         await withTimeout(this._sessionStartedEvent.wait(), this.#connOptions.timeoutMs);
 
         const inputAbortController = new AbortController();
@@ -293,6 +303,7 @@ export class SpeechStream extends stt.SpeechStream {
           inputAbortController.abort();
           await inputTask;
           pushStream.close();
+          inputClosed = true;
         }
 
         if (inputEnded) {
@@ -300,6 +311,7 @@ export class SpeechStream extends stt.SpeechStream {
           break;
         }
       } finally {
+        if (!inputClosed) pushStream.close();
         await new Promise<void>((resolve) => {
           recognizer.stopContinuousRecognitionAsync(resolve, () => resolve());
         });
@@ -353,9 +365,17 @@ export class SpeechStream extends stt.SpeechStream {
     const text = evt.result.text.trim();
     if (!text) return;
 
+    const assessment = this._opts.pronunciationAssessment
+      ? pronunciationAssessment(evt.result)
+      : undefined;
     this.queue.put({
       type: stt.SpeechEventType.FINAL_TRANSCRIPT,
-      alternatives: [this.#speechData(evt, 1)],
+      alternatives: [
+        {
+          ...this.#speechData(evt, 1),
+          metadata: assessment ? { pronunciationAssessment: assessment } : undefined,
+        },
+      ],
     });
   }
 
@@ -500,7 +520,35 @@ function createSpeechRecognizer(
     }
   }
 
+  if (config.pronunciationAssessment) {
+    config.pronunciationAssessment.applyTo(recognizer);
+  }
+
   return recognizer;
+}
+
+function pronunciationAssessment(
+  result: speechsdk.SpeechRecognitionResult,
+): Record<string, unknown> | undefined {
+  if (!result.json) return undefined;
+
+  let best: unknown;
+  try {
+    const nbest = (JSON.parse(result.json) as { NBest?: unknown } | null)?.NBest;
+    if (!Array.isArray(nbest) || nbest.length === 0) throw new Error('missing NBest');
+    best = nbest[0];
+  } catch {
+    // The payload contains the transcript, so do not include it in the log.
+    log().warn('could not read the Azure pronunciation assessment result');
+    return undefined;
+  }
+
+  return typeof best === 'object' &&
+    best !== null &&
+    !Array.isArray(best) &&
+    'PronunciationAssessment' in best
+    ? (best as Record<string, unknown>)
+    : undefined;
 }
 
 function createSpeechConfig(config: STTOptions): speechsdk.SpeechConfig {

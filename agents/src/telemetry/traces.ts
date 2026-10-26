@@ -8,9 +8,11 @@ import {
   type Context,
   ProxyTracerProvider,
   type Span,
+  type SpanKind,
   type SpanOptions,
   type Tracer,
   type TracerProvider,
+  metrics,
   context as otelContext,
   trace,
 } from '@opentelemetry/api';
@@ -22,6 +24,11 @@ import {
   envDetector,
   resourceFromAttributes,
 } from '@opentelemetry/resources';
+import {
+  AggregationTemporality,
+  MeterProvider,
+  PeriodicExportingMetricReader,
+} from '@opentelemetry/sdk-metrics';
 import type {
   ReadableSpan,
   Span as SdkSpan,
@@ -34,7 +41,7 @@ import FormData from 'form-data';
 import { AccessToken } from 'livekit-server-sdk';
 import fs from 'node:fs/promises';
 import type { ChatItem } from '../llm/index.js';
-import { enableOtelLogging } from '../log.js';
+import { enableOtelLogging, log } from '../log.js';
 import { filterZeroValues } from '../metrics/model_usage.js';
 import { encodeChatItem } from '../proto.js';
 import {
@@ -42,11 +49,26 @@ import {
   ATTRIBUTE_SIMULATION_ENABLED,
   recordingEnabled,
 } from '../types.js';
+import { version } from '../version.js';
 import { type SessionReport, sessionReportToJSON } from '../voice/report.js';
+import { blockedSpanTracker } from './blocked_span_tracker.js';
+import { conversationId } from './gen_ai.js';
+import type { ObservabilityEndpoint } from './observability_endpoint.js';
+import { resolveObservabilityUrl } from './observability_endpoint.js';
 import { type SimpleLogRecord, SimpleOTLPHttpLogExporter } from './otel_http_exporter.js';
+import { PIIFilteringSpanProcessor } from './pii.js';
 import { flushPinoLogs, initPinoCloudExporter } from './pino_otel_transport.js';
-import { ATTR_AGENT_NAME, ATTR_CLOUD_AGENT_ID, ATTR_DEPLOYMENT_ID } from './trace_types.js';
-import { UploadGateTraceExporter, uploadGate } from './upload_gate.js';
+import { uploadRecording } from './recording_upload.js';
+import { allowPiiFromEnv, redactionEnabledFromAttributes } from './redaction.js';
+import { JobSpanGateExporter } from './span_gate.js';
+import {
+  ATTR_AGENT_NAME,
+  ATTR_CLOUD_AGENT_ID,
+  ATTR_DEPLOYMENT_ID,
+  ATTR_GEN_AI_CONVERSATION_ID,
+} from './trace_types.js';
+import { UploadGateMetricExporter, UploadGateTraceExporter, uploadGate } from './upload_gate.js';
+import { recordException } from './utils.js';
 
 export interface StartSpanOptions {
   /** Name of the span */
@@ -59,10 +81,33 @@ export interface StartSpanOptions {
   endOnExit?: boolean;
   /** Optional start time for the span in milliseconds (Date.now() format) */
   startTime?: number;
+  /** The span's kind (client, server, ...); defaults to INTERNAL */
+  kind?: SpanKind;
+}
+
+/**
+ * An object that can appear in `AgentSession` options (a turn detector, a model) and wants the
+ * session report to show its configuration.
+ *
+ * Return the options worth reporting, keyed by name; values can be primitives, plain objects or
+ * arrays of them. Leave secrets and endpoints out: the report is uploaded. Objects without this
+ * method are reported by class name alone.
+ *
+ * @public
+ */
+export interface DescribesOptions {
+  /** The options worth reporting, keyed by name. Never credentials or endpoints. */
+  describeOptions(): Readonly<Record<string, unknown>>;
 }
 
 /** @deprecated Use OpenTelemetry SDK 2.x's `SpanProcessor` type directly. */
 export type SpanProcessorLike = SpanProcessor;
+
+function withConversationId(attributes: Attributes | undefined): Attributes | undefined {
+  const id = conversationId();
+  if (!id) return attributes;
+  return { [ATTR_GEN_AI_CONVERSATION_ID]: id, ...(attributes ?? {}) };
+}
 
 /**
  * A dynamic tracer that allows the tracer provider to be changed at runtime.
@@ -116,8 +161,9 @@ class DynamicTracer {
     const span = this.tracer.startSpan(
       options.name,
       {
-        attributes: options.attributes,
+        attributes: withConversationId(options.attributes),
         startTime: options.startTime,
+        kind: options.kind,
       },
       ctx,
     );
@@ -136,7 +182,11 @@ class DynamicTracer {
   async startActiveSpan<T>(fn: (span: Span) => Promise<T>, options: StartSpanOptions): Promise<T> {
     const ctx = options.context || otelContext.active();
     const endOnExit = options.endOnExit === undefined ? true : options.endOnExit; // default true
-    const opts: SpanOptions = { attributes: options.attributes, startTime: options.startTime };
+    const opts: SpanOptions = {
+      attributes: withConversationId(options.attributes),
+      startTime: options.startTime,
+      kind: options.kind,
+    };
 
     // Directly return the tracer's startActiveSpan result - it handles async correctly
     return await this.tracer.startActiveSpan(options.name, opts, ctx, async (span) => {
@@ -151,6 +201,27 @@ class DynamicTracer {
   }
 
   /**
+   * Run `fn` under a span that is never made current.
+   *
+   * For code that spawns long-lived tasks (connecting the room, publishing a track, connecting
+   * MCP servers): a *current* span is inherited by every task created under it and becomes the
+   * accidental parent of unrelated spans those tasks emit for the rest of the session. The
+   * parent is `options.context` when given, else the ambient context; an exception is recorded
+   * redaction-aware and rethrown, and the span is always ended.
+   */
+  async detachedSpan<T>(fn: (span: Span) => Promise<T>, options: StartSpanOptions): Promise<T> {
+    const span = this.startSpan(options);
+    try {
+      return await fn(span);
+    } catch (error) {
+      recordException(span, error instanceof Error ? error : new Error(String(error)));
+      throw error;
+    } finally {
+      span.end();
+    }
+  }
+
+  /**
    * Synchronous version of startActiveSpan for non-async operations.
    *
    * @param fn - The function to execute within the span context
@@ -160,7 +231,11 @@ class DynamicTracer {
   startActiveSpanSync<T>(fn: (span: Span) => T, options: StartSpanOptions): T {
     const ctx = options.context || otelContext.active();
     const endOnExit = options.endOnExit === undefined ? true : options.endOnExit; // default true
-    const opts: SpanOptions = { attributes: options.attributes, startTime: options.startTime };
+    const opts: SpanOptions = {
+      attributes: withConversationId(options.attributes),
+      startTime: options.startTime,
+      kind: options.kind,
+    };
 
     return this.tracer.startActiveSpan(options.name, opts, ctx, (span) => {
       try {
@@ -184,6 +259,11 @@ class MetadataSpanProcessor implements SpanProcessor {
   private metadata: Attributes;
 
   constructor(metadata: Attributes) {
+    this.metadata = metadata;
+  }
+
+  /** Replace the stamp: the job's session metadata is only known once it registers. */
+  setMetadata(metadata: Attributes): void {
     this.metadata = metadata;
   }
 
@@ -263,6 +343,127 @@ interface CustomProviderConfig {
 }
 
 const customProviderConfigs = new WeakMap<TracerProvider, CustomProviderConfig>();
+/** Providers that already carry the in-process PII stripper — installed at most once. */
+const piiRedactionInstalled = new WeakSet<TracerProvider>();
+/** Providers already reporting their spans to the loop monitor's blocked-span tracker. */
+const blockedSpanTrackerInstalled = new WeakSet<TracerProvider>();
+
+/**
+ * Report the provider's spans to the loop monitor's {@link blockedSpanTracker}, so a stall
+ * nests under the span that was running. Once per provider; a user's provider needs a
+ * registrar, like PII redaction.
+ */
+function installBlockedSpanTracker(
+  provider: TracerProvider,
+  registerSpanProcessor: SpanProcessorRegistrar | undefined,
+): void {
+  if (blockedSpanTrackerInstalled.has(provider) || !registerSpanProcessor) return;
+  blockedSpanTrackerInstalled.add(provider);
+  registerSpanProcessor(blockedSpanTracker);
+}
+
+let cloudMeterProvider: MeterProvider | undefined;
+let cloudMetricsUnavailable = false;
+let cloudMeterShutdownRegistered = false;
+
+// @opentelemetry/api keeps every registered global under this well-known symbol, keyed by API
+// major version; the default no-op meter provider is never stored there. Reading the registry
+// directly also sees a provider installed through a second copy of the API package, which an
+// `instanceof` or constructor-name check on `metrics.getMeterProvider()` would not.
+const OTEL_API_GLOBAL_KEY = Symbol.for('opentelemetry.js.api.1');
+
+function hasGlobalMeterProvider(): boolean {
+  const registry = (globalThis as { [OTEL_API_GLOBAL_KEY]?: { metrics?: unknown } })[
+    OTEL_API_GLOBAL_KEY
+  ];
+  return registry?.metrics !== undefined;
+}
+
+function setupCloudMetrics(
+  observabilityUrl: string,
+  headers: Record<string, string>,
+  resource: ReturnType<typeof resourceFromAttributes>,
+): MeterProvider | undefined {
+  if (cloudMeterProvider || cloudMetricsUnavailable) return cloudMeterProvider;
+
+  if (hasGlobalMeterProvider()) {
+    // Metric readers are fixed when an SDK 2.x MeterProvider is constructed. Preserve an
+    // application-installed global provider rather than replacing it and breaking its exporter;
+    // measurements still reach it through the API's global meter.
+    cloudMetricsUnavailable = true;
+    return undefined;
+  }
+
+  const exporter = new UploadGateMetricExporter({
+    url: `${observabilityUrl}/observability/metrics/otlp/v0`,
+    headers,
+    compression: CompressionAlgorithm.GZIP,
+    temporalityPreference: AggregationTemporality.DELTA,
+  });
+  const provider = new MeterProvider({
+    resource,
+    readers: [
+      new PeriodicExportingMetricReader({
+        exporter,
+        exportIntervalMillis: 30_000,
+      }),
+    ],
+  });
+
+  if (!metrics.setGlobalMeterProvider(provider)) {
+    // Another provider won the set-once global between the check and registration. Do not leave
+    // the orphaned periodic reader running.
+    void provider.shutdown().catch(() => undefined);
+    cloudMetricsUnavailable = true;
+    return undefined;
+  }
+
+  cloudMeterProvider = provider;
+  if (!cloudMeterShutdownRegistered) {
+    cloudMeterShutdownRegistered = true;
+    process.once('beforeExit', () => {
+      const ownedProvider = cloudMeterProvider;
+      cloudMeterProvider = undefined;
+      // the pending export keeps the loop alive, so the shutdown completes before exit
+      void ownedProvider?.shutdown({ timeoutMillis: 10_000 }).catch((error: unknown) => {
+        console.error('Failed to shut down cloud metrics:', error);
+      });
+    });
+  }
+  return provider;
+}
+
+/**
+ * Installs {@link PIIFilteringSpanProcessor} on a provider LiveKit does not own.
+ *
+ * The processor strips PII in `onEnding`, which the SDK dispatches to every registered
+ * processor before any processor's `onEnd`, so it protects the integrator's exporters
+ * regardless of the order they were registered in.
+ */
+function installPIIRedaction(
+  provider: TracerProvider,
+  registerSpanProcessor: SpanProcessorRegistrar | undefined,
+  allowPii: boolean | undefined,
+): void {
+  if (piiRedactionInstalled.has(provider)) return;
+
+  if (!registerSpanProcessor) {
+    // never reached for a provider we own. addSpanProcessor is deliberately not used as a
+    // fallback: OpenTelemetry 2.x removed it, and attaching to an integrator's provider
+    // without being handed a registrar is not ours to do
+    console.warn(
+      'Unable to install LiveKit PII redaction on the custom tracer provider, so its ' +
+        'exporters may receive conversational content. Pass registerSpanProcessor to ' +
+        'setTracerProvider, or set OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=false.',
+    );
+    return;
+  }
+
+  piiRedactionInstalled.add(provider);
+  // PII flows to every exporter unless withheld: the GenAI conventions are only useful to a
+  // backend that can render the conversation
+  registerSpanProcessor(new PIIFilteringSpanProcessor(allowPii ?? allowPiiFromEnv() ?? true));
+}
 
 /** Options for configuring a custom tracer provider. */
 export interface SetTracerProviderOptions {
@@ -292,6 +493,16 @@ export interface SetTracerProviderOptions {
    * active. The returned processor must use OpenTelemetry SDK 2.x.
    */
   createCloudSpanProcessor?: (options: CloudSpanProcessorOptions) => SpanProcessor;
+  /**
+   * Whether this provider's exporters may receive conversational content, tool payloads and
+   * other user data.
+   *
+   * Defaults to `true` (or `LIVEKIT_TELEMETRY_ALLOW_PII`, when set), since a GenAI backend
+   * can only render the conversation if it receives it. Pass `false` to strip PII in-process
+   * before every exporter but LiveKit Cloud's, leaving them the non-content attributes.
+   * Ignored when the project mandates redaction — that setting is not weakened from here.
+   */
+  allowPii?: boolean;
 }
 
 /**
@@ -345,6 +556,9 @@ export function setTracerProvider(
     );
   }
 
+  installPIIRedaction(provider, registerSpanProcessor, options?.allowPii);
+  installBlockedSpanTracker(provider, registerSpanProcessor);
+
   if (registerSpanProcessor) {
     customProviderConfigs.set(provider, {
       registerSpanProcessor,
@@ -357,90 +571,218 @@ export function setTracerProvider(
   tracer.setProvider(provider);
 }
 
-/**
- * Setup OpenTelemetry tracer for LiveKit Cloud observability.
- * This configures OTLP exporters to send traces to LiveKit Cloud.
- *
- * @param options - Configuration for cloud tracer with roomId, jobId, and cloudHostname properties
- *
- * @internal
- */
-export async function setupCloudTracer(options: {
-  roomId: string;
-  jobId: string;
-  cloudHostname: string;
-  agentName?: string;
-  enableTraces?: boolean;
-  enableLogs?: boolean;
-  metadata?: Attributes;
-}): Promise<void> {
-  uploadGate.reset();
+/** The trace pipeline a job prepared before its first span (see {@link prepareCloudTracer}). */
+interface PreparedCloudPipeline {
+  provider: NodeTracerProvider;
+  gate: JobSpanGateExporter;
+  metadata: MetadataSpanProcessor;
+  observabilityUrl: string;
+}
 
-  const {
-    roomId,
-    jobId,
-    cloudHostname,
-    agentName,
-    enableTraces = true,
-    enableLogs = true,
-  } = options;
+let preparedCloud: PreparedCloudPipeline | undefined;
 
+async function cloudAuthHeaders(): Promise<Record<string, string>> {
   const apiKey = process.env.LIVEKIT_API_KEY;
   const apiSecret = process.env.LIVEKIT_API_SECRET;
-
   if (!apiKey || !apiSecret) {
     throw new Error('LIVEKIT_API_KEY and LIVEKIT_API_SECRET must be set for cloud tracing');
   }
-
   const token = new AccessToken(apiKey, apiSecret, {
     identity: 'livekit-agents-telemetry',
     ttl: '6h',
   });
   token.addObservabilityGrant({ write: true });
+  return { Authorization: `Bearer ${await token.toJwt()}` };
+}
+
+function cloudBaseMetadata(roomId: string, jobId: string, agentName?: string): Attributes {
+  const baseMetadata: Attributes = { room_id: roomId, job_id: jobId };
+  if (agentName) {
+    // identifies the agent for LiveKit Cloud agent insights (explicit dispatch only; the
+    // default dispatch has no agent name). Included in both the resource (traces) and the
+    // session metadata (spans + logs).
+    baseMetadata[ATTR_AGENT_NAME] = agentName;
+  }
+  // cloud agent id and deployment provided by LiveKit Cloud via env vars. Included in both the
+  // resource and the session metadata like agentName; omitted when unset.
+  const cloudAgentId = process.env.LIVEKIT_AGENT_ID;
+  if (cloudAgentId) baseMetadata[ATTR_CLOUD_AGENT_ID] = cloudAgentId;
+  const deploymentId = process.env.LIVEKIT_AGENT_DEPLOYMENT;
+  if (deploymentId) baseMetadata[ATTR_DEPLOYMENT_ID] = deploymentId;
+  return baseMetadata;
+}
+
+function cloudResource(baseMetadata: Attributes) {
+  return defaultResource()
+    .merge(detectResources({ detectors: [envDetector] }))
+    .merge(
+      resourceFromAttributes({
+        [ATTR_SERVICE_NAME]: 'livekit-agents',
+        ...baseMetadata,
+      }),
+    );
+}
+
+/**
+ * Have the LiveKit Cloud trace pipeline up before the job's first span.
+ *
+ * Without a tracer provider every span is a non-recording stub: the job's root
+ * (`job_entrypoint`) and everything before `session.start()` (`room_connect`, a stall while
+ * models load) would be lost, and later spans would start their own traces. This creates the
+ * provider and the gated exporter but registers nothing: the job's spans are held by the gate
+ * until {@link setupCloudTracer} decides whether they upload. A job that never decides drops
+ * them through {@link discardPreparedCloudTracer}.
+ *
+ * A user-configured provider is left alone: it records already, and what it exports is its own
+ * business.
+ *
+ * @internal
+ */
+export async function prepareCloudTracer(
+  options: ObservabilityEndpoint & { roomId: string; jobId: string; agentName?: string },
+): Promise<void> {
+  const observabilityUrl = resolveObservabilityUrl(options);
+  const current = tracer.getProvider();
+  if (preparedCloud) {
+    if (current === preparedCloud.provider) preparedCloud.gate.openJob(options.jobId);
+    return;
+  }
+  if (!(current instanceof ProxyTracerProvider)) return; // the user's provider records
+
+  const headers = await cloudAuthHeaders();
+  const gate = new JobSpanGateExporter(
+    new UploadGateTraceExporter({
+      url: `${observabilityUrl}/observability/traces/otlp/v0`,
+      headers,
+      compression: CompressionAlgorithm.GZIP,
+    }),
+  );
+  const baseMetadata = cloudBaseMetadata(options.roomId, options.jobId, options.agentName);
+  const metadata = new MetadataSpanProcessor(baseMetadata);
+  const provider = new NodeTracerProvider({
+    resource: cloudResource(baseMetadata),
+    spanProcessors: [
+      // strips PII while the span is still mutable, ahead of every exporter's onEnd
+      new PIIFilteringSpanProcessor(allowPiiFromEnv() ?? true),
+      metadata,
+      // which span a loop stall happened under (see BlockedSpanTracker)
+      blockedSpanTracker,
+      new BatchSpanProcessor(gate),
+    ],
+  });
+  piiRedactionInstalled.add(provider);
+  blockedSpanTrackerInstalled.add(provider);
+  gate.openJob(options.jobId);
+  preparedCloud = { provider, gate, metadata, observabilityUrl };
+  // register() installs an AsyncLocalStorageContextManager (needed for span nesting) and sets
+  // the global tracer provider; both are set-once in the OTel API, so a NodeSDK the user
+  // started already makes these no-ops
+  provider.register();
+  setTracerProvider(provider);
+}
+
+/**
+ * A job ended without ever registering: drop whatever the gate held for it.
+ *
+ * @internal
+ */
+export function discardPreparedCloudTracer(jobId: string): void {
+  preparedCloud?.gate.closeJob(jobId);
+}
+
+/** Forget the prepared pipeline so a test can prepare a fresh one. @internal */
+export async function _resetPreparedCloudTracer(): Promise<void> {
+  const prepared = preparedCloud;
+  preparedCloud = undefined;
+  await prepared?.provider.shutdown();
+}
+
+/**
+ * Export every span the framework's provider still holds. Call it once the job's root span has
+ * ended: the job process exits explicitly, so the batch processor would get no further turn.
+ *
+ * @internal
+ */
+export async function flushCloudTraces(): Promise<void> {
+  const provider = tracer.getProvider() as TracerProvider & {
+    forceFlush?: () => Promise<void>;
+  };
+  const prepared = preparedCloud;
+  // three independent queues, each drained whatever the others do: the active provider; the
+  // prepared provider when the entrypoint installed its own (job_entrypoint still sits in the
+  // prepared batch queue); and the gate, whose release uploads and other in-flight requests
+  // a batch processor's flush does not wait for. The first failure surfaces once all ran.
+  const results = await Promise.allSettled([
+    provider.forceFlush?.(),
+    prepared && prepared.provider !== provider ? prepared.provider.forceFlush() : undefined,
+    prepared?.gate.forceFlush(),
+  ]);
+  const failure = results.find((r) => r.status === 'rejected');
+  if (failure) throw failure.reason;
+}
+
+/**
+ * Setup OpenTelemetry tracer for LiveKit Cloud observability.
+ * This configures OTLP exporters to send traces to LiveKit Cloud.
+ *
+ * @param options - Configuration for cloud tracer with roomId, jobId, and observabilityUrl properties
+ *
+ * @internal
+ */
+export async function setupCloudTracer(
+  options: ObservabilityEndpoint & {
+    roomId: string;
+    jobId: string;
+    agentName?: string;
+    enableTraces?: boolean;
+    enableLogs?: boolean;
+    metadata?: Attributes;
+  },
+): Promise<void> {
+  uploadGate.reset();
+
+  const { roomId, jobId, agentName, enableTraces = true, enableLogs = true } = options;
+  const observabilityUrl = resolveObservabilityUrl(options);
 
   try {
-    const jwt = await token.toJwt();
-
-    const headers = {
-      Authorization: `Bearer ${jwt}`,
-    };
-
-    const baseMetadata: Attributes = {
-      room_id: roomId,
-      job_id: jobId,
-    };
-    if (agentName) {
-      // identifies the agent for LiveKit Cloud agent insights (explicit dispatch
-      // only; the default dispatch has no agent name). Included in both the
-      // resource (traces) and the session metadata (spans + logs).
-      baseMetadata[ATTR_AGENT_NAME] = agentName;
-    }
-
-    // cloud agent id and deployment provided by LiveKit Cloud via env vars.
-    // Included in both the resource and the session metadata like agentName;
-    // omitted when unset.
-    const cloudAgentId = process.env.LIVEKIT_AGENT_ID;
-    if (cloudAgentId) {
-      baseMetadata[ATTR_CLOUD_AGENT_ID] = cloudAgentId;
-    }
-    const deploymentId = process.env.LIVEKIT_AGENT_DEPLOYMENT;
-    if (deploymentId) {
-      baseMetadata[ATTR_DEPLOYMENT_ID] = deploymentId;
-    }
-
+    const headers = await cloudAuthHeaders();
+    const baseMetadata = cloudBaseMetadata(roomId, jobId, agentName);
+    const cloudAgentId = baseMetadata[ATTR_CLOUD_AGENT_ID] as string | undefined;
+    const deploymentId = baseMetadata[ATTR_DEPLOYMENT_ID] as string | undefined;
     const sessionMetadata: Attributes = { ...baseMetadata, ...(options.metadata ?? {}) };
+    const resource = cloudResource(baseMetadata);
 
-    const resource = defaultResource()
+    // A meter provider has process lifetime and cannot carry room/job identity safely. Those
+    // fields are attached to each measurement by otel_metrics instead.
+    const meterResource = defaultResource()
       .merge(detectResources({ detectors: [envDetector] }))
       .merge(
         resourceFromAttributes({
           [ATTR_SERVICE_NAME]: 'livekit-agents',
-          ...baseMetadata,
+          ...(agentName ? { [ATTR_AGENT_NAME]: agentName } : {}),
+          ...(cloudAgentId ? { [ATTR_CLOUD_AGENT_ID]: cloudAgentId } : {}),
+          ...(deploymentId ? { [ATTR_DEPLOYMENT_ID]: deploymentId } : {}),
         }),
       );
+    // The final export belongs to the job bootstrap (flushCloudMetrics), after every shutdown
+    // callback has run: a stall inside one of them is only recorded once it returns, and the
+    // periodic reader would not get another turn before process.exit().
+    setupCloudMetrics(observabilityUrl, headers, meterResource);
 
-    if (enableTraces) {
-      const url = `https://${cloudHostname}/observability/traces/otlp/v0`;
+    const currentProvider = tracer.getProvider();
+    if (preparedCloud) {
+      // the job's pipeline was prepared at job start: release what the gate held for it (or
+      // drop it) and stamp the session metadata on the spans that follow
+      preparedCloud.gate.jobRegistered(jobId, {
+        tracesEnabled: enableTraces,
+        redacted: redactionEnabledFromAttributes(options.metadata as Record<string, unknown>),
+      });
+      preparedCloud.metadata.setMetadata(sessionMetadata);
+    }
+    const preparedHere = preparedCloud !== undefined && currentProvider === preparedCloud.provider;
+
+    if (enableTraces && !preparedHere) {
+      const url = `${observabilityUrl}/observability/traces/otlp/v0`;
       const createCloudExporter = () =>
         new UploadGateTraceExporter({
           url,
@@ -451,7 +793,6 @@ export async function setupCloudTracer(options: {
       // If the user already configured a tracer provider (e.g. setTracerProvider in the job
       // entrypoint), attach the cloud exporter to it rather than replacing it, so spans reach
       // both the user's backend and LiveKit Cloud.
-      const currentProvider = tracer.getProvider();
       const existingProvider =
         currentProvider instanceof ProxyTracerProvider ? undefined : currentProvider;
 
@@ -459,10 +800,18 @@ export async function setupCloudTracer(options: {
         const tracerProvider = new NodeTracerProvider({
           resource,
           spanProcessors: [
+            // strips PII while the span is still mutable, ahead of every exporter's onEnd
+            new PIIFilteringSpanProcessor(allowPiiFromEnv() ?? true),
             new MetadataSpanProcessor(sessionMetadata),
+            blockedSpanTracker,
             new BatchSpanProcessor(createCloudExporter()),
           ],
         });
+        // the processor above is already attached, so record it: otherwise the
+        // setTracerProvider call below finds no registrar and warns that redaction could
+        // not be installed, on the default path where it demonstrably was
+        piiRedactionInstalled.add(tracerProvider);
+        blockedSpanTrackerInstalled.add(tracerProvider);
         // register() installs an AsyncLocalStorageContextManager (needed for span nesting)
         // and sets the global tracer provider. Both use set-once semantics in the OTel API,
         // so if the user already called NodeSDK.start(), these are safe no-ops.
@@ -491,6 +840,8 @@ export async function setupCloudTracer(options: {
           // Resource shared by all exporters, so applying `resource` here would also relabel
           // the spans going to the user's own backend. room_id/job_id — the keys Cloud
           // correlates on — still ride along as span attributes via MetadataSpanProcessor.
+          installPIIRedaction(existingProvider, config.registerSpanProcessor, undefined);
+          installBlockedSpanTracker(existingProvider, config.registerSpanProcessor);
           config.registerSpanProcessor(new MetadataSpanProcessor(sessionMetadata));
           config.registerSpanProcessor(cloudSpanProcessor);
         }
@@ -500,7 +851,7 @@ export async function setupCloudTracer(options: {
     if (enableLogs) {
       // Initialize standalone Pino cloud exporter (no OTEL SDK dependency)
       initPinoCloudExporter({
-        cloudHostname,
+        observabilityUrl,
         roomId,
         jobId,
         metadata: options.metadata,
@@ -524,6 +875,16 @@ export async function flushOtelLogs(): Promise<void> {
   await flushPinoLogs();
 }
 
+/**
+ * Export every measurement the cloud meter provider holds. Call it once all work that could
+ * record a metric is done: the job process exits explicitly, so no later flush would run.
+ *
+ * @internal
+ */
+export async function flushCloudMetrics(): Promise<void> {
+  await cloudMeterProvider?.forceFlush({ timeoutMillis: 10_000 });
+}
+
 /** Proto field names and shapes, matching what livekit/agents emits for the same log body. */
 function chatItemSpanAttribute(item: ChatItem): Record<string, unknown> {
   return encodeChatItem(item).toJson({ useProtoFieldName: true }) as Record<string, unknown>;
@@ -533,35 +894,158 @@ const SESSION_OPTION_KEY_ALIASES: Record<string, string> = {
   keyterms: 'lk.pii.keyterms',
 };
 
-function serializeSessionOptions(options: SessionReport['options']): Record<string, unknown> {
-  const serialize = (value: Record<string, unknown>): Record<string, unknown> =>
-    Object.fromEntries(
-      Object.entries(value).map(([key, nestedValue]) => [
-        SESSION_OPTION_KEY_ALIASES[key] ?? key,
-        nestedValue !== null &&
-        typeof nestedValue === 'object' &&
-        !Array.isArray(nestedValue) &&
-        (Object.getPrototypeOf(nestedValue) === Object.prototype ||
-          Object.getPrototypeOf(nestedValue) === null)
-          ? serialize(nestedValue as Record<string, unknown>)
-          : nestedValue,
-      ]),
-    );
+// Option keys never written to the report: prompt text authored by the customer
+// (`keytermsOptions.keytermDetection.instructions`) can embed anything about their business
+// or users, and the report has no use for it. Dropped at every depth, including the options an
+// object returns from `describeOptions()`.
+const SESSION_OPTION_OMITTED_KEYS: ReadonlySet<string> = new Set(['instructions']);
 
-  return serialize(options as unknown as Record<string, unknown>);
+type OptionPrimitive = string | boolean | number;
+
+function isOptionPrimitive(value: unknown): value is OptionPrimitive {
+  return typeof value === 'string' || typeof value === 'boolean' || typeof value === 'number';
+}
+
+/** The JS analogue of Python's `module.Class`: the constructor name is the only stable,
+ * safe identity an object carries. */
+function optionObjectName(value: object): string {
+  return value.constructor?.name || 'Object';
+}
+
+/** Deterministic rendering (sorted keys at every level), the equivalent of
+ * `json.dumps(..., sort_keys=True)`. Only ever called on already-serialized, JSON-safe values. */
+function stringifyOptionValue(value: unknown): string {
+  return JSON.stringify(value, (_key, nestedValue: unknown) => {
+    if (nestedValue !== null && typeof nestedValue === 'object' && !Array.isArray(nestedValue)) {
+      return Object.fromEntries(
+        Object.entries(nestedValue as Record<string, unknown>).sort(([a], [b]) =>
+          a < b ? -1 : a > b ? 1 : 0,
+        ),
+      );
+    }
+    return nestedValue;
+  });
+}
+
+/**
+ * Render an object from the session options as `Class` or, when it implements
+ * {@link DescribesOptions}, `Class(k=v, ...)`.
+ *
+ * The OTel log exporter walks the enumerable properties of anything that is not a primitive,
+ * which for these objects would dump their internals (a turn detector's cloud credentials
+ * among them). The class alone is stable and safe; the object itself decides what else is
+ * worth showing.
+ *
+ * @internal
+ */
+export function describeOptionObject(value: object): string {
+  const name = optionObjectName(value);
+  const describe = (value as Partial<DescribesOptions>).describeOptions;
+  if (typeof describe !== 'function') {
+    return name;
+  }
+
+  let options: Readonly<Record<string, unknown>>;
+  try {
+    options = describe.call(value);
+  } catch (error) {
+    log().debug({ error, className: name }, 'describeOptions() failed');
+    return name;
+  }
+
+  const parts: string[] = [];
+  for (const [key, optionValue] of Object.entries(options)) {
+    if (optionValue === null || optionValue === undefined) continue;
+    if (SESSION_OPTION_OMITTED_KEYS.has(key)) continue;
+    const rendered = isOptionPrimitive(optionValue)
+      ? String(optionValue)
+      : stringifyOptionValue(serializeOptionValue(optionValue));
+    parts.push(`${key}=${rendered}`);
+  }
+  return `${name}(${parts.join(', ')})`;
+}
+
+function isPlainObject(value: object): value is Record<string, unknown> {
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function serializeOptionEntries(entries: Iterable<[unknown, unknown]>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [rawKey, nestedValue] of entries) {
+    const key = String(rawKey);
+    if (SESSION_OPTION_OMITTED_KEYS.has(key)) continue;
+    out[SESSION_OPTION_KEY_ALIASES[key] ?? key] = serializeOptionValue(nestedValue);
+  }
+  return out;
+}
+
+/**
+ * Serialize one session option value into JSON-safe primitives and containers.
+ *
+ * Primitives pass through (`undefined` becomes `null`); plain objects and `Map`s recurse with
+ * the key aliases and omissions applied; arrays, `Set`s (sorted, for a deterministic report) and
+ * other iterables are serialized element-wise, since any iterable is a valid option value;
+ * anything else is reported by class via {@link describeOptionObject}.
+ *
+ * @internal
+ */
+export function serializeOptionValue(value: unknown): unknown {
+  if (value === null || isOptionPrimitive(value)) {
+    return value;
+  }
+  if (value === undefined) {
+    return null;
+  }
+  if (typeof value === 'function') {
+    return describeOptionObject(value);
+  }
+  if (typeof value !== 'object') {
+    // bigint, symbol
+    return String(value);
+  }
+  if (value instanceof Map) {
+    return serializeOptionEntries(value.entries());
+  }
+  if (isPlainObject(value)) {
+    return serializeOptionEntries(Object.entries(value));
+  }
+  if (Array.isArray(value)) {
+    return value.map(serializeOptionValue);
+  }
+  if (value instanceof Set) {
+    // the same order every time, whatever the insertion order (Python: sorted(value, key=str))
+    return [...value]
+      .map((item) => [String(item), item] as const)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .map(([, item]) => serializeOptionValue(item));
+  }
+  if (Symbol.iterator in value) {
+    return [...(value as Iterable<unknown>)].map(serializeOptionValue);
+  }
+  return describeOptionObject(value);
+}
+
+/** @internal */
+export function serializeSessionOptions(
+  options: SessionReport['options'],
+): Record<string, unknown> {
+  return serializeOptionValue(options) as Record<string, unknown>;
 }
 
 /**
  * Upload session report to LiveKit Cloud observability.
- * @param options - Configuration with agentName, cloudHostname, and report
+ * @param options - Configuration with agentName, observabilityUrl, and report
  */
-export async function uploadSessionReport(options: {
-  agentName: string;
-  cloudHostname: string;
-  report: SessionReport;
-  metadata?: Attributes;
-}): Promise<void> {
-  const { agentName, cloudHostname, report } = options;
+export async function uploadSessionReport(
+  options: ObservabilityEndpoint & {
+    agentName: string;
+    report: SessionReport;
+    metadata?: Attributes;
+  },
+): Promise<void> {
+  const { agentName, report } = options;
+  const observabilityUrl = resolveObservabilityUrl(options);
   const metadata = options.metadata ?? {};
 
   if (!recordingEnabled(report.options.recordingOptions)) {
@@ -574,7 +1058,7 @@ export async function uploadSessionReport(options: {
   // Create OTLP HTTP exporter for chat history logs
   // Uses raw HTTP JSON format which is required by LiveKit Cloud
   const logExporter = new SimpleOTLPHttpLogExporter({
-    cloudHostname,
+    observabilityUrl,
     resourceAttributes: {
       room_id: report.roomId,
       job_id: report.jobId,
@@ -608,6 +1092,7 @@ export async function uploadSessionReport(options: {
       'session.options': serializeSessionOptions(report.options),
       'session.report_timestamp': report.timestamp,
       agent_name: agentName,
+      sdk_version: version,
       usage,
     },
   });
@@ -677,9 +1162,6 @@ export async function uploadSessionReport(options: {
   token.addObservabilityGrant({ write: true });
   const jwt = await token.toJwt();
 
-  const formData = new FormData();
-
-  // Add header (protobuf MetricsRecordingHeader)
   const audioStartTime = report.audioRecordingStartedAt ?? 0;
   const headerMsg = new MetricsRecordingHeader({
     roomId: report.roomId,
@@ -694,47 +1176,47 @@ export async function uploadSessionReport(options: {
   });
 
   const headerBytes = Buffer.from(headerMsg.toBinary());
-  formData.append('header', headerBytes, {
-    filename: 'header.binpb',
-    contentType: 'application/protobuf',
-    knownLength: headerBytes.length,
-    header: {
-      'Content-Type': 'application/protobuf',
-      'Content-Length': headerBytes.length.toString(),
-    },
-  });
-
-  // Add chat_history JSON (only when transcript recording is enabled).
-  // Reuse the report layer's serialization so the uploaded chat history carries the
-  // snake_case (Python wire) field names — chat-item toJSON() emits camelCase, and the
-  // snake_case conversion lives only in sessionReportToJSON (toSnakeCaseDeep). Serializing
-  // raw toJSON() here would send camelCase and fail the Python consumer's pydantic validation
-  // (e.g. call_id/arguments/is_error/new_agent_id reported as missing).
+  let chatHistoryBuffer: Buffer | undefined;
   if (report.options.recordingOptions.transcript) {
+    // The report serializer applies the Python-compatible snake_case wire field names.
     const chatHistoryJson = JSON.stringify(sessionReportToJSON(report).chat_history);
-    const chatHistoryBuffer = Buffer.from(chatHistoryJson, 'utf-8');
-    formData.append('chat_history', chatHistoryBuffer, {
-      filename: 'chat_history.json',
-      contentType: 'application/json',
-      knownLength: chatHistoryBuffer.length,
-      header: {
-        'Content-Type': 'application/json',
-        'Content-Length': chatHistoryBuffer.length.toString(),
-      },
-    });
+    chatHistoryBuffer = Buffer.from(chatHistoryJson, 'utf-8');
   }
 
-  // Add audio recording file if available
-  if (
-    report.options.recordingOptions.audio &&
-    report.audioRecordingPath &&
-    report.audioRecordingStartedAt
-  ) {
-    let audioBytes: Buffer;
+  let audioBytes = Buffer.alloc(0);
+  if (hasAudio && report.audioRecordingPath) {
     try {
       audioBytes = await fs.readFile(report.audioRecordingPath);
-    } catch {
-      audioBytes = Buffer.alloc(0);
+    } catch (error) {
+      log().warn(
+        { error, path: report.audioRecordingPath },
+        'failed to read audio recording for session report upload, uploading without the audio part',
+      );
+    }
+  }
+
+  const createFormData = () => {
+    const formData = new FormData();
+    formData.append('header', headerBytes, {
+      filename: 'header.binpb',
+      contentType: 'application/protobuf',
+      knownLength: headerBytes.length,
+      header: {
+        'Content-Type': 'application/protobuf',
+        'Content-Length': headerBytes.length.toString(),
+      },
+    });
+
+    if (chatHistoryBuffer) {
+      formData.append('chat_history', chatHistoryBuffer, {
+        filename: 'chat_history.json',
+        contentType: 'application/json',
+        knownLength: chatHistoryBuffer.length,
+        header: {
+          'Content-Type': 'application/json',
+          'Content-Length': chatHistoryBuffer.length.toString(),
+        },
+      });
     }
 
     if (audioBytes.length > 0) {
@@ -748,61 +1230,8 @@ export async function uploadSessionReport(options: {
         },
       });
     }
-  }
+    return formData;
+  };
 
-  // Upload to LiveKit Cloud using form-data's submit method
-  // This properly streams the multipart form with all headers including Content-Length
-  return new ThrowsPromise<void, Error>((resolve, reject) => {
-    const uploadGeneration = uploadGate.generation;
-    formData.submit(
-      {
-        protocol: 'https:',
-        host: cloudHostname,
-        path: '/observability/recordings/v0',
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${jwt}`,
-        },
-      },
-      (err, res) => {
-        if (err) {
-          reject(new Error(`Failed to upload session report: ${err.message}`));
-          return;
-        }
-
-        if (res.statusCode && res.statusCode >= 400) {
-          // Read response body for error details
-          const chunks: Buffer[] = [];
-          res.on('data', (chunk) => {
-            chunks.push(Buffer.from(chunk));
-          });
-          res.on('error', (readErr) => {
-            reject(
-              new Error(
-                `Failed to upload session report: ${res.statusCode} ${res.statusMessage} (body read error: ${readErr.message})`,
-              ),
-            );
-          });
-          res.on('end', () => {
-            const body = Buffer.concat(chunks);
-            if (uploadGate.isDisabledResponse(res.statusCode ?? 0, body)) {
-              uploadGate.disable(uploadGeneration);
-              resolve();
-              return;
-            }
-            reject(
-              new Error(
-                `Failed to upload session report: ${res.statusCode} ${res.statusMessage} - ${body.toString('utf8')}`,
-              ),
-            );
-          });
-          return;
-        }
-
-        res.resume(); // Drain the response
-        res.on('error', (readErr) => reject(new Error(`Response read error: ${readErr.message}`)));
-        res.on('end', () => resolve());
-      },
-    );
-  });
+  await uploadRecording({ observabilityUrl, jwt, createFormData });
 }

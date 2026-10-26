@@ -5,14 +5,21 @@
 /**
  * Regression tests: sentence tokenizers must handle XML markup correctly.
  *
- * Covers the basic sentence tokenizer (batch + streaming) with the TTS markup tags used
- * in expressive mode (Cartesia, Inworld, xAI, Fish Audio).
+ * Covers the basic and blingfire sentence tokenizers (batch + streaming) with the TTS markup
+ * tags used in expressive mode (Cartesia, Inworld, xAI, Fish Audio).
  */
 import { describe, expect, it } from 'vitest';
 import { extractAndStrip } from '../tts/markup_utils.js';
 import { sentenceTokenizer } from '../tts/provider_format.js';
-import { SentenceTokenizer } from './basic/basic.js';
+import { SentenceTokenizer as BasicSentenceTokenizer } from './basic/basic.js';
+import { SentenceTokenizer as BlingfireSentenceTokenizer } from './blingfire.js';
 import { hasUnclosedXmlTags } from './token_stream.js';
+import type { SentenceTokenizer as BaseSentenceTokenizer } from './tokenizer.js';
+
+const TOKENIZERS = [
+  ['basic', BasicSentenceTokenizer],
+  ['blingfire', BlingfireSentenceTokenizer],
+] as const;
 
 const XML_TAG_RE = /<(\/?)([A-Za-z]\w*)[^>]*?(\/?)\s*>/g;
 
@@ -36,7 +43,7 @@ function assertNoTagOnlySentences(sentences: string[]): void {
   }
 }
 
-async function streamTokenize(tok: SentenceTokenizer, text: string): Promise<string[]> {
+async function streamTokenize(tok: BaseSentenceTokenizer, text: string): Promise<string[]> {
   const stream = tok.stream();
   for (const char of text) {
     stream.pushText(char);
@@ -53,7 +60,8 @@ describe('extractAndStrip', () => {
   const strip = (text: string, tags: string[]) => extractAndStrip(text, tags)[0];
 
   it('removes a self-closing tag', () => {
-    expect(strip('<emotion value="happy"/> Hello!', ['emotion'])).toBe(' Hello!');
+    // a tag heading the text takes the space it stranded along
+    expect(strip('<emotion value="happy"/> Hello!', ['emotion'])).toBe('Hello!');
   });
 
   it('keeps the content of a wrapping tag', () => {
@@ -62,7 +70,7 @@ describe('extractAndStrip', () => {
 
   it('preserves unrelated tags', () => {
     const text = '<emotion value="happy"/> <custom>keep</custom>';
-    expect(strip(text, ['emotion'])).toBe(' <custom>keep</custom>');
+    expect(strip(text, ['emotion'])).toBe('<custom>keep</custom>');
   });
 
   it('is a no-op with an empty tag list', () => {
@@ -113,7 +121,7 @@ describe('extractAndStrip', () => {
       '<expression value="excited"/> Great! <expression value="sad">oh no</expression>',
       ['expression'],
     );
-    expect(clean).toBe(' Great! oh no');
+    expect(clean).toBe('Great! oh no');
     expect(tags).toEqual([
       ['expression', 'excited'],
       ['expression', 'oh no'],
@@ -128,194 +136,214 @@ describe('extractAndStrip', () => {
   });
 });
 
-describe('batch sentence tokenizer with markup', () => {
-  const tok = new SentenceTokenizer({ minSentenceLength: 1, xmlAware: true });
+describe.each(TOKENIZERS)('%s', (_name, SentenceTokenizer) => {
+  describe('batch sentence tokenizer with markup', () => {
+    const tok = new SentenceTokenizer({ minSentenceLength: 1, xmlAware: true });
 
-  it('splits sentences separated by expression tags', () => {
-    // Regression: a sentence tokenizer refuses to split when <expression .../> sits
-    // between sentences because /> confuses its boundary detection. The XML wrapper must
-    // strip tags before tokenizing and remap offsets so each tag goes with its sentence.
-    const text =
-      '<expression value="speak cheerfully"/> Hello and welcome! ' +
-      '<expression value="speak with bright energy"/> Great specials today. ' +
-      '<expression value="sound excited"/> Try our new sandwich.';
-    const sentences = tok.tokenize(text);
-    expect(sentences).toHaveLength(3);
-    expect(sentences[0]).toContain('<expression value="speak cheerfully"/>');
-    expect(sentences[1]).toContain('<expression value="speak with bright energy"/>');
-    expect(sentences[2]).toContain('<expression value="sound excited"/>');
-    assertNoTagOnlySentences(sentences);
+    it('splits sentences separated by expression tags', () => {
+      // Regression: a sentence tokenizer refuses to split when <expression .../> sits
+      // between sentences because /> confuses its boundary detection. The XML wrapper must
+      // strip tags before tokenizing and remap offsets so each tag goes with its sentence.
+      const text =
+        '<expression value="speak cheerfully"/> Hello and welcome! ' +
+        '<expression value="speak with bright energy"/> Great specials today. ' +
+        '<expression value="sound excited"/> Try our new sandwich.';
+      const sentences = tok.tokenize(text);
+      expect(sentences).toHaveLength(3);
+      expect(sentences[0]).toContain('<expression value="speak cheerfully"/>');
+      expect(sentences[1]).toContain('<expression value="speak with bright energy"/>');
+      expect(sentences[2]).toContain('<expression value="sound excited"/>');
+      assertNoTagOnlySentences(sentences);
+    });
+
+    it('merges a standalone tag with the following text', () => {
+      // Regression: a self-closing tag as its own sentence must merge with the next so TTS
+      // never receives a tag-only chunk.
+      const text = '<expression value="speak firmly"/> I told you already, no changes.';
+      assertNoTagOnlySentences(tok.tokenize(text));
+    });
+
+    it('keeps a wrapping tag whose inner text has periods intact', () => {
+      const text = 'Spell it: <spell>U.S.A.</spell>. Got it?';
+      assertWrappingTagIntact(tok.tokenize(text), 'spell');
+    });
+
+    it('keeps a wrapping tag containing full sentences intact', () => {
+      const text =
+        'Read this: <spell>The quick brown fox. The cat sat on the mat.</spell>. ' +
+        'Now something else.';
+      assertWrappingTagIntact(tok.tokenize(text), 'spell');
+    });
+
+    it('handles self-closing, wrapping and break tags in one text', () => {
+      const text =
+        '<emotion value="excited"/><speed ratio="1.3"/> Great news! ' +
+        'The code is <spell>X9Z</spell>. ' +
+        '<break time="500ms"/> <emotion value="calm"/> Let me explain.';
+      const sentences = tok.tokenize(text);
+      assertWrappingTagIntact(sentences, 'spell');
+      assertNoTagOnlySentences(sentences);
+    });
+
+    it('still splits plain text', () => {
+      expect(tok.tokenize('Hello there. How are you? I am fine.').length).toBeGreaterThanOrEqual(2);
+    });
+
+    it('emits a tag-only text as a single token', () => {
+      expect(tok.tokenize('<emotion value="happy"/>')).toHaveLength(1);
+    });
+
+    it('never strands the last character of the final sentence', () => {
+      // regression: the sentence splitter reported `length - 1` as the trailing buffer's
+      // end offset, and the XML wrapper rebuilds sentences from those offsets — so the
+      // last character was remapped into a token of its own and rejoined with a space,
+      // shipping "Bye no w" to the TTS on every expressive turn
+      const sentences = tok.tokenize('<x/> Hello there world how are you today. <y/> Bye now');
+      expect(sentences).toEqual(['<x/> Hello there world how are you today.', '<y/> Bye now']);
+    });
   });
 
-  it('merges a standalone tag with the following text', () => {
-    // Regression: a self-closing tag as its own sentence must merge with the next so TTS
-    // never receives a tag-only chunk.
-    const text = '<expression value="speak firmly"/> I told you already, no changes.';
-    assertNoTagOnlySentences(tok.tokenize(text));
+  describe('streaming sentence tokenizer with markup', () => {
+    const makeTok = () =>
+      new SentenceTokenizer({ minSentenceLength: 1, streamContextLength: 5, xmlAware: true });
+
+    it('holds a tag split across pushes', async () => {
+      const stream = makeTok().stream();
+      stream.pushText('Hello. <emo');
+      stream.pushText('tion value="happy"/> Great!');
+      stream.endInput();
+      const tokens: string[] = [];
+      for await (const ev of stream) tokens.push(ev.token);
+      expect(tokens.join(' ')).toContain('<emotion value="happy"/>');
+    });
+
+    it('merges inner sentence splits of a wrapping tag', async () => {
+      const text =
+        'I want to tell you something important now. ' +
+        '<outer>The first thing you should know is quite significant. ' +
+        'The second thing is equally critical to understand. ' +
+        'The third thing wraps up the entire explanation.</outer> ' +
+        'That was everything I needed to explain today.';
+      assertWrappingTagIntact(await streamTokenize(makeTok(), text), 'outer');
+    });
+
+    it('does not let a stray closing tag unbalance a later wrapping tag', async () => {
+      // Regression: a closing tag whose opener was already emitted (or never sent)
+      // drove the depth counter negative, so the next opening tag looked closed and
+      // its sentences were split across chunks.
+      expect(hasUnclosedXmlTags("</b> Now <emotion value='sad'>I am sorry.")).toBe(true);
+
+      const text =
+        "Okay then.</b> Now <emotion value='sad'>I am sorry. Truly sorry.</emotion> Bye.";
+      const stream = makeTok().stream();
+      for (const word of text.split(' ')) {
+        stream.pushText(`${word} `);
+      }
+      stream.endInput();
+      const tokens: string[] = [];
+      for await (const ev of stream) tokens.push(ev.token);
+      assertWrappingTagIntact(tokens, 'emotion');
+    });
+
+    it('never emits a tag-only chunk', async () => {
+      const text =
+        '<expression value="speak firmly with a sharp and serious tone"/> ' +
+        'I told you already, no changes to the order.';
+      assertNoTagOnlySentences(await streamTokenize(makeTok(), text));
+    });
+
+    it('emits a tag-only token on flush', async () => {
+      // flush()/endInput() must emit tag-only tokens — they could be non-verbal sounds
+      // like laughs that produce audio on their own
+      const stream = makeTok().stream();
+      stream.pushText('<expression value="laugh"/>');
+      stream.endInput();
+      const tokens: string[] = [];
+      for await (const ev of stream) tokens.push(ev.token);
+      expect(tokens).toHaveLength(1);
+    });
+
+    it('handles a realistic marked-up conversation turn', async () => {
+      const text =
+        '<emotion value="neutral"/> Thank you for calling. ' +
+        'How can I help you today? ' +
+        '<break time="500ms"/> ' +
+        '<emotion value="empathetic"/> I understand your frustration. ' +
+        'Let me look into this for you. ' +
+        'Your order number is <spell>A.B.1.2.3.</spell>. ' +
+        '<emotion value="confident"/> I found the issue. ' +
+        '<speed ratio="0.8"/> The refund will be processed in 3 to 5 business days. ' +
+        '<emotion value="happy"/> Is there anything else I can help with?';
+      const tokens = await streamTokenize(makeTok(), text);
+      assertWrappingTagIntact(tokens, 'spell');
+      assertNoTagOnlySentences(tokens);
+    });
   });
 
-  it('keeps a wrapping tag whose inner text has periods intact', () => {
-    const text = 'Spell it: <spell>U.S.A.</spell>. Got it?';
-    assertWrappingTagIntact(tok.tokenize(text), 'spell');
-  });
+  describe('plain text with "<" (false-positive guard)', () => {
+    // Regression: a stray "<" in plain text must not stall streaming. hasUnclosedXmlTags
+    // used to treat any "<" after the last ">" as an unfinished tag; one "3 < 5" then held
+    // every following sentence until flush, degrading streaming TTS to end-of-turn batching
+    // for the rest of the turn.
 
-  it('keeps a wrapping tag containing full sentences intact', () => {
-    const text =
-      'Read this: <spell>The quick brown fox. The cat sat on the mat.</spell>. ' +
-      'Now something else.';
-    assertWrappingTagIntact(tok.tokenize(text), 'spell');
-  });
+    it('does not treat a bare "<" as a tag', () => {
+      expect(hasUnclosedXmlTags('3 < 5.')).toBe(false);
+      expect(hasUnclosedXmlTags('i <3 you')).toBe(false);
+      expect(hasUnclosedXmlTags('price < 10 dollars')).toBe(false);
+      // tag-shaped: must still hold
+      expect(hasUnclosedXmlTags('Hello <emo')).toBe(true);
+      expect(hasUnclosedXmlTags('Hello <')).toBe(true); // the next chunk resolves it
+      expect(hasUnclosedXmlTags('<spell>abc')).toBe(true); // unclosed wrapping tag
+    });
 
-  it('handles self-closing, wrapping and break tags in one text', () => {
-    const text =
-      '<emotion value="excited"/><speed ratio="1.3"/> Great news! ' +
-      'The code is <spell>X9Z</spell>. ' +
-      '<break time="500ms"/> <emotion value="calm"/> Let me explain.';
-    const sentences = tok.tokenize(text);
-    assertWrappingTagIntact(sentences, 'spell');
-    assertNoTagOnlySentences(sentences);
-  });
+    it('does not count digit-named pseudo tags', () => {
+      // regression: the depth-counter regex must not treat "<5>" / "<3 wins>" as open tags,
+      // or a complete-but-digit-named pair would leave depth > 0 and stall streaming for
+      // the rest of the turn (the tail check already treats "<"+digit as plain text — the
+      // two predicates must agree)
+      expect(hasUnclosedXmlTags('Rate this from <1> to <5> please.')).toBe(false);
+      expect(hasUnclosedXmlTags('Scores: <3 wins> today.')).toBe(false);
+      // a real letter-named tag pair is still balanced
+      expect(hasUnclosedXmlTags('<spell>abc</spell> done')).toBe(false);
+    });
 
-  it('still splits plain text', () => {
-    expect(tok.tokenize('Hello there. How are you? I am fine.').length).toBeGreaterThanOrEqual(2);
-  });
+    it('streams a digit pseudo tag with xmlAware on', async () => {
+      const stream = new SentenceTokenizer({
+        minSentenceLength: 1,
+        streamContextLength: 5,
+        xmlAware: true,
+      }).stream();
+      stream.pushText('Rate this from <1> to <5>. And here is a second sentence to split.');
+      const { value } = await stream.next();
+      expect(value!.token.includes('<5>') || value!.token.includes('<1>')).toBe(true);
+      stream.endInput();
+    });
 
-  it('emits a tag-only text as a single token', () => {
-    expect(tok.tokenize('<emotion value="happy"/>')).toHaveLength(1);
-  });
+    it('streams a bare "<" with xmlAware on', async () => {
+      const stream = new SentenceTokenizer({
+        minSentenceLength: 1,
+        streamContextLength: 5,
+        xmlAware: true,
+      }).stream();
+      stream.pushText('Note that 3 < 5 holds. And here is a second sentence to tokenize.');
+      // the first sentence must be emitted without waiting for flush
+      const { value } = await stream.next();
+      expect(value!.token).toContain('3 < 5');
+      stream.endInput();
+    });
 
-  it('never strands the last character of the final sentence', () => {
-    // regression: the sentence splitter reported `length - 1` as the trailing buffer's
-    // end offset, and the XML wrapper rebuilds sentences from those offsets — so the
-    // last character was remapped into a token of its own and rejoined with a space,
-    // shipping "Bye no w" to the TTS on every expressive turn
-    const sentences = tok.tokenize('<x/> Hello there world how are you today. <y/> Bye now');
-    expect(sentences).toEqual(['<x/> Hello there world how are you today.', '<y/> Bye now']);
-  });
-});
-
-describe('streaming sentence tokenizer with markup', () => {
-  const makeTok = () =>
-    new SentenceTokenizer({ minSentenceLength: 1, streamContextLength: 5, xmlAware: true });
-
-  it('holds a tag split across pushes', async () => {
-    const stream = makeTok().stream();
-    stream.pushText('Hello. <emo');
-    stream.pushText('tion value="happy"/> Great!');
-    stream.endInput();
-    const tokens: string[] = [];
-    for await (const ev of stream) tokens.push(ev.token);
-    expect(tokens.join(' ')).toContain('<emotion value="happy"/>');
-  });
-
-  it('merges inner sentence splits of a wrapping tag', async () => {
-    const text =
-      'I want to tell you something important now. ' +
-      '<outer>The first thing you should know is quite significant. ' +
-      'The second thing is equally critical to understand. ' +
-      'The third thing wraps up the entire explanation.</outer> ' +
-      'That was everything I needed to explain today.';
-    assertWrappingTagIntact(await streamTokenize(makeTok(), text), 'outer');
-  });
-
-  it('never emits a tag-only chunk', async () => {
-    const text =
-      '<expression value="speak firmly with a sharp and serious tone"/> ' +
-      'I told you already, no changes to the order.';
-    assertNoTagOnlySentences(await streamTokenize(makeTok(), text));
-  });
-
-  it('emits a tag-only token on flush', async () => {
-    // flush()/endInput() must emit tag-only tokens — they could be non-verbal sounds
-    // like laughs that produce audio on their own
-    const stream = makeTok().stream();
-    stream.pushText('<expression value="laugh"/>');
-    stream.endInput();
-    const tokens: string[] = [];
-    for await (const ev of stream) tokens.push(ev.token);
-    expect(tokens).toHaveLength(1);
-  });
-
-  it('handles a realistic marked-up conversation turn', async () => {
-    const text =
-      '<emotion value="neutral"/> Thank you for calling. ' +
-      'How can I help you today? ' +
-      '<break time="500ms"/> ' +
-      '<emotion value="empathetic"/> I understand your frustration. ' +
-      'Let me look into this for you. ' +
-      'Your order number is <spell>A.B.1.2.3.</spell>. ' +
-      '<emotion value="confident"/> I found the issue. ' +
-      '<speed ratio="0.8"/> The refund will be processed in 3 to 5 business days. ' +
-      '<emotion value="happy"/> Is there anything else I can help with?';
-    const tokens = await streamTokenize(makeTok(), text);
-    assertWrappingTagIntact(tokens, 'spell');
-    assertNoTagOnlySentences(tokens);
-  });
-});
-
-describe('plain text with "<" (false-positive guard)', () => {
-  // Regression: a stray "<" in plain text must not stall streaming. hasUnclosedXmlTags
-  // used to treat any "<" after the last ">" as an unfinished tag; one "3 < 5" then held
-  // every following sentence until flush, degrading streaming TTS to end-of-turn batching
-  // for the rest of the turn.
-
-  it('does not treat a bare "<" as a tag', () => {
-    expect(hasUnclosedXmlTags('3 < 5.')).toBe(false);
-    expect(hasUnclosedXmlTags('i <3 you')).toBe(false);
-    expect(hasUnclosedXmlTags('price < 10 dollars')).toBe(false);
-    // tag-shaped: must still hold
-    expect(hasUnclosedXmlTags('Hello <emo')).toBe(true);
-    expect(hasUnclosedXmlTags('Hello <')).toBe(true); // the next chunk resolves it
-    expect(hasUnclosedXmlTags('<spell>abc')).toBe(true); // unclosed wrapping tag
-  });
-
-  it('does not count digit-named pseudo tags', () => {
-    // regression: the depth-counter regex must not treat "<5>" / "<3 wins>" as open tags,
-    // or a complete-but-digit-named pair would leave depth > 0 and stall streaming for
-    // the rest of the turn (the tail check already treats "<"+digit as plain text — the
-    // two predicates must agree)
-    expect(hasUnclosedXmlTags('Rate this from <1> to <5> please.')).toBe(false);
-    expect(hasUnclosedXmlTags('Scores: <3 wins> today.')).toBe(false);
-    // a real letter-named tag pair is still balanced
-    expect(hasUnclosedXmlTags('<spell>abc</spell> done')).toBe(false);
-  });
-
-  it('streams a digit pseudo tag with xmlAware on', async () => {
-    const stream = new SentenceTokenizer({
-      minSentenceLength: 1,
-      streamContextLength: 5,
-      xmlAware: true,
-    }).stream();
-    stream.pushText('Rate this from <1> to <5>. And here is a second sentence to split.');
-    const { value } = await stream.next();
-    expect(value!.token.includes('<5>') || value!.token.includes('<1>')).toBe(true);
-    stream.endInput();
-  });
-
-  it('streams a bare "<" with xmlAware on', async () => {
-    const stream = new SentenceTokenizer({
-      minSentenceLength: 1,
-      streamContextLength: 5,
-      xmlAware: true,
-    }).stream();
-    stream.pushText('Note that 3 < 5 holds. And here is a second sentence to tokenize.');
-    // the first sentence must be emitted without waiting for flush
-    const { value } = await stream.next();
-    expect(value!.token).toContain('3 < 5');
-    stream.endInput();
-  });
-
-  it('streams tag-shaped text when xmlAware is off', async () => {
-    // the default tokenizer (non-expressive agents) applies no XML logic at all, so even
-    // tag-shaped plain text must stream sentence by sentence
-    const stream = new SentenceTokenizer({
-      minSentenceLength: 1,
-      streamContextLength: 5,
-    }).stream();
-    stream.pushText('Email me at <bob@example.com> please. Second sentence for the split.');
-    const { value } = await stream.next();
-    expect(value!.token).toContain('bob@example.com');
-    stream.endInput();
+    it('streams tag-shaped text when xmlAware is off', async () => {
+      // the default tokenizer (non-expressive agents) applies no XML logic at all, so even
+      // tag-shaped plain text must stream sentence by sentence
+      const stream = new SentenceTokenizer({
+        minSentenceLength: 1,
+        streamContextLength: 5,
+      }).stream();
+      stream.pushText('Email me at <bob@example.com> please. Second sentence for the split.');
+      const { value } = await stream.next();
+      expect(value!.token).toContain('bob@example.com');
+      stream.endInput();
+    });
   });
 });
 
@@ -336,27 +364,29 @@ describe('expressive streaming end to end', () => {
   });
 });
 
-describe('token batching', () => {
-  it('batches sentences up to minTokenLength and caps at maxTokenLength', async () => {
-    // expressive raises the minimum so consecutive sentences ride one request, keeping
-    // prosody continuous; the cap still bounds every emitted chunk
-    const stream = new SentenceTokenizer({
-      minSentenceLength: 1,
-      streamContextLength: 5,
-      minTokenLength: 60,
-      maxTokenLength: 80,
-    }).stream();
-    stream.pushText('One two three. Four five six. Seven eight nine. Ten eleven twelve. Done.');
-    stream.endInput();
+describe.each(TOKENIZERS)('%s', (_name, SentenceTokenizer) => {
+  describe('token batching', () => {
+    it('batches sentences up to minTokenLength and caps at maxTokenLength', async () => {
+      // expressive raises the minimum so consecutive sentences ride one request, keeping
+      // prosody continuous; the cap still bounds every emitted chunk
+      const stream = new SentenceTokenizer({
+        minSentenceLength: 1,
+        streamContextLength: 5,
+        minTokenLength: 60,
+        maxTokenLength: 80,
+      }).stream();
+      stream.pushText('One two three. Four five six. Seven eight nine. Ten eleven twelve. Done.');
+      stream.endInput();
 
-    const tokens: string[] = [];
-    for await (const ev of stream) tokens.push(ev.token);
+      const tokens: string[] = [];
+      for await (const ev of stream) tokens.push(ev.token);
 
-    expect(tokens.length).toBeGreaterThan(1);
-    for (const token of tokens) {
-      expect(token.length).toBeLessThanOrEqual(80);
-    }
-    // batching happened: at least one chunk carries more than one sentence
-    expect(tokens.some((t) => t.split('.').length > 2)).toBe(true);
+      expect(tokens.length).toBeGreaterThan(1);
+      for (const token of tokens) {
+        expect(token.length).toBeLessThanOrEqual(80);
+      }
+      // batching happened: at least one chunk carries more than one sentence
+      expect(tokens.some((t) => t.split('.').length > 2)).toBe(true);
+    });
   });
 });

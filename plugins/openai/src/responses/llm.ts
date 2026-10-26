@@ -247,6 +247,9 @@ class ResponsesHttpLLMStream extends llm.LLMStream {
           case 'response.failed':
             this.handleResponseFailed(event);
             break;
+          case 'response.incomplete':
+            this.handleResponseIncomplete(event);
+            break;
         }
 
         if (chunk) {
@@ -299,6 +302,13 @@ class ResponsesHttpLLMStream extends llm.LLMStream {
   private handleResponseFailed(event: OpenAI.Responses.ResponseFailedEvent): void {
     throw new APIStatusError({
       message: event.response.error?.message ?? 'Response failed',
+      options: { statusCode: -1, retryable: false },
+    });
+  }
+
+  private handleResponseIncomplete(event: OpenAI.Responses.ResponseIncompleteEvent): void {
+    throw new APIStatusError({
+      message: `response incomplete: ${event.response.incomplete_details?.reason ?? 'reason unavailable'}`,
       options: { statusCode: -1, retryable: false },
     });
   }

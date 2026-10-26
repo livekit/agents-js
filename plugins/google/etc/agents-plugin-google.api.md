@@ -10,10 +10,11 @@ import { AudioFrame } from '@livekit/rtc-node';
 import { AudioResampler } from '@livekit/rtc-node';
 import { AudioTranscriptionConfig } from '@google/genai';
 import { Behavior } from '@google/genai';
-import type { Context } from '@opentelemetry/api';
+import { Context } from '@opentelemetry/api';
 import { ContextWindowCompressionConfig } from '@google/genai';
 import { EventEmitter } from 'events';
 import { EventEmitter as EventEmitter_2 } from 'node:events';
+import type { EventMap } from '@livekit/typed-emitter';
 import { FrameProcessor } from '@livekit/rtc-node';
 import { FunctionResponseScheduling } from '@google/genai';
 import { GenerateContentConfig } from '@google/genai';
@@ -32,8 +33,9 @@ import type { ReadableStreamDefaultReader as ReadableStreamDefaultReader_2 } fro
 import { RealtimeInputConfig } from '@google/genai';
 import { RemoteParticipant } from '@livekit/rtc-node';
 import { Room } from '@livekit/rtc-node';
-import type { Span } from '@opentelemetry/api';
+import { Span } from '@opentelemetry/api';
 import type { TextStreamInfo } from '@livekit/rtc-node';
+import { Throws } from '@livekit/throws-transformer/throws';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import { TrackPublishOptions } from '@livekit/rtc-node';
 import { TransformStream as TransformStream_2 } from 'node:stream/web';
@@ -117,6 +119,8 @@ export type ApiVersion = 'v1' | 'v1beta1';
 
 declare namespace beta {
     export {
+        STT_3 as GeminiSTT,
+        STTOptions_2 as GeminiSTTOptions,
         TTS_3 as TTS,
         CustomPronunciationParams,
         CustomPronunciations,
@@ -131,7 +135,7 @@ export { beta }
 // Warning: (ae-missing-release-tag) "ChatModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-export type ChatModels = 'gemini-3.5-flash' | 'gemini-3-pro-preview' | 'gemini-3-flash-preview' | 'gemini-2.5-flash' | 'gemini-2.5-pro-preview-05-06' | 'gemini-2.5-flash-preview-04-17' | 'gemini-2.5-flash-preview-05-20' | 'gemini-2.0-flash-001' | 'gemini-2.0-flash-lite-preview-02-05' | 'gemini-2.0-pro-exp-02-05' | 'gemini-1.5-pro';
+export type ChatModels = 'gemini-4-argon' | 'gemini-3.5-flash' | 'gemini-3-pro-preview' | 'gemini-3-flash-preview' | 'gemini-2.5-flash' | 'gemini-2.5-pro-preview-05-06' | 'gemini-2.5-flash-preview-04-17' | 'gemini-2.5-flash-preview-05-20' | 'gemini-2.0-flash-001' | 'gemini-2.0-flash-lite-preview-02-05' | 'gemini-2.0-pro-exp-02-05' | 'gemini-1.5-pro';
 
 // Warning: (ae-missing-release-tag) "ClientEvents" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -200,7 +204,7 @@ export abstract class GeminiTool extends llm.ProviderTool {
 // Warning: (ae-missing-release-tag) "GeminiTTSModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-export type GeminiTTSModels = 'gemini-3.1-flash-tts-preview' | 'gemini-2.5-flash-tts' | 'gemini-2.5-flash-lite-preview-tts' | 'gemini-2.5-pro-tts';
+export type GeminiTTSModels = 'gemini-3.8-flash-tts' | 'gemini-3.8-flash-lite-tts' | 'gemini-3.1-flash-tts-preview' | 'gemini-2.5-flash-tts' | 'gemini-2.5-flash-lite-preview-tts' | 'gemini-2.5-pro-tts';
 
 // Warning: (ae-missing-release-tag) "GeminiVoices" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -244,7 +248,7 @@ export class GoogleSearch extends GeminiTool {
 // Warning: (ae-missing-release-tag) "LiveAPIModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
-type LiveAPIModels = 'gemini-live-2.5-flash-native-audio' | 'gemini-live-2.5-flash-preview-native-audio-09-2025' | 'gemini-live-2.5-flash-preview-native-audio' | 'gemini-3.1-flash-live-preview' | 'gemini-2.5-flash-native-audio-preview-12-2025' | 'gemini-2.0-flash-exp';
+type LiveAPIModels = 'gemini-3.8-live' | 'gemini-live-2.5-flash-native-audio' | 'gemini-live-2.5-flash-preview-native-audio-09-2025' | 'gemini-live-2.5-flash-preview-native-audio' | 'gemini-3.8-live-extended-thinking' | 'gemini-3.1-flash-live-preview' | 'gemini-2.5-flash-native-audio-preview-12-2025' | 'gemini-2.0-flash-exp';
 
 // Warning: (ae-missing-release-tag) "LLM" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -396,6 +400,8 @@ class RealtimeModel_2 extends llm.RealtimeModel {
     //
     // @internal (undocumented)
     _options: RealtimeOptions;
+    // (undocumented)
+    get provider(): string;
     // Warning: (ae-forgotten-export) The symbol "RealtimeSession_2" needs to be exported by the entry point index.d.ts
     session(): RealtimeSession_2;
     updateOptions(options: {
@@ -415,6 +421,57 @@ export type SpeechLanguages = 'en-US' | 'ja-JP' | 'en-IN' | 'en-GB' | 'hi-IN' | 
 //
 // @public (undocumented)
 export type SpeechModels = 'long' | 'short' | 'telephony' | 'medical_dictation' | 'medical_conversation' | 'chirp' | 'chirp_2' | 'latest_long' | 'latest_short';
+
+// Warning: (ae-forgotten-export) The symbol "stt_2" needs to be exported by the entry point index.d.ts
+// Warning: (ae-missing-release-tag) "STT" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+class STT_3 extends stt_2.STT {
+    constructor(input?: Partial<STTOptions_2>);
+    // (undocumented)
+    readonly label = "google.gemini.STT";
+    // (undocumented)
+    get model(): string;
+    // (undocumented)
+    get provider(): string;
+    // (undocumented)
+    protected _recognize(): Promise<stt_2.SpeechEvent>;
+    // (undocumented)
+    stream(options?: {
+        language?: string;
+        connOptions?: APIConnectOptions;
+    }): stt_2.SpeechStream;
+}
+
+// Warning: (ae-missing-release-tag) "STTOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+interface STTOptions_2 {
+    // (undocumented)
+    apiKey?: string;
+    // (undocumented)
+    credentials?: object | string;
+    // (undocumented)
+    credentialsPath?: string;
+    // (undocumented)
+    customVocabulary?: string[];
+    // (undocumented)
+    httpOptions?: types.HttpOptions;
+    // (undocumented)
+    language: string | null;
+    // (undocumented)
+    languageCodes?: string[];
+    // (undocumented)
+    location?: string;
+    // (undocumented)
+    model: string;
+    // (undocumented)
+    project?: string;
+    // (undocumented)
+    sampleRate: number;
+    // (undocumented)
+    vertexai?: boolean;
+}
 
 // Warning: (ae-missing-release-tag) "ToolCodeExecution" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -438,6 +495,8 @@ class TTS_3 extends tts_2.TTS {
     // (undocumented)
     label: string;
     // (undocumented)
+    protected markupProviderKey(): string;
+    // (undocumented)
     get opts(): TTSOptions_2;
     // (undocumented)
     stream(): tts_2.SynthesizeStream;
@@ -447,6 +506,7 @@ class TTS_3 extends tts_2.TTS {
     synthesize(text: string, connOptions?: APIConnectOptions, abortSignal?: AbortSignal): ChunkedStream_2;
     updateOptions(opts: {
         voiceName?: GeminiVoices | string;
+        speaker?: string;
     }): void;
 }
 
@@ -464,6 +524,8 @@ interface TTSOptions_2 {
     model: GeminiTTSModels | string;
     // (undocumented)
     project?: string;
+    speaker?: string;
+    speakers?: Record<string, GeminiVoices | string>;
     // (undocumented)
     vertexai: boolean;
     // (undocumented)
@@ -514,7 +576,7 @@ type Voice = 'Achernar' | 'Achird' | 'Algenib' | 'Algieba' | 'Alnilam' | 'Aoede'
 // Warnings were encountered during analysis:
 //
 // src/aiplatform_llm.ts:176:5 - (ae-forgotten-export) The symbol "APIConnectOptions" needs to be exported by the entry point index.d.ts
-// src/realtime/realtime_api.ts:268:7 - (ae-forgotten-export) The symbol "DEFAULT_IMAGE_ENCODE_OPTIONS" needs to be exported by the entry point index.d.ts
+// src/realtime/realtime_api.ts:317:7 - (ae-forgotten-export) The symbol "DEFAULT_IMAGE_ENCODE_OPTIONS" needs to be exported by the entry point index.d.ts
 
 // (No @packageDocumentation comment for this package)
 

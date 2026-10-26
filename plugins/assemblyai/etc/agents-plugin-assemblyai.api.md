@@ -9,10 +9,18 @@ import { AudioResampler } from '@livekit/rtc-node';
 import { Logger } from 'pino';
 import type { ReadableStream as ReadableStream_2 } from 'node:stream/web';
 import type { ReadableStreamDefaultReader as ReadableStreamDefaultReader_2 } from 'node:stream/web';
+import type { Span } from '@opentelemetry/api';
+import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import { TransformStream as TransformStream_2 } from 'node:stream/web';
 import type { TypedEventEmitter } from '@livekit/typed-emitter';
 import type { VideoFrame as VideoFrame_2 } from '@livekit/rtc-node';
+import { WebSocket as WebSocket_2 } from 'ws';
 import type { WritableStreamDefaultWriter as WritableStreamDefaultWriter_2 } from 'node:stream/web';
+
+// Warning: (ae-missing-release-tag) "PiiRedactionSubstitution" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+export type PiiRedactionSubstitution = 'entity_name' | 'hash';
 
 // Warning: (ae-forgotten-export) The symbol "stt" needs to be exported by the entry point index.d.ts
 // Warning: (ae-missing-release-tag) "SpeechStream" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -72,7 +80,7 @@ export type STTEncoding = 'pcm_s16le' | 'pcm_mulaw';
 // Warning: (ae-missing-release-tag) "STTModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-export type STTModels = 'universal-streaming-english' | 'universal-streaming-multilingual' | 'u3-rt-pro' | 'u3-rt-pro-beta-1' | 'universal-3-5-pro' | 'u3-pro';
+export type STTModels = 'universal-streaming-english' | 'universal-streaming-multilingual' | 'u3-rt-pro' | 'u3-rt-pro-beta-1' | 'universal-3-5-pro' | 'universal-3-6-pro' | 'u3-pro';
 
 // Warning: (ae-missing-release-tag) "STTOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -85,17 +93,22 @@ export interface STTOptions {
     // (undocumented)
     baseUrl: string;
     bufferSizeMs: number;
+    continuousPartials?: boolean;
     // (undocumented)
     domain?: string;
     // (undocumented)
     encoding: STTEncoding;
     // (undocumented)
     endOfTurnConfidenceThreshold?: number;
+    filterProfanity?: boolean;
     // (undocumented)
     formatTurns?: boolean;
     inactivityTimeout?: number;
+    includePartialTurns?: boolean;
+    interruptionDelay?: number;
     // (undocumented)
     keytermsPrompt?: string[];
+    languageCodes?: string | string[];
     // (undocumented)
     languageDetection?: boolean;
     // (undocumented)
@@ -105,15 +118,96 @@ export interface STTOptions {
     mode?: 'min_latency' | 'balanced' | 'max_accuracy';
     previousContextNTurns?: number;
     prompt?: string;
+    redactPii?: boolean;
+    redactPiiPolicies?: string[];
+    redactPiiSub?: PiiRedactionSubstitution;
     // (undocumented)
     sampleRate: number;
     speakerLabels?: boolean;
-    // (undocumented)
     speechModel: STTModels;
     // (undocumented)
     vadThreshold?: number;
     voiceFocus?: VoiceFocus;
     voiceFocusThreshold?: number;
+}
+
+// Warning: (ae-forgotten-export) The symbol "tts" needs to be exported by the entry point index.d.ts
+// Warning: (ae-missing-release-tag) "SynthesizeStream" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export class SynthesizeStream extends tts.SynthesizeStream {
+    constructor(instance: TTS, connOptions?: APIConnectOptions);
+    // @internal (undocumented)
+    get cancellationSignal(): AbortSignal;
+    // @internal (undocumented)
+    get connectionTimeout(): number;
+    // Warning: (ae-forgotten-export) The symbol "Future" needs to be exported by the entry point index.d.ts
+    //
+    // (undocumented)
+    readonly done: Future<void, Error>;
+    // @internal (undocumented)
+    emitAudio(audio: tts.SynthesizedAudio): void;
+    // (undocumented)
+    label: string;
+    // @internal (undocumented)
+    markProviderStarted(): void;
+    // (undocumented)
+    protected onStreamDone(): void;
+    // (undocumented)
+    protected run(): Promise<void>;
+}
+
+// Warning: (ae-missing-release-tag) "TTS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export class TTS extends tts.TTS {
+    constructor(opts?: TTSOptions);
+    // Warning: (ae-forgotten-export) The symbol "ConnectionLease" needs to be exported by the entry point index.d.ts
+    //
+    // (undocumented)
+    acquire(timeoutMs: number, signal: AbortSignal): Promise<ConnectionLease>;
+    // (undocumented)
+    close(): Promise<void>;
+    // (undocumented)
+    label: string;
+    // (undocumented)
+    get model(): string;
+    // Warning: (ae-forgotten-export) The symbol "APIError" needs to be exported by the entry point index.d.ts
+    //
+    // (undocumented)
+    noteRetryAfter(error: APIError): void;
+    // @internal (undocumented)
+    get _opts(): TTSOptions;
+    // (undocumented)
+    prewarm(): void;
+    // (undocumented)
+    get provider(): string;
+    // (undocumented)
+    releaseIdleConnections(): Promise<void>;
+    // (undocumented)
+    stream(options?: {
+        connOptions?: APIConnectOptions;
+    }): SynthesizeStream;
+    // (undocumented)
+    synthesize(text: string, connOptions?: APIConnectOptions, abortSignal?: AbortSignal): tts.ChunkedStream;
+    // (undocumented)
+    updateOptions(opts: Pick<TTSOptions, 'voice' | 'language' | 'model'>): void;
+}
+
+// Warning: (ae-missing-release-tag) "TTSOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export interface TTSOptions {
+    apiKey?: string;
+    baseUrl?: string;
+    language?: string | null;
+    model?: string;
+    sampleRate?: number;
+    textPacing?: boolean;
+    // Warning: (ae-forgotten-export) The symbol "tokenize" needs to be exported by the entry point index.d.ts
+    tokenizer?: tokenize.SentenceTokenizer;
+    voice?: string;
+    wordTimestamps?: boolean;
 }
 
 // Warning: (ae-missing-release-tag) "VoiceFocus" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)

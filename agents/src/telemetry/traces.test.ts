@@ -12,18 +12,273 @@ import {
 } from '@opentelemetry/sdk-trace-base';
 import { BatchSpanProcessor, NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import FormData from 'form-data';
+import { EventEmitter } from 'node:events';
+import fs from 'node:fs/promises';
+import type { ClientRequest } from 'node:http';
 import { PassThrough } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { TurnDetector } from '../inference/eot/detector.js';
 import { ChatContext } from '../llm/chat_context.js';
+import { log } from '../log.js';
+import { version } from '../version.js';
+import { AgentSession } from '../voice/agent_session.js';
 import type { SessionReport } from '../voice/report.js';
 import { SimpleOTLPHttpLogExporter } from './otel_http_exporter.js';
+import { PIIFilteringSpanProcessor } from './pii.js';
 import {
   type CloudSpanProcessorOptions,
+  describeOptionObject,
+  serializeOptionValue,
+  serializeSessionOptions,
   setTracerProvider,
   setupCloudTracer,
   tracer,
   uploadSessionReport,
 } from './traces.js';
+
+/**
+ * The session report ships `session.options` as a log attribute. The OTel exporter walks the
+ * enumerable properties of anything that is not a primitive, so an object left in the options
+ * (the turn detector, for one) used to reach the cloud as a dump of its internals. These tests
+ * pin the descriptive form the serializer produces instead.
+ */
+function assertReportSafe(value: unknown): void {
+  // everything left after serialization must be JSON primitives, arrays, or plain objects
+  expect(() => JSON.stringify(value)).not.toThrow();
+  if (value === null) {
+    return;
+  } else if (Array.isArray(value)) {
+    value.forEach(assertReportSafe);
+  } else if (typeof value === 'object') {
+    expect(Object.getPrototypeOf(value)).toBe(Object.prototype);
+    Object.values(value).forEach(assertReportSafe);
+  } else {
+    expect(['string', 'boolean', 'number']).toContain(typeof value);
+  }
+}
+
+describe('session options report', () => {
+  const turnDetection = (session: AgentSession): unknown => {
+    const serialized = serializeSessionOptions(session.sessionOptions);
+    return (serialized.turnHandling as Record<string, unknown>).turnDetection;
+  };
+
+  it('describes the default turn detector instead of serializing its object', () => {
+    const session = new AgentSession();
+    const serialized = serializeSessionOptions(session.sessionOptions);
+    const detector = turnDetection(session);
+
+    expect(detector).toBeTypeOf('string');
+    expect(detector).toMatch(/^TurnDetector\(model=turn-detector-/);
+    expect(detector).toContain('provider=livekit');
+    expect(detector).toContain('sampleRate=16000');
+    expect(detector).toContain('localFallback=true');
+    // server-calibrated defaults in use: the override fields must be absent
+    expect(detector).not.toContain('thresholdOverrides');
+    expect(detector).not.toContain('undefined');
+    assertReportSafe(serialized);
+  });
+
+  it('includes turn detector threshold overrides', () => {
+    const detector = new TurnDetector({
+      version: 'v1-mini',
+      unlikelyThreshold: 0.2,
+      backchannelThreshold: { en: 0.7, fr: 0.6 },
+    });
+    const description = describeOptionObject(detector);
+
+    expect(description).toContain('thresholdOverrides=0.2');
+    expect(description).toContain('backchannelThresholdOverrides={"en":0.7,"fr":0.6}');
+  });
+
+  it('reports disabled local fallback', () => {
+    const detector = new TurnDetector({
+      version: 'v1',
+      localFallback: false,
+      baseUrl: 'https://inference.example.com',
+      apiKey: 'k',
+      apiSecret: 's',
+    });
+    const session = new AgentSession({ turnHandling: { turnDetection: detector } });
+
+    expect(turnDetection(session)).toContain('localFallback=false');
+    expect(detector.toJSON().localFallback).toBe(false);
+  });
+
+  it('does not leak turn detector credentials or endpoints', () => {
+    const detector = new TurnDetector({
+      version: 'v1',
+      baseUrl: 'https://inference.example.com',
+      apiKey: 'APIsecretkey123',
+      apiSecret: 'verysecretvalue',
+    });
+    const description = describeOptionObject(detector);
+
+    expect(description).not.toContain('APIsecretkey123');
+    expect(description).not.toContain('verysecretvalue');
+    expect(description).not.toContain('inference.example.com');
+
+    // the same holds for the whole report when the user supplies the detector: the old
+    // serializer left the instance in place and the exporter dumped its private fields
+    const session = new AgentSession({ turnHandling: { turnDetection: detector } });
+    const report = JSON.stringify(serializeSessionOptions(session.sessionOptions));
+    expect(report).not.toContain('APIsecretkey123');
+    expect(report).not.toContain('verysecretvalue');
+    expect(report).not.toContain('inference.example.com');
+    expect(report).toContain('TurnDetector(model=turn-detector-v1,');
+  });
+
+  it('passes turn detection mode strings through', () => {
+    expect(turnDetection(new AgentSession({ turnHandling: { turnDetection: 'vad' } }))).toBe('vad');
+    expect(turnDetection(new AgentSession({ turnHandling: { turnDetection: 'manual' } }))).toBe(
+      'manual',
+    );
+  });
+
+  it('renders objects that implement describeOptions with their options', () => {
+    class ThirdPartyDetector {
+      describeOptions(): Record<string, unknown> {
+        return { model: 'eou-v9', provider: 'acme', thresholds: { en: 0.7 } };
+      }
+    }
+
+    expect(describeOptionObject(new ThirdPartyDetector())).toBe(
+      'ThirdPartyDetector(model=eou-v9, provider=acme, thresholds={"en":0.7})',
+    );
+  });
+
+  it('renders objects without describeOptions as their class name', () => {
+    class Opaque {
+      model = 'm';
+      provider = 'acme';
+    }
+
+    expect(describeOptionObject(new Opaque())).toBe('Opaque');
+  });
+
+  it('skips null and undefined described options', () => {
+    class Sparse {
+      describeOptions(): Record<string, unknown> {
+        return { model: 'm', provider: null, label: undefined };
+      }
+    }
+
+    expect(describeOptionObject(new Sparse())).toBe('Sparse(model=m)');
+  });
+
+  it('falls back to the class name when describeOptions throws', () => {
+    class Broken {
+      describeOptions(): Record<string, unknown> {
+        throw new Error('not ready');
+      }
+    }
+
+    expect(describeOptionObject(new Broken())).toBe('Broken');
+  });
+
+  it('omits prompt text and nested internals from described options', () => {
+    class Chatty {
+      describeOptions(): Record<string, unknown> {
+        return {
+          model: 'm',
+          instructions: 'Extract product names for Acme customer Jane Doe',
+          nested: { instructions: 'more prompt text', depth: 2 },
+        };
+      }
+    }
+
+    expect(describeOptionObject(new Chatty())).toBe('Chatty(model=m, nested={"depth":2})');
+  });
+
+  it('keeps elements from custom iterables and sets', () => {
+    class Transforms implements Iterable<string> {
+      constructor(private readonly items: string[]) {}
+
+      *[Symbol.iterator](): Iterator<string> {
+        yield* this.items;
+      }
+    }
+    class Detector {
+      describeOptions(): Record<string, unknown> {
+        return { model: 'm' };
+      }
+    }
+
+    const output = serializeOptionValue({
+      ttsTextTransforms: new Transforms(['filter_markdown', 'filter_emoji']),
+      set: new Set([2, 1, 'b', 'a']),
+    });
+    expect(output).toEqual({
+      ttsTextTransforms: ['filter_markdown', 'filter_emoji'],
+      set: [1, 2, 'a', 'b'],
+    });
+    expect(
+      serializeOptionValue(
+        new Map([
+          ['instructions', 'x'],
+          ['keyterms', ['k']],
+        ]),
+      ),
+    ).toEqual({
+      'lk.pii.keyterms': ['k'],
+    });
+    expect(serializeOptionValue(new Transforms(['a']))).toEqual(['a']);
+    expect(serializeOptionValue([new Detector()])).toEqual(['Detector(model=m)']);
+    assertReportSafe(output);
+  });
+
+  it('omits customer-authored prompt text recursively', () => {
+    const session = new AgentSession({
+      keytermsOptions: {
+        keyterms: ['Acme'],
+        keytermDetection: {
+          enabled: true,
+          instructions: 'Extract product names for Acme customer Jane Doe',
+        },
+      },
+    });
+    const serialized = serializeSessionOptions(session.sessionOptions);
+    const keytermsOptions = serialized.keytermsOptions as Record<string, unknown>;
+    const detection = keytermsOptions.keytermDetection as Record<string, unknown>;
+
+    expect(detection).not.toHaveProperty('instructions');
+    expect(detection.enabled).toBe(true);
+    expect(keytermsOptions['lk.pii.keyterms']).toEqual(['Acme']);
+    expect(JSON.stringify(serialized)).not.toContain('Jane Doe');
+    expect(serializeOptionValue({ a: { instructions: 'x', keep: 1 } })).toEqual({
+      a: { keep: 1 },
+    });
+  });
+
+  it('serializes nested containers and key aliases', () => {
+    class Detector {
+      describeOptions(): Record<string, unknown> {
+        return { model: 'm' };
+      }
+    }
+    const output = serializeOptionValue({
+      keyterms: ['LiveKit', 'Acme'],
+      nested: { detector: new Detector(), flags: [true, 1, 2.5, null] },
+    });
+
+    expect(output).toEqual({
+      'lk.pii.keyterms': ['LiveKit', 'Acme'],
+      nested: { detector: 'Detector(model=m)', flags: [true, 1, 2.5, null] },
+    });
+    assertReportSafe(output);
+  });
+
+  it('reports custom text transforms by class, not by source', () => {
+    // a `ttsTextTransforms` entry can be a function; its body is customer code
+    const session = new AgentSession({
+      ttsTextTransforms: ['filter_markdown', (text) => text],
+    });
+    const serialized = serializeSessionOptions(session.sessionOptions);
+
+    expect(serialized.ttsTextTransforms).toEqual(['filter_markdown', 'Function']);
+    assertReportSafe(serialized);
+  });
+});
 
 describe('setupCloudTracer default provider resource', () => {
   let provider: NodeTracerProvider | undefined;
@@ -54,11 +309,12 @@ describe('setupCloudTracer default provider resource', () => {
       exportedSpans.push(...spans);
       callback({ code: 0 });
     });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 
     await setupCloudTracer({
       roomId: 'room1',
       jobId: 'job1',
-      cloudHostname: 'example.livekit.cloud',
+      observabilityUrl: 'https://example.livekit.cloud',
       enableLogs: false,
     });
 
@@ -76,6 +332,9 @@ describe('setupCloudTracer default provider resource', () => {
       room_id: 'room1',
       job_id: 'job1',
     });
+    // the framework-owned provider is built with the filtering processor attached, so the
+    // setTracerProvider call that follows must not report redaction as uninstallable
+    expect(warn.mock.calls.flat().join(' ')).not.toContain('PII redaction');
   });
 });
 
@@ -253,7 +512,7 @@ describe('setupCloudTracer with a user-configured provider', () => {
     await setupCloudTracer({
       roomId: 'room1',
       jobId: 'job1',
-      cloudHostname: 'example.livekit.cloud',
+      observabilityUrl: 'https://example.livekit.cloud',
       agentName: 'my-agent',
       enableTraces: true,
       enableLogs: false,
@@ -262,11 +521,13 @@ describe('setupCloudTracer with a user-configured provider', () => {
     // No span is created/ended here so the newly attached cloud BatchSpanProcessor has
     // nothing to flush over the network on shutdown.
     expect(tracer.getProvider()).toBe(userProvider);
-    // setTracerProvider registers the user metadata processor; setupCloudTracer registers the
-    // session metadata processor plus the built-in (SDK 2.x) cloud exporter.
-    expect(registeredProcessors).toHaveLength(3);
+    // setTracerProvider registers the user metadata processor, the in-process PII stripper
+    // and the loop monitor's blocked-span tracker; setupCloudTracer registers the session
+    // metadata processor plus the built-in (SDK 2.x) cloud exporter.
+    expect(registeredProcessors).toHaveLength(5);
+    expect(registeredProcessors[1]).toBeInstanceOf(PIIFilteringSpanProcessor);
     const setAttributes = vi.fn();
-    registeredProcessors[1]!.onStart({ setAttributes } as never, otelContext.active());
+    registeredProcessors[3]!.onStart({ setAttributes } as never, otelContext.active());
     // agent_name rides the session metadata so spans (and logs) carry it even on
     // the custom-provider path, where the resource is left untouched.
     expect(setAttributes).toHaveBeenCalledWith({
@@ -274,7 +535,7 @@ describe('setupCloudTracer with a user-configured provider', () => {
       job_id: 'job1',
       'lk.agent_name': 'my-agent',
     });
-    expect(registeredProcessors[2]).toBeInstanceOf(BatchSpanProcessor);
+    expect(registeredProcessors[4]).toBeInstanceOf(BatchSpanProcessor);
   });
 
   it('passes the gated exporter to a user-supplied cloud processor factory', async () => {
@@ -292,14 +553,17 @@ describe('setupCloudTracer with a user-configured provider', () => {
     await setupCloudTracer({
       roomId: 'room1',
       jobId: 'job1',
-      cloudHostname: 'example.livekit.cloud',
+      observabilityUrl: 'https://example.livekit.cloud',
       enableTraces: true,
       enableLogs: false,
     });
 
     expect(createCloudSpanProcessor).toHaveBeenCalledOnce();
-    expect(registeredProcessors).toHaveLength(2);
-    expect(registeredProcessors[1]).toBe(factoryProcessor);
+    // the PII stripper, the loop monitor's blocked-span tracker, the session metadata
+    // processor, then the factory's cloud processor
+    expect(registeredProcessors).toHaveLength(4);
+    expect(registeredProcessors[0]).toBeInstanceOf(PIIFilteringSpanProcessor);
+    expect(registeredProcessors[3]).toBe(factoryProcessor);
   });
 
   it('requires registerSpanProcessor and never calls addSpanProcessor', async () => {
@@ -311,7 +575,7 @@ describe('setupCloudTracer with a user-configured provider', () => {
     await setupCloudTracer({
       roomId: 'room1',
       jobId: 'job1',
-      cloudHostname: 'example.livekit.cloud',
+      observabilityUrl: 'https://example.livekit.cloud',
       enableTraces: true,
       enableLogs: false,
     });
@@ -338,7 +602,7 @@ describe('setupCloudTracer with a user-configured provider', () => {
     await setupCloudTracer({
       roomId: 'room1',
       jobId: 'job1',
-      cloudHostname: 'example.livekit.cloud',
+      observabilityUrl: 'https://example.livekit.cloud',
       enableTraces: true,
       enableLogs: false,
     });
@@ -362,8 +626,15 @@ function makeReport(recordingOptions: SessionReport['options']['recordingOptions
   };
 }
 
+function fakeClientRequest(): ClientRequest {
+  const request = new EventEmitter() as ClientRequest;
+  request.destroy = vi.fn(() => request);
+  return request;
+}
+
 function mockSuccessfulFormSubmit() {
-  return vi.spyOn(FormData.prototype, 'submit').mockImplementation(function submit(_opts, cb) {
+  return vi.spyOn(FormData.prototype, 'submit').mockImplementation(function submit() {
+    const request = fakeClientRequest();
     const res = new PassThrough() as PassThrough & {
       statusCode: number;
       statusMessage: string;
@@ -375,8 +646,8 @@ function mockSuccessfulFormSubmit() {
       process.nextTick(() => res.emit('end'));
       return res;
     };
-    cb?.(null, res as never);
-    return {} as never;
+    queueMicrotask(() => request.emit('response', res));
+    return request;
   });
 }
 
@@ -411,14 +682,14 @@ describe('uploadSessionReport metadata', () => {
     else process.env.LIVEKIT_API_SECRET = prevSecret;
   });
 
-  it('includes simulation and redaction metadata on exported session-report logs', async () => {
+  it('includes the SDK version, simulation, and redaction metadata on exported session-report logs', async () => {
     const exportSpy = vi
       .spyOn(SimpleOTLPHttpLogExporter.prototype, 'export')
       .mockResolvedValue(undefined);
 
     await uploadSessionReport({
       agentName: 'agent',
-      cloudHostname: 'example.livekit.cloud',
+      observabilityUrl: 'https://example.livekit.cloud',
       report: makeReport({
         audio: false,
         traces: true,
@@ -434,6 +705,7 @@ describe('uploadSessionReport metadata', () => {
 
     const records = exportSpy.mock.calls[0]?.[0] ?? [];
     expect(records[0]?.attributes).toMatchObject({
+      sdk_version: version,
       'lk.simulation.enabled': true,
       'lk.redaction.enabled': true,
     });
@@ -459,7 +731,7 @@ describe('uploadSessionReport metadata', () => {
 
     await uploadSessionReport({
       agentName: 'agent',
-      cloudHostname: 'example.livekit.cloud',
+      observabilityUrl: 'https://example.livekit.cloud',
       report,
     });
 
@@ -472,13 +744,44 @@ describe('uploadSessionReport metadata', () => {
     expect(keytermsOptions.keyterms).toEqual(['Acme Corp']);
   });
 
+  it('uses Python-compatible room and agent_name fields in exported session-report logs', async () => {
+    let scopeAttributes: Record<string, unknown> | undefined;
+    let records: Parameters<SimpleOTLPHttpLogExporter['export']>[0] = [];
+    vi.spyOn(SimpleOTLPHttpLogExporter.prototype, 'export').mockImplementation(function (value) {
+      records = value;
+      scopeAttributes = (
+        this as unknown as { config: { scopeAttributes?: Record<string, unknown> } }
+      ).config.scopeAttributes;
+      return Promise.resolve();
+    });
+
+    await uploadSessionReport({
+      agentName: 'customer agent',
+      observabilityUrl: 'https://example.livekit.cloud',
+      report: makeReport({
+        audio: false,
+        traces: true,
+        logs: false,
+        transcript: false,
+        redaction: false,
+      }),
+    });
+
+    expect(scopeAttributes).toMatchObject({ room: 'room-name' });
+    expect(scopeAttributes).not.toHaveProperty('lk.pii.room_name');
+    expect(records[0]?.attributes).toMatchObject({
+      agent_name: 'customer agent',
+    });
+    expect(records[0]?.attributes).not.toHaveProperty('lk.pii.agent_name');
+  });
+
   it('sets job, simulation, and redaction fields on the multipart recording header', async () => {
     vi.spyOn(SimpleOTLPHttpLogExporter.prototype, 'export').mockResolvedValue(undefined);
     const submitSpy = mockSuccessfulFormSubmit();
 
     await uploadSessionReport({
       agentName: 'agent',
-      cloudHostname: 'example.livekit.cloud',
+      observabilityUrl: 'https://example.livekit.cloud',
       report: makeReport({
         audio: false,
         traces: false,
@@ -507,7 +810,7 @@ describe('uploadSessionReport metadata', () => {
 
     await uploadSessionReport({
       agentName: 'agent',
-      cloudHostname: 'example.livekit.cloud',
+      observabilityUrl: 'https://example.livekit.cloud',
       report: makeReport({
         audio: false,
         traces: false,
@@ -520,6 +823,41 @@ describe('uploadSessionReport metadata', () => {
 
     expect(exportSpy).not.toHaveBeenCalled();
     expect(submitSpy).not.toHaveBeenCalled();
+  });
+
+  it('warns and uploads without audio when the recording file cannot be read', async () => {
+    const readError = new Error('ENOENT');
+    vi.spyOn(fs, 'readFile').mockRejectedValue(readError);
+    const warn = vi.spyOn(log(), 'warn').mockImplementation(() => undefined);
+    vi.spyOn(SimpleOTLPHttpLogExporter.prototype, 'export').mockResolvedValue(undefined);
+    const submitSpy = mockSuccessfulFormSubmit();
+
+    await uploadSessionReport({
+      agentName: 'agent',
+      observabilityUrl: 'https://example.livekit.cloud',
+      report: {
+        ...makeReport({
+          audio: true,
+          traces: false,
+          logs: false,
+          transcript: true,
+          redaction: false,
+        }),
+        audioRecordingPath: '/tmp/missing-recording.ogg',
+        audioRecordingStartedAt: 1_700_000_000_000,
+      },
+    });
+
+    expect(warn).toHaveBeenCalledWith(
+      { error: readError, path: '/tmp/missing-recording.ogg' },
+      'failed to read audio recording for session report upload, uploading without the audio part',
+    );
+    expect(submitSpy).toHaveBeenCalledTimes(1);
+    const formData = submitSpy.mock.instances[0] as FormData;
+    const streams = (formData as unknown as { _streams: unknown[] })._streams;
+    expect(streams.some((part) => typeof part === 'string' && part.includes('name="audio"'))).toBe(
+      false,
+    );
   });
 });
 
@@ -583,7 +921,7 @@ describe('setupCloudTracer resource identity (fresh provider)', () => {
     await setupCloudTracer({
       roomId: 'room1',
       jobId: 'job1',
-      cloudHostname: 'example.livekit.cloud',
+      observabilityUrl: 'https://example.livekit.cloud',
       agentName: 'sdk-name',
       enableTraces: true,
       enableLogs: false,
@@ -601,7 +939,7 @@ describe('setupCloudTracer resource identity (fresh provider)', () => {
     await setupCloudTracer({
       roomId: 'room2',
       jobId: 'job2',
-      cloudHostname: 'example.livekit.cloud',
+      observabilityUrl: 'https://example.livekit.cloud',
       agentName: '',
       enableTraces: true,
       enableLogs: false,
@@ -619,7 +957,7 @@ describe('setupCloudTracer resource identity (fresh provider)', () => {
     await setupCloudTracer({
       roomId: 'room3',
       jobId: 'job3',
-      cloudHostname: 'example.livekit.cloud',
+      observabilityUrl: 'https://example.livekit.cloud',
       agentName: '',
       enableTraces: true,
       enableLogs: false,
@@ -637,7 +975,7 @@ describe('setupCloudTracer resource identity (fresh provider)', () => {
     await setupCloudTracer({
       roomId: 'room4',
       jobId: 'job4',
-      cloudHostname: 'example.livekit.cloud',
+      observabilityUrl: 'https://example.livekit.cloud',
       agentName: '',
       enableTraces: true,
       enableLogs: false,
@@ -652,7 +990,7 @@ describe('setupCloudTracer resource identity (fresh provider)', () => {
     await setupCloudTracer({
       roomId: 'room5',
       jobId: 'job5',
-      cloudHostname: 'example.livekit.cloud',
+      observabilityUrl: 'https://example.livekit.cloud',
       agentName: '',
       enableTraces: true,
       enableLogs: false,
@@ -670,7 +1008,7 @@ describe('setupCloudTracer resource identity (fresh provider)', () => {
     await setupCloudTracer({
       roomId: 'room6',
       jobId: 'job6',
-      cloudHostname: 'example.livekit.cloud',
+      observabilityUrl: 'https://example.livekit.cloud',
       agentName: '',
       enableTraces: true,
       enableLogs: false,

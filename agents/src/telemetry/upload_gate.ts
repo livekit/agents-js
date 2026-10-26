@@ -2,10 +2,13 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { type ExportResult, ExportResultCode } from '@opentelemetry/core';
+import { OTLPMetricExporter } from '@opentelemetry/exporter-metrics-otlp-proto';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-proto';
 import { OTLPExporterError } from '@opentelemetry/otlp-exporter-base';
+import type { ResourceMetrics } from '@opentelemetry/sdk-metrics';
 import type { ReadableSpan } from '@opentelemetry/sdk-trace-base';
 import { log } from '../log_core.js';
+import { restorePii } from './redaction.js';
 
 const DISABLED_MARKERS = ['data recording is disabled', 'disabled by owner'];
 
@@ -106,7 +109,9 @@ export class UploadGateTraceExporter extends OTLPTraceExporter {
       return;
     }
 
-    super.export(items, (result) => {
+    // PII stripped for third-party exporters is put back here: what LiveKit Cloud may
+    // receive is the project's setting, applied at its collector
+    super.export(items.map(restorePii), (result) => {
       if (isDisabledTraceExport(result)) {
         uploadGate.disable(generation);
         resultCallback({ code: ExportResultCode.SUCCESS });
@@ -117,7 +122,31 @@ export class UploadGateTraceExporter extends OTLPTraceExporter {
   }
 }
 
+/** OTLP metric exporter that shares the recording-disabled upload gate. */
+export class UploadGateMetricExporter extends OTLPMetricExporter {
+  override export(items: ResourceMetrics, resultCallback: (result: ExportResult) => void): void {
+    const generation = uploadGate.generation;
+    if (uploadGate.disabled) {
+      resultCallback({ code: ExportResultCode.SUCCESS });
+      return;
+    }
+
+    super.export(items, (result) => {
+      if (isDisabledExport(result)) {
+        uploadGate.disable(generation);
+        resultCallback({ code: ExportResultCode.SUCCESS });
+        return;
+      }
+      resultCallback(result);
+    });
+  }
+}
+
 function isDisabledTraceExport(result: ExportResult): boolean {
+  return isDisabledExport(result);
+}
+
+function isDisabledExport(result: ExportResult): boolean {
   const error = result.error;
   return (
     result.code === ExportResultCode.FAILED &&

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { ChatContext, initializeLogger } from '@livekit/agents';
+import { APIStatusError, ChatContext, initializeLogger } from '@livekit/agents';
 import { llm, llmStrict } from '@livekit/agents-plugins-test';
 import type OpenAI from 'openai';
 import { describe, expect, it } from 'vitest';
@@ -113,6 +113,60 @@ describe('OpenAI Responses HTTP retry eligibility', () => {
 
   it('does not retry once generated text has reached the caller', async () => {
     expect(await attemptsUntilStall([RESPONSE_CREATED, TEXT_DELTA], 2)).toBe(1);
+  });
+});
+
+describe('OpenAI Responses HTTP incomplete handling', () => {
+  it.each([
+    ['max_output_tokens', 'max_output_tokens'],
+    [undefined, 'reason unavailable'],
+  ] as const)('surfaces %s as non-retryable', async (reason, expectedMessage) => {
+    let attempts = 0;
+    const incomplete = {
+      type: 'response.incomplete',
+      response: {
+        id: 'resp_1',
+        ...(reason === undefined ? {} : { incomplete_details: { reason } }),
+      },
+    };
+    const client = {
+      responses: {
+        create: async () => {
+          attempts++;
+          return {
+            async *[Symbol.asyncIterator]() {
+              yield RESPONSE_CREATED;
+              yield incomplete;
+            },
+          };
+        },
+      },
+    };
+    const model = new LLM({
+      model: 'gpt-4.1',
+      apiKey: 'test-key',
+      useWebSocket: false,
+      client: client as unknown as OpenAI,
+    });
+    const errorEvent = new Promise<Error>((resolve) => {
+      model.once('error', (event) => resolve(event.error));
+    });
+    const chatCtx = ChatContext.empty();
+    chatCtx.addMessage({ role: 'user', content: 'hi' });
+
+    const stream = model.chat({
+      chatCtx,
+      connOptions: { maxRetry: 2, retryIntervalMs: 0, timeoutMs: 5000 },
+    });
+    for await (const _chunk of stream) void _chunk;
+    const error = await errorEvent;
+
+    expect(error).toBeInstanceOf(APIStatusError);
+    expect(error.message).toContain(expectedMessage);
+    expect((error as APIStatusError).statusCode).toBe(-1);
+    expect((error as APIStatusError).retryable).toBe(false);
+    expect(attempts).toBe(1);
+    await model.aclose();
   });
 });
 

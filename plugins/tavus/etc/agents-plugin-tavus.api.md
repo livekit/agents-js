@@ -26,6 +26,7 @@ import { Room } from '@livekit/rtc-node';
 import { RpcInvocationData } from '@livekit/rtc-node';
 import type { Span } from '@opentelemetry/api';
 import type { TextStreamInfo } from '@livekit/rtc-node';
+import { Throws } from '@livekit/throws-transformer/throws';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import { TrackKind } from '@livekit/rtc-node';
 import { TrackPublishOptions } from '@livekit/rtc-node';
@@ -46,6 +47,7 @@ export class AvatarSession extends voice.AvatarSession {
     conversationId: string | null;
     // (undocumented)
     get provider(): string;
+    setEmotion(emotion: Emotion): Promise<void>;
     // (undocumented)
     start(agentSession: voice.AgentSession, room: Room, options?: StartOptions): Promise<void>;
 }
@@ -93,6 +95,12 @@ export interface CreatePersonaOptions {
 
 // @public (undocumented)
 export const DEFAULT_API_URL = "https://tavusapi.com/v2";
+
+// @public
+export type Emotion = (typeof EMOTIONS)[number];
+
+// @public
+export const EMOTIONS: readonly ["neutral", "happiness", "sadness", "anger", "fear", "surprise", "disgust", "contempt"];
 
 // @public
 export interface StartOptions {

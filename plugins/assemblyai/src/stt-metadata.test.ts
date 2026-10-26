@@ -23,6 +23,7 @@ async function startWebSocketServer() {
 }
 
 async function closeWebSocketServer(wss: WebSocketServer): Promise<void> {
+  for (const client of wss.clients) client.close();
   await new Promise<void>((resolve) => wss.close(() => resolve()));
 }
 
@@ -42,6 +43,53 @@ async function collectUntilEnd(stream: sttLib.SpeechStream): Promise<sttLib.Spee
     if (event.type === sttLib.SpeechEventType.END_OF_SPEECH) break;
   }
   return events;
+}
+
+function turnMessage(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    type: 'Turn',
+    words: [{ text: 'hello', start: 0, end: 480, confidence: 0.9 }],
+    end_of_turn: false,
+    transcript: '',
+    ...overrides,
+  };
+}
+
+async function collectTranscript(
+  message: Record<string, unknown>,
+  eventType: sttLib.SpeechEventType,
+): Promise<sttLib.SpeechData> {
+  const { wss, baseUrl } = await startWebSocketServer();
+  let connected = false;
+  let sent = false;
+  const stream = new STT({ apiKey: 'test-key', baseUrl }).stream({
+    connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1000 },
+  });
+
+  wss.on('connection', (ws) => {
+    connected = true;
+    ws.on('message', () => {
+      if (sent) return;
+      sent = true;
+      ws.send(JSON.stringify(message));
+    });
+  });
+
+  try {
+    await waitUntil(() => connected);
+    stream.pushFrame(makeFrame());
+
+    for await (const event of stream) {
+      if (event.type === eventType && event.alternatives?.[0]) {
+        return event.alternatives[0];
+      }
+    }
+
+    throw new Error(`stream ended before ${eventType} was emitted`);
+  } finally {
+    stream.close();
+    await closeWebSocketServer(wss);
+  }
 }
 
 describe('AssemblyAI STT metadata', () => {
@@ -128,5 +176,142 @@ describe('AssemblyAI STT metadata', () => {
     } finally {
       await closeWebSocketServer(wss);
     }
+  });
+
+  it('surfaces end-of-turn confidence on interim metadata', async () => {
+    const transcript = await collectTranscript(
+      turnMessage({ end_of_turn_confidence: 0.55 }),
+      sttLib.SpeechEventType.INTERIM_TRANSCRIPT,
+    );
+
+    expect(transcript.metadata).toEqual({
+      assemblyai: { endOfTurnConfidence: 0.55 },
+    });
+  });
+
+  it('surfaces end-of-turn confidence on final metadata', async () => {
+    const transcript = await collectTranscript(
+      turnMessage({
+        end_of_turn: true,
+        transcript: 'hello',
+        end_of_turn_confidence: 1,
+      }),
+      sttLib.SpeechEventType.FINAL_TRANSCRIPT,
+    );
+
+    expect(transcript.metadata).toEqual({
+      assemblyai: { endOfTurnConfidence: 1 },
+    });
+  });
+
+  it('surfaces zero end-of-turn confidence', async () => {
+    const transcript = await collectTranscript(
+      turnMessage({ end_of_turn_confidence: 0 }),
+      sttLib.SpeechEventType.INTERIM_TRANSCRIPT,
+    );
+
+    expect(transcript.metadata).toEqual({
+      assemblyai: { endOfTurnConfidence: 0 },
+    });
+  });
+
+  it('leaves metadata unset when end-of-turn confidence is absent', async () => {
+    const transcript = await collectTranscript(
+      turnMessage(),
+      sttLib.SpeechEventType.INTERIM_TRANSCRIPT,
+    );
+
+    expect(transcript.metadata).toBeUndefined();
+  });
+});
+
+describe('AssemblyAI STT PII redaction', () => {
+  it('emits only the redacted transcript text for final turns', async () => {
+    const { wss, baseUrl } = await startWebSocketServer();
+    wss.on('connection', (ws) => {
+      ws.once('message', () => {
+        ws.send(
+          JSON.stringify({
+            type: 'Turn',
+            transcript: 'My name',
+            utterance: 'My name',
+            end_of_turn: false,
+            words: [
+              { text: 'My', start: 0, end: 200, confidence: 0.9 },
+              { text: 'name', start: 200, end: 400, confidence: 0.9 },
+            ],
+          }),
+        );
+        ws.send(
+          JSON.stringify({
+            type: 'Turn',
+            transcript: 'My name is [PERSON_NAME].',
+            utterance: 'My name is Sonny.',
+            end_of_turn: true,
+            words: [
+              { text: 'My', start: 0, end: 200, confidence: 0.9 },
+              { text: 'name', start: 200, end: 400, confidence: 0.9 },
+              { text: 'is', start: 400, end: 500, confidence: 0.9 },
+              { text: 'Sonny.', start: 500, end: 900, confidence: 0.9 },
+            ],
+          }),
+        );
+      });
+    });
+
+    try {
+      const stream = new STT({ apiKey: 'test-key', baseUrl, redactPii: true }).stream({
+        connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1000 },
+      });
+      await waitUntil(() => wss.clients.size > 0);
+      stream.pushFrame(makeFrame());
+      stream.endInput();
+
+      const events = await collectUntilEnd(stream);
+      stream.close();
+
+      const alternatives = events.flatMap((event) => event.alternatives ?? []);
+      expect(alternatives.map((alternative) => alternative.text)).toEqual([
+        'My name',
+        'My name',
+        'My name is [PERSON_NAME].',
+        'My name is [PERSON_NAME].',
+        'My name is [PERSON_NAME].',
+      ]);
+      for (const alternative of alternatives.slice(2)) {
+        expect(alternative.words).toEqual([]);
+        expect(alternative.startTime).toBe(alternatives[0]!.startTime);
+        expect(alternative.endTime).toBeGreaterThan(alternative.startTime);
+      }
+    } finally {
+      await closeWebSocketServer(wss);
+    }
+  });
+});
+
+describe('AssemblyAI STT speaker labels', () => {
+  it('surfaces the turn speaker label as speakerId', async () => {
+    const transcript = await collectTranscript(
+      turnMessage({ end_of_turn: true, transcript: 'hello', speaker_label: 'B' }),
+      sttLib.SpeechEventType.FINAL_TRANSCRIPT,
+    );
+
+    expect(transcript.speakerId).toBe('B');
+  });
+
+  it('treats the UNKNOWN speaker label as no speaker', async () => {
+    const transcript = await collectTranscript(
+      turnMessage({ speaker_label: 'UNKNOWN' }),
+      sttLib.SpeechEventType.INTERIM_TRANSCRIPT,
+    );
+
+    expect(transcript.speakerId).toBeNull();
+  });
+
+  it('advertises diarization only when speakerLabels is enabled', () => {
+    expect(new STT({ apiKey: 'test-key' }).capabilities.diarization).toBe(false);
+    expect(new STT({ apiKey: 'test-key', speakerLabels: true }).capabilities.diarization).toBe(
+      true,
+    );
   });
 });
