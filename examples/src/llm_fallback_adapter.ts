@@ -59,8 +59,9 @@ export default defineAgent({
     const agent = new voice.Agent({
       instructions:
         'You are a helpful assistant. Demonstrate that you are working by responding to user queries.',
-      tools: {
-        getWeather: llm.tool({
+      tools: [
+        llm.tool({
+          name: 'getWeather',
           description: 'Get the weather for a given location.',
           parameters: z.object({
             location: z.string().describe('The location to get the weather for'),
@@ -69,7 +70,7 @@ export default defineAgent({
             return `The weather in ${location} is sunny with a temperature of 72°F.`;
           },
         }),
-      },
+      ],
     });
 
     const session = new voice.AgentSession({

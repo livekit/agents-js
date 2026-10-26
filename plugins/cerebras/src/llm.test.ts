@@ -9,13 +9,13 @@ import { assert, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import type { LLMOptions } from './llm.js';
 import { LLM } from './llm.js';
+import type { CerebrasChatModels } from './models.js';
 
 assert(process.env.CEREBRAS_API_KEY, 'CEREBRAS_API_KEY must be set');
 
-// llama3.1-8b is fast and has generous rate limits but can't do tool calls reliably;
-// qwen-3-235b is needed for function calling but has tight per-minute token quotas.
-const CHAT_MODEL = 'llama3.1-8b';
-const TOOL_MODEL = 'qwen-3-235b-a22b-instruct-2507';
+// gpt-oss-120b supports both basic chat and function calling.
+const CHAT_MODEL = 'gpt-oss-120b';
+const TOOL_MODEL = 'gpt-oss-120b';
 
 interface CapturedRequest {
   url: string;
@@ -88,8 +88,9 @@ class WeatherAgent extends voice.Agent {
   constructor() {
     super({
       instructions: 'You are a helpful assistant.',
-      tools: {
-        get_weather: llm.tool({
+      tools: [
+        llm.tool({
+          name: 'get_weather',
           description: 'Get the current weather for a location.',
           parameters: z.object({
             location: z.string().describe('The city name'),
@@ -98,12 +99,26 @@ class WeatherAgent extends voice.Agent {
             return `The weather in ${location} is sunny, 72°F.`;
           },
         }),
-      },
+      ],
     });
   }
 }
 
 describe('Cerebras', { timeout: 30_000 }, () => {
+  it('instantiates all Cerebras chat models', () => {
+    const modelNames = [
+      'gpt-oss-120b',
+      'qwen-3.8-27b',
+      'zai-glm-4.7',
+      'gemma-4-31b',
+    ] satisfies CerebrasChatModels[];
+
+    for (const modelName of modelNames) {
+      const model = new LLM({ model: modelName, apiKey: 'test-key' });
+      expect(model.model).toBe(modelName);
+    }
+  });
+
   it('basic chat completion returns a non-empty assistant message', async () => {
     const session = new voice.AgentSession({ llm: cerebrasLLM() });
     await session.start({

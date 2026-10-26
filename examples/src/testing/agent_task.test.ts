@@ -148,8 +148,9 @@ describe('AgentTask examples', { timeout: 120_000 }, () => {
           super({
             instructions:
               'You are collecting a name and role. Extract both from user input and call recordIntro.',
-            tools: {
-              recordIntro: llm.tool({
+            tools: [
+              llm.tool({
+                name: 'recordIntro',
                 description: 'Record the name and role',
                 parameters: z.object({
                   name: z.string().describe('User name'),
@@ -160,7 +161,7 @@ describe('AgentTask examples', { timeout: 120_000 }, () => {
                   return 'recorded';
                 },
               }),
-            },
+            ],
           });
         }
 
@@ -222,8 +223,9 @@ describe('AgentTask examples', { timeout: 120_000 }, () => {
           super({
             instructions:
               'When asked to capture email, ALWAYS call captureEmail exactly once, then respond briefly.',
-            tools: {
-              captureEmail: llm.tool({
+            tools: [
+              llm.tool({
+                name: 'captureEmail',
                 description: 'Capture an email by running a nested AgentTask.',
                 parameters: z.object({}),
                 execute: async () => {
@@ -236,7 +238,7 @@ describe('AgentTask examples', { timeout: 120_000 }, () => {
                   }
                 },
               }),
-            },
+            ],
           });
         }
 
@@ -275,8 +277,9 @@ describe('AgentTask examples', { timeout: 120_000 }, () => {
           instructions:
             'You are Alex, an interviewer. Extract the candidate name and a short intro from the latest user input. ' +
             'Use the tool recordIntro exactly once when both are available.',
-          tools: {
-            recordIntro: llm.tool({
+          tools: [
+            llm.tool({
+              name: 'recordIntro',
               description: 'Record candidate name and intro summary.',
               parameters: z.object({
                 name: z.string().describe('Candidate name'),
@@ -288,7 +291,7 @@ describe('AgentTask examples', { timeout: 120_000 }, () => {
                 return 'Intro recorded.';
               },
             }),
-          },
+          ],
         });
       }
 
@@ -305,8 +308,9 @@ describe('AgentTask examples', { timeout: 120_000 }, () => {
         super({
           instructions:
             'When the user asks to run the intro task, ALWAYS call collectIntroWithTask exactly once.',
-          tools: {
-            collectIntroWithTask: llm.tool({
+          tools: [
+            llm.tool({
+              name: 'collectIntroWithTask',
               description: 'Launch the IntroTask and return the captured intro details.',
               parameters: z.object({}),
               execute: async () => {
@@ -316,7 +320,7 @@ describe('AgentTask examples', { timeout: 120_000 }, () => {
                 return JSON.stringify(result);
               },
             }),
-          },
+          ],
         });
       }
     }

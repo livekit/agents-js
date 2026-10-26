@@ -12,7 +12,7 @@ export interface JobExecutor {
 
   start(): Promise<Throws<void, Error>>;
   join(): Promise<Throws<void, Error>>;
-  initialize(): Promise<Throws<void, Error>>;
+  initialize(options: { sessionEndTimeout: number }): Promise<Throws<void, Error>>;
   close(): Promise<Throws<void, Error>>;
   launchJob(info: RunningJobInfo): Promise<Throws<void, Error>>;
 }

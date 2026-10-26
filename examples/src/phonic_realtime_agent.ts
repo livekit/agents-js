@@ -1,19 +1,20 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { type JobContext, ServerOptions, cli, defineAgent, llm, voice } from '@livekit/agents';
+import { type JobContext, ServerOptions, cli, defineAgent, llm, log, voice } from '@livekit/agents';
 import * as phonic from '@livekit/agents-plugin-phonic';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
 const toggleLight = llm.tool({
+  name: 'toggle_light',
   description: 'Toggle a light on or off. Available lights are A05, A06, A07, and A08.',
   parameters: z.object({
     light_id: z.string().describe('The ID of the light to toggle'),
     state: z.enum(['on', 'off']).describe('Whether to turn the light on or off'),
   }),
   execute: async ({ light_id, state }) => {
-    console.log(`Turning ${state} light ${light_id}`);
+    log().info({ state, 'lk.pii.light_id': light_id }, 'toggling light');
     await new Promise((resolve) => setTimeout(resolve, 1_000));
     return `Light ${light_id} turned ${state}`;
   },
@@ -23,9 +24,7 @@ export default defineAgent({
   entry: async (ctx: JobContext) => {
     const agent = new voice.Agent({
       instructions: 'You are a helpful voice AI assistant named Alex.',
-      tools: {
-        toggle_light: toggleLight,
-      },
+      tools: [toggleLight],
     });
 
     const session = new voice.AgentSession({
@@ -34,6 +33,9 @@ export default defineAgent({
         voice: 'sabrina',
         audioSpeed: 1.2,
         minWordsToInterrupt: 3,
+        onConversationCreated: (conversationId) => {
+          console.log(`Phonic conversation id: ${conversationId}`);
+        },
       }),
     });
 
@@ -48,7 +50,7 @@ export default defineAgent({
       instructions: 'Greet the user, asking about their day.',
     });
 
-    setTimeout(async () => {
+    setTimeout(() => {
       if (session.agentState === 'initializing') return;
       const agent = session.currentAgent;
       const chatCtx = agent.chatCtx.copy();
@@ -57,7 +59,9 @@ export default defineAgent({
         content:
           "The user's name is Alex. He is from San Francisco and likes hiking. Use this information in your conversation.",
       });
-      await agent.updateChatCtx(chatCtx);
+      agent.updateChatCtx(chatCtx).catch((error) => {
+        log().error(error, 'Failed to update chat context');
+      });
     }, 10000);
   },
 });

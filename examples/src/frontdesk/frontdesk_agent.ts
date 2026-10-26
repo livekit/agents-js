@@ -49,8 +49,9 @@ export class FrontDeskAgent extends voice.Agent {
 
     super({
       instructions,
-      tools: {
-        scheduleAppointment: llm.tool({
+      tools: [
+        llm.tool({
+          name: 'scheduleAppointment',
           description: 'Schedule an appointment at the given slot.',
           parameters: z.object({
             slotId: z
@@ -100,7 +101,8 @@ export class FrontDeskAgent extends voice.Agent {
             return `The appointment was successfully scheduled for ${formatted}.`;
           },
         }),
-        listAvailableSlots: llm.tool({
+        llm.tool({
+          name: 'listAvailableSlots',
           description: `Return a plain-text list of available slots, one per line.
 
 <slot_id> - <Weekday>, <Month> <Day>, <Year> at <HH:MM> <TZ> (<relative time>)
@@ -178,7 +180,7 @@ You must infer the appropriate range implicitly from the conversational context 
             return lines.join('\n') || 'No slots available at the moment.';
           },
         }),
-      },
+      ],
     });
 
     this.tz = options.timezone;

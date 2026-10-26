@@ -15,17 +15,61 @@ export const AUDIO_ENCODING = 'pcm_s16le';
  * See [the docs](https://docs.cartesia.ai/build-with-cartesia/tts-models/latest) for all options.
  */
 export type TTSModels =
-  | 'sonic'
-  | 'sonic-2'
+  | 'sonic-3.6'
+  | 'sonic-3.6-2026-08-27'
+  | 'sonic-3.5'
   | 'sonic-3'
   | 'sonic-lite'
-  | 'sonic-preview'
-  | 'sonic-turbo';
+  | 'sonic-preview';
 
 /**
  * See [the docs](https://docs.cartesia.ai/build-with-cartesia/tts-models/latest) for all options.
  */
-export type TTSLanguages = 'en' | 'es' | 'fr' | 'de' | 'pt' | 'zh' | 'ja';
+export type TTSLanguages =
+  | 'en'
+  | 'es'
+  | 'fr'
+  | 'de'
+  | 'pt'
+  | 'zh'
+  | 'ja'
+  | 'hi'
+  | 'ko'
+  | 'it'
+  | 'nl'
+  | 'pl'
+  | 'ru'
+  | 'sv'
+  | 'tr'
+  | 'tl'
+  | 'bg'
+  | 'ro'
+  | 'ar'
+  | 'cs'
+  | 'el'
+  | 'fi'
+  | 'hr'
+  | 'ms'
+  | 'sk'
+  | 'da'
+  | 'ta'
+  | 'uk'
+  | 'hu'
+  | 'no'
+  | 'vi'
+  | 'bn'
+  | 'th'
+  | 'he'
+  | 'ka'
+  | 'id'
+  | 'te'
+  | 'gu'
+  | 'kn'
+  | 'ml'
+  | 'mr'
+  | 'or'
+  | 'pa'
+  | 'ur';
 
 export const TTSDefaultVoiceId = 'f786b574-daa5-4673-aa0c-cbe3e8534c02';
 
@@ -71,5 +115,7 @@ export type TTSEncoding = 'pcm_s16le';
 
 /**
  * See [the docs](https://docs.cartesia.ai/build-with-cartesia/stt-models/latest) for all options.
+ *
+ * `ink-2` currently supports English only; `ink-whisper` is multilingual.
  */
-export type STTModel = 'ink-2';
+export type STTModel = 'ink-2' | 'ink-whisper';

@@ -8,7 +8,7 @@ import { ChatContext } from '../llm/chat_context.js';
 import { type RealtimeCapabilities, RealtimeModel, type RealtimeSession } from '../llm/realtime.js';
 import { initializeLogger, log } from '../log.js';
 import type { SpeechEvent } from '../stt/stt.js';
-import { Agent, type ModelSettings } from './agent.js';
+import { Agent, AgentTask, type ModelSettings } from './agent.js';
 import {
   AgentActivity,
   type ReusableResources,
@@ -21,9 +21,7 @@ initializeLogger({ pretty: false, level: 'silent' });
 
 type FakeActivity = {
   agent: Agent;
-  audioRecognition:
-    | { detachSttPipeline: ReturnType<typeof vi.fn>; inputStartedAt?: number }
-    | undefined;
+  audioRecognition: { detachSttPipeline: ReturnType<typeof vi.fn> } | undefined;
   stt: unknown;
   llm: unknown;
   tools: unknown;
@@ -31,12 +29,11 @@ type FakeActivity = {
 };
 
 function createFakeActivity(agent: Agent, stt: unknown, inputStartedAt?: number) {
-  const detachedPipeline = { id: Symbol('pipeline') };
+  const detachedPipeline = { id: Symbol('pipeline'), inputStartedAt };
   const activity = {
     agent,
     audioRecognition: {
       detachSttPipeline: vi.fn(async () => detachedPipeline),
-      inputStartedAt,
     },
     stt,
     llm: undefined,
@@ -85,7 +82,7 @@ describe('AgentActivity STT handoff reuse eligibility', () => {
     const resources = await detachResources(oldActivity.activity, newActivity.activity);
 
     expect(resources.sttPipeline).toBe(oldActivity.detachedPipeline);
-    expect(resources.sttInputStartedAt).toBe(oldInputStartedAt);
+    expect(resources.sttPipeline?.inputStartedAt).toBe(oldInputStartedAt);
   });
 
   it('does not reuse when the STT instances differ', async () => {
@@ -316,6 +313,7 @@ describe('AgentActivity blockNewTurns (handoff transition)', () => {
     activity.logger = { warn: vi.fn(), debug: vi.fn(), info: vi.fn(), error: vi.fn() };
     activity.cancelPreemptiveGeneration = vi.fn();
     activity.createSpeechTask = vi.fn(() => ({ cancel: vi.fn() }));
+    activity.speechQueue = { clone: () => [] };
     return activity;
   }
 
@@ -492,5 +490,47 @@ describe('cleanupReusableResources', () => {
     const resources: ReusableResources = {};
     await cleanupReusableResources(resources, log());
     // should not throw
+  });
+});
+
+describe('AgentActivity STT handoff reuse with Agent.create', () => {
+  it('reuses the pipeline between Agent.create agents without an sttNode hook', async () => {
+    const sharedStt = { id: 'shared-stt' };
+    const oldActivity = createFakeActivity(Agent.create({ instructions: 'a' }), sharedStt);
+    const newActivity = createFakeActivity(Agent.create({ instructions: 'b' }), sharedStt);
+
+    const resources = await detachResources(oldActivity.activity, newActivity.activity);
+
+    expect(resources.sttPipeline).toBe(oldActivity.detachedPipeline);
+  });
+
+  it('reuses the pipeline between a class agent and an AgentTask.create task', async () => {
+    const sharedStt = { id: 'shared-stt' };
+    const oldActivity = createFakeActivity(new Agent({ instructions: 'a' }), sharedStt);
+    const newActivity = createFakeActivity(
+      AgentTask.create<string>({ instructions: 'task' }),
+      sharedStt,
+    );
+
+    const resources = await detachResources(oldActivity.activity, newActivity.activity);
+
+    expect(resources.sttPipeline).toBe(oldActivity.detachedPipeline);
+  });
+
+  it('does not reuse the pipeline when an Agent.create agent provides an sttNode hook', async () => {
+    const sharedStt = { id: 'shared-stt' };
+    const oldActivity = createFakeActivity(new Agent({ instructions: 'a' }), sharedStt);
+    const newActivity = createFakeActivity(
+      Agent.create({
+        instructions: 'b',
+        sttNode: async function* () {},
+      }),
+      sharedStt,
+    );
+
+    const resources = await detachResources(oldActivity.activity, newActivity.activity);
+
+    expect(resources.sttPipeline).toBeUndefined();
+    expect(oldActivity.activity.audioRecognition?.detachSttPipeline).not.toHaveBeenCalled();
   });
 });

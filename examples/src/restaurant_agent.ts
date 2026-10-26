@@ -77,6 +77,7 @@ function summarize({
 }
 
 const updateName = llm.tool({
+  name: 'updateName',
   description:
     'Called when the user provides their name. Confirm the spelling with the user before calling the function.',
   parameters: z.object({
@@ -89,6 +90,7 @@ const updateName = llm.tool({
 });
 
 const updatePhone = llm.tool({
+  name: 'updatePhone',
   description:
     'Called when the user provides their phone number. Confirm the spelling with the user before calling the function.',
   parameters: z.object({
@@ -101,6 +103,7 @@ const updatePhone = llm.tool({
 });
 
 const toGreeter = llm.tool({
+  name: 'toGreeter',
   description:
     'Called when user asks any unrelated questions or requests any other services not in your job description.',
   execute: async (_, { ctx }: llm.ToolOptions<UserData>) => {
@@ -171,35 +174,37 @@ function createGreeterAgent(menu: string) {
     instructions: `You are a friendly restaurant receptionist. The menu is: ${menu}\nYour jobs are to greet the caller and understand if they want to make a reservation or order takeaway. Guide them to the right agent using tools.`,
     llm: new inference.LLM({ model: 'openai/gpt-4.1-mini' }),
     tts: new inference.TTS({ model: 'cartesia/sonic-3', voice: voices.greeter }),
-    tools: {
-      toReservation: llm.tool({
+    tools: [
+      llm.tool({
+        name: 'toReservation',
         description: dedent`
           Called when user wants to make or update a reservation.
           This function handles transitioning to the reservation agent
           who will collect the necessary details like reservation time,
           customer name and phone number.
         `,
-        execute: async (_, { ctx }): Promise<llm.AgentHandoff> => {
+        execute: async (_, { ctx }: llm.ToolOptions<UserData>): Promise<llm.AgentHandoff> => {
           return await greeter.transferToAgent({
             name: 'reservation',
             ctx,
           });
         },
       }),
-      toTakeaway: llm.tool({
+      llm.tool({
+        name: 'toTakeaway',
         description: dedent`
           Called when the user wants to place a takeaway order.
           This includes handling orders for pickup, delivery, or when the user wants to
           proceed to checkout with their existing order.
         `,
-        execute: async (_, { ctx }): Promise<llm.AgentHandoff> => {
+        execute: async (_, { ctx }: llm.ToolOptions<UserData>): Promise<llm.AgentHandoff> => {
           return await greeter.transferToAgent({
             name: 'takeaway',
             ctx,
           });
         },
       }),
-    },
+    ],
   });
 
   return greeter;
@@ -210,11 +215,12 @@ function createReservationAgent() {
     name: 'reservation',
     instructions: `You are a reservation agent at a restaurant. Your jobs are to ask for the reservation time, then customer's name, and phone number. Then confirm the reservation details with the customer.`,
     tts: new inference.TTS({ model: 'cartesia/sonic-3', voice: voices.reservation }),
-    tools: {
+    tools: [
       updateName,
       updatePhone,
       toGreeter,
-      updateReservationTime: llm.tool({
+      llm.tool({
+        name: 'updateReservationTime',
         description: dedent`
           Called when the user provides their reservation time.
           Confirm the time with the user before calling the function.
@@ -222,14 +228,18 @@ function createReservationAgent() {
         parameters: z.object({
           time: z.string().describe('The reservation time'),
         }),
-        execute: async ({ time }, { ctx }) => {
+        execute: async ({ time }, { ctx }: llm.ToolOptions<UserData>) => {
           ctx.userData.reservationTime = time;
           return `The reservation time is updated to ${time}`;
         },
       }),
-      confirmReservation: llm.tool({
+      llm.tool({
+        name: 'confirmReservation',
         description: `Called when the user confirms the reservation.`,
-        execute: async (_, { ctx }): Promise<llm.AgentHandoff | string> => {
+        execute: async (
+          _,
+          { ctx }: llm.ToolOptions<UserData>,
+        ): Promise<llm.AgentHandoff | string> => {
           const userdata = ctx.userData;
           if (!userdata.customer.name || !userdata.customer.phone) {
             return 'Please provide your name and phone number first.';
@@ -243,7 +253,7 @@ function createReservationAgent() {
           });
         },
       }),
-    },
+    ],
   });
 
   return reservation;
@@ -254,21 +264,26 @@ function createTakeawayAgent(menu: string) {
     name: 'takeaway',
     instructions: `Your are a takeaway agent that takes orders from the customer. Our menu is: ${menu}\nClarify special requests and confirm the order with the customer.`,
     tts: new inference.TTS({ model: 'cartesia/sonic-3', voice: voices.takeaway }),
-    tools: {
+    tools: [
       toGreeter,
-      updateOrder: llm.tool({
+      llm.tool({
+        name: 'updateOrder',
         description: `Called when the user provides their order.`,
         parameters: z.object({
           items: z.array(z.string()).describe('The items of the full order'),
         }),
-        execute: async ({ items }, { ctx }) => {
+        execute: async ({ items }, { ctx }: llm.ToolOptions<UserData>) => {
           ctx.userData.order = items;
           return `The order is updated to ${items}`;
         },
       }),
-      toCheckout: llm.tool({
+      llm.tool({
+        name: 'toCheckout',
         description: `Called when the user confirms the order.`,
-        execute: async (_, { ctx }): Promise<llm.AgentHandoff | string> => {
+        execute: async (
+          _,
+          { ctx }: llm.ToolOptions<UserData>,
+        ): Promise<llm.AgentHandoff | string> => {
           const userdata = ctx.userData;
           if (!userdata.order) {
             return 'No takeaway order found. Please make an order first.';
@@ -279,7 +294,7 @@ function createTakeawayAgent(menu: string) {
           });
         },
       }),
-    },
+    ],
   });
 
   return takeaway;
@@ -290,21 +305,23 @@ function createCheckoutAgent(menu: string) {
     name: 'checkout',
     instructions: `You are a checkout agent at a restaurant. The menu is: ${menu}\nYour are responsible for confirming the expense of the order and then collecting customer's name, phone number and credit card information, including the card number, expiry date, and CVV step by step.`,
     tts: new inference.TTS({ model: 'cartesia/sonic-3', voice: voices.checkout }),
-    tools: {
+    tools: [
       updateName,
       updatePhone,
       toGreeter,
-      confirmExpense: llm.tool({
+      llm.tool({
+        name: 'confirmExpense',
         description: `Called when the user confirms the expense.`,
         parameters: z.object({
           expense: z.number().describe('The expense of the order'),
         }),
-        execute: async ({ expense }, { ctx }) => {
+        execute: async ({ expense }, { ctx }: llm.ToolOptions<UserData>) => {
           ctx.userData.expense = expense;
           return `The expense is confirmed to be ${expense}`;
         },
       }),
-      updateCreditCard: llm.tool({
+      llm.tool({
+        name: 'updateCreditCard',
         description: dedent`
           Called when the user provides their credit card number, expiry date, and CVV.
           Confirm the spelling with the user before calling the function.
@@ -314,14 +331,18 @@ function createCheckoutAgent(menu: string) {
           expiry: z.string().describe('The expiry date of the credit card'),
           cvv: z.string().describe('The CVV of the credit card'),
         }),
-        execute: async ({ number, expiry, cvv }, { ctx }) => {
+        execute: async ({ number, expiry, cvv }, { ctx }: llm.ToolOptions<UserData>) => {
           ctx.userData.creditCard = { number, expiry, cvv };
           return `The credit card number is updated to ${number}`;
         },
       }),
-      confirmCheckout: llm.tool({
+      llm.tool({
+        name: 'confirmCheckout',
         description: `Called when the user confirms the checkout.`,
-        execute: async (_, { ctx }): Promise<llm.AgentHandoff | string> => {
+        execute: async (
+          _,
+          { ctx }: llm.ToolOptions<UserData>,
+        ): Promise<llm.AgentHandoff | string> => {
           const userdata = ctx.userData;
           if (!userdata.expense) {
             return 'Please confirm the expense first.';
@@ -340,16 +361,17 @@ function createCheckoutAgent(menu: string) {
           });
         },
       }),
-      toTakeaway: llm.tool({
+      llm.tool({
+        name: 'toTakeaway',
         description: `Called when the user wants to update their order.`,
-        execute: async (_, { ctx }): Promise<llm.AgentHandoff> => {
+        execute: async (_, { ctx }: llm.ToolOptions<UserData>): Promise<llm.AgentHandoff> => {
           return await checkout.transferToAgent({
             name: 'takeaway',
             ctx,
           });
         },
       }),
-    },
+    ],
   });
 
   return checkout;

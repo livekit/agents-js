@@ -1,9 +1,11 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import type * as types from '@google/genai';
 import type { FunctionDeclaration, Schema } from '@google/genai';
-import { llm } from '@livekit/agents';
+import { llm, log } from '@livekit/agents';
 import type { JSONSchema7 } from 'json-schema';
+import { GeminiTool, type LLMTools } from './tools.js';
 
 /**
  * JSON Schema v7
@@ -79,6 +81,7 @@ export function convertJSONSchemaToOpenAPISchema(jsonSchema: JSONSchema7Definiti
       },
       {} as Record<string, unknown>,
     );
+    result.propertyOrdering = Object.keys(properties);
   }
 
   if (items) {
@@ -136,22 +139,131 @@ function isEmptyObjectSchema(jsonSchema: JSONSchema7Definition): boolean {
   );
 }
 
-export function toFunctionDeclarations(toolCtx: llm.ToolContext): FunctionDeclaration[] {
+function validateGeminiSchema(schema: JSONSchema7Definition): void {
+  if (typeof schema === 'boolean') return;
+
+  for (const field of [
+    'maxItems',
+    'maxLength',
+    'maxProperties',
+    'minItems',
+    'minLength',
+    'minProperties',
+    'maximum',
+    'minimum',
+  ] as const) {
+    if (schema[field] !== undefined && typeof schema[field] !== 'number') {
+      throw new TypeError(`${field} must be a number`);
+    }
+  }
+
+  if (schema.properties) {
+    for (const property of Object.values(schema.properties)) {
+      validateGeminiSchema(property);
+    }
+  }
+  if (schema.items) {
+    const items = Array.isArray(schema.items) ? schema.items : [schema.items];
+    for (const item of items) validateGeminiSchema(item);
+  }
+  for (const alternatives of [schema.allOf, schema.anyOf, schema.oneOf]) {
+    if (alternatives) {
+      for (const alternative of alternatives) validateGeminiSchema(alternative);
+    }
+  }
+}
+
+export function toFunctionDeclarations(
+  toolCtx: llm.ToolContext,
+  useParametersJsonSchema = true,
+): FunctionDeclaration[] {
   const functionDeclarations: FunctionDeclaration[] = [];
 
+  // Provider tools are not supported by the Gemini schema; `sortedToolEntries` yields only
+  // function tools (sorted by name), so they are skipped here.
   for (const [name, tool] of llm.sortedToolEntries(toolCtx)) {
-    const { description, parameters } = tool;
-    const jsonSchema = llm.toJsonSchema(parameters, false);
+    try {
+      const { description, parameters } = tool;
+      const jsonSchema = llm.toJsonSchema(parameters, false);
 
-    // Create a deep copy to prevent the Google GenAI library from mutating the schema
-    const schemaCopy = JSON.parse(JSON.stringify(jsonSchema));
+      // Create a deep copy to prevent the Google GenAI library from mutating the schema
+      const schemaCopy = JSON.parse(JSON.stringify(jsonSchema));
 
-    functionDeclarations.push({
-      name,
-      description,
-      parameters: convertJSONSchemaToOpenAPISchema(schemaCopy) as Schema,
-    });
+      const declaration: FunctionDeclaration = {
+        name,
+        description,
+      };
+      if (useParametersJsonSchema) {
+        declaration.parametersJsonSchema = isEmptyObjectSchema(schemaCopy) ? undefined : schemaCopy;
+      } else {
+        declaration.parameters = convertJSONSchemaToOpenAPISchema(schemaCopy) as Schema;
+        if (declaration.parameters) {
+          validateGeminiSchema(declaration.parameters as JSONSchema7Definition);
+        }
+      }
+      functionDeclarations.push(declaration);
+    } catch (cause) {
+      throw new Error(`tool ${name} has a schema Gemini rejected`, { cause });
+    }
   }
 
   return functionDeclarations;
+}
+
+export function toToolsConfig({
+  toolCtx,
+  geminiTools,
+  toolBehavior,
+  allowMixedTools = true,
+  useParametersJsonSchema = true,
+}: {
+  toolCtx?: llm.ToolContext;
+  geminiTools?: LLMTools;
+  toolBehavior?: types.Behavior;
+  allowMixedTools?: boolean;
+  useParametersJsonSchema?: boolean;
+}): [types.Tool[] | undefined, boolean] {
+  const tools: types.Tool[] = [];
+  let hasFunctionTools = false;
+
+  if (toolCtx) {
+    const functionDeclarations = toFunctionDeclarations(toolCtx, useParametersJsonSchema);
+    if (functionDeclarations.length > 0) {
+      hasFunctionTools = true;
+      tools.push({
+        functionDeclarations:
+          toolBehavior !== undefined
+            ? functionDeclarations.map((declaration) => ({
+                ...declaration,
+                behavior: toolBehavior,
+              }))
+            : functionDeclarations,
+      });
+    }
+  }
+
+  const providerTools: types.Tool[] = [];
+  if (geminiTools !== undefined) {
+    providerTools.push(geminiTools);
+  }
+
+  if (toolCtx !== undefined) {
+    for (const tool of toolCtx.providerTools) {
+      if (tool instanceof GeminiTool) {
+        providerTools.push(tool.toToolConfig());
+      }
+    }
+  }
+
+  // generateContent only supports combining built-in tools with function tools on the
+  // Gemini 3 Developer API: https://ai.google.dev/gemini-api/docs/tool-combination
+  if (hasFunctionTools && providerTools.length > 0 && !allowMixedTools) {
+    log().warn(
+      'ignoring provider tools; combining them with function tools requires the Gemini 3 Developer API (Vertex AI is not supported)',
+    );
+    return [tools.length > 0 ? tools : undefined, false];
+  }
+
+  tools.push(...providerTools);
+  return [tools.length > 0 ? tools : undefined, hasFunctionTools && providerTools.length > 0];
 }

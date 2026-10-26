@@ -165,19 +165,20 @@ export class AIPlatformLLM extends llm.LLM {
 
   chat({
     chatCtx,
-    toolCtx,
+    toolCtx: toolCtxInput,
     connOptions = DEFAULT_API_CONNECT_OPTIONS,
     parallelToolCalls,
     toolChoice,
     extraKwargs,
   }: {
     chatCtx: llm.ChatContext;
-    toolCtx?: llm.ToolContext;
+    toolCtx?: llm.ToolContextLike;
     connOptions?: APIConnectOptions;
     parallelToolCalls?: boolean;
     toolChoice?: llm.ToolChoice;
     extraKwargs?: Record<string, unknown>;
   }): inference.LLMStream {
+    const toolCtx = llm.toToolContext(toolCtxInput);
     const extras: Record<string, unknown> = { ...extraKwargs };
 
     if (this.#opts.temperature !== undefined) {
@@ -201,7 +202,11 @@ export class AIPlatformLLM extends llm.LLM {
 
     parallelToolCalls =
       parallelToolCalls !== undefined ? parallelToolCalls : this.#opts.parallelToolCalls;
-    if (toolCtx && Object.keys(toolCtx).length > 0 && parallelToolCalls !== undefined) {
+    if (
+      toolCtx &&
+      Object.keys(toolCtx.functionTools).length > 0 &&
+      parallelToolCalls !== undefined
+    ) {
       extras.parallel_tool_calls = parallelToolCalls;
     }
 

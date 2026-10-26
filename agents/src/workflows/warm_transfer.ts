@@ -1,0 +1,1272 @@
+// SPDX-FileCopyrightText: 2026 LiveKit, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+import type { SIPOutboundConfig } from '@livekit/protocol';
+import {
+  DisconnectReason,
+  type ParticipantKind,
+  type RemoteParticipant,
+  type RemoteTrackPublication,
+  Room,
+  RoomEvent,
+  TrackKind,
+} from '@livekit/rtc-node';
+import {
+  AccessToken,
+  ConnectTwilioCallRequest_TwilioCallDirection,
+  ConnectorClient,
+  RoomServiceClient,
+  SipClient,
+  type VideoGrant,
+} from 'livekit-server-sdk';
+import { z } from 'zod';
+import type { LLMModels, STTModelString, TTSModelString } from '../inference/index.js';
+import { type JobContext, getJobContext } from '../job.js';
+import type {
+  ChatContext,
+  Instructions,
+  LLM,
+  RealtimeModel,
+  ToolContextEntry,
+} from '../llm/index.js';
+import { ToolError, ToolFlag, tool } from '../llm/index.js';
+import { log } from '../log.js';
+import type { STT } from '../stt/index.js';
+import type { TTS } from '../tts/index.js';
+import { Future, asError, waitUntilAborted } from '../utils.js';
+import type { VAD } from '../vad.js';
+import { Agent, AgentTask } from '../voice/agent.js';
+import { AgentSession, type TurnDetectionMode } from '../voice/agent_session.js';
+import {
+  type AudioConfig,
+  type AudioSourceType,
+  BackgroundAudioPlayer,
+  BuiltinAudioClip,
+  type PlayHandle,
+} from '../voice/background_audio.js';
+import { DEFAULT_PARTICIPANT_KINDS } from '../voice/room_io/index.js';
+import type { SpeechHandle } from '../voice/speech_handle.js';
+import type { InstructionParts } from './utils.js';
+
+export interface WarmTransferResult {
+  humanAgentIdentity: string;
+}
+
+/**
+ * Exact text or a callback that starts speech in the consultation session.
+ *
+ * @public
+ */
+export type WarmTransferSpeech = string | ((session: AgentSession) => SpeechHandle);
+
+/**
+ * Places the human agent call into the briefing room. See
+ * {@link WarmTransferTaskOptions.originateHumanAgent}.
+ *
+ * @public
+ */
+export type OriginateHumanAgent = (options: {
+  /** Name of the room the human agent is dialed into. */
+  roomName: string;
+  /** Participant identity the human agent joins with. */
+  identity: string;
+  /** Connected client room, for observing the human agent join. */
+  room: Room;
+  /** Job context of the caller session, for reaching LiveKit service APIs. */
+  jobCtx: JobContext;
+  /** Aborts when the transfer is cancelled while the dial is pending. */
+  signal: AbortSignal;
+}) => Promise<void>;
+
+export interface WarmTransferTaskOptions {
+  /**
+   * Signal for application cancellation, such as a consult deadline or application shutdown.
+   *
+   * Do not abort this signal when the caller disconnects. The task handles caller disconnects so
+   * it can play `callerHangupInstruction` before it ends an answered consultation.
+   *
+   * A successful participant move wins if it completes after the signal aborts. The task stops
+   * waiting for a pending SIP request but cannot cancel it.
+   */
+  abortSignal?: AbortSignal;
+  /** The phone number or SIP URI to dial for the human agent. */
+  sipCallTo?: string;
+  /**
+   * ID of a pre-configured LiveKit SIP outbound trunk used to originate the call.
+   * Falls back to the `LIVEKIT_SIP_OUTBOUND_TRUNK` environment variable when not provided.
+   */
+  sipTrunkId?: string | null;
+  /** Low-level SIP connection config for originating calls through a custom SIP domain. */
+  sipConnection?: SIPOutboundConfig;
+  /** Optional SIP From number. Falls back to `LIVEKIT_SIP_NUMBER`. */
+  sipNumber?: string;
+  /** Headers to include on the outbound SIP call. */
+  sipHeaders?: Record<string, string>;
+  /**
+   * DTMF tones to send once the human agent's call is answered, e.g. to dial an extension or
+   * navigate an IVR menu (`'1234#'`). Insert `w` characters to pause ~0.5s each before/between
+   * digits (`'wwww1234#'` waits ~2s, useful when the destination plays a greeting before
+   * accepting input).
+   */
+  dtmf?: string | null;
+  /**
+   * How long to wait, in milliseconds, for the human agent to answer before giving up. The
+   * underlying SIP API only supports whole-second granularity, so the value is rounded to the
+   * nearest second.
+   */
+  ringingTimeout?: number | null;
+  /**
+   * Name of the room used to dial and brief the human agent. Defaults to
+   * `${callerRoom.name}-human-agent`.
+   *
+   * Set this to control the briefing room's configuration: pre-create a room
+   * under this name (e.g. with `RoomServiceClient.createRoom` and an `egress`
+   * request to record the transfer leg) before running the task, and the
+   * transfer agent joins the pre-configured room instead of implicitly
+   * creating one with project defaults.
+   *
+   * The room is deleted when the transfer completes, fails, or is cancelled
+   * (the same lifecycle as the default room), which also ends any egress
+   * attached to it. Must differ from the caller room's name.
+   */
+  roomName?: string;
+  /**
+   * Participant identity the dialed human agent joins with. Defaults to
+   * `'human-agent-sip'`; {@link WarmTransferResult} reports the value used.
+   */
+  humanAgentIdentity?: string;
+  /**
+   * Hook that places the human agent call into the briefing room, replacing
+   * the default SIP dial (the SIP options above are then unused). It must
+   * resolve once the call is answered and reject when the dial fails. Its
+   * `signal` aborts when the transfer is cancelled while the dial is pending;
+   * the hook should then stop the call it placed.
+   */
+  originateHumanAgent?: OriginateHumanAgent;
+  /** Audio played to the caller while they are on hold during the transfer. */
+  holdAudio?: AudioSourceType | AudioConfig | AudioConfig[] | null;
+  /**
+   * Speech started after the outbound SIP call is answered. A string is spoken with
+   * `session.say()`. A callback runs once after answer with the consultation session and must
+   * return a speech handle. Omit this option to let the destination speak first. The answer signal
+   * does not distinguish a person from voicemail or an IVR, so an enabled greeting can overlap
+   * automated audio.
+   */
+  greetingSpeech?: WarmTransferSpeech;
+  /**
+   * Speech played before ending the human agent's call when the caller hangs up after the human
+   * agent answers. A string is spoken with `session.say()` and requires a TTS model. For sessions
+   * without TTS, use a callback that returns `session.say(text, { audio })` with prerecorded audio.
+   * The callback runs only after the caller hangs up, and the task awaits its returned handle.
+   * This option takes precedence over `callerHangupInstruction`.
+   */
+  callerHangupSpeech?: WarmTransferSpeech;
+  /**
+   * Instructions used to generate the reply spoken to the human agent before their call is
+   * ended when the caller hangs up mid-transfer (after the human agent answered but before
+   * the merge). Falls back to a built-in instruction when not provided.
+   *
+   * @deprecated Use `callerHangupSpeech`. Return `session.generateReply()` from its callback to
+   * keep generated speech.
+   */
+  callerHangupInstruction?: string | null;
+  /**
+   * Instructions for the human agent briefing. Pass a full string to replace the built-in prompt
+   * entirely, or {@link InstructionParts} to override individual sections (e.g. `persona`) while
+   * keeping the built-in template and auto-formatted conversation history.
+   */
+  instructions?: InstructionParts | string;
+  chatCtx?: ChatContext;
+  turnDetection?: TurnDetectionMode | null;
+  tools?: readonly ToolContextEntry[];
+  stt?: STT | STTModelString | null;
+  vad?: VAD | null;
+  llm?: LLM | RealtimeModel | LLMModels | null;
+  tts?: TTS | TTSModelString | null;
+  allowInterruptions?: boolean;
+}
+
+type IoState = {
+  audioInput: boolean;
+  audioOutput: boolean;
+  transcriptionOutput: boolean;
+};
+
+/**
+ * Build a warm-transfer {@link AgentTask} that dials a human agent over SIP (or through
+ * the `originateHumanAgent` hook), briefs them in a private room, and (on confirmation)
+ * merges them into the caller room.
+ *
+ * If the caller hangs up before the merge — including while the human agent's phone is
+ * still ringing — the transfer is cancelled: the pending dial is aborted, the human agent
+ * room is torn down (ending the SIP call), and the task completes with a {@link ToolError}.
+ * A human agent who already answered is told the caller left using `callerHangupSpeech`, or a
+ * reply generated from the deprecated `callerHangupInstruction`, before their call is ended.
+ *
+ * This is the functional core; {@link WarmTransferTask} is a thin class wrapper over it.
+ */
+export function createWarmTransferTask({
+  abortSignal,
+  sipCallTo,
+  sipTrunkId,
+  sipConnection,
+  sipNumber = process.env.LIVEKIT_SIP_NUMBER ?? '',
+  sipHeaders = {},
+  dtmf,
+  ringingTimeout,
+  humanAgentIdentity = 'human-agent-sip',
+  originateHumanAgent,
+  roomName: rawRoomName,
+  holdAudio = { source: BuiltinAudioClip.HOLD_MUSIC, volume: 0.8 },
+  greetingSpeech,
+  callerHangupSpeech,
+  callerHangupInstruction,
+  instructions,
+  chatCtx,
+  turnDetection,
+  tools,
+  stt,
+  vad,
+  llm,
+  tts,
+  allowInterruptions,
+}: WarmTransferTaskOptions = {}): AgentTask<WarmTransferResult> {
+  if (rawRoomName !== undefined && rawRoomName.length === 0) {
+    throw new Error('`roomName` must not be empty');
+  }
+
+  // Resolve the origination up front so a SIP misconfiguration throws at task
+  // creation, not mid-transfer.
+  const originate =
+    originateHumanAgent ??
+    createSipOriginateHumanAgent({
+      sipCallTo,
+      sipTrunkId,
+      sipConnection,
+      sipNumber,
+      sipHeaders,
+      dtmf,
+      ringingTimeout,
+    });
+
+  const backgroundAudio = new BackgroundAudioPlayer();
+  const logger = log();
+
+  // Mutable state shared between the onEnter hook and the tools below. A closure
+  // keeps it private to this task instance without the field-initializer ordering
+  // pitfalls of a class.
+  let callerRoom: Room | null = null;
+  let humanAgentRoom: Room | null = null;
+  // Captured eagerly in onEnter while the live job context is available. The
+  // post-merge caller-room cleanup listener fires from a native rtc-node FFI
+  // callback whose AsyncLocalStorage context is pinned to FfiClient-singleton
+  // creation, so getJobContext() would read an empty/stale store there.
+  let jobCtx: JobContext | null = null;
+  let transferAgentSession: AgentSession | null = null;
+  // Session handed off to the caller-hangup notification flow, which owns its
+  // teardown from that point on — no other cleanup path may close it.
+  let hangupNotifySession: AgentSession | null = null;
+  // Task exit keeps the caller job alive until the notification finishes.
+  let hangupNotifyPromise: Promise<void> | null = null;
+  let holdAudioHandle: PlayHandle | null = null;
+  let originalIoState: IoState | null = null;
+
+  // Resolves when the human agent room/session fails, so onEnter stops waiting.
+  const humanAgentFailedFut = new Future<void>();
+  const cancellationFut = new Future<void>();
+
+  // `task` is created at the end of this function. The helpers and tools below
+  // only read it at runtime (inside their bodies), long after it's assigned, so
+  // the forward reference is safe.
+  const setIoEnabled = (enabled: boolean): void => {
+    const input = task.session.input;
+    const output = task.session.output;
+
+    originalIoState ??= {
+      audioInput: input.audioEnabled,
+      audioOutput: output.audioEnabled,
+      transcriptionOutput: output.transcriptionEnabled,
+    };
+
+    if (input.audio) input.setAudioEnabled(enabled && originalIoState.audioInput);
+    if (output.audio) output.setAudioEnabled(enabled && originalIoState.audioOutput);
+    if (output.transcription)
+      output.setTranscriptionEnabled(enabled && originalIoState.transcriptionOutput);
+  };
+
+  const setResult = (result: WarmTransferResult | Error): void => {
+    if (task.done) return;
+
+    // Every completion path (merge, decline, voicemail, failure, hangup) ends
+    // the pre-merge hangup watch; connect_to_caller re-attaches its own
+    // post-merge cleanup listener.
+    callerRoom?.off(RoomEvent.ParticipantDisconnected, onCallerLeftBeforeMerge);
+
+    if (transferAgentSession) {
+      // shutdown() triggers deleteRoomOnClose, which disconnects the human agent
+      // room and frees its WebSocket. The human agent is already moved out
+      // (mergeCalls) or torn down (failure) by now.
+      transferAgentSession.shutdown();
+      transferAgentSession = null;
+      humanAgentRoom = null;
+    }
+
+    if (holdAudioHandle) {
+      holdAudioHandle.stop();
+      holdAudioHandle = null;
+    }
+    void backgroundAudio.close().catch((error) => {
+      logger.warn({ error }, 'failed to close background audio');
+    });
+
+    task.complete(result);
+  };
+
+  const onHumanAgentRoomClose = (reason: DisconnectReason): void => {
+    if (!task.done) {
+      logger.warn({ reason }, 'human agent room disconnected before transfer completed');
+    }
+    humanAgentFailedFut.resolve();
+    setResult(
+      new ToolError(
+        `Transfer failed: the human agent room disconnected before the transfer completed (reason: ${reason}). The caller has not been connected to a human agent.`,
+      ),
+    );
+  };
+
+  const hasCallerParticipant = (): boolean => {
+    if (!callerRoom) return false;
+    for (const participant of callerRoom.remoteParticipants.values()) {
+      if (DEFAULT_PARTICIPANT_KINDS.includes(participant.kind)) {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  // Announces the caller hangup to the human agent, then hangs up on them by
+  // shutting the session down (deleteRoomOnClose ends the SIP call).
+  const notifyHumanAgentOfHangup = async (
+    session: AgentSession,
+    room: Room | null,
+  ): Promise<void> => {
+    try {
+      session.interrupt();
+      const handle = createCallerHangupSpeech(session, callerHangupSpeech, callerHangupInstruction);
+      // Cap the wait so teardown can't hang on a stuck playout.
+      const playout = await waitUntilAborted(
+        handle.waitForPlayout(),
+        AbortSignal.timeout(CALLER_HANGUP_NOTICE_TIMEOUT_MS),
+      );
+      if (playout.isAborted) {
+        logger.warn(
+          { timeoutMs: CALLER_HANGUP_NOTICE_TIMEOUT_MS },
+          'caller hangup notification timed out',
+        );
+      }
+    } catch (error) {
+      logger.warn({ error }, 'failed to notify human agent of caller hangup');
+    } finally {
+      if (room?.name && jobCtx) {
+        const info = jobCtx.info;
+        const rooms = new RoomServiceClient(info.url, info.apiKey, info.apiSecret);
+        const removal = await waitUntilAborted(
+          rooms.removeParticipant(room.name, humanAgentIdentity),
+          AbortSignal.timeout(CALLER_HANGUP_CLEANUP_TIMEOUT_MS),
+        ).catch((error) => {
+          logger.warn({ error }, 'failed to remove human agent after caller hangup');
+          return null;
+        });
+        if (removal?.isAborted) {
+          logger.warn(
+            { timeoutMs: CALLER_HANGUP_CLEANUP_TIMEOUT_MS },
+            'timed out removing human agent after caller hangup',
+          );
+        }
+      }
+      session.shutdown({ drain: false });
+    }
+  };
+
+  const cancelForCallerHangup = (participantIdentity?: string): void => {
+    if (task.done) return;
+    logger.info(
+      { participantIdentity },
+      'caller hung up before the transfer completed, cancelling transfer',
+    );
+    cancellationFut.resolve();
+
+    // If the human agent already answered, take the session out of setResult's
+    // reach and let them know before hanging up, instead of dropping the call
+    // on them mid-briefing.
+    const session = transferAgentSession;
+    if (session) {
+      const room = humanAgentRoom;
+      transferAgentSession = null;
+      humanAgentRoom = null;
+      hangupNotifySession = session;
+      hangupNotifyPromise = notifyHumanAgentOfHangup(session, room);
+    }
+    setResult(new ToolError('caller hung up before the transfer completed'));
+  };
+
+  const onAbort = (): void => {
+    if (task.done) return;
+
+    const error = asError(abortSignal?.reason ?? new Error('warm transfer aborted'));
+    logger.info({ error }, 'warm transfer aborted');
+    cancellationFut.resolve();
+    setResult(error);
+  };
+
+  // Pre-merge watch: cancels the transfer if the caller leaves while the human
+  // agent's phone is still ringing or they're being briefed. Without it the
+  // dial keeps going and the human agent gets merged into an empty room.
+  const onCallerLeftBeforeMerge = (participant: {
+    identity: string;
+    kind: ParticipantKind;
+  }): void => {
+    if (!DEFAULT_PARTICIPANT_KINDS.includes(participant.kind)) {
+      return;
+    }
+    cancelForCallerHangup(participant.identity);
+  };
+
+  const onCallerParticipantDisconnected = (participant: {
+    identity: string;
+    kind: ParticipantKind;
+  }): void => {
+    if (!DEFAULT_PARTICIPANT_KINDS.includes(participant.kind)) {
+      return;
+    }
+
+    logger.info(
+      { participantIdentity: participant.identity },
+      'participant disconnected from caller room, closing',
+    );
+
+    if (!callerRoom?.name) {
+      return;
+    }
+
+    callerRoom.off(RoomEvent.ParticipantDisconnected, onCallerParticipantDisconnected);
+
+    // Use the eagerly-captured job context: this callback runs from a native
+    // rtc-node FFI event, where getJobContext() reads an empty/stale
+    // AsyncLocalStorage store and would throw as an unhandled rejection.
+    if (!jobCtx) {
+      logger.warn('no job context captured, cannot delete caller room');
+      return;
+    }
+    const callerRoomName = callerRoom.name;
+    void jobCtx.deleteRoom(callerRoomName).catch((error) => {
+      logger.warn({ error }, 'failed to delete caller room');
+    });
+  };
+
+  const cleanupHumanAgentDial = async (
+    session?: AgentSession | null,
+    room?: Room | null,
+  ): Promise<void> => {
+    // Start shutdown before disconnect so closeOnDisconnect cannot start a
+    // second close. Internal session teardown continues after the room is gone.
+    session?.shutdown({ drain: false });
+    await room?.disconnect().catch((error) => {
+      logger.warn({ error }, 'failed to disconnect human agent room');
+    });
+  };
+
+  const mergeCalls = async (): Promise<void> => {
+    if (!callerRoom?.name || !humanAgentRoom?.name) {
+      throw new Error('calls are not ready to merge');
+    }
+
+    humanAgentRoom.off(RoomEvent.Disconnected, onHumanAgentRoomClose);
+
+    logger.debug(
+      {
+        humanAgentIdentity,
+        callerRoom: callerRoom.name,
+      },
+      'moving human agent to caller room',
+    );
+
+    const info = (jobCtx ?? getJobContext()).info;
+    const rooms = new RoomServiceClient(info.url, info.apiKey, info.apiSecret);
+    await rooms.moveParticipant(humanAgentRoom.name, humanAgentIdentity, callerRoom.name);
+  };
+
+  /**
+   * Dials the human agent into a fresh room and starts a copy of this
+   * task there. Every awaited step is raced against `signal`; on abort the
+   * `finally` block tears the half-built room/session down (the room/session
+   * SDK calls aren't AbortSignal-aware; the origination hook also receives the
+   * signal so it can stop a call it already placed).
+   */
+  const dialHumanAgent = async (signal: AbortSignal): Promise<AgentSession> => {
+    if (!callerRoom?.name) {
+      throw new Error('caller room is not available');
+    }
+    const localIdentity = callerRoom.localParticipant?.identity;
+    if (!localIdentity) {
+      throw new Error('caller room local participant is not available');
+    }
+
+    const ctx = jobCtx ?? getJobContext();
+    const humanAgentRoomName = resolveHumanAgentRoomName(callerRoom.name, rawRoomName);
+    const room = new Room();
+    const transferAgent = new Agent({
+      instructions: task.instructions,
+      stt: task.stt,
+      vad: task.vad,
+      llm: task.llm,
+      tts: task.tts,
+      tools: task.toolCtx.tools,
+      chatCtx: task.chatCtx.copy(),
+      turnDetection: turnDetection ?? undefined,
+      allowInterruptions,
+    });
+
+    let session: AgentSession | undefined;
+    let completed = false;
+
+    try {
+      const token = new AccessToken(undefined, undefined, { identity: localIdentity });
+      token.kind = 'agent';
+      token.addGrant({
+        roomJoin: true,
+        room: humanAgentRoomName,
+        canUpdateOwnMetadata: true,
+        canPublish: true,
+        canSubscribe: true,
+      } as VideoGrant);
+
+      logger.debug({ wsUrl: ctx.info.url, humanAgentRoomName }, 'connecting to human agent room');
+      const jwt = await token.toJwt();
+
+      room.on(RoomEvent.Disconnected, onHumanAgentRoomClose);
+
+      const connected = await waitUntilAborted(room.connect(ctx.info.url, jwt), signal);
+      if (connected.isAborted) {
+        throw new Error('dial cancelled');
+      }
+
+      // The human agent session reuses the caller session's models.
+      session = new AgentSession({
+        vad: task.session.vad,
+        llm: task.session.llm,
+        stt: task.session.stt,
+        tts: task.session.tts,
+        turnDetection: task.session.turnDetection,
+      });
+
+      const started = await waitUntilAborted(
+        session.start({
+          agent: transferAgent,
+          room,
+          inputOptions: {
+            closeOnDisconnect: true,
+            // Delete the human agent room on shutdown so its WebSocket doesn't
+            // leak across transfers.
+            deleteRoomOnClose: true,
+            participantIdentity: humanAgentIdentity,
+          },
+          record: false,
+        }),
+        signal,
+      );
+      if (started.isAborted) {
+        throw new Error('dial cancelled');
+      }
+
+      const dialed = await waitUntilAborted(
+        originate({
+          roomName: humanAgentRoomName,
+          identity: humanAgentIdentity,
+          room,
+          jobCtx: ctx,
+          signal,
+        }),
+        signal,
+      );
+      if (dialed.isAborted) {
+        throw new Error('dial cancelled');
+      }
+
+      humanAgentRoom = room;
+      completed = true;
+      return session;
+    } finally {
+      if (!completed) {
+        room.off(RoomEvent.Disconnected, onHumanAgentRoomClose);
+        await cleanupHumanAgentDial(session, room);
+      }
+    }
+  };
+
+  const transferTools: ToolContextEntry[] = [
+    tool({
+      name: 'connect_to_caller',
+      description: 'Called when the human agent wants to connect to the caller.',
+      flags: ToolFlag.IGNORE_ON_ENTER,
+      execute: async () => {
+        logger.debug('connecting to caller');
+        if (!callerRoom) {
+          throw new Error('caller room is not available');
+        }
+        if (task.done) {
+          // e.g. the caller hung up while the human agent was confirming;
+          // don't move them into an empty room.
+          throw new ToolError('the transfer was already cancelled');
+        }
+
+        abortSignal?.removeEventListener('abort', onAbort);
+        try {
+          await mergeCalls();
+          setResult({ humanAgentIdentity });
+        } catch (error) {
+          if (abortSignal?.aborted) {
+            setResult(asError(abortSignal.reason ?? new Error('warm transfer aborted')));
+            return;
+          }
+          const room = humanAgentRoom;
+          room?.on(RoomEvent.Disconnected, onHumanAgentRoomClose);
+          if (room && !room.isConnected && !task.done) {
+            onHumanAgentRoomClose(DisconnectReason.UNKNOWN_REASON);
+          }
+          abortSignal?.addEventListener('abort', onAbort, { once: true });
+          throw error;
+        }
+        callerRoom.on(RoomEvent.ParticipantDisconnected, onCallerParticipantDisconnected);
+      },
+    }),
+    tool({
+      name: 'decline_transfer',
+      description:
+        'Handles the case when the human agent explicitly declines to connect to the caller.',
+      parameters: z.object({
+        reason: z
+          .string()
+          .describe('A short explanation of why the human agent declined to connect to the caller'),
+      }),
+      flags: ToolFlag.IGNORE_ON_ENTER,
+      execute: async ({ reason }: { reason: string }) => {
+        setResult(new ToolError(`human agent declined to connect: ${reason}`));
+      },
+    }),
+    tool({
+      name: 'voicemail_detected',
+      description:
+        'Called when the call reaches voicemail. Use this tool AFTER you hear the voicemail greeting',
+      flags: ToolFlag.IGNORE_ON_ENTER,
+      execute: async () => {
+        setResult(new ToolError('voicemail detected'));
+      },
+    }),
+  ];
+
+  const task = AgentTask.create<WarmTransferResult>({
+    instructions: resolveInstructions(instructions, chatCtx),
+    turnDetection: turnDetection ?? undefined,
+    tools: [...(tools ?? []), ...transferTools],
+    stt: stt ?? undefined,
+    vad: vad ?? undefined,
+    llm: llm ?? undefined,
+    tts: tts ?? undefined,
+    allowInterruptions,
+    onExit: async () => {
+      abortSignal?.removeEventListener('abort', onAbort);
+      if (hangupNotifyPromise) {
+        await hangupNotifyPromise;
+      }
+      // Keep the transfer activity deaf to the caller until dial cleanup has
+      // finished and the framework is ready to resume the original agent.
+      setIoEnabled(true);
+    },
+    onEnter: async () => {
+      jobCtx = getJobContext();
+      callerRoom = jobCtx.room;
+
+      abortSignal?.addEventListener('abort', onAbort, { once: true });
+      if (abortSignal?.aborted) {
+        onAbort();
+        return;
+      }
+
+      callerRoom.on(RoomEvent.ParticipantDisconnected, onCallerLeftBeforeMerge);
+      if (!hasCallerParticipant()) {
+        // The caller was already gone before the listener could attach.
+        cancelForCallerHangup();
+        return;
+      }
+
+      if (holdAudio !== null) {
+        await backgroundAudio.start({ room: callerRoom });
+        if (task.done) {
+          // The caller hung up while the hold audio was starting; setResult
+          // already closed the player, so don't create an orphaned play handle.
+          return;
+        }
+        holdAudioHandle = backgroundAudio.play(holdAudio, true);
+      }
+
+      setIoEnabled(false);
+
+      const abortController = new AbortController();
+      const dialPromise = dialHumanAgent(abortController.signal);
+      try {
+        const result = await Promise.race([
+          dialPromise.then((session) => ({ session, cancelled: false })),
+          humanAgentFailedFut.await.then(() => ({ session: null, cancelled: false })),
+          cancellationFut.await.then(() => ({ session: null, cancelled: true })),
+        ]);
+
+        if (result.cancelled) {
+          // The cancellation handler already completed the task.
+          return;
+        }
+        if (!result.session) {
+          throw new Error('human agent room closed');
+        }
+        if (task.done) {
+          // The caller hung up in the same tick the dial completed; leave
+          // `transferAgentSession` unset so the `finally` discards the session.
+          return;
+        }
+        transferAgentSession = result.session;
+        try {
+          createWarmTransferSpeech(transferAgentSession, greetingSpeech);
+        } catch (error) {
+          logger.warn({ error }, 'failed to greet human agent');
+        }
+      } catch (error) {
+        logger.error({ error }, 'could not dial human agent');
+        setResult(new ToolError('could not dial human agent'));
+      } finally {
+        abortController.abort();
+        // If the dial won the race we kept its session; if the hangup-notify
+        // flow took it, that flow shuts it down; otherwise discard it.
+        const session = await dialPromise.catch(() => null);
+        if (session && transferAgentSession !== session && hangupNotifySession !== session) {
+          await cleanupHumanAgentDial(session, humanAgentRoom);
+          humanAgentRoom = null;
+        }
+      }
+    },
+  });
+
+  return task;
+}
+
+/**
+ * Class wrapper around {@link createWarmTransferTask}, preserving the
+ * `new WarmTransferTask(options).run()` API. It composes the functional task and
+ * delegates `run()` to it.
+ */
+export class WarmTransferTask extends AgentTask<WarmTransferResult> {
+  readonly #task: AgentTask<WarmTransferResult>;
+
+  constructor(options: WarmTransferTaskOptions = {}) {
+    // The wrapper itself never runs as an agent; run() delegates to the
+    // composed task. Instructions are resolved inside createWarmTransferTask.
+    super({ instructions: '' });
+    this.#task = createWarmTransferTask(options);
+  }
+
+  override run(): Promise<WarmTransferResult> {
+    return this.#task.run();
+  }
+}
+
+/**
+ * Build the default origination: validates the SIP options eagerly and dials
+ * the human agent with `createSipParticipant`, resolving once they answer.
+ */
+function createSipOriginateHumanAgent(options: {
+  sipCallTo?: string;
+  sipTrunkId?: string | null;
+  sipConnection?: SIPOutboundConfig;
+  sipNumber: string;
+  sipHeaders: Record<string, string>;
+  dtmf?: string | null;
+  ringingTimeout?: number | null;
+}): OriginateHumanAgent {
+  const { sipCallTo, sipConnection, sipNumber, sipHeaders, dtmf, ringingTimeout } = options;
+  if (!sipCallTo) {
+    throw new Error('`sipCallTo` must be set');
+  }
+
+  // Resolve the SIP trunk: an explicit id wins, then a custom connection (which
+  // skips the env fallback so it isn't silently overridden), then the env var.
+  const sipTrunkId =
+    options.sipTrunkId !== undefined
+      ? options.sipTrunkId
+      : sipConnection
+        ? null
+        : process.env.LIVEKIT_SIP_OUTBOUND_TRUNK ?? null;
+
+  if (sipTrunkId === null && !sipConnection) {
+    throw new Error(
+      '`LIVEKIT_SIP_OUTBOUND_TRUNK` environment variable, `sipTrunkId`, or `sipConnection` must be set',
+    );
+  }
+
+  return async ({ roomName, identity, jobCtx }) => {
+    const sip = new SipClient(jobCtx.info.url);
+    await sip.createSipParticipant(
+      sipTrunkId ?? '',
+      sipCallTo,
+      roomName,
+      {
+        participantIdentity: identity,
+        waitUntilAnswered: true,
+        fromNumber: sipNumber || undefined,
+        headers: sipHeaders,
+        dtmf: dtmf ?? undefined,
+        // SIP API takes whole seconds (BigInt coercion throws on fractional input).
+        ringingTimeout: ringingTimeout != null ? Math.round(ringingTimeout / 1000) : undefined,
+      },
+      sipConnection,
+    );
+  };
+}
+
+// Twilio reports no-answer/failure only via async status webhooks (not
+// consumed here), so cap the wait to keep an unanswered transfer from hanging.
+const TWILIO_RINGING_TIMEOUT_MS = 30_000;
+
+/**
+ * Options for {@link createTwilioConnectorWarmTransferTask}: the base task
+ * options minus the SIP fields, plus the Twilio credentials used to place the
+ * supervisor call.
+ */
+export interface TwilioConnectorWarmTransferTaskOptions
+  extends Omit<
+    WarmTransferTaskOptions,
+    | 'sipCallTo'
+    | 'sipTrunkId'
+    | 'sipConnection'
+    | 'sipNumber'
+    | 'sipHeaders'
+    | 'dtmf'
+    | 'ringingTimeout'
+    | 'humanAgentIdentity'
+    | 'originateHumanAgent'
+  > {
+  /** Phone number of the human agent to dial, in E.164 format. */
+  phoneNumber: string;
+  /**
+   * Agent/business Twilio number or verified caller ID. Used without a token and
+   * for the caller-ID rejection fallback.
+   */
+  twilioFromNumber: string;
+  /** Twilio account SID. Falls back to the `TWILIO_ACCOUNT_SID` environment variable. */
+  twilioAccountSid?: string;
+  /** Twilio auth token. Falls back to the `TWILIO_AUTH_TOKEN` environment variable. */
+  twilioAuthToken?: string;
+  /**
+   * `CallToken` from the original incoming Twilio voice webhook, authorizing reuse
+   * of that call's caller ID. Requires the same call's `From` as `originalCallerNumber`.
+   * HTTP 400 / Twilio error 21210 or 21212 retries once from `twilioFromNumber` without a token.
+   * Other failures are not retried, to avoid duplicate calls.
+   * Retrieve the token from server-side state for that specific call; keep it out
+   * of prompts and participant attributes. When omitted or empty, use the business caller ID.
+   */
+  twilioCallToken?: string;
+  /** Incoming call’s `From`; used only with a nonempty `twilioCallToken`. */
+  originalCallerNumber?: string;
+  /**
+   * How long to wait, in milliseconds, for the human agent to answer before
+   * giving up and cancelling the call. Defaults to 30 seconds: Twilio reports
+   * no-answer only via status webhooks, which this task does not consume, so
+   * the wait is capped instead. `null` disables the cap.
+   */
+  ringingTimeout?: number | null;
+}
+
+/**
+ * Build a warm-transfer {@link AgentTask} that dials the human agent through
+ * the LiveKit Twilio connector instead of a SIP trunk: `connectTwilioCall`
+ * opens an outbound connector session, the Twilio REST API places the call
+ * with TwiML that streams it into that session, and the dial resolves once the
+ * connector publishes the answered human agent's audio.
+ *
+ * Cancellation starts bounded, best-effort cleanup without waiting for Twilio.
+ * Cleanup requires a returned call SID and a running worker. If Twilio accepts
+ * the call but its creation response is lost, the task cannot cancel that call.
+ *
+ * This is the functional core; {@link TwilioConnectorWarmTransferTask} is a
+ * thin class wrapper over it.
+ */
+export function createTwilioConnectorWarmTransferTask(
+  options: TwilioConnectorWarmTransferTaskOptions,
+): AgentTask<WarmTransferResult> {
+  const {
+    phoneNumber,
+    twilioFromNumber,
+    twilioAccountSid = process.env.TWILIO_ACCOUNT_SID ?? '',
+    twilioAuthToken = process.env.TWILIO_AUTH_TOKEN ?? '',
+    twilioCallToken,
+    originalCallerNumber,
+    ringingTimeout = TWILIO_RINGING_TIMEOUT_MS,
+    ...baseOptions
+  } = options;
+
+  if (!twilioAccountSid || !twilioAuthToken) {
+    throw new Error(
+      'Twilio credentials are required: pass `twilioAccountSid` and `twilioAuthToken` or set' +
+        ' the TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN environment variables',
+    );
+  }
+  if (twilioCallToken && !originalCallerNumber) {
+    throw new Error('twilioCallToken requires originalCallerNumber');
+  }
+  const auth = { accountSid: twilioAccountSid, authToken: twilioAuthToken };
+
+  return createWarmTransferTask({
+    ...baseOptions,
+    // the human agent joins through a connector, not SIP
+    humanAgentIdentity: 'human-agent-connector',
+    originateHumanAgent: async ({ roomName, identity, room, jobCtx, signal }) => {
+      signal.throwIfAborted();
+      const info = jobCtx.info;
+      const connector = new ConnectorClient(info.url, info.apiKey, info.apiSecret);
+      const { connectUrl } = await connector.connectTwilioCall({
+        twilioCallDirection: ConnectTwilioCallRequest_TwilioCallDirection.OUTBOUND,
+        roomName,
+        participantIdentity: identity,
+      });
+      signal.throwIfAborted();
+
+      const twiml = `<Response><Connect><Stream url=${escapeXmlAttribute(connectUrl)}/></Connect></Response>`;
+      let callSid: string;
+      try {
+        callSid = await createTwilioCall(auth, {
+          to: phoneNumber,
+          from: twilioCallToken ? originalCallerNumber! : twilioFromNumber,
+          twiml,
+          callToken: twilioCallToken || undefined,
+        });
+      } catch (error) {
+        // Retry only a definitive caller-ID rejection before a call was created.
+        // 21210 = From not verified (token rejected/expired), 21212 = invalid From
+        // (e.g. withheld/anonymous inbound caller).
+        if (
+          !twilioCallToken ||
+          signal.aborted ||
+          !(error instanceof TwilioCallCreationError) ||
+          error.status !== 400 ||
+          (error.code !== 21210 && error.code !== 21212)
+        ) {
+          throw error;
+        }
+        callSid = await createTwilioCall(auth, { to: phoneNumber, from: twilioFromNumber, twiml });
+      }
+
+      try {
+        signal.throwIfAborted();
+        await waitForConnectorAnswer({ room, identity, ringingTimeout, signal });
+        signal.throwIfAborted();
+      } catch (error) {
+        // Keep provider cleanup independent of caller resumption and session shutdown.
+        void cancelTwilioCall(auth, callSid);
+        throw error;
+      }
+    },
+  });
+}
+
+/**
+ * Class wrapper around {@link createTwilioConnectorWarmTransferTask},
+ * matching the `new WarmTransferTask(options).run()` API.
+ */
+export class TwilioConnectorWarmTransferTask extends AgentTask<WarmTransferResult> {
+  readonly #task: AgentTask<WarmTransferResult>;
+
+  constructor(options: TwilioConnectorWarmTransferTaskOptions) {
+    // The wrapper itself never runs as an agent; run() delegates to the
+    // composed task. Instructions are resolved inside createWarmTransferTask.
+    super({ instructions: '' });
+    this.#task = createTwilioConnectorWarmTransferTask(options);
+  }
+
+  override run(): Promise<WarmTransferResult> {
+    return this.#task.run();
+  }
+}
+
+/**
+ * The connector publishes the human agent's audio track only after the call is
+ * answered, so treat that publication as the answer signal.
+ */
+async function waitForConnectorAnswer(options: {
+  room: Room;
+  identity: string;
+  ringingTimeout: number | null;
+  signal: AbortSignal;
+}): Promise<void> {
+  const { room, identity, ringingTimeout, signal } = options;
+  const answered = new Future<void>();
+
+  const hasPublishedAudio = (participant: RemoteParticipant): boolean =>
+    participant.identity === identity &&
+    [...participant.trackPublications.values()].some((pub) => pub.kind === TrackKind.KIND_AUDIO);
+
+  const resolveIfAnswered = (participant: RemoteParticipant): void => {
+    if (hasPublishedAudio(participant) && !answered.done) {
+      answered.resolve();
+    }
+  };
+  const onTrackPublished = (_: RemoteTrackPublication, participant: RemoteParticipant): void =>
+    resolveIfAnswered(participant);
+
+  room.on(RoomEvent.TrackPublished, onTrackPublished);
+  room.on(RoomEvent.ParticipantConnected, resolveIfAnswered);
+  try {
+    // Checked after the listeners are attached, so a connector that joined and
+    // published before this wait started isn't missed.
+    const existing = room.remoteParticipants.get(identity);
+    if (existing) {
+      resolveIfAnswered(existing);
+    }
+
+    const waitSignal =
+      ringingTimeout != null
+        ? AbortSignal.any([signal, AbortSignal.timeout(ringingTimeout)])
+        : signal;
+    const result = await waitUntilAborted(answered.await, waitSignal);
+    if (result.isAborted) {
+      if (signal.aborted) {
+        throw new Error('dial cancelled');
+      }
+      throw new ToolError('human agent did not answer');
+    }
+  } finally {
+    room.off(RoomEvent.TrackPublished, onTrackPublished);
+    room.off(RoomEvent.ParticipantConnected, resolveIfAnswered);
+  }
+}
+
+const TWILIO_API_BASE = 'https://api.twilio.com/2010-04-01';
+
+interface TwilioRestAuth {
+  accountSid: string;
+  authToken: string;
+}
+
+const twilioRequest = (
+  auth: TwilioRestAuth,
+  path: string,
+  form: Record<string, string>,
+  signal?: AbortSignal,
+) =>
+  fetch(`${TWILIO_API_BASE}/Accounts/${encodeURIComponent(auth.accountSid)}${path}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Basic ${Buffer.from(`${auth.accountSid}:${auth.authToken}`).toString('base64')}`,
+    },
+    body: new URLSearchParams(form),
+    signal,
+  });
+
+class TwilioCallCreationError extends Error {
+  constructor(
+    readonly status: number,
+    readonly code?: number,
+  ) {
+    // Do not include the response body: it can contain caller data or a token.
+    super(`Twilio call creation failed (${status}, code ${code ?? 'unknown'})`);
+  }
+}
+
+/** Place the human agent call with the Twilio REST API; returns the call SID. */
+async function createTwilioCall(
+  auth: TwilioRestAuth,
+  options: { to: string; from: string; twiml: string; callToken?: string },
+): Promise<string> {
+  const resp = await twilioRequest(auth, '/Calls.json', {
+    To: options.to,
+    From: options.from,
+    Twiml: options.twiml,
+    ...(options.callToken !== undefined ? { CallToken: options.callToken } : {}),
+  });
+  const body = await resp.text();
+  if (!resp.ok) {
+    let code: number | undefined;
+    try {
+      const parsed = JSON.parse(body) as { code?: unknown };
+      if (typeof parsed?.code === 'number') code = parsed.code;
+    } catch {
+      // Unparseable errors are never eligible for the caller-ID fallback.
+    }
+    throw new TwilioCallCreationError(resp.status, code);
+  }
+  return (JSON.parse(body) as { sid: string }).sid;
+}
+
+/** End a call even if it was answered while cancellation was in flight. */
+async function cancelTwilioCall(auth: TwilioRestAuth, callSid: string): Promise<void> {
+  try {
+    const response = await twilioRequest(
+      auth,
+      `/Calls/${encodeURIComponent(callSid)}.json`,
+      { Status: 'completed' },
+      AbortSignal.timeout(10_000),
+    );
+    if (!response.ok) {
+      log().warn({ status: response.status }, 'Twilio call cleanup failed');
+    }
+  } catch {
+    log().warn('Twilio call cleanup request failed');
+  }
+}
+
+/** XML-escape a value and wrap it in double quotes for use as an attribute. */
+function escapeXmlAttribute(value: string): string {
+  const escaped = value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+  return `"${escaped}"`;
+}
+
+const renderInstructionPart = (value: Instructions | string): string =>
+  typeof value === 'string' ? value : value.value;
+
+function resolveInstructions(
+  instructions: InstructionParts | string | undefined,
+  chatCtx: ChatContext | undefined,
+): string {
+  // A full instruction string replaces the built-in prompt entirely.
+  if (typeof instructions === 'string') {
+    return instructions;
+  }
+
+  // No instructions or an `InstructionParts` override: fill the built-in template.
+  const parts: InstructionParts = instructions ?? { persona: PERSONA };
+  // Single-pass replace via a callback: a chained `.replace(a, b)` would
+  // interpret `$`-patterns in the substituted text and let an earlier
+  // substitution swallow a later `{placeholder}`.
+  const replacements: Record<string, string> = {
+    // Unset preserves the built-in default; an explicit empty string removes the section.
+    persona: parts.persona !== undefined ? renderInstructionPart(parts.persona) : PERSONA,
+    _conversation_history: formatConversationHistory(chatCtx),
+    extra: parts.extra !== undefined ? renderInstructionPart(parts.extra) : '',
+  };
+  return INSTRUCTIONS_TEMPLATE.replace(
+    /\{(persona|_conversation_history|extra)\}/g,
+    (_match, key: string) => replacements[key] ?? '',
+  );
+}
+
+function formatConversationHistory(chatCtx?: ChatContext): string {
+  if (!chatCtx) {
+    return '';
+  }
+
+  let previousConversation = '';
+  for (const item of chatCtx.items) {
+    if (item.type !== 'message' || (item.role !== 'user' && item.role !== 'assistant')) {
+      continue;
+    }
+
+    const content = item.textContent;
+    if (!content) {
+      continue;
+    }
+
+    const role = item.role === 'user' ? 'Caller' : 'Assistant';
+    previousConversation += `${role}: ${content}\n`;
+  }
+  return previousConversation;
+}
+
+/**
+ * Resolve the name of the room used to dial and brief the human agent.
+ *
+ * Exported for testing; not re-exported from the package index.
+ */
+export function resolveHumanAgentRoomName(callerRoomName: string, override?: string): string {
+  if (override === undefined) {
+    return `${callerRoomName}-human-agent`;
+  }
+  if (override === callerRoomName) {
+    throw new Error('`roomName` must differ from the caller room name');
+  }
+  return override;
+}
+
+/** @internal */
+export function createWarmTransferSpeech(
+  session: AgentSession,
+  speech: WarmTransferSpeech | undefined,
+  sayOptions?: Parameters<AgentSession['say']>[1],
+): SpeechHandle | undefined {
+  if (typeof speech === 'function') {
+    return speech(session);
+  }
+
+  if (speech !== undefined) {
+    return session.say(speech, sayOptions);
+  }
+
+  return undefined;
+}
+
+/** @internal */
+export function createCallerHangupSpeech(
+  session: AgentSession,
+  callerHangupSpeech: WarmTransferSpeech | undefined,
+  callerHangupInstruction: string | null | undefined,
+): SpeechHandle {
+  const handle = createWarmTransferSpeech(session, callerHangupSpeech, {
+    allowInterruptions: false,
+    addToChatCtx: false,
+  });
+  if (handle) {
+    return handle;
+  }
+
+  return session.generateReply({
+    instructions: callerHangupInstruction ?? CALLER_HANGUP_INSTRUCTION,
+    allowInterruptions: false,
+    // The transfer is already cancelled; the reply must speak, not call
+    // connect_to_caller/decline_transfer.
+    toolChoice: 'none',
+  });
+}
+
+const CALLER_HANGUP_INSTRUCTION = `The caller has hung up before the transfer could be completed.
+Briefly inform the human agent that the caller has left and that you are ending the call now.`;
+
+const CALLER_HANGUP_NOTICE_TIMEOUT_MS = 30_000;
+const CALLER_HANGUP_CLEANUP_TIMEOUT_MS = 10_000;
+
+const PERSONA = `# Identity
+
+You are an agent that is reaching out to a human agent for help. There has been a previous conversation
+between you and a caller, the conversation history is included below.
+
+# Goal
+
+Your main goal is to give the human agent sufficient context about why the caller had called in,
+so that the human agent could gain sufficient knowledge to help the caller directly.`;
+
+const INSTRUCTIONS_TEMPLATE = `{persona}
+
+# Context
+
+In the conversation, user refers to the human agent, caller refers to the person who's transcript is included.
+Remember, you are not speaking to the caller right now, you are speaking to the human agent.
+
+## Conversation history with caller
+{_conversation_history}
+## End of conversation history with caller
+
+Once the human agent has confirmed, you should call the tool \`connect_to_caller\` to connect them to the caller.
+
+You are talking to the human agent now, start by giving them a summary of the conversation so far, and answer any questions they might have.
+
+{extra}
+`;

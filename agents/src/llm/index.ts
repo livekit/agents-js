@@ -2,22 +2,62 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 export {
+  CONFIRM_DUPLICATE_PARAM,
   handoff,
   isFunctionTool,
-  tool,
+  isProviderTool,
+  isTool,
+  isToolset,
+  ProviderTool,
   sortedToolEntries,
   sortedToolNames,
+  tool,
+  ToolContext,
   ToolError,
   ToolFlag,
+  Toolset,
+  toToolContext,
   type AgentHandoff,
+  type AnonFunctionTool,
+  type DuplicateMode,
   type FunctionTool,
-  type ProviderDefinedTool,
   type Tool,
+  type ToolCalledEvent,
   type ToolChoice,
-  type ToolContext,
+  type ToolCompletedEvent,
+  type ToolContextEntry,
+  type ToolContextLike,
   type ToolOptions,
+  type ToolsetContext,
+  type ToolsetCreateOptions,
   type ToolType,
 } from './tool_context.js';
+
+export { AsyncToolset, type AsyncToolsetCreateOptions } from './async_toolset.js';
+
+export {
+  DuplexModel,
+  DuplexSession,
+  type DuplexAudioFrame,
+  type DuplexCapabilities,
+  type DuplexOutputTranscriptDelta,
+  type DuplexSessionCallbacks,
+} from './duplex.js';
+export {
+  AdaptiveNoiseGate,
+  DuplexRealtimeAdapter,
+  FixedGate,
+  type AdaptiveNoiseGateOptions,
+  type AudioGate,
+  type AudioGateOptions,
+  type DuplexRealtimeAdapterOptions,
+} from './duplex_adapter.js';
+export type {
+  AsyncToolOptions,
+  DuplicatePromptArgs,
+  ReplyPromptArgs,
+  ToolHandlingOptions,
+} from '../voice/tool_executor.js';
 
 export {
   AgentHandoffItem,
@@ -43,13 +83,32 @@ export type { ProviderFormat } from './provider_format/index.js';
 export {
   LLM,
   LLMStream,
+  hasResponse,
   type ChatChunk,
   type ChoiceDelta,
+  type CollectedResponse,
   type CompletionUsage,
   type LLMCallbacks,
 } from './llm.js';
 
 export {
+  Choice,
+  ChoiceResult,
+  DecisionModel,
+  DecisionResponse,
+  Probability,
+  ProbabilityResult,
+  Score,
+  ScoreResult,
+  type Decision,
+  type DecisionCapabilities,
+  type DecisionKind,
+  type DecisionModelCallbacks,
+  type DecisionResult,
+} from './decisions.js';
+
+export {
+  RealtimeError,
   RealtimeModel,
   RealtimeSession,
   type GenerationCreatedEvent,
@@ -69,7 +128,6 @@ export {
   createToolOptions,
   executeToolCall,
   formatChatHistory,
-  oaiBuildFunctionInfo,
   oaiParams,
   serializeImage,
   toJsonSchema,
@@ -87,3 +145,21 @@ export {
   type AvailabilityChangedEvent,
   type FallbackAdapterOptions,
 } from './fallback_adapter.js';
+
+export {
+  MCPServer,
+  MCPServerHTTP,
+  MCPServerStdio,
+  MCPToolset,
+  type MCPHTTPTransportType,
+  type MCPServerHTTPOptions,
+  type MCPServerOptions,
+  type MCPServerStdioOptions,
+  type MCPToolCallResult,
+  type MCPToolContent,
+  type MCPToolDescriptor,
+  type MCPToolResultContext,
+  type MCPToolResultResolver,
+  type MCPToolOptions,
+  type MCPToolsetOptions,
+} from './mcp.js';
