@@ -362,7 +362,14 @@ class ChunkedStream extends tts.ChunkedStream {
       if (this.abortSignal.aborted) return;
       const requestId = shortuuid();
       const byteStream = new AudioByteStream(this.#tts.sampleRate, this.#tts.numChannels);
-      const frames = [...byteStream.write(pcm), ...byteStream.flush()];
+      // AudioByteStream copies its remaining buffer per frame, so write frame-sized chunks
+      // rather than the whole response to keep framing linear in the audio size.
+      const chunkBytes = Math.floor(this.#tts.sampleRate / 10) * this.#tts.numChannels * 2;
+      const frames: AudioFrame[] = [];
+      for (let offset = 0; offset < pcm.byteLength; offset += chunkBytes) {
+        frames.push(...byteStream.write(pcm.subarray(offset, offset + chunkBytes)));
+      }
+      frames.push(...byteStream.flush());
       let previous: AudioFrame | undefined;
       for (const frame of frames) {
         if (previous) {

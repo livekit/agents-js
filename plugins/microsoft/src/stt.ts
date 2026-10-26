@@ -668,6 +668,8 @@ class SpeechStream extends stt.SpeechStream {
       resolve = done;
       reject = fail;
     });
+    // The commit write can fail before the acknowledgment is awaited.
+    promise.catch(() => {});
     this.#commit = { promise, resolve, reject };
     this.#committedItemId = undefined;
     try {
