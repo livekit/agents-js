@@ -112,6 +112,9 @@ export class AvatarSession extends voice.AvatarSession {
   private playbackPosition = 0;
   private sessionConnectedFuture: Future<void> = new Future();
   private chunkInterrupted = false;
+  // True while `forwardAudio` has consumed frames of a segment but not yet its
+  // AudioSegmentEnd, i.e. a boundary for the current segment is still ahead.
+  private forwardingSegment = false;
   private closing = false;
 
   #logger = log();
@@ -306,9 +309,12 @@ export class AvatarSession extends voice.AvatarSession {
    *    `wasCapturing` alone would return early here and never send
    *    `agent.interrupt`, letting the avatar talk over the user.
    *
-   * `chunkInterrupted` stays gated on `wasCapturing` only: with no segment
-   * in flight it would carry over and discard the first frame of the *next*
-   * segment.
+   * `chunkInterrupted` is only set while the interrupted segment's
+   * AudioSegmentEnd is still ahead of `forwardAudio`: either `wasCapturing`
+   * (the clear writes it) or `forwardingSegment` (a `flush` already wrote it
+   * but `forwardAudio` has not consumed it, so a residual chunk may still be
+   * pending). Otherwise it would carry over and discard the first frame of
+   * the *next* segment.
    */
   private onClearBuffer(ev: voice.QueueAudioOutputClearEvent): void {
     const wasPlaying = this.audioPlaying;
@@ -316,7 +322,7 @@ export class AvatarSession extends voice.AvatarSession {
     if (!ev.wasCapturing && !wasPlaying) {
       return;
     }
-    if (ev.wasCapturing) {
+    if (ev.wasCapturing || this.forwardingSegment) {
       this.chunkInterrupted = true;
     }
     if (this.audioBuffer) {
@@ -425,6 +431,7 @@ export class AvatarSession extends voice.AvatarSession {
               // The interrupted segment has fully drained; resume normal
               // operation for the next segment.
               interruptDraining = false;
+              this.forwardingSegment = false;
               flushChunk();
               this.sendEvent({ type: 'agent.speak_end', event_id: shortuuid() });
               this.sendEvent({ type: 'agent.start_listening', event_id: shortuuid() });
@@ -439,6 +446,7 @@ export class AvatarSession extends voice.AvatarSession {
               continue;
             }
 
+            this.forwardingSegment = true;
             if (!this.audioPlaying) {
               this.audioPlaying = true;
             }

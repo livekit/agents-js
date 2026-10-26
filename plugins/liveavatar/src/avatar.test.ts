@@ -31,6 +31,7 @@ type AvatarSessionInternals = {
   avatarInterrupted: boolean;
   avatarSpeaking: boolean;
   chunkInterrupted: boolean;
+  forwardingSegment: boolean;
   handleServerEvent(event: Record<string, unknown>): void;
   onClearBuffer(event: { wasCapturing: boolean }): void;
   playbackPosition: number;
@@ -207,6 +208,18 @@ describe('LiveAvatar WebSocket event dispatch', () => {
     expect(buffer.finished).toEqual([[3.5, true]]);
     // No segment is in flight, so the next segment's first frame must survive.
     expect(avatar.chunkInterrupted).toBe(false);
+  });
+
+  it('drops the residual chunk on a barge-in after flush before the segment end is consumed', () => {
+    const [, avatar, buffer] = createAvatar();
+    // flush() already queued the AudioSegmentEnd (wasCapturing is false), but
+    // forwardAudio is still mid-segment holding a partial chunk.
+    avatar.audioPlaying = true;
+    avatar.forwardingSegment = true;
+    avatar.playbackPosition = 0.6;
+    avatar.onClearBuffer({ wasCapturing: false });
+    expect(buffer.finished).toEqual([[0.6, true]]);
+    expect(avatar.chunkInterrupted).toBe(true);
   });
 
   it('ignores a clear with nothing captured and nothing playing', () => {
