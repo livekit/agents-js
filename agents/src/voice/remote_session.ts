@@ -40,6 +40,8 @@ import {
   AgentSessionEventTypes,
   type AgentState,
   type AgentStateChangedEvent,
+  type CloseEvent,
+  CloseReason,
   type ConversationItemAddedEvent,
   type EotPredictionEvent,
   type ErrorEvent,
@@ -76,6 +78,7 @@ export type RemoteSessionEventTypes =
   | 'eot_prediction'
   | 'session_usage'
   | 'debug_message'
+  | 'session_closed'
   | 'error';
 
 /** @experimental */
@@ -91,6 +94,7 @@ export type RemoteSessionCallbacks = {
   eot_prediction: (ev: pb.AgentSessionEvent_EotPrediction) => void;
   session_usage: (ev: pb.AgentSessionEvent_SessionUsageUpdated) => void;
   debug_message: (ev: pb.DebugMessage) => void;
+  session_closed: (ev: pb.AgentSessionEvent_SessionClosed) => void;
   error: (ev: pb.AgentSessionEvent_Error) => void;
 };
 
@@ -556,6 +560,13 @@ export class TcpSessionTransport extends SessionTransport {
 // ===========================================================================
 // Enum maps
 // ===========================================================================
+const CLOSE_REASON_MAP: Record<string, pb.CloseReason> = {
+  [CloseReason.ERROR]: pb.CloseReason.CR_ERROR,
+  [CloseReason.JOB_SHUTDOWN]: pb.CloseReason.CR_JOB_SHUTDOWN,
+  [CloseReason.PARTICIPANT_DISCONNECTED]: pb.CloseReason.CR_PARTICIPANT_DISCONNECTED,
+  [CloseReason.USER_INITIATED]: pb.CloseReason.CR_USER_INITIATED,
+};
+
 const AGENT_STATE_MAP: Record<AgentState, pb.AgentState> = {
   initializing: pb.AgentState.AS_INITIALIZING,
   idle: pb.AgentState.AS_IDLE,
@@ -741,6 +752,8 @@ function protoSerializeOptions(opts: {
 // ===========================================================================
 export const NO_ACTIVE_SESSION_ERROR = 'no active session';
 
+type QueuedEvent = { msg: pb.AgentSessionMessage; handedOff: Future<void> };
+
 /**
  * Serves a `RemoteSession` client for the whole job.
  *
@@ -758,7 +771,9 @@ export class SessionHost {
   private started = false;
   private recvTask: Task<void> | undefined;
   private readonly tasks = new Set<Task<void>>();
-  private readonly eventMessages = new AsyncIterableQueue<pb.AgentSessionMessage>();
+  private readonly eventMessages = new AsyncIterableQueue<QueuedEvent>();
+  // settles once every event queued so far is on the transport's (FIFO) send path
+  private eventsHandedOff: Promise<void> = Promise.resolve();
   private writeTask: Task<void> | undefined;
   private readonly simulationFinalized = new Event();
 
@@ -792,6 +807,7 @@ export class SessionHost {
     session.on(AgentSessionEventTypes.EotPrediction, this.onEotPrediction);
     session.on(AgentSessionEventTypes.Error, this.onHostError);
     session.on(AgentSessionEventTypes.DebugMessage, this.onDebugMessage);
+    session.on(AgentSessionEventTypes.Close, this.onClose);
   }
 
   /** Stop serving the attached session; the host itself stays up. */
@@ -808,6 +824,7 @@ export class SessionHost {
     this.session.off(AgentSessionEventTypes.EotPrediction, this.onEotPrediction);
     this.session.off(AgentSessionEventTypes.Error, this.onHostError);
     this.session.off(AgentSessionEventTypes.DebugMessage, this.onDebugMessage);
+    this.session.off(AgentSessionEventTypes.Close, this.onClose);
     this.session = undefined;
   }
 
@@ -862,8 +879,9 @@ export class SessionHost {
       this.writeTask = undefined;
     }
     // The writer may have stopped at its deadline with buffered events remaining.
-    for await (const _message of this.eventMessages) {
+    for await (const { handedOff } of this.eventMessages) {
       // Discard events after the writer has settled.
+      handedOff.resolve();
     }
     clearTimeout(writerDeadline);
 
@@ -907,16 +925,20 @@ export class SessionHost {
       message: { case: 'event', value: event },
     });
     if (this.eventMessages.closed) return;
-    this.eventMessages.put(msg);
+    const handedOff = new Future<void>();
+    this.eventMessages.put({ msg, handedOff });
+    this.eventsHandedOff = handedOff.await;
   }
 
   private async writeLoop(signal: AbortSignal): Promise<void> {
     try {
       while (!signal.aborted) {
-        const { value: msg, done } = await this.eventMessages.next({ signal });
+        const { value: queued, done } = await this.eventMessages.next({ signal });
         if (done) break;
         try {
-          await abortable(this.transport.sendMessage(msg, signal), signal);
+          const sending = this.transport.sendMessage(queued.msg, signal);
+          queued.handedOff.resolve();
+          await abortable(sending, signal);
         } catch (error) {
           if (signal.aborted) return;
           log().warn({ error }, 'failed to send session event');
@@ -1042,6 +1064,19 @@ export class SessionHost {
     );
   };
 
+  private onClose = (event: CloseEvent): void => {
+    this.emitEvent(
+      {
+        case: 'sessionClosed',
+        value: new pb.AgentSessionEvent_SessionClosed({
+          reason: CLOSE_REASON_MAP[event.reason] ?? pb.CloseReason.CR_UNKNOWN,
+          error: event.error ? String(event.error) : undefined,
+        }),
+      },
+      event.createdAt,
+    );
+  };
+
   private onMetricsCollected = (event: MetricsCollectedEvent): void => {
     if (!this.session) return;
     this.emitEvent(
@@ -1121,7 +1156,7 @@ export class SessionHost {
             }),
           },
         });
-        await abortable(this.transport.sendMessage(resp, signal), signal);
+        await this.sendReply(resp, signal);
       } catch (e) {
         log().debug({ error: e }, 'failed to send error response');
       }
@@ -1383,18 +1418,22 @@ export class SessionHost {
     error?: string,
   ): Promise<void> {
     signal.throwIfAborted();
-    await abortable(
-      this.transport.sendMessage(
-        new pb.AgentSessionMessage({
-          message: {
-            case: 'response',
-            value: new pb.SessionResponse({ requestId, response, error }),
-          },
-        }),
-        signal,
-      ),
+    await this.sendReply(
+      new pb.AgentSessionMessage({
+        message: {
+          case: 'response',
+          value: new pb.SessionResponse({ requestId, response, error }),
+        },
+      }),
       signal,
     );
+  }
+
+  // A reply goes out after every event emitted before it, so a client hears session_closed
+  // before the reply to a run that the close cut short.
+  private async sendReply(msg: pb.AgentSessionMessage, signal: AbortSignal): Promise<void> {
+    await abortable(this.eventsHandedOff, signal);
+    await abortable(this.transport.sendMessage(msg, signal), signal);
   }
 
   private trackTask(task: Task<void>): void {
@@ -1532,6 +1571,9 @@ export class RemoteSession extends (EventEmitter as new () => TypedEventEmitter<
         break;
       case 'debugMessage':
         this.emit('debug_message', ev.value);
+        break;
+      case 'sessionClosed':
+        this.emit('session_closed', ev.value);
         break;
       case 'error':
         this.emit('error', ev.value);
