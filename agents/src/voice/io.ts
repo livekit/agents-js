@@ -555,7 +555,11 @@ function replaceAudioTail(output: AudioOutput, sink: AudioOutput, attached: bool
   const controls = audioOutputChainControls.get(output);
   const next = controls?.next();
   if (!controls || !next) return false;
-  if (replaceAudioTail(next, sink, attached)) return true;
+  if (replaceAudioTail(next, sink, attached)) {
+    // wrappers cache their downstream rate, so propagate the new sink's rate up the chain
+    output.sampleRate = next.sampleRate;
+    return true;
+  }
   controls.replace(sink, attached);
   return true;
 }
