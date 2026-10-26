@@ -95,8 +95,6 @@ interface TTSBaseOptions {
   minBufferSize?: number;
   /** Maximum streaming chunk length. Defaults to 150. */
   maxChunkLength?: number;
-  /** Request a final completion event from the WebSocket. Defaults to true. */
-  sendCompletionEvent?: boolean;
 }
 
 /** Options specific to bulbul:v2 */
@@ -161,7 +159,6 @@ interface ResolvedTTSOptions {
   outputAudioBitrate: TTSOutputAudioBitrate;
   minBufferSize: number;
   maxChunkLength: number;
-  sendCompletionEvent: boolean;
   pitch: number;
   loudness: number;
   enablePreprocessing: boolean;
@@ -260,7 +257,6 @@ function resolveOptions(opts: Partial<TTSOptions>): ResolvedTTSOptions {
     outputAudioBitrate: opts.outputAudioBitrate ?? '128k',
     minBufferSize: opts.minBufferSize ?? 50,
     maxChunkLength: opts.maxChunkLength ?? 150,
-    sendCompletionEvent: opts.sendCompletionEvent ?? true,
     pitch: modelOpts.pitch ?? (isV4 ? V4_DEFAULTS.pitch : V2_DEFAULTS.pitch),
     loudness: modelOpts.loudness ?? (isV4 ? V4_DEFAULTS.loudness : V2_DEFAULTS.loudness),
     enablePreprocessing:
@@ -492,7 +488,6 @@ export class TTS extends tts.TTS {
           outputAudioBitrate: this.#opts.outputAudioBitrate,
           minBufferSize: this.#opts.minBufferSize,
           maxChunkLength: this.#opts.maxChunkLength,
-          sendCompletionEvent: this.#opts.sendCompletionEvent,
         }
       : ({ ...this.#opts } as Partial<TTSOptions>);
     const resolved = resolveOptions({ ...base, ...opts } as TTSOptions);
@@ -664,7 +659,8 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       this.opts.model === 'bulbul:v4-flash' ? `${SARVAM_WS_URL_PATH}/v2` : SARVAM_WS_URL_PATH;
     const url = new URL(`${wsBaseUrl}${path}`);
     url.searchParams.set('model', this.opts.model);
-    url.searchParams.set('send_completion_event', String(this.opts.sendCompletionEvent));
+    // Always request the completion event: recvTask relies on it to end the stream.
+    url.searchParams.set('send_completion_event', 'true');
 
     const ws = new WebSocket(url, {
       headers: {
