@@ -200,6 +200,7 @@ examples/src/test_*.ts
 !**/CHANGELOG.md
 !CONTRIBUTING.md
 !CLAUDE.md
+!AGENTS.md
 !.CODE_OF_CONDUCT.md
 
 # OpenTelemetry trace test output

@@ -18,6 +18,7 @@ import type {
 import {
   AgentSessionEventTypes,
   createConversationItemAddedEvent,
+  createFunctionToolsExecutedEvent,
   createSessionUsageUpdatedEvent,
   createUserInputTranscribedEvent,
   createUserStateChangedEvent,
@@ -42,6 +43,7 @@ function baseOptions(): ReportOptions {
       logs: false,
       transcript: false,
       redaction: false,
+      inputDelta: false,
     },
   };
 }
@@ -284,6 +286,45 @@ describe('sessionReportToJSON', () => {
     ]);
   });
 
+  it('serializes function_tools_executed with only the Python event fields', () => {
+    const call = FunctionCall.create({ callId: 'call_1', name: 'lookup', args: '{}' });
+    const output = FunctionCallOutput.create({
+      callId: 'call_1',
+      name: 'lookup',
+      output: 'ok',
+      isError: false,
+    });
+    const report = createSessionReport({
+      jobId: 'job',
+      roomId: 'room-id',
+      room: 'room',
+      options: baseOptions(),
+      events: [
+        createFunctionToolsExecutedEvent({
+          functionCalls: [call],
+          functionCallOutputs: [output],
+          createdAt: 5,
+        }),
+      ],
+      chatHistory: ChatContext.empty(),
+      enableRecording: false,
+      timestamp: 0,
+      startedAt: 0,
+    });
+
+    // hasToolReply and cancelToolReply() are derived, so Python's model_dump() omits them
+    expect(sessionReportToJSON(report).events).toEqual([
+      {
+        type: 'function_tools_executed',
+        function_calls: [expect.objectContaining({ call_id: 'call_1' })],
+        function_call_outputs: [
+          expect.objectContaining({ call_id: 'call_1', reply_required: true }),
+        ],
+        created_at: 5,
+      },
+    ]);
+  });
+
   it('includes audio recording and sdk metadata in the report', () => {
     const report = createSessionReport({
       jobId: 'job',
@@ -429,7 +470,7 @@ describe('sessionReportToJSON', () => {
   });
 });
 
-describe('createSessionReport recordingOptions', () => {
+describe('createSessionReport', () => {
   function makeReport(recordingOptions: ResolvedRecordingOptions) {
     const options = baseOptions();
     options.recordingOptions = recordingOptions;
@@ -443,6 +484,22 @@ describe('createSessionReport recordingOptions', () => {
     });
   }
 
+  it('sets duration without audio recording', () => {
+    const report = createSessionReport({
+      jobId: 'job',
+      roomId: 'room-id',
+      room: 'room',
+      options: baseOptions(),
+      events: [],
+      chatHistory: ChatContext.empty(),
+      startedAt: Date.now() - 5000,
+    });
+
+    expect(report.audioRecordingStartedAt).toBeUndefined();
+    expect(report.duration).toBeDefined();
+    expect(report.duration).toBeGreaterThan(0);
+  });
+
   it('includes recording options in report options and serializes a defensive copy', () => {
     const recordingOptions: ResolvedRecordingOptions = {
       audio: false,
@@ -450,6 +507,7 @@ describe('createSessionReport recordingOptions', () => {
       logs: true,
       transcript: false,
       redaction: true,
+      inputDelta: false,
     };
     const report = makeReport(recordingOptions);
     expect(report.options.recordingOptions).toEqual(recordingOptions);

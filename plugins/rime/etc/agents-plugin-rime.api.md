@@ -7,6 +7,7 @@
 import type { AudioFrame } from '@livekit/rtc-node';
 import { AudioResampler } from '@livekit/rtc-node';
 import type { ReadableStream as ReadableStream_2 } from 'node:stream/web';
+import type { Span } from '@opentelemetry/api';
 import type { TypedEventEmitter } from '@livekit/typed-emitter';
 
 // Warning: (ae-forgotten-export) The symbol "tts" needs to be exported by the entry point index.d.ts
@@ -65,6 +66,7 @@ export class TTS extends tts.TTS {
     prewarm(): void;
     // (undocumented)
     get provider(): string;
+    releaseIdleConnections(): Promise<void>;
     // (undocumented)
     get sampleRate(): number;
     // (undocumented)
@@ -100,7 +102,6 @@ export interface TTSOptions {
     lang?: DefaultLanguages | string;
     // (undocumented)
     max_tokens?: number;
-    // (undocumented)
     modelId: TTSModels | string;
     // (undocumented)
     noTextNormalization?: boolean;

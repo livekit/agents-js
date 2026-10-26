@@ -26,7 +26,7 @@ class Friend extends Agent {
 export default defineAgent({
   entry: async (ctx: JobContext) => {
     const session = new AgentSession({
-      stt: new inference.STT({ model: 'assemblyai/universal-streaming', language: 'en' }),
+      stt: new inference.STT({ model: 'assemblyai/universal-3-6-pro', language: 'en' }),
       llm: new inference.LLM({ model: 'google/gemini-2.5-flash' }),
       tts: new inference.TTS({
         model: 'fishaudio/s2.1-pro',

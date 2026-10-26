@@ -71,6 +71,7 @@ export {
   type InputDetails,
   type ResolvedSpeechHandle,
 } from './speech_handle.js';
+export type { InterruptionSource } from './speech_handle.js';
 export * from './turn_config/endpointing.js';
 export * from './turn_config/user_turn_limit.js';
 export * as testing from './testing/index.js';

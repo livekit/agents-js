@@ -194,7 +194,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     // (markStarted) reflects when a full sentence was handed to the provider
     // rather than when the first LLM token arrived.
     const sentenceStream = (
-      this.#opts.tokenizer ?? new tokenize.basic.SentenceTokenizer()
+      this.#opts.tokenizer ?? new tokenize.blingfire.SentenceTokenizer()
     ).stream();
 
     const tokenizeInput = async () => {

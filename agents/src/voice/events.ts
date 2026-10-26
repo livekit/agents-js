@@ -214,6 +214,13 @@ export type FunctionToolsExecutedEvent = {
   functionCalls: FunctionCall[];
   functionCallOutputs: FunctionCallOutput[];
   createdAt: number;
+  /** Whether any output in this batch asks the model to reply. */
+  readonly hasToolReply: boolean;
+  /**
+   * Ask the model not to reply to this batch. Each output is still delivered, since a realtime
+   * model holds the call open until it is answered.
+   */
+  cancelToolReply(): void;
 };
 
 export const createFunctionToolsExecutedEvent = ({
@@ -230,6 +237,12 @@ export const createFunctionToolsExecutedEvent = ({
     functionCalls,
     functionCallOutputs,
     createdAt,
+    get hasToolReply() {
+      return functionCallOutputs.some((output) => output.replyRequired);
+    },
+    cancelToolReply() {
+      for (const output of functionCallOutputs) output.replyRequired = false;
+    },
   };
 };
 
