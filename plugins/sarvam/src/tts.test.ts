@@ -97,9 +97,9 @@ describe('Sarvam TTS', () => {
   it('commits option updates atomically and revalidates retained values', () => {
     const sarvam = new TTS({ apiKey: 'test', model: 'bulbul:v3', pace: 0.3, temperature: 1.5 });
 
-    expect(() =>
-      sarvam.updateOptions({ model: 'bulbul:v4-flash', speaker: 'shubh' }),
-    ).toThrow(/not compatible/);
+    expect(() => sarvam.updateOptions({ model: 'bulbul:v4-flash', speaker: 'shubh' })).toThrow(
+      /not compatible/,
+    );
     expect(() =>
       sarvam.updateOptions({ model: 'bulbul:v4-flash', speaker: 'ritu_hi_medical' }),
     ).toThrow(/pace/);
