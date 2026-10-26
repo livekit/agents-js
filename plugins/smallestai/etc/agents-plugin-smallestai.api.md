@@ -4,13 +4,22 @@
 
 ```ts
 
-import { APIConnectOptions } from '@livekit/agents';
-import { AudioBuffer as AudioBuffer_2 } from '@livekit/agents';
-import { stt } from '@livekit/agents';
-import { tts } from '@livekit/agents';
+import { AudioFrame } from '@livekit/rtc-node';
+import { AudioResampler } from '@livekit/rtc-node';
+import { Logger } from 'pino';
+import type { ReadableStream as ReadableStream_2 } from 'node:stream/web';
+import type { ReadableStreamDefaultReader as ReadableStreamDefaultReader_2 } from 'node:stream/web';
+import type { Span } from '@opentelemetry/api';
+import { TransformStream as TransformStream_2 } from 'node:stream/web';
+import type { TypedEventEmitter } from '@livekit/typed-emitter';
+import type { VideoFrame as VideoFrame_2 } from '@livekit/rtc-node';
+import type { WritableStreamDefaultWriter as WritableStreamDefaultWriter_2 } from 'node:stream/web';
 
+// Warning: (ae-forgotten-export) The symbol "tts" needs to be exported by the entry point index.d.ts
+//
 // @public (undocumented)
 export class ChunkedStream extends tts.ChunkedStream {
+    // Warning: (ae-forgotten-export) The symbol "APIConnectOptions" needs to be exported by the entry point index.d.ts
     constructor(tts: TTS, text: string, opts: TTSOptions, connOptions?: APIConnectOptions, abortSignal?: AbortSignal);
     // (undocumented)
     label: string;
@@ -18,6 +27,8 @@ export class ChunkedStream extends tts.ChunkedStream {
     protected run(): Promise<void>;
 }
 
+// Warning: (ae-forgotten-export) The symbol "stt" needs to be exported by the entry point index.d.ts
+//
 // @public (undocumented)
 export class SpeechStream extends stt.SpeechStream {
     constructor(stt: STT, opts: STTOptions, connOptions?: APIConnectOptions);
@@ -36,6 +47,8 @@ export class STT extends stt.STT {
     get model(): string;
     // (undocumented)
     get provider(): string;
+    // Warning: (ae-forgotten-export) The symbol "AudioBuffer_2" needs to be exported by the entry point index.d.ts
+    //
     // (undocumented)
     _recognize(buffer: AudioBuffer_2, abortSignal?: AbortSignal): Promise<stt.SpeechEvent>;
     // (undocumented)
