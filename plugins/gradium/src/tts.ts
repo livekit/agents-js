@@ -72,7 +72,7 @@ function resolveOptions(opts: Partial<TTSOptions>): ResolvedTTSOptions {
     modelEndpoint,
     modelName: opts.modelName ?? 'default',
     voice: opts.voice,
-    voiceId: opts.voiceId ?? 'YTpq7expH9539ERJ',
+    voiceId: opts.voiceId ?? '4SZHfMpw-p46Ywgs',
     pronunciationId: opts.pronunciationId,
     jsonConfig: opts.jsonConfig,
     wordTokenizer: opts.wordTokenizer ?? new tokenize.basic.WordTokenizer(false),
@@ -147,7 +147,7 @@ export class TTS extends tts.TTS {
     return 'Gradium';
   }
 
-  updateOptions(opts: Partial<Pick<TTSOptions, 'voice' | 'jsonConfig'>>) {
+  updateOptions(opts: Partial<Pick<TTSOptions, 'voice' | 'voiceId' | 'jsonConfig'>>) {
     this.#opts = { ...this.#opts, ...opts };
   }
 
