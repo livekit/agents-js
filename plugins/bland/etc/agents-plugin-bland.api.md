@@ -17,17 +17,34 @@ export class ChunkedStream extends tts.ChunkedStream {
 }
 
 // @public
-export class TTS extends tts.TTS {
-    constructor(opts?: TTSOptions);
+export class SynthesizeStream extends tts.SynthesizeStream {
+    constructor(ttsInstance: TTS, connOptions?: APIConnectOptions);
     // (undocumented)
     label: string;
     // (undocumented)
+    protected onStreamDone(): void;
+    // (undocumented)
+    protected run(): Promise<void>;
+}
+
+// @public
+export class TTS extends tts.TTS {
+    constructor(opts?: TTSOptions);
+    // (undocumented)
+    close(): Promise<void>;
+    // (undocumented)
+    label: string;
+    // (undocumented)
+    prewarm(): void;
+    // (undocumented)
     get provider(): string;
     // (undocumented)
-    stream(): tts.SynthesizeStream;
+    stream(options?: {
+        connOptions?: APIConnectOptions;
+    }): SynthesizeStream;
     // (undocumented)
     synthesize(text: string, connOptions?: APIConnectOptions, abortSignal?: AbortSignal): ChunkedStream;
-    updateOptions(opts: Partial<Pick<TTSOptions, 'voiceId' | 'expressiveness' | 'stability'>>): void;
+    updateOptions(opts?: Partial<Pick<TTSOptions, 'voiceId' | 'expressiveness' | 'stability'>>): void;
 }
 
 // @public
@@ -37,6 +54,7 @@ export interface TTSOptions {
     expressiveness?: number;
     sampleRate?: number;
     stability?: number;
+    streaming?: boolean;
     voiceId?: string;
 }
 
