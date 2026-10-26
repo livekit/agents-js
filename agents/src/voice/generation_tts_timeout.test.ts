@@ -32,8 +32,49 @@ class MockAudioOutput extends AudioOutput {
   }
 }
 
+class DiscardingAudioOutput extends AudioOutput {
+  pushedDuration = 0;
+
+  override async captureFrame(frame: AudioFrame): Promise<void> {
+    await super.captureFrame(frame);
+    this.pushedDuration += frame.samplesPerChannel / frame.sampleRate;
+    this.onPlaybackStarted(Date.now());
+  }
+
+  clearBuffer(): void {
+    // no-op for mock
+  }
+}
+
 describe('TTS stream idle timeout', () => {
   initializeLogger({ pretty: false, level: 'silent' });
+
+  it.each([undefined, 16000])(
+    'does not retain consumed audio with output sample rate %s',
+    async (outputSampleRate) => {
+      const stream = new ReadableStream<AudioFrame>({
+        start(controller) {
+          for (let i = 0; i < 3000; i++) {
+            controller.enqueue(new AudioFrame(new Int16Array(960), 48000, 1, 960));
+          }
+          controller.close();
+        },
+      });
+      const audioOutput = new DiscardingAudioOutput(outputSampleRate);
+
+      const [task, audioOut] = performAudioForwarding(
+        stream,
+        audioOutput,
+        new AbortController(),
+        () => {},
+      );
+      await task.result;
+
+      expect(audioOutput.pushedDuration).toBeCloseTo(60);
+      expect(audioOut).not.toHaveProperty('audio');
+      expect(audioOut.firstFrameFut.done).toBe(true);
+    },
+  );
 
   it('forwardAudio completes when TTS stream stalls after producing frames', async () => {
     const stalledStream = new ReadableStream<AudioFrame>({
@@ -46,7 +87,9 @@ describe('TTS stream idle timeout', () => {
     const audioOutput = new MockAudioOutput();
     const controller = new AbortController();
 
-    const [task, audioOut] = performAudioForwarding(stalledStream, audioOutput, controller);
+    const [task, audioOut] = performAudioForwarding(stalledStream, audioOutput, controller, () =>
+      audioOutput.resume(),
+    );
 
     vi.useFakeTimers();
 
@@ -70,7 +113,13 @@ describe('TTS stream idle timeout', () => {
     const audioOutput = new MockAudioOutput();
     const controller = new AbortController();
 
-    const [task, audioOut] = performAudioForwarding(stalledStream, audioOutput, controller, 500);
+    const [task, audioOut] = performAudioForwarding(
+      stalledStream,
+      audioOutput,
+      controller,
+      () => audioOutput.resume(),
+      500,
+    );
 
     vi.useFakeTimers();
 
@@ -97,7 +146,9 @@ describe('TTS stream idle timeout', () => {
     const audioOutput = new MockAudioOutput();
     const controller = new AbortController();
 
-    const [task, audioOut] = performAudioForwarding(normalStream, audioOutput, controller);
+    const [task, audioOut] = performAudioForwarding(normalStream, audioOutput, controller, () =>
+      audioOutput.resume(),
+    );
 
     await task.result;
 
@@ -113,7 +164,13 @@ describe('TTS stream idle timeout', () => {
 
     const audioOutput = new MockAudioOutput();
     const controller = new AbortController();
-    const [task, audioOut] = performAudioForwarding(stalledStream, audioOutput, controller, 500);
+    const [task, audioOut] = performAudioForwarding(
+      stalledStream,
+      audioOutput,
+      controller,
+      () => audioOutput.resume(),
+      500,
+    );
 
     vi.useFakeTimers();
 
@@ -149,7 +206,9 @@ describe('TTS stream idle timeout', () => {
 
     const audioOutput = new MockAudioOutput();
     const controller = new AbortController();
-    const [task, audioOut] = performAudioForwarding(stream, audioOutput, controller);
+    const [task, audioOut] = performAudioForwarding(stream, audioOutput, controller, () =>
+      audioOutput.resume(),
+    );
 
     // Stray event before the loop captures anything must not skip resampling.
     audioOutput.onPlaybackStarted(Date.now());
@@ -179,7 +238,9 @@ describe('TTS stream idle timeout', () => {
     });
     const audioOutput = new MockAudioOutput();
     const controller = new AbortController();
-    const [task] = performAudioForwarding(stream, audioOutput, controller);
+    const [task] = performAudioForwarding(stream, audioOutput, controller, () =>
+      audioOutput.resume(),
+    );
 
     // Let forwarding enter reader.read(), which cannot be cancelled by the task's
     // AbortSignal. The read resolves only after the task has already been aborted.

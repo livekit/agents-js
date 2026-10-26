@@ -26,6 +26,7 @@ const DEFAULT_SAMPLE_RATE = 24000;
 const DEFAULT_SPEED = 1.0;
 const MIN_SPEED = 0.7;
 const MAX_SPEED = 1.3;
+const MODELS_WITHOUT_SILENCE_REDUCTION = new Set(['tts-rt-v1', 'tts-rt-v1-preview']);
 const KEEPALIVE_INTERVAL = 10000;
 const KEEPALIVE_MESSAGE = JSON.stringify({ keep_alive: true });
 
@@ -40,6 +41,8 @@ export interface TTSOptions {
   bitrate?: number | null;
   /** Speaking rate. 1.0 is normal; valid range is [0.7, 1.3]. */
   speed: number;
+  /** Shorten pauses between words. Only supported by models with silence reduction. */
+  reduceSilence: boolean;
   apiKey?: string;
   websocketUrl: string;
 }
@@ -51,6 +54,7 @@ const defaultTTSOptions: TTSOptions = {
   audioFormat: DEFAULT_AUDIO_FORMAT,
   sampleRate: DEFAULT_SAMPLE_RATE,
   speed: DEFAULT_SPEED,
+  reduceSilence: false,
   apiKey: process.env.SONIOX_API_KEY,
   websocketUrl: WEBSOCKET_URL,
 };
@@ -58,6 +62,16 @@ const defaultTTSOptions: TTSOptions = {
 const validateSpeed = (speed: number) => {
   if (!Number.isFinite(speed) || speed < MIN_SPEED || speed > MAX_SPEED) {
     throw new Error(`speed must be between ${MIN_SPEED} and ${MAX_SPEED}, but got ${speed}`);
+  }
+};
+
+const validateReduceSilence = (model: string, reduceSilence: boolean) => {
+  if (reduceSilence && MODELS_WITHOUT_SILENCE_REDUCTION.has(model)) {
+    throw new Error(
+      `reduceSilence is not supported on model '${model}'; use a model with ` +
+        'supports_silence_reduction (e.g. tts-rt-v2). ' +
+        'See https://soniox.com/docs/tts/concepts/reduce-silence',
+    );
   }
 };
 
@@ -69,15 +83,20 @@ const validateAudioFormat = (audioFormat: string) => {
 
 const cloneOptions = (opts: TTSOptions): TTSOptions => ({ ...opts });
 
-const toAPIStatusError = (message: string, statusCode?: number, body?: object | null) =>
+const toAPIStatusError = (
+  message: string,
+  statusCode?: number,
+  body?: object | null,
+  requestId?: string | null,
+) =>
   new APIStatusError({
     message,
-    options: { statusCode, body: body ?? null },
+    options: { statusCode, body: body ?? null, requestId },
   });
 
 interface TTSState {
-  currentConnection?: Connection;
-  connectionPromise?: Promise<Connection>;
+  currentConnection?: _Connection;
+  connectionPromise?: Promise<_Connection>;
   streams: Set<SynthesizeStream>;
 }
 
@@ -97,6 +116,7 @@ export class TTS extends tts.TTS {
       throw new Error('Soniox API key is required. Set SONIOX_API_KEY or pass apiKey');
     }
     validateSpeed(merged.speed);
+    validateReduceSilence(merged.model, merged.reduceSilence);
     validateAudioFormat(merged.audioFormat);
 
     this.#opts = merged;
@@ -111,11 +131,13 @@ export class TTS extends tts.TTS {
     return 'Soniox';
   }
 
-  updateOptions(opts: Partial<Pick<TTSOptions, 'model' | 'language' | 'voice' | 'speed'>>): void {
-    if (opts.speed !== undefined) {
-      validateSpeed(opts.speed);
-    }
-    this.#opts = { ...this.#opts, ...opts };
+  updateOptions(
+    opts: Partial<Pick<TTSOptions, 'model' | 'language' | 'voice' | 'speed' | 'reduceSilence'>>,
+  ): void {
+    const merged = { ...this.#opts, ...opts };
+    validateSpeed(merged.speed);
+    validateReduceSilence(merged.model, merged.reduceSilence);
+    this.#opts = merged;
   }
 
   synthesize(
@@ -133,9 +155,11 @@ export class TTS extends tts.TTS {
   }
 
   prewarm(): void {
-    void currentConnection(this, this.#opts.websocketUrl, 20000).catch((error: unknown) => {
-      log().debug({ error }, 'Soniox TTS prewarm failed');
-    });
+    void currentConnection(this, this.#opts.websocketUrl, this.#opts.apiKey!, 20000).catch(
+      (error: unknown) => {
+        log().debug({ error }, 'Soniox TTS prewarm failed');
+      },
+    );
   }
 
   override async close(): Promise<void> {
@@ -162,8 +186,9 @@ const getTTSState = (tts: TTS): TTSState => {
 const currentConnection = async (
   tts: TTS,
   websocketUrl: string,
+  apiKey: string,
   timeoutMs: number,
-): Promise<Connection> => {
+): Promise<_Connection> => {
   const state = getTTSState(tts);
   const current = state.currentConnection;
   if (current !== undefined && current.isCurrent && !current.closed) {
@@ -178,8 +203,8 @@ const currentConnection = async (
     current.markNonCurrent();
   }
 
-  state.connectionPromise = new Promise<Connection>((resolve, reject) => {
-    const connection = new Connection(websocketUrl);
+  state.connectionPromise = new Promise<_Connection>((resolve, reject) => {
+    const connection = new _Connection(websocketUrl, apiKey);
     const timeout = setTimeout(() => {
       void connection.close();
       reject(new APITimeoutError({ message: 'Timeout connecting to Soniox TTS API' }));
@@ -209,7 +234,7 @@ export class ChunkedStream extends tts.ChunkedStream {
   #opts: TTSOptions;
   #text: string;
   #connOptions: APIConnectOptions | undefined;
-  #connection?: Connection;
+  #connection?: _Connection;
   #streamId = '';
   label = 'soniox.ChunkedStream';
 
@@ -246,6 +271,7 @@ export class ChunkedStream extends tts.ChunkedStream {
       this.#connection = await currentConnection(
         this.#tts,
         this.#opts.websocketUrl,
+        this.#opts.apiKey!,
         this.#connOptions?.timeoutMs ?? 10000,
       );
       this.#connection.registerStream(this.#streamId, {
@@ -298,7 +324,7 @@ export class ChunkedStream extends tts.ChunkedStream {
 export class SynthesizeStream extends tts.SynthesizeStream {
   #tts: TTS;
   #opts: TTSOptions;
-  #connection?: Connection;
+  #connection?: _Connection;
   #streamId = '';
   #cancelled = false;
   #inputCache: Array<string | typeof SynthesizeStream.FLUSH_SENTINEL> = [];
@@ -341,6 +367,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       this.#connection = await currentConnection(
         this.#tts,
         this.#opts.websocketUrl,
+        this.#opts.apiKey!,
         this.connOptions.timeoutMs,
       );
       this.#connection.registerStream(this.#streamId, {
@@ -443,8 +470,10 @@ interface StreamData {
   configSent?: boolean;
 }
 
-class Connection {
+/** @internal */
+export class _Connection {
   #websocketUrl: string;
+  #apiKey: string;
   #ws?: WebSocket;
   #streams = new Map<string, StreamData>();
   #outbound = new AsyncIterableQueue<OutboundMessage>();
@@ -452,10 +481,12 @@ class Connection {
   #keepalive?: NodeJS.Timeout;
   #isCurrent = true;
   #closed = false;
+  #error?: Error;
   #logger = log();
 
-  constructor(websocketUrl: string) {
+  constructor(websocketUrl: string, apiKey: string) {
     this.#websocketUrl = websocketUrl;
+    this.#apiKey = apiKey;
   }
 
   get isCurrent(): boolean {
@@ -471,7 +502,9 @@ class Connection {
       return;
     }
 
-    this.#ws = new WebSocket(this.#websocketUrl);
+    this.#ws = new WebSocket(this.#websocketUrl, {
+      headers: { Authorization: `Bearer ${this.#apiKey}` },
+    });
     await new Promise<void>((resolve, reject) => {
       this.#ws!.once('open', () => resolve());
       this.#ws!.once('error', (error) => reject(error));
@@ -507,8 +540,10 @@ class Connection {
   }
 
   registerStream(streamId: string, stream: StreamData): void {
-    if (this.#closed) {
-      stream.waiter.reject(new APIConnectionError({ message: 'Soniox TTS connection is closed' }));
+    if (this.#closed || this.#error !== undefined) {
+      stream.waiter.reject(
+        this.#error ?? new APIConnectionError({ message: 'Soniox TTS connection is closed' }),
+      );
       return;
     }
     if (this.#streams.has(streamId)) {
@@ -607,7 +642,6 @@ class Connection {
 
         if (msg.type === 'start') {
           const config: Record<string, unknown> = {
-            api_key: msg.opts.apiKey,
             model: msg.opts.model,
             language: msg.opts.language,
             voice: msg.opts.voice,
@@ -618,6 +652,9 @@ class Connection {
           };
           if (msg.opts.bitrate !== undefined && msg.opts.bitrate !== null) {
             config.bitrate = msg.opts.bitrate;
+          }
+          if (msg.opts.reduceSilence) {
+            config.reduce_silence = true;
           }
           this.#ws.send(JSON.stringify(config));
         } else if (msg.type === 'text') {
@@ -640,17 +677,32 @@ class Connection {
     try {
       response = JSON.parse(raw) as Record<string, unknown>;
     } catch (error) {
-      this.#logger.warn({ error, raw }, 'Failed to parse Soniox TTS response');
+      this.#logger.warn(
+        {
+          error,
+          'lk.pii.raw_response': raw,
+        },
+        'Failed to parse Soniox TTS response',
+      );
       return;
     }
 
     const streamId = response.stream_id;
-    if (typeof streamId !== 'string') {
+    if (typeof streamId !== 'string' || !streamId) {
       if (response.error_code !== undefined) {
         this.#logger.error(
           { response },
           `Soniox TTS connection-level error: ${response.error_code} - ${response.error_message}`,
         );
+        this.#failAll(
+          toAPIStatusError(
+            String(response.error_message ?? 'Unknown Soniox TTS error'),
+            parseStatusCode(response.error_code),
+            response,
+            typeof response.request_id === 'string' ? response.request_id : null,
+          ),
+        );
+        void this.close();
       }
       return;
     }
@@ -703,9 +755,10 @@ class Connection {
   }
 
   #failAll(error: Error): void {
+    this.#error ??= error;
     for (const stream of this.#streams.values()) {
       if (!stream.waiter.done) {
-        stream.waiter.reject(error);
+        stream.waiter.reject(this.#error);
       }
     }
     this.#streams.clear();

@@ -143,3 +143,10 @@ export type STTLanguages =
   | 'tr'
   | 'uk'
   | 'multi';
+
+// Flux TTS model names follow the `flux-{voice}-{language}` format. Only the
+// documented example is listed; the option stays open via `FluxTTSModels | string`
+// so new voices work without a code change.
+// https://developers.deepgram.com/docs/flux-tts/overview
+// Ref: python livekit-plugins/livekit-plugins-deepgram/livekit/plugins/deepgram/models.py - 152 line
+export type FluxTTSModels = 'flux-alexis-en';

@@ -21,6 +21,8 @@ export type LLMModelUsage = {
   inputTokens: number;
   /** Input tokens served from cache. */
   inputCachedTokens: number;
+  /** Input tokens used to write to the prompt cache. */
+  inputCacheCreationTokens?: number;
   /** Input audio tokens (for multimodal models). */
   inputAudioTokens: number;
   /** Cached input audio tokens. */
@@ -39,6 +41,8 @@ export type LLMModelUsage = {
   outputAudioTokens: number;
   /** Output text tokens. */
   outputTextTokens: number;
+  /** Output tokens spent on hidden reasoning. Already counted in `outputTokens`. */
+  outputReasoningTokens?: number;
   /** Total session connection duration in milliseconds (for session-based billing like xAI). */
   sessionDurationMs: number;
 };
@@ -151,6 +155,7 @@ export class ModelUsageCollector {
         model,
         inputTokens: 0,
         inputCachedTokens: 0,
+        inputCacheCreationTokens: 0,
         inputAudioTokens: 0,
         inputCachedAudioTokens: 0,
         inputTextTokens: 0,
@@ -160,6 +165,7 @@ export class ModelUsageCollector {
         outputTokens: 0,
         outputAudioTokens: 0,
         outputTextTokens: 0,
+        outputReasoningTokens: 0,
         sessionDurationMs: 0,
       };
       this.llmUsage.set(key, usage);
@@ -241,7 +247,11 @@ export class ModelUsageCollector {
       const usage = this.getLLMUsage(provider, model);
       usage.inputTokens += metrics.promptTokens;
       usage.inputCachedTokens += metrics.promptCachedTokens;
+      usage.inputCacheCreationTokens =
+        (usage.inputCacheCreationTokens ?? 0) + (metrics.cacheCreationTokens ?? 0);
       usage.outputTokens += metrics.completionTokens;
+      usage.outputReasoningTokens =
+        (usage.outputReasoningTokens ?? 0) + (metrics.reasoningTokens ?? 0);
     } else if (metrics.type === 'realtime_model_metrics') {
       const [provider, model] = this.extractProviderModel(metrics);
       const usage = this.getLLMUsage(provider, model);
@@ -260,6 +270,8 @@ export class ModelUsageCollector {
       usage.outputTextTokens += metrics.outputTokenDetails.textTokens;
       usage.outputAudioTokens += metrics.outputTokenDetails.audioTokens;
       usage.outputTokens += metrics.outputTokens;
+      usage.outputReasoningTokens =
+        (usage.outputReasoningTokens ?? 0) + (metrics.reasoningTokens ?? 0);
       usage.sessionDurationMs += metrics.sessionDurationMs ?? 0;
     } else if (metrics.type === 'tts_metrics') {
       const [provider, model] = this.extractProviderModel(metrics);

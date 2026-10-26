@@ -40,7 +40,7 @@ export default defineAgent({
     const resourcesPath = join(currentDir, '../../agents/resources');
     const audioFile = join(resourcesPath, 'office-ambience.ogg');
 
-    logger.info(`Playing: ${audioFile}`);
+    logger.info({ 'lk.pii.audio_file': audioFile }, 'Playing audio file');
 
     const abortController = new AbortController();
 

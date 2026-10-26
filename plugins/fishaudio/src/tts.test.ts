@@ -172,6 +172,14 @@ if (hasFishAudioConfig) {
   });
 }
 
+describe('FishAudio options', () => {
+  it('accepts all supported model variants', () => {
+    for (const model of ['s1', 's2-pro', 's2.1-pro', 'drama-3'] as const) {
+      expect(new TTS({ apiKey: 'test-key', model }).model).toBe(model);
+    }
+  });
+});
+
 describe('FishAudio streaming', () => {
   it('keeps sampling and encoding defaults unchanged', async () => {
     const request = await captureStartRequest();
@@ -230,6 +238,11 @@ describe('FishAudio streaming', () => {
       volume: -3.0,
       normalize_loudness: true,
     });
+  });
+
+  it('always enables quality guard', async () => {
+    const request = await captureStartRequest();
+    expect(request.features).toEqual(['quality-guard']);
   });
 
   it('omits generation tuning by default', async () => {

@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { initializeLogger } from '../log.js';
+import type { LLMMetrics } from '../metrics/base.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import { Future, Task, delay } from '../utils.js';
 import { ChatContext, FunctionCall } from './chat_context.js';
@@ -70,6 +71,39 @@ class PrewarmLLM extends MockLLM {
 }
 
 const waitForTasks = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+async function collectMetrics(llm: MockLLM): Promise<LLMMetrics> {
+  const metrics = new Promise<LLMMetrics>((resolve) => llm.once('metrics_collected', resolve));
+  await llm.chat({ chatCtx: new ChatContext() }).collect();
+  return metrics;
+}
+
+describe('LLMStream metrics', () => {
+  it('defaults cache creation tokens to zero', async () => {
+    const metrics = await collectMetrics(new MockLLM([]));
+
+    expect(metrics.cacheCreationTokens).toBe(0);
+  });
+
+  it('carries cache creation tokens', async () => {
+    const metrics = await collectMetrics(
+      new MockLLM([
+        {
+          id: '1',
+          usage: {
+            completionTokens: 10,
+            promptTokens: 100,
+            promptCachedTokens: 20,
+            cacheCreationTokens: 42,
+            totalTokens: 110,
+          },
+        },
+      ]),
+    );
+
+    expect(metrics.cacheCreationTokens).toBe(42);
+  });
+});
 
 describe('LLM prewarm lifecycle', () => {
   it('is a no-op when the provider does not override _prewarmImpl', async () => {

@@ -4,6 +4,9 @@
 import type { LanguageCode } from '@livekit/agents';
 import {
   type APIConnectOptions,
+  APIConnectionError,
+  APIError,
+  APIStatusError,
   type AudioBuffer,
   AudioByteStream,
   Future,
@@ -13,6 +16,7 @@ import {
   mergeFrames,
   stt,
   waitForAbort,
+  waitForWebSocketOpen,
 } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { randomUUID } from 'node:crypto';
@@ -229,34 +233,38 @@ export class SpeechStream extends stt.SpeechStream {
         }
       }
 
-      ws = new WebSocket(streamURL, {
-        headers: { Authorization: `Bearer ${this.#apiKey}` },
-      });
+      try {
+        ws = new WebSocket(streamURL, {
+          headers: { Authorization: `Bearer ${this.#apiKey}` },
+        });
+        await waitForWebSocketOpen(ws, 'xAI');
+      } catch (error) {
+        if (error instanceof APIStatusError || error instanceof APIConnectionError) throw error;
+        throw new APIConnectionError({
+          message: `failed to connect to xAI (${errorName(error)})`,
+        });
+      }
 
       try {
-        await new Promise((resolve, reject) => {
-          ws.on('open', resolve);
-          ws.on('error', (error) => reject(error));
-          ws.on('close', (code) => reject(`WebSocket returned ${code}`));
-        });
-
         await this.#runWS(ws);
       } catch (e) {
         if (!this.closed && !this.input.closed) {
-          if (retries >= maxRetry) {
-            throw new Error(`failed to connect to xAI after ${retries} attempts: ${e}`);
+          if ((e instanceof APIError && !e.retryable) || retries >= maxRetry) {
+            throw e;
           }
 
           const delay = Math.min(retries * 5, 10);
           retries++;
 
           this.#logger.warn(
-            `failed to connect to xAI STT, retrying in ${delay} seconds: ${e} (${retries}/${maxRetry})`,
+            { error: e, retryDelayMs: delay * 1000, attempt: retries, maxRetry },
+            'Failed to connect to xAI STT, retrying',
           );
           await new Promise((resolve) => setTimeout(resolve, delay * 1000));
         } else {
           this.#logger.warn(
-            `xAI STT disconnected, connection is closed: ${e} (inputClosed: ${this.input.closed}, isClosed: ${this.closed})`,
+            { error: e, inputClosed: this.input.closed, isClosed: this.closed },
+            'xAI STT disconnected, connection is closed',
           );
         }
       }
@@ -269,13 +277,22 @@ export class SpeechStream extends stt.SpeechStream {
     this.#resetWS = new Future();
     this.#serverReady = new Future();
     let closing = false;
+    const attemptController = new AbortController();
+    const attemptSignal = AbortSignal.any([this.abortSignal, attemptController.signal]);
 
     const wsMonitor = Task.from(async (controller) => {
-      const closed = new Promise<void>(async (_, reject) => {
-        ws.once('close', (code, reason) => {
+      const closed = new Promise<void>((_, reject) => {
+        ws.once('close', (code) => {
           if (!closing) {
-            this.#logger.error(`WebSocket closed with code ${code}: ${reason}`);
-            reject(new Error('WebSocket closed'));
+            this.#logger.error({ code }, 'xAI WebSocket closed unexpectedly');
+            reject(new APIConnectionError({ message: 'xAI WebSocket closed unexpectedly' }));
+          }
+        });
+        ws.once('error', (error) => {
+          if (!closing) {
+            reject(
+              new APIConnectionError({ message: `xAI WebSocket failed (${errorName(error)})` }),
+            );
           }
         });
       });
@@ -284,17 +301,16 @@ export class SpeechStream extends stt.SpeechStream {
     });
 
     const sendTask = async () => {
-      await this.#serverReady.await;
+      await Promise.race([this.#serverReady.await, waitForAbort(attemptSignal)]);
+      if (attemptSignal.aborted) return;
 
       const samples50ms = Math.floor(this.#opts.sampleRate / 20);
       const stream = new AudioByteStream(this.#opts.sampleRate, 1, samples50ms);
-      const abortPromise = waitForAbort(this.abortSignal);
 
       try {
         while (!this.closed) {
-          const result = await Promise.race([this.input.next(), abortPromise]);
+          const result = await this.input.next({ signal: attemptSignal });
 
-          if (result === undefined) return;
           if (result.done) break;
 
           const data = result.value;
@@ -313,16 +329,19 @@ export class SpeechStream extends stt.SpeechStream {
             ws.send(frame.data.buffer);
           }
         }
+      } catch (error) {
+        if (!attemptSignal.aborted) throw error;
       } finally {
         this.#audioDurationCollector.flush();
         closing = true;
-        ws.send(JSON.stringify({ type: 'audio.done' }));
+        if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'audio.done' }));
         wsMonitor.cancel();
       }
     };
 
-    const listenTask = Task.from(async (controller) => {
+    const listenTask = Task.from(async () => {
       const listenMessage = new Promise<void>((resolve, reject) => {
+        ws.once('close', () => resolve());
         ws.on('message', (msg) => {
           try {
             const json = JSON.parse(msg.toString());
@@ -332,21 +351,36 @@ export class SpeechStream extends stt.SpeechStream {
               resolve();
             }
           } catch (err) {
-            this.#logger.error(`xAI STT: error processing message: ${msg}`);
+            this.#logger.error(
+              {
+                error: err,
+                'lk.pii.message': msg.toString(),
+              },
+              'xAI STT failed to process message',
+            );
             reject(err);
           }
         });
       });
 
-      await Promise.race([listenMessage, waitForAbort(controller.signal)]);
-    }, this.abortController);
+      await Promise.race([listenMessage, waitForAbort(attemptSignal)]);
+    });
 
-    await Promise.race([
-      this.#resetWS.await,
-      Promise.all([sendTask(), listenTask.result, wsMonitor]),
-    ]);
-    closing = true;
-    ws.close();
+    const sendPromise = sendTask();
+    try {
+      await Promise.race([
+        this.#resetWS.await,
+        waitForAbort(attemptSignal),
+        Promise.all([sendPromise, listenTask.result, wsMonitor.result]),
+      ]);
+    } finally {
+      closing = true;
+      attemptController.abort();
+      wsMonitor.cancel();
+      ws.close();
+      await Promise.allSettled([sendPromise, listenTask.result, wsMonitor.result]);
+      ws.removeAllListeners('message');
+    }
   }
 
   #onAudioDurationReport(duration: number) {
@@ -445,11 +479,18 @@ export class SpeechStream extends stt.SpeechStream {
         this.#putMessage({ type: stt.SpeechEventType.END_OF_SPEECH });
       }
     } else if (msgType === 'error') {
-      this.#logger.error(`xAI STT error: ${(data['message'] as string) ?? 'unknown error'}`);
+      throw new APIStatusError({
+        message: `xAI STT error: ${(data['message'] as string) ?? 'unknown error'}`,
+        options: { body: data },
+      });
     } else {
       this.#logger.warn(`received unexpected message from xAI: ${msgType}`);
     }
   }
+}
+
+function errorName(error: unknown): string {
+  return error instanceof Error ? error.name : typeof error;
 }
 
 function wordsToSpeechData(

@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { Room } from '@livekit/rtc-node';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { BaseStreamingTurnDetector } from '../inference/eot/base.js';
 import type { InferenceExecutor } from '../ipc/inference_executor.js';
 import {
   JobContext,
@@ -109,6 +110,31 @@ describe('AgentSession text-only gating', () => {
     });
   });
 
+  it('disables audio turn handling without warnings under a TEXT simulation', () => {
+    runWithJobContext(jobCtxWithMode('SIMULATION_MODE_TEXT'), () => {
+      const session = new AgentSession({
+        stt: fakeStt,
+        tts: fakeTts,
+        vad: fakeVad,
+        llm: fakeLlm,
+        turnHandling: { turnDetection: 'vad', interruption: { mode: 'adaptive' } },
+      });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const activity: any = new AgentActivity(
+        new Agent({ instructions: 'help the user' }),
+        session,
+      );
+      activity.logger = { warn: vi.fn() };
+
+      const turnDetector = Object.create(BaseStreamingTurnDetector.prototype);
+      expect(activity._resolveTurnDetection(turnDetector)).toBeUndefined();
+      expect(activity._resolveTurnDetection('vad')).toBeUndefined();
+      expect(activity._resolveTurnDetection('manual')).toBe('manual');
+      expect(activity.resolveInterruptionDetector()).toBeUndefined();
+      expect(activity.logger.warn).not.toHaveBeenCalled();
+    });
+  });
+
   it('keeps components under an AUDIO simulation', () => {
     const session = runWithJobContext(jobCtxWithMode('SIMULATION_MODE_AUDIO'), newSession);
     expect(session._textOnly).toBe(false);
@@ -135,14 +161,15 @@ describe('AgentSession text-only gating', () => {
       });
     });
 
-    expect(session._recordingOptions).toEqual({
+    expect(session.sessionOptions.recordingOptions).toEqual({
       audio: false,
       traces: true,
       logs: true,
       transcript: true,
       redaction: false,
+      inputDelta: false,
     });
-    expect(initRecording).toHaveBeenCalledWith(session._recordingOptions);
+    expect(initRecording).toHaveBeenCalledWith(session.sessionOptions.recordingOptions);
     await session.close();
   });
 });

@@ -48,9 +48,28 @@ function createFakeSession(rootSpanContext = ROOT_CONTEXT): AgentSession {
     _cancelUserAwayTimer: vi.fn(),
     _userSpeakingSpan: undefined,
     _userState: 'listening',
+    _addSessionEvent: vi.fn(),
     emit: vi.fn(),
     rootSpanContext,
   } as unknown as AgentSession;
+}
+
+function createRecognitionHooks(): RecognitionHooks {
+  return {
+    interruptionByAudioActivityEnabled: false,
+    onOverlapSpeech: vi.fn(),
+    onBackchannelConfirmed: vi.fn(),
+    onStartOfSpeech: vi.fn(),
+    onVADInferenceDone: vi.fn(),
+    onEndOfSpeech: vi.fn(),
+    onInterimTranscript: vi.fn(),
+    onFinalTranscript: vi.fn(),
+    onPreemptiveGeneration: vi.fn(),
+    onEotPrediction: vi.fn(),
+    onAgentBackchannelOpportunity: vi.fn(),
+    retrieveChatCtx: () => ChatContext.empty(),
+    onEndOfTurn: vi.fn(async () => true),
+  };
 }
 
 class FakeVADStream extends (Object as unknown as { new (): VADStream }) {
@@ -100,11 +119,12 @@ const alwaysTrueTurnDetector: _TurnDetector = {
 describe('AudioRecognition user_turn span', () => {
   initializeLogger({ pretty: false, level: 'silent' });
 
-  it('creates user_turn and parents eou_detection under it (stt mode)', async () => {
+  it('creates user_turn and nests eou_wait and eou_detection under it (stt mode)', async () => {
     const { exporter } = setupInMemoryTracing();
 
     const hooks: RecognitionHooks = {
-      onInterruption: vi.fn(),
+      interruptionByAudioActivityEnabled: false,
+      onOverlapSpeech: vi.fn(),
       onBackchannelConfirmed: vi.fn(),
       onStartOfSpeech: vi.fn(),
       onVADInferenceDone: vi.fn(),
@@ -170,17 +190,21 @@ describe('AudioRecognition user_turn span', () => {
       throw new Error('expected user_turn and eou_detection spans');
     }
 
-    expect(eou.parentSpanContext?.spanId).toBe(userTurn.spanContext().spanId);
+    // the detector inference nests under the turn's endpointing wait, which nests under the turn
+    const eouWait = spanByName(spans, 'eou_wait');
+    expect(eouWait, 'eou_wait span missing').toBeTruthy();
+    expect(eou.parentSpanContext?.spanId).toBe(eouWait!.spanContext().spanId);
+    expect(eouWait!.parentSpanContext?.spanId).toBe(userTurn.spanContext().spanId);
 
     // creation-time attributes
     expect(userTurn.attributes['lk.participant_id']).toBe('p1');
-    expect(userTurn.attributes['lk.participant_identity']).toBe('bob');
+    expect(userTurn.attributes['lk.pii.participant_identity']).toBe('bob');
     expect(userTurn.attributes['lk.participant_kind']).toBe('AGENT');
     expect(userTurn.attributes['gen_ai.request.model']).toBe('deepgram-nova2');
     expect(userTurn.attributes['gen_ai.provider.name']).toBe('deepgram');
 
     // end-of-turn attributes
-    expect(userTurn.attributes['lk.user_transcript']).toContain('hello');
+    expect(userTurn.attributes['lk.pii.user_transcript']).toContain('hello');
     expect(userTurn.attributes['lk.transcript_confidence']).toBeGreaterThan(0);
   });
 
@@ -200,7 +224,8 @@ describe('AudioRecognition user_turn span', () => {
     bigCtx.addMessage({ role: 'user', content: [] });
 
     const hooks: RecognitionHooks = {
-      onInterruption: vi.fn(),
+      interruptionByAudioActivityEnabled: false,
+      onOverlapSpeech: vi.fn(),
       onBackchannelConfirmed: vi.fn(),
       onStartOfSpeech: vi.fn(),
       onVADInferenceDone: vi.fn(),
@@ -258,7 +283,7 @@ describe('AudioRecognition user_turn span', () => {
     }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const items = JSON.parse(String(eou.attributes['lk.chat_ctx'])).items as any[];
+    const items = JSON.parse(String(eou.attributes['lk.pii.chat_ctx'])).items as any[];
     expect(items.length).toBeLessThanOrEqual(6);
     // only non-empty, non-system messages survive; the pending user transcript is last
     expect(items.every((i) => i.type === 'message')).toBe(true);
@@ -274,7 +299,8 @@ describe('AudioRecognition user_turn span', () => {
     const { exporter } = setupInMemoryTracing();
 
     const hooks: RecognitionHooks = {
-      onInterruption: vi.fn(),
+      interruptionByAudioActivityEnabled: false,
+      onOverlapSpeech: vi.fn(),
       onBackchannelConfirmed: vi.fn(),
       onStartOfSpeech: vi.fn(),
       onVADInferenceDone: vi.fn(),
@@ -366,7 +392,11 @@ describe('AudioRecognition user_turn span', () => {
     if (!userTurn || !eou) {
       throw new Error('expected user_turn and eou_detection spans');
     }
-    expect(eou.parentSpanContext?.spanId).toBe(userTurn.spanContext().spanId);
+    // the detector inference nests under the turn's endpointing wait, which nests under the turn
+    const eouWait = spanByName(spans, 'eou_wait');
+    expect(eouWait, 'eou_wait span missing').toBeTruthy();
+    expect(eou.parentSpanContext?.spanId).toBe(eouWait!.spanContext().spanId);
+    expect(eouWait!.parentSpanContext?.spanId).toBe(userTurn.spanContext().spanId);
 
     expect(hooks.onStartOfSpeech).toHaveBeenCalled();
     expect(hooks.onEndOfSpeech).toHaveBeenCalled();
@@ -376,7 +406,8 @@ describe('AudioRecognition user_turn span', () => {
     const { exporter } = setupInMemoryTracing();
 
     const hooks: RecognitionHooks = {
-      onInterruption: vi.fn(),
+      interruptionByAudioActivityEnabled: false,
+      onOverlapSpeech: vi.fn(),
       onBackchannelConfirmed: vi.fn(),
       onStartOfSpeech: vi.fn(),
       onVADInferenceDone: vi.fn(),
@@ -493,5 +524,73 @@ describe('AudioRecognition user_turn span', () => {
       throw new Error('expected user_speaking span');
     }
     expect(userSpeaking.parentSpanContext?.spanId).toBe(sessionSpan.spanContext().spanId);
+  });
+
+  it('does not mark a normal user_speaking span as a non-interruption', async () => {
+    const { exporter } = setupInMemoryTracing();
+    const recognition = new AudioRecognition({
+      recognitionHooks: createRecognitionHooks(),
+    });
+    const internals = recognition as unknown as {
+      isInterruptionEnabled: boolean;
+      trySendInterruptionSentinel: ReturnType<typeof vi.fn>;
+    };
+    internals.isInterruptionEnabled = true;
+    internals.trySendInterruptionSentinel = vi.fn(async () => true);
+    const userSpeaking = tracer.startSpan({ name: 'user_speaking', context: ROOT_CONTEXT });
+
+    await recognition.onEndOfOverlapSpeech(Date.now(), userSpeaking);
+    userSpeaking.end();
+
+    const exportedSpan = spanByName(exporter.getFinishedSpans(), 'user_speaking');
+    expect(exportedSpan?.attributes['lk.is_interruption']).toBeUndefined();
+  });
+
+  it('marks an ended overlap as a non-interruption', async () => {
+    const { exporter } = setupInMemoryTracing();
+    const recognition = new AudioRecognition({
+      recognitionHooks: createRecognitionHooks(),
+    });
+    const internals = recognition as unknown as {
+      isInterruptionEnabled: boolean;
+      isAgentSpeaking: boolean;
+      trySendInterruptionSentinel: ReturnType<typeof vi.fn>;
+    };
+    internals.isInterruptionEnabled = true;
+    internals.isAgentSpeaking = true;
+    internals.trySendInterruptionSentinel = vi.fn(async () => true);
+    const userSpeaking = tracer.startSpan({ name: 'user_speaking', context: ROOT_CONTEXT });
+
+    await recognition.onStartOfOverlapSpeech(0, Date.now(), userSpeaking);
+    await recognition.onEndOfOverlapSpeech(Date.now(), userSpeaking);
+    userSpeaking.end();
+
+    const exportedSpan = spanByName(exporter.getFinishedSpans(), 'user_speaking');
+    expect(exportedSpan?.attributes['lk.is_interruption']).toBe('false');
+  });
+
+  it('does not overwrite an interruption verdict when overlap speech ends', async () => {
+    const { exporter } = setupInMemoryTracing();
+    const recognition = new AudioRecognition({
+      recognitionHooks: createRecognitionHooks(),
+    });
+    const internals = recognition as unknown as {
+      isInterruptionEnabled: boolean;
+      overlapInCurrentTurn: boolean;
+      interruptionDetected: boolean;
+      trySendInterruptionSentinel: ReturnType<typeof vi.fn>;
+    };
+    internals.isInterruptionEnabled = true;
+    internals.overlapInCurrentTurn = true;
+    internals.interruptionDetected = true;
+    internals.trySendInterruptionSentinel = vi.fn(async () => true);
+    const userSpeaking = tracer.startSpan({ name: 'user_speaking', context: ROOT_CONTEXT });
+    userSpeaking.setAttribute('lk.is_interruption', 'true');
+
+    await recognition.onEndOfOverlapSpeech(Date.now(), userSpeaking);
+    userSpeaking.end();
+
+    const exportedSpan = spanByName(exporter.getFinishedSpans(), 'user_speaking');
+    expect(exportedSpan?.attributes['lk.is_interruption']).toBe('true');
   });
 });

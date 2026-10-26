@@ -336,6 +336,52 @@ describe('Zod Utils', () => {
         }
       });
 
+      it('should not add a null sentinel to a defaulted const field', () => {
+        const schema = z4.object({ tag: z4.literal('only').default('only') });
+
+        const strictSchema = zodSchemaToJsonSchema(schema, true, true) as Record<string, unknown>;
+        const properties = strictSchema.properties as JSONSchemaProperties;
+
+        expect(properties.tag).toEqual({ const: 'only', type: 'string' });
+        expect(jsonSchemaAllowsNull(properties.tag!, strictSchema)).toBe(false);
+      });
+
+      it('should keep defaulted discriminant tags pinned to their variants', async () => {
+        const celsius = z4.object({
+          unit: z4.literal('celsius').default('celsius'),
+          value: z4.number(),
+        });
+        const fahrenheit = z4.object({
+          unit: z4.literal('fahrenheit').default('fahrenheit'),
+          value: z4.number(),
+        });
+        const temperature = z4.discriminatedUnion('unit', [celsius, fahrenheit]);
+        const schema = z4.object({ temp: temperature });
+
+        const strictSchema = zodSchemaToJsonSchema(schema, true, true) as Record<string, unknown>;
+        const properties = strictSchema.properties as JSONSchemaProperties;
+        const variants = (properties.temp!.anyOf ?? properties.temp!.oneOf) as Array<
+          Record<string, unknown>
+        >;
+
+        for (const [variant, tag] of variants.map((variant, index) => [
+          variant,
+          index === 0 ? 'celsius' : 'fahrenheit',
+        ]) as Array<[Record<string, unknown>, string]>) {
+          const variantProperties = variant.properties as JSONSchemaProperties;
+          expect(variantProperties.unit).toEqual({ const: tag, type: 'string' });
+          expect(jsonSchemaAllowsNull(variantProperties.unit!, strictSchema)).toBe(false);
+          expect(variant.required).toContain('unit');
+        }
+
+        await expect(
+          parseZodSchema(schema, { temp: { unit: 'fahrenheit', value: 70 } }),
+        ).resolves.toMatchObject({
+          success: true,
+          data: { temp: { unit: 'fahrenheit', value: 70 } },
+        });
+      });
+
       it('should keep defaulted fields non-nullable when not generating a strict schema', () => {
         const schema = z4.object({
           count: z4.number().default(5),

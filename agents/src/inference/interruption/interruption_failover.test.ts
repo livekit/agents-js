@@ -27,6 +27,7 @@ import { MockWebSocket } from './_mock_ws.js';
 import { apiConnectDefaults } from './defaults.js';
 import { AdaptiveInterruptionDetector } from './interruption_detector.js';
 import { InterruptionStreamBase, InterruptionStreamSentinel } from './interruption_stream.js';
+import type { OverlappingSpeechEvent } from './types.js';
 
 // ---------------------------------------------------------------------------
 // Mock `ws` so the WebSocket transport can be driven deterministically.
@@ -340,7 +341,7 @@ describe('interruption updateOptions reconnect', () => {
 
 function createHooks(): RecognitionHooks {
   return {
-    onInterruption: vi.fn(),
+    onOverlapSpeech: vi.fn(),
     onBackchannelConfirmed: vi.fn(),
     onStartOfSpeech: vi.fn(),
     onVADInferenceDone: vi.fn(),
@@ -355,6 +356,65 @@ function createHooks(): RecognitionHooks {
 }
 
 describe('interruption failover error emission', () => {
+  it('routes overlap verdicts through recognition hooks', async () => {
+    const event: OverlappingSpeechEvent = {
+      type: 'overlapping_speech',
+      detectedAt: Date.now(),
+      isInterruption: true,
+      totalDurationInS: 0,
+      predictionDurationInS: 0,
+      detectionDelayInS: 0,
+      probability: 1,
+      numRequests: 1,
+    };
+    const hooks = createHooks();
+    const eventStream = new ReadableStream<OverlappingSpeechEvent>({
+      start(controller) {
+        controller.enqueue(event);
+        controller.close();
+      },
+    });
+    const detectorStream = {
+      stream: () => eventStream,
+      pushFrame: async () => {},
+      close: async () => {},
+    };
+    const detector = {
+      label: 'mock-detector',
+      createStream: () => detectorStream,
+      emitError: vi.fn(),
+    };
+    const recognition = new AudioRecognition({
+      recognitionHooks: hooks,
+      interruptionDetection: detector as unknown as AdaptiveInterruptionDetector,
+    });
+    const abortController = new AbortController();
+    const task = (
+      recognition as unknown as {
+        createInterruptionTask: (
+          detector: AdaptiveInterruptionDetector,
+          signal: AbortSignal,
+        ) => Promise<void>;
+      }
+    ).createInterruptionTask(
+      detector as unknown as AdaptiveInterruptionDetector,
+      abortController.signal,
+    );
+
+    const startedAt = performance.now();
+    while (
+      !vi.mocked(hooks.onOverlapSpeech).mock.calls.length &&
+      performance.now() - startedAt < 2_000
+    ) {
+      await sleep(5);
+    }
+    abortController.abort();
+    await task;
+
+    expect(hooks.onOverlapSpeech).toHaveBeenCalledOnce();
+    expect(hooks.onOverlapSpeech).toHaveBeenCalledWith(event);
+  });
+
   it('emits exactly one unrecoverable error for a non-retryable transport failure', async () => {
     // Mirrors how ws_transport constructs the connection-rejected error (retryable forced off).
     const transportError = new APIStatusError({

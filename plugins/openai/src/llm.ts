@@ -170,7 +170,7 @@ export class LLM extends llm.LLM {
     }
 
     return new LLM({
-      model: 'llama3.1-8b',
+      model: 'gpt-oss-120b',
       baseURL: 'https://api.cerebras.ai/v1',
       ...opts,
     });
