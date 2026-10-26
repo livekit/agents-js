@@ -199,7 +199,7 @@ describe('Google mixed tools request construction', () => {
     {
       toolChoice: 'required' as const,
       expectedMode: FunctionCallingConfigMode.ANY,
-      expectedNames: ['get_temperature', 'get_weather'],
+      expectedNames: ['get_weather', 'get_temperature'],
     },
     {
       toolChoice: 'none' as const,
