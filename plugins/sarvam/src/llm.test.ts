@@ -375,6 +375,20 @@ describe('sarvam-105b-conversations capabilities', () => {
     expect(opts.extraBody).not.toHaveProperty('wiki_grounding');
   });
 
+  it('strips gated options after switching to conversations at runtime', () => {
+    const model = new LLM({
+      model: 'sarvam-105b',
+      apiKey: 'sk_test',
+      client: fakeClient(),
+      reasoningEffort: 'high',
+      wikiGrounding: true,
+    });
+    model.updateOptions({ model: 'sarvam-105b-conversations' });
+    const options = streamOptions(model.chat({ chatCtx: chatContext() }));
+    expect(options).not.toHaveProperty('reasoning_effort');
+    expect(options).not.toHaveProperty('wiki_grounding');
+  });
+
   it('supports tool calling', () => {
     const getWeather = llm.tool({
       name: 'get_weather',

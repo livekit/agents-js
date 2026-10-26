@@ -246,10 +246,13 @@ export class LLM extends llm.LLM {
     if (!REASONING_EFFORT_MODELS.has(model)) delete modelOptions.reasoning_effort;
 
     Object.assign(modelOptions, this._opts.extraBody);
+    // Capability gates were applied for the constructor's model; re-apply them in case
+    // updateOptions switched to a model without reasoning-effort or wiki-grounding support.
+    if (!WIKI_GROUNDING_MODELS.has(model)) delete modelOptions.wiki_grounding;
     if (this._opts.user !== undefined) modelOptions.user = this._opts.user;
     if (this._opts.temperature !== undefined) modelOptions.temperature = this._opts.temperature;
     if (this._opts.topP !== undefined) modelOptions.top_p = this._opts.topP;
-    if (this._opts.reasoningEffort !== undefined) {
+    if (this._opts.reasoningEffort !== undefined && REASONING_EFFORT_MODELS.has(model)) {
       modelOptions.reasoning_effort = this._opts.reasoningEffort;
     }
     if (responseFormat !== undefined) modelOptions.response_format = responseFormat;
