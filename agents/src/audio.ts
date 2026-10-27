@@ -213,6 +213,9 @@ export async function* loopAudioFramesFromFile(
     yield frame;
   }
 
+  // replaying zero frames never yields, so it would never return control to check the signal
+  if (frames.length === 0) return;
+
   while (!options.abortSignal?.aborted) {
     for (const frame of frames) {
       yield frame;
