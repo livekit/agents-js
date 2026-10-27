@@ -59,6 +59,19 @@ export class JobProcExecutor extends SupervisedProc implements JobExecutor {
     return 'job';
   }
 
+  protected override loggingFields(): Record<string, unknown> {
+    const fields = super.loggingFields();
+    if (this.#runningJob) {
+      fields.job_id = this.#runningJob.job.id;
+      fields.room = this.#runningJob.job.room?.name;
+      fields.room_id = this.#runningJob.job.room?.sid;
+      if (this.#runningJob.job.agentName) {
+        fields.agent_name = this.#runningJob.job.agentName;
+      }
+    }
+    return fields;
+  }
+
   createProcess(): ChildProcess {
     const forkUrl = new URL(`./job_proc_lazy_main${currentFileExtension}`, import.meta.url);
 
