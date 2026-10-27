@@ -83,6 +83,19 @@ These limits apply:
 - PCM16 input is downmixed or resampled when needed. Output is 24 kHz mono PCM16.
   Queues are bounded; overflow closes the session.
 
+The realtime session emits SDK payloads as `item_truncated` and `response_ended`.
+Available `keptText` updates the plugin's history while the server item ID still
+matches. An empty string means no words remain; `null` means unavailable and leaves
+known text unchanged. Early acknowledgments may have no retained text, with no later
+update guaranteed. Retained text can differ from the words heard and does not replace
+LiveKit's playback transcript.
+
+`response_ended.truncation` reports items excluded from that reply's prompt through
+`itemsLeftOut` and `firstKeptItemId`. It does not delete local history or change the
+truncation policy. A missing or null summary means no exclusions were reported or the
+information was unavailable. Diagnostics include discarded replies and can arrive
+before `generateReply()` returns a requested response.
+
 ### Configuration and compatibility
 
 Constructor options include turn detection, history truncation, request IDs, response
@@ -93,7 +106,7 @@ Both local protocol tests and standard-session tests passed with the repository 
 at `f03a68ef` and published `@livekit/agents@1.9.4`, using Node.js 24.18.0. Earlier
 versions were not tested. The peer dependency remains the repository's release version.
 
-The plugin pins `@rimelabs/sdk` to `0.1.0-alpha.23` from public npm. If your machine
+The plugin pins `@rimelabs/sdk` to `0.1.0-alpha.24` from public npm. If your machine
 routes `@rimelabs` to GitHub Packages, install with
 `pnpm install --@rimelabs:registry=https://registry.npmjs.org`.
 
