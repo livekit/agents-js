@@ -1004,10 +1004,55 @@ describe('GPTLiveModel', () => {
     });
     session.on('function_call', () => order.push('call'));
     await ready(session);
+    for (let i = 0; i < 20; i++) session.pushAudio(pcm());
     await server.send(session, transcript('user', "What's the weather in Paris?", 1000));
+    await server.send(session, {
+      type: 'session.delegation.created',
+      delegation: { id: 'd1', target: 'responses' },
+    });
     await server.response(session, { type: 'response.created' });
     await server.response(session, callDone('c1'));
     expect(order).toEqual(['final', 'call']);
+    // the caller starts their next request while the first one's tools still run
+    await server.send(session, transcript('user', 'Also', 3000));
+    await server.response(session, callDone('c2'));
+    expect(order).toEqual(['final', 'call', 'call']);
+  });
+
+  it('takes the first answer after each caller turn began on the model clock', async () => {
+    const session = create();
+    const finals: string[] = [];
+    session.on('input_audio_transcription_completed', (event) => {
+      if (event.isFinal) finals.push(event.transcript);
+    });
+    await ready(session);
+    await server.send(session, transcript('assistant', 'Yes.', 2000));
+    await server.send(session, transcript('assistant', 'Sure.', 5000));
+    await server.send(session, transcript('user', 'Question one.', 1000));
+    await server.send(session, transcript('user', 'Question two.', 3500));
+    await server.send(session, transcript('user', 'Hello', 6000));
+    expect(finals).toEqual(['Question one.', 'Question two.']);
+
+    await server.send(session, transcript('assistant', 'Hi.', 7000));
+    await server.send(session, transcript('user', 'Can you', 7000));
+    await server.send(session, transcript('user', ' help me?', 7800));
+    expect(finals.at(-1)).toBe('Hello');
+
+    const delegation = {
+      type: 'session.delegation.created',
+      delegation: { id: 'd1', target: 'client' },
+    } as const;
+    for (let i = 0; i < 100; i++) session.pushAudio(pcm());
+    expect(finals.at(-1)).toBe('Hello');
+    await server.send(session, delegation);
+    for (let i = 0; i < 8; i++) session.pushAudio(pcm());
+    expect(finals.at(-1)).toBe('Can you help me?');
+
+    for (let i = 0; i < 12; i++) session.pushAudio(pcm());
+    await server.send(session, delegation);
+    await server.send(session, transcript('user', 'Book it.', 11500));
+    for (let i = 0; i < 8; i++) session.pushAudio(pcm());
+    expect(finals.at(-1)).toBe('Book it.');
   });
 
   it.each(['responses', 'client'] as const)(
