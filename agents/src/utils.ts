@@ -764,6 +764,7 @@ export function resampleStream({
 }): ReadableStream<AudioFrame> {
   let resampler: AudioResampler | null = null;
   let currentInputRate = 0;
+  let currentChannels = 0;
   const transformStream = new TransformStream<AudioFrame, AudioFrame>({
     transform(chunk: AudioFrame, controller: TransformStreamDefaultController<AudioFrame>) {
       if (chunk.samplesPerChannel === 0) {
@@ -783,15 +784,20 @@ export function resampleStream({
         return;
       }
 
-      if (!resampler || currentInputRate !== chunk.sampleRate) {
+      if (
+        !resampler ||
+        currentInputRate !== chunk.sampleRate ||
+        currentChannels !== chunk.channels
+      ) {
         if (resampler) {
           for (const frame of resampler.flush()) {
             controller.enqueue(frame);
           }
           resampler.close();
         }
-        resampler = new AudioResampler(chunk.sampleRate, outputRate);
+        resampler = new AudioResampler(chunk.sampleRate, outputRate, chunk.channels);
         currentInputRate = chunk.sampleRate;
+        currentChannels = chunk.channels;
       }
 
       for (const frame of resampler.push(chunk)) {
