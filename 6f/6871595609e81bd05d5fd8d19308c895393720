@@ -1,0 +1,39 @@
+agents/etc/agents.api.md
+  s_b6ebb92b33ee85::t_ee767be8f706de 2481,5155,5171
+agents/src/inference/_warmup.ts
+  s_b6ebb92b33ee85::t_2d735ba5592599 10
+agents/src/inference/eot/base.test.ts
+  s_b6ebb92b33ee85::t_c25edad94a0022 18,50-51,116,121,130,135
+agents/src/inference/eot/base.ts
+  s_b6ebb92b33ee85::t_49ee1aa2f93f1a 68-69,73,95,351-355,522
+agents/src/inference/eot/detector.test.ts
+  s_b6ebb92b33ee85::t_43500060fd378a 96-97
+agents/src/inference/eot/runner.ts
+  s_b6ebb92b33ee85::t_6ca075d08a480e 7,26,50
+agents/src/inference/eot/transports.test.ts
+  s_b6ebb92b33ee85::t_3cd9cef9010937 19,316,327,330,332,334,337,339-340,342,348
+agents/src/inference/eot/transports.ts
+  s_b6ebb92b33ee85::t_11446c5d9ccd90 22,87,135,137,139,149,161-162,171,228,231-232,239,349
+agents/src/voice/audio_recognition.ts
+  s_b6ebb92b33ee85::t_fb7aa4602d13e7 1177-1182,1201-1207
+agents/src/voice/audio_recognition_turn_detection.test.ts
+  s_b6ebb92b33ee85::t_e4c0ea77212e2d 384-400
+agents/src/worker.ts
+  s_b6ebb92b33ee85::t_856ac62071cf48 399
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6f6871595609e81bd05d5fd8d19308c895393720",
+  "prompts": {},
+  "sessions": {
+    "s_b6ebb92b33ee85": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7ffd5347-5f1e-4331-bcb5-8dce87ae0dd4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
