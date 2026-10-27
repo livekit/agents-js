@@ -735,6 +735,9 @@ export class GPTLiveSession extends llm.DuplexSession<{
     const speech = this.speech.get(role);
     this.speech.delete(role);
     if (!speech || role !== 'user') return;
+    // its answer is spent: no later turn began before it
+    const replyMs = this.replyMs(speech);
+    if (replyMs !== undefined) this.answers = this.answers.filter((answer) => answer > replyMs);
     this.emit('input_audio_transcription_completed', {
       itemId: speech.messageId,
       transcript: speech.text,

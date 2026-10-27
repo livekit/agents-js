@@ -1011,6 +1011,10 @@ describe('GPTLiveModel', () => {
     for (let i = 0; i < 8; i++) session.pushAudio(pcm());
     expect(finals).toEqual(['Where is my order?']);
     expect(started).toBe(1);
+    // that answer is spent, so the next turn waits for its own
+    await server.send(session, transcript('user', 'Thanks', 9000));
+    for (let i = 0; i < 8; i++) session.pushAudio(pcm());
+    expect(finals).toEqual(['Where is my order?']);
   });
 
   it('commits the caller request before a tool call reads it', async () => {
