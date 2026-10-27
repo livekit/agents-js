@@ -19,7 +19,7 @@ export default defineAgent({
   entry: async (ctx: JobContext) => {
     const session = new AgentSession({
       stt: new inference.STT({ model: 'deepgram/nova-3' }),
-      llm: new inference.LLM({ model: 'google/gemini-2.5-flash' }),
+      llm: new inference.LLM({ model: 'google/gemma-4-31b-it' }),
       tts: new inference.TTS({ model: 'cartesia/sonic-3' }),
     });
 

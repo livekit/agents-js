@@ -156,7 +156,7 @@ export default defineAgent({
       llm: new llm.FallbackAdapter({
         llms: [
           new inference.LLM({ model: 'openai/gpt-4.1-mini' }),
-          new inference.LLM({ model: 'google/gemini-2.5-flash' }),
+          new inference.LLM({ model: 'google/gemma-4-31b-it' }),
         ],
       }),
       stt: new stt.FallbackAdapter({

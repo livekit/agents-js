@@ -54,7 +54,7 @@ export default defineAgent({
     });
 
     const session = new voice.AgentSession({
-      llm: 'deepseek-ai/deepseek-v3',
+      llm: 'openai/gpt-oss-120b',
       stt: 'deepgram/nova-3',
       tts: 'cartesia/sonic-3',
     });

@@ -27,7 +27,7 @@ export default defineAgent({
   entry: async (ctx: JobContext) => {
     const session = new AgentSession({
       stt: new inference.STT({ model: 'assemblyai/universal-3-6-pro', language: 'en' }),
-      llm: new inference.LLM({ model: 'google/gemini-2.5-flash' }),
+      llm: new inference.LLM({ model: 'google/gemma-4-31b-it' }),
       tts: new inference.TTS({
         model: 'fishaudio/s2.1-pro',
         voice: '51b44863613e405a896f7f4294c6e6d0',
