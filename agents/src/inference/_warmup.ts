@@ -7,7 +7,7 @@
  *
  * Memory model (measured ~540 MB for the EOT model, ~2 MB for VAD): Node has
  * no forkserver/COW, so anything loaded in a job worker is private to that
- * worker. To avoid paying ~540 MB per worker, the EOT model is NOT loaded in
+ * worker. To avoid paying that per worker, the EOT model is NOT loaded in
  * job workers — it runs in the shared `InferenceProcExecutor` (see
  * `inference/eot/runner.ts`), loaded once per host. The VAD stays in-process
  * (it's small and runs continuously) and is reached via this loader.

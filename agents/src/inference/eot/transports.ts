@@ -19,11 +19,11 @@ import { log } from '../../log.js';
 import { type StreamChannel, createStreamChannel } from '../../stream/stream_channel.js';
 import { type APIConnectOptions, intervalForRetry } from '../../types.js';
 import { Task, delay } from '../../utils.js';
+import { _getLocalInferenceModule } from '../_warmup.js';
 import { buildMetadataHeaders, connectWs, createAccessToken } from '../utils.js';
 import {
   type BaseStreamingTurnDetectorOptions,
   type BaseStreamingTurnDetectorStream,
-  DEFAULT_SAMPLE_RATE,
   type FlushSentinel,
   type StreamingTurnDetectionTransport,
 } from './base.js';
@@ -82,13 +82,9 @@ function durationToMs(d?: Duration): number {
   return Number(d.seconds) * 1000 + Math.floor(d.nanos / 1_000_000);
 }
 
-// Native model operates on up to 2.0 s of 16 kHz s16le PCM per predict.
-const CLIENT_BUFFER_SECONDS = 2.0;
-const CLIENT_BUFFER_SAMPLES = Math.floor(CLIENT_BUFFER_SECONDS * DEFAULT_SAMPLE_RATE);
-
 /**
  * Append-only ring buffer of 16-bit PCM samples used by the local transport
- * to keep the last ~2.0 s of audio available for per-window prediction.
+ * to keep the window the native model reads available for per-window prediction.
  */
 class PcmRingBuffer {
   private buf: Int16Array;
@@ -136,11 +132,11 @@ class PcmRingBuffer {
  * Transport for the local `turn-detector-v1-mini` model.
  *
  * The native model runs in the shared `InferenceProcExecutor` (one load per
- * host, ~540 MB) rather than in every job worker. Audio is buffered locally
+ * host) rather than in every job worker. Audio is buffered locally
  * in the job process (no per-frame IPC); on each inference window the last
- * ~2.0 s is snapshotted, base64-encoded, and sent over IPC to the runner
+ * window is snapshotted, base64-encoded, and sent over IPC to the runner
  * (`inference/eot/runner.ts`) via `executor.doInference(...)`, with the turn
- * length in samples counted from the user turn start since the last flush.
+ * length in samples.
  *
  * When no executor is available (binding couldn't load on this platform),
  * predictions resolve to a positive default (1.0) so the session still
@@ -150,8 +146,7 @@ export class LocalTransport implements StreamingTurnDetectionTransport {
   protected _opts: BaseStreamingTurnDetectorOptions;
   protected _executor: InferenceExecutor | undefined;
   protected _buf: PcmRingBuffer;
-  protected _numSamples = 0;
-  protected _turnStart: number | undefined;
+  protected _turnSamples = 0;
   protected _streamRef: WeakRef<BaseStreamingTurnDetectorStream> | undefined;
   protected _tasks = new Set<Promise<void>>();
   protected _warnedNoExecutor = false;
@@ -163,7 +158,8 @@ export class LocalTransport implements StreamingTurnDetectionTransport {
   }) {
     this._opts = opts.opts;
     this._executor = opts.executor;
-    this._buf = new PcmRingBuffer(CLIENT_BUFFER_SAMPLES);
+    // without the binding, predictions never reach the model, so the buffer size does not matter
+    this._buf = new PcmRingBuffer(_getLocalInferenceModule()?.EOT_MAX_SAMPLES ?? 1);
   }
 
   attach(stream: BaseStreamingTurnDetectorStream): void {
@@ -172,7 +168,7 @@ export class LocalTransport implements StreamingTurnDetectionTransport {
 
   runInference(requestId: string): void {
     const snapshot = this._buf.read();
-    const turnSamples = this._numSamples - (this._turnStart ?? 0);
+    const turnSamples = Math.max(this._turnSamples, snapshot.length);
     const task = this._predict(requestId, snapshot, turnSamples);
     this._tasks.add(task);
     void task.finally(() => this._tasks.delete(task));
@@ -229,21 +225,18 @@ export class LocalTransport implements StreamingTurnDetectionTransport {
 
   async pushFrame(frame: AudioFrame): Promise<void> {
     this._buf.pushFrame(frame);
-    this._numSamples += frame.data.length;
+    this._turnSamples += frame.data.length;
   }
 
-  onStartOfTurn(startedAt: number): void {
-    const elapsed = Math.max(0, Date.now() - startedAt);
-    const elapsedSamples = Math.floor((elapsed * DEFAULT_SAMPLE_RATE) / 1000);
-    this._turnStart = Math.max(0, this._numSamples - elapsedSamples);
+  onStartOfTurn(turnSamples: number): void {
+    this._turnSamples = Math.min(this._turnSamples, turnSamples);
   }
 
   async flush(_sentinel: FlushSentinel): Promise<void> {
     if (this._buf.length > 0) {
       this._buf.shift(this._buf.length);
     }
-    this._numSamples = 0;
-    this._turnStart = undefined;
+    this._turnSamples = 0;
   }
 
   detach(): void {
@@ -353,9 +346,7 @@ export class CloudTransport implements StreamingTurnDetectionTransport {
     );
   }
 
-  onStartOfTurn(_startedAt: number): void {
-    return;
-  }
+  onStartOfTurn(_turnSamples: number): void {}
 
   async flush(_sentinel: FlushSentinel): Promise<void> {
     this._enqueue(

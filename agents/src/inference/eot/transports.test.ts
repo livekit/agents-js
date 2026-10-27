@@ -16,7 +16,7 @@
  */
 import { AgentInference } from '@livekit/protocol';
 import { AudioFrame } from '@livekit/rtc-node';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { APIConnectionError } from '../../_exceptions.js';
 import type { InferenceExecutor } from '../../ipc/inference_executor.js';
 import { DEFAULT_API_CONNECT_OPTIONS } from '../../types.js';
@@ -308,21 +308,12 @@ async function predictOnce(local: ReturnType<typeof makeLocal>) {
   };
 }
 
-const NOW = 1_000_000;
-
 describe('LocalTransportTurnSamples', () => {
-  beforeEach(() => {
-    vi.spyOn(Date, 'now').mockReturnValue(NOW);
-  });
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
   it('counts the turn from its start, past the window', async () => {
     const local = makeLocal();
     await local.transport.pushFrame(pcmFrame(8000));
     await local.transport.pushFrame(pcmFrame(4000));
-    local.transport.onStartOfTurn(NOW - 250);
+    local.transport.onStartOfTurn(4000);
     for (let i = 0; i < 40; i++) {
       await local.transport.pushFrame(pcmFrame(1600));
     }
@@ -333,30 +324,28 @@ describe('LocalTransportTurnSamples', () => {
     });
   });
 
-  it('starts a new turn after a flush', async () => {
-    const local = makeLocal();
-    local.transport.onStartOfTurn(NOW);
-    await local.transport.pushFrame(pcmFrame(16000));
-    await local.transport.flush({ kind: 'flush' });
-    await local.transport.pushFrame(pcmFrame(3200));
-    local.transport.onStartOfTurn(NOW - 100);
-
-    expect(await predictOnce(local)).toEqual({ windowSamples: 3200, turnSamples: 1600 });
-  });
-
-  it('counts from the flush when no turn start was given', async () => {
+  it('forgets the turn start after a flush', async () => {
     const local = makeLocal();
     await local.transport.pushFrame(pcmFrame(16000));
+    local.transport.onStartOfTurn(1600);
     await local.transport.flush({ kind: 'flush' });
     await local.transport.pushFrame(pcmFrame(6000));
 
-    expect((await predictOnce(local)).turnSamples).toBe(6000);
+    expect(await predictOnce(local)).toEqual({ windowSamples: 6000, turnSamples: 6000 });
+  });
+
+  it('covers at least the audio the model reads', async () => {
+    const local = makeLocal();
+    await local.transport.pushFrame(pcmFrame(WINDOW_SAMPLES));
+    local.transport.onStartOfTurn(800);
+
+    expect((await predictOnce(local)).turnSamples).toBe(WINDOW_SAMPLES);
   });
 
   it('clamps a turn longer than the audio to the flush', async () => {
     const local = makeLocal();
     await local.transport.pushFrame(pcmFrame(1600));
-    local.transport.onStartOfTurn(NOW - 1000);
+    local.transport.onStartOfTurn(16000);
 
     expect((await predictOnce(local)).turnSamples).toBe(1600);
   });

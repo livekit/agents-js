@@ -15,7 +15,7 @@
  * `voice/audio_recognition_turn_detection.test.ts`.
  */
 import { AudioFrame } from '@livekit/rtc-node';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { Future } from '../../utils.js';
 import {
   BaseStreamingTurnDetector,
@@ -47,8 +47,8 @@ class FakeTransport implements StreamingTurnDetectionTransport {
   async pushFrame(frame: AudioFrame): Promise<void> {
     this.audioEvents.push(['push_frame', frame.samplesPerChannel]);
   }
-  onStartOfTurn(startedAt: number): void {
-    this.audioEvents.push(['on_start_of_turn', startedAt]);
+  onStartOfTurn(turnSamples: number): void {
+    this.audioEvents.push(['on_start_of_turn', turnSamples]);
   }
   async flush(_sentinel: FlushSentinel): Promise<void> {
     this.audioEvents.push(['flush', undefined]);
@@ -113,11 +113,12 @@ const countRunInference = (events: Array<[string, string]>) =>
   events.filter((e) => e[0] === 'run_inference').length;
 
 describe('AudioTurnDetectionRequests', () => {
-  it('turn start reaches the transport in audio order', async () => {
+  it('measures the turn start when queued, in audio order', async () => {
     const s = makeStream();
     try {
       const frame = new AudioFrame(new Int16Array(160), 16000, 1, 160);
       s.pushAudio(frame);
+      vi.spyOn(Date, 'now').mockReturnValueOnce(1_000_250);
       s.onStartOfTurn(1_000_000);
       s.pushAudio(frame);
       s.flush();
@@ -126,11 +127,12 @@ describe('AudioTurnDetectionRequests', () => {
       }
       expect(s.fakeTransport.audioEvents).toEqual([
         ['push_frame', 160],
-        ['on_start_of_turn', 1_000_000],
+        ['on_start_of_turn', 4000],
         ['push_frame', 160],
         ['flush', undefined],
       ]);
     } finally {
+      vi.restoreAllMocks();
       await s.aclose();
     }
   });

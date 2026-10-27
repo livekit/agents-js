@@ -381,6 +381,23 @@ describe('TestStartOfTurn', () => {
     expect(stream.onStartOfTurn).toHaveBeenCalledOnce();
     expect(stream.onStartOfTurn).toHaveBeenCalledWith(internals.userTurnStart);
   });
+
+  it('keeps the turn detector count when the turn has no known start', async () => {
+    const { internals } = makeRecognition();
+    const stream = makeAudioStream();
+    internals.turnDetectorStream = stream;
+    internals.turnDetector = makeAudioDetector(stream);
+
+    const vad = runScriptedVad(internals);
+    try {
+      await vad.feed(endOfSpeech());
+    } finally {
+      await vad.stop();
+    }
+
+    expect(internals.userTurnStart).toBeDefined();
+    expect(stream.onStartOfTurn).not.toHaveBeenCalled();
+  });
 });
 
 describe('TestEotPredictionDedup', () => {

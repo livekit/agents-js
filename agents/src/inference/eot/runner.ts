@@ -4,7 +4,7 @@
 
 /**
  * Audio EOT inference runner — runs inside the shared `InferenceProcExecutor`
- * so the ~540 MB native model loads once per host instead of once per job
+ * so the native model loads once per host instead of once per job
  * worker. Job-side transports reach it via `executor.doInference(...)`.
  *
  * The inference proc instantiates this with `new Runner()` (no args) and
@@ -23,7 +23,7 @@ export const EOT_INFERENCE_METHOD = 'lk_eot_audio';
  * turn length in samples, counted from the user turn start. */
 export interface EotInferenceInput {
   pcm: string;
-  turnSamples?: number;
+  turnSamples: number;
 }
 
 export interface EotInferenceOutput {
@@ -47,7 +47,7 @@ export default class EotRunner extends InferenceRunner<EotInferenceInput, EotInf
         'EotRunner: @livekit/local-inference native binding unavailable in the inference process',
       );
     }
-    // Page in the EOT model singleton (~540 MB). During preload this keeps the
+    // Page in the EOT model singleton. During preload this keeps the
     // first request off the hot path; otherwise the first request loads it lazily.
     mod.initEot();
     this.#mod = mod;
