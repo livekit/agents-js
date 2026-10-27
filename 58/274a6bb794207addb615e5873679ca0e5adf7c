@@ -1,0 +1,29 @@
+examples/src/telephony/amd.test.ts
+  s_a76e625a99c445::t_63ef68ad10488d 42
+  s_a76e625a99c445::t_d18806c1694221 9-15,17,19,53-99,123,128
+  s_a76e625a99c445::t_831a38e5a17a2d 1-8,16,18,20-41,43-52,100-122,124-127,129-206,208-269,277-295,297,304-307,309-315,318-376,382,385-393
+  s_a76e625a99c445::t_ca4f28a997b43d 207
+  s_a76e625a99c445::t_868831a9b43eb3 270-276,296,298-303
+  s_a76e625a99c445::t_85d4b9ff89cf15 308,316-317,377-381,383-384
+examples/src/telephony/amd.ts
+  s_a76e625a99c445::t_8de6e52436ba21 55-56,127-131
+agents/src/voice/realtime_error_logging.test.ts
+  s_a76e625a99c445::t_01ce89e0795a03 1-173,175-261
+  s_a76e625a99c445::t_694b5605e1f806 174
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "58274a6bb794207addb615e5873679ca0e5adf7c",
+  "prompts": {},
+  "sessions": {
+    "s_a76e625a99c445": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c9702b8a-b660-4f34-bd32-230591d391a0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
