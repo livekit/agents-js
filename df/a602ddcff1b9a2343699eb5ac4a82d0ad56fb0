@@ -1,0 +1,73 @@
+agents/src/voice/audio_recognition.ts
+  s_a76e625a99c445::t_6a1b14a5e63650 1480-1482,1507-1509,2185-2186,2191,2193,2199,2234,2468-2469
+  s_a76e625a99c445::t_5c3778c827dc34 162,534-535,1464,1467-1468
+  s_a76e625a99c445::t_e7ec182f74a8ec 1469-1479
+agents/src/voice/amd/stt.ts
+  s_a76e625a99c445::t_fd06324807c3a0 1-142
+agents/src/voice/events.ts
+  s_a76e625a99c445::t_1d98372c14ae06 59-64,69-71,79,84,230-231,237-240,257,261-263,267-269
+agents/src/voice/amd/events.ts
+  s_a76e625a99c445::t_2373a82e0616a5 1-183
+agents/src/voice/agent_activity.ts
+  s_a76e625a99c445::t_be3df27f32435f 3404
+  s_a76e625a99c445::t_e7ec182f74a8ec 2629,4495-4498,5138-5141
+  s_a76e625a99c445::t_749041c15f4e41 4506,5149,5395-5396
+  s_a76e625a99c445::t_8d73f3fd3e02f4 2163
+  s_a76e625a99c445::t_b202f76b7445a6 185
+  s_a76e625a99c445::t_9feddf728b7206 2758
+  s_a76e625a99c445::t_d04e977ec45f4a 1785-1798,1800,1806,1808,2583-2628,2630-2631,2755,2795-2799,2812,2815-2818,3230-3231,3357-3361,3363,3369-3373,3500-3535,3539,3601,3608-3609,5397-5398
+agents/src/voice/amd/chat_context.ts
+  s_a76e625a99c445::t_59fecda53bbe3d 1-110,116-127,131-141
+  s_a76e625a99c445::t_903b9f94cbcdb7 111-115,128-130
+agents/src/voice/audio_recognition_push_audio.test.ts
+  s_a76e625a99c445::t_2d3e60084f956d 127,134,177
+agents/src/voice/agent_session.ts
+  s_a76e625a99c445::t_c5b7a93aa2a0bc 149
+  s_a76e625a99c445::t_8a562bfae5ee8a 1184,1561,2176
+  s_a76e625a99c445::t_b6e5a3900ac919 95,657,660-661,1185-1186,1315,1325-1327,1562-1563,1970,1988,2177-2180
+  s_a76e625a99c445::t_9dbcec43a6ead6 662,1328-1329,2181
+agents/src/voice/turn_hooks.ts
+  s_a76e625a99c445::t_8a4a5d8c6afe3b 1-52
+agents/src/voice/agent.ts
+  s_a76e625a99c445::t_4a53b4ef9a744d 337-353
+agents/src/voice/amd/index.ts
+  s_a76e625a99c445::t_d935ca180e1280 1-16
+agents/src/voice/eou_wait_span.test.ts
+  s_a76e625a99c445::t_7cdc071a0a8fb6 39,766-767,769-784
+agents/src/voice/amd/detector.ts
+  s_a76e625a99c445::t_d0508d291f2c6f 460-461,1102-1103
+  s_a76e625a99c445::t_4cf06c70c618ee 1-11,14-15,17,19-28,30-32,34-316,318-319,321-459,462-499,506,514-515,521-617,619-780,782-944,950-1101,1104-1307,1310-1424
+  s_a76e625a99c445::t_e7ec182f74a8ec 12-13,18,33,518-520,945-949
+  s_a76e625a99c445::t_a14afd92aa930f 781
+  s_a76e625a99c445::t_a6e40be4fb5ada 29
+  s_a76e625a99c445::t_d4ccfa50d8e24e 317,500-505,507-513,516-517,618,1308-1309
+  s_a76e625a99c445::t_cc5753b977d679 16,320
+agents/src/voice/report.ts
+  s_a76e625a99c445::t_0cc1918a5f1e1c 184,187-189
+agents/src/voice/remote_session.ts
+  s_a76e625a99c445::t_23d69ca34f34dc 34,390-391,395,833-834
+agents/src/voice/index.ts
+  s_a76e625a99c445::t_d935ca180e1280 18
+agents/src/voice/amd/fsm.ts
+  s_a76e625a99c445::t_7bd137d82e5565 1-90
+agents/src/voice/amd/inference.ts
+  s_a76e625a99c445::t_6c6190bb43c3d6 1-309
+agents/src/voice/audio_recognition_turn_detection.test.ts
+  s_a76e625a99c445::t_7cdc071a0a8fb6 330
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "dfa602ddcff1b9a2343699eb5ac4a82d0ad56fb0",
+  "prompts": {},
+  "sessions": {
+    "s_a76e625a99c445": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c9702b8a-b660-4f34-bd32-230591d391a0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
