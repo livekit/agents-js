@@ -420,6 +420,165 @@ describe('Synthesia AvatarSession', () => {
     await expect(session.start(fakeAgentSession(), fakeRoom().room, LIVEKIT)).rejects.toBe(failure);
   });
 
+  it('returns from a background start before the session request', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    vi.mocked(SynthesiaAPI.prototype.startSession).mockImplementationOnce(async () => {
+      await gate;
+      return { sessionId: 'sess_123' };
+    });
+    const agent = fakeAgentSession();
+    const room = fakeRoom();
+    const session = avatar();
+
+    await session.start(agent, room.room, { ...LIVEKIT, waitForAvatar: false });
+
+    const sink = agent.output.audio;
+    expect(sink).toBeInstanceOf(voice.DataStreamAudioOutput);
+    expect(sink).toMatchObject({ waitRemoteTrack: TrackKind.KIND_VIDEO });
+    let ready = false;
+    const wait = session.waitUntilReady().then(() => {
+      ready = true;
+    });
+    await Promise.resolve();
+    expect(ready).toBe(false);
+
+    release();
+    await wait;
+    expect(agent.output.audio).toBe(sink);
+    expect(SynthesiaAPI.prototype.startSession).toHaveBeenCalledTimes(1);
+    expect(room.room.listenerCount(RoomEvent.Disconnected)).toBe(1);
+    await session.aclose();
+  });
+
+  it('raises a background API failure from waitUntilReady', async () => {
+    vi.mocked(SynthesiaAPI.prototype.startSession).mockRejectedValueOnce(
+      new SynthesiaError('bad key', { type: ErrorType.AUTH }),
+    );
+    const agent = fakeAgentSession();
+    const session = avatar();
+    await session.start(agent, fakeRoom().room, { ...LIVEKIT, waitForAvatar: false });
+    const sink = agent.output.audio;
+
+    await expect(session.waitUntilReady()).rejects.toMatchObject({ type: ErrorType.AUTH });
+    expect(agent.output.audio).toBeNull();
+    expect(sink).not.toBeNull();
+    await expect(session.swapAvatar('default')).rejects.toThrow(
+      'requires a started avatar session',
+    );
+    await session.aclose();
+  });
+
+  it('omits a background failure message from the log', async () => {
+    const logger = logModule.log();
+    const error = vi.spyOn(logger, 'error');
+    vi.spyOn(logModule, 'log').mockReturnValue(logger);
+    vi.mocked(SynthesiaAPI.prototype.startSession).mockRejectedValueOnce(
+      new SynthesiaError('echoed: lk-token-secret', {
+        type: ErrorType.AUTH,
+        status: 401,
+        requestId: 'req_1',
+      }),
+    );
+    const session = avatar();
+    await session.start(fakeAgentSession(), fakeRoom().room, {
+      ...LIVEKIT,
+      waitForAvatar: false,
+    });
+
+    await expect(session.waitUntilReady()).rejects.toThrow('echoed');
+
+    expect(error).toHaveBeenCalledWith(
+      {
+        error: 'SynthesiaError',
+        type: ErrorType.AUTH,
+        status: 401,
+        requestId: 'req_1',
+      },
+      'avatar failed to start',
+    );
+    expect(JSON.stringify(error.mock.calls)).not.toContain('lk-token-secret');
+    await session.aclose();
+  });
+
+  it('wraps unexpected background launch errors', async () => {
+    const failure = new Error('socket closed');
+    vi.mocked(SynthesiaAPI.prototype.startSession).mockRejectedValueOnce(failure);
+    const session = avatar();
+    await session.start(fakeAgentSession(), fakeRoom().room, {
+      ...LIVEKIT,
+      waitForAvatar: false,
+    });
+
+    await expect(session.waitUntilReady()).rejects.toMatchObject({ cause: failure });
+    await session.aclose();
+  });
+
+  it('maps a background join timeout', async () => {
+    vi.mocked(voice.AvatarSession.prototype.waitForJoin).mockReturnValueOnce(new Promise(() => {}));
+    const agent = fakeAgentSession();
+    const session = avatar({ joinTimeout: 10 });
+    await session.start(agent, fakeRoom().room, { ...LIVEKIT, waitForAvatar: false });
+
+    await expect(session.waitUntilReady()).rejects.toMatchObject({ type: ErrorType.TIMEOUT });
+    expect(agent.output.audio).toBeNull();
+    await session.aclose();
+  });
+
+  it('cancels an in-progress background start on close', async () => {
+    vi.mocked(SynthesiaAPI.prototype.startSession).mockReturnValueOnce(new Promise(() => {}));
+    const agent = fakeAgentSession();
+    const session = avatar();
+    await session.start(agent, fakeRoom().room, { ...LIVEKIT, waitForAvatar: false });
+    const sink = agent.output.audio;
+    await Promise.resolve();
+
+    await session.aclose();
+
+    await expect(session.waitUntilReady()).rejects.toThrow('closed while starting');
+    expect(agent.output.audio).toBeNull();
+    expect(sink).not.toBeNull();
+  });
+
+  it('closes safely as soon as a background start returns', async () => {
+    vi.mocked(SynthesiaAPI.prototype.startSession).mockReturnValueOnce(new Promise(() => {}));
+    const session = avatar();
+    await session.start(fakeAgentSession(), fakeRoom().room, {
+      ...LIVEKIT,
+      waitForAvatar: false,
+    });
+
+    await session.aclose();
+
+    await expect(session.waitUntilReady()).rejects.toThrow('closed while starting');
+  });
+
+  it('rejects another start while a background start is running', async () => {
+    vi.mocked(SynthesiaAPI.prototype.startSession).mockReturnValueOnce(new Promise(() => {}));
+    const room = fakeRoom();
+    const session = avatar();
+    await session.start(fakeAgentSession(), room.room, { ...LIVEKIT, waitForAvatar: false });
+
+    await expect(session.start(fakeAgentSession(), room.room, LIVEKIT)).rejects.toThrow(
+      'already in progress',
+    );
+    await session.aclose();
+  });
+
+  it('returns immediately from waitUntilReady after a blocking start', async () => {
+    const session = avatar();
+    await session.start(fakeAgentSession(), fakeRoom().room, LIVEKIT);
+
+    await expect(session.waitUntilReady()).resolves.toBeUndefined();
+    await session.aclose();
+  });
+
+  it('rejects waitUntilReady before start', async () => {
+    await expect(avatar().waitUntilReady()).rejects.toThrow('not started');
+  });
+
   it('tears down after a mapped launch failure and can retry', async () => {
     vi.mocked(SynthesiaAPI.prototype.startSession)
       .mockRejectedValueOnce(new SynthesiaError('bad key', { type: ErrorType.AUTH }))

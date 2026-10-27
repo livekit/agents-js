@@ -66,6 +66,7 @@ export class AvatarSession extends voice.AvatarSession {
     swapAvatar(avatarId: string, input?: {
         timeout?: number | undefined;
     }): Promise<string>;
+    waitUntilReady(): Promise<void>;
 }
 
 // @public
@@ -111,6 +112,7 @@ export interface StartOptions {
     livekitApiSecret?: string | null;
     // (undocumented)
     livekitUrl?: string | null;
+    waitForAvatar?: boolean;
 }
 
 // Warning: (ae-forgotten-export) The symbol "APIError" needs to be exported by the entry point index.d.ts
