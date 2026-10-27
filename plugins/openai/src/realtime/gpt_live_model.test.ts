@@ -996,6 +996,23 @@ describe('GPTLiveModel', () => {
     expect(finals).toEqual(['Can you hear me?']);
   });
 
+  it('takes an answer with no start for the open turn without splitting it', async () => {
+    const session = create();
+    const finals: string[] = [];
+    let started = 0;
+    session.on('input_audio_transcription_completed', (event) => {
+      if (event.isFinal) finals.push(event.transcript);
+    });
+    session.on('input_speech_started', () => started++);
+    await ready(session);
+    await server.send(session, transcript('user', 'Where is', 1000));
+    await server.send(session, { type: 'session.output_transcript.delta', delta: 'One moment.' });
+    await server.send(session, transcript('user', ' my order?', 5000));
+    for (let i = 0; i < 8; i++) session.pushAudio(pcm());
+    expect(finals).toEqual(['Where is my order?']);
+    expect(started).toBe(1);
+  });
+
   it('commits the caller request before a tool call reads it', async () => {
     const session = create();
     const order: string[] = [];
