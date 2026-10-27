@@ -75,6 +75,16 @@ interface PrismGenerationCreatedEvent extends llm.GenerationCreatedEvent {
     settingsRevision: number | null;
 }
 
+// Warning: (ae-missing-release-tag) "PrismItemTruncatedEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+type PrismItemTruncatedEvent = r.ItemTruncated;
+
+// Warning: (ae-missing-release-tag) "PrismResponseEndedEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+type PrismResponseEndedEvent = r.ResponseEnded;
+
 declare namespace realtime {
     export {
         RealtimeModel,
@@ -82,7 +92,9 @@ declare namespace realtime {
         PrismError,
         RealtimeModelOptions,
         SessionOptions,
-        PrismGenerationCreatedEvent
+        PrismGenerationCreatedEvent,
+        PrismItemTruncatedEvent,
+        PrismResponseEndedEvent
     }
 }
 

@@ -11,8 +11,8 @@ minimumReleaseAgeExclude:
   - '@mistralai/mistralai@3.4.0'
   - encodeurl@2.0.1
   - qs@6.17.1
-  # Prism handshake diagnostics.
-  - '@rimelabs/sdk@0.1.0-alpha.23'
+  # Prism retained text and truncation diagnostics.
+  - '@rimelabs/sdk@0.1.0-alpha.24'
   # Gemini 4 continuation support.
   - '@google/genai@2.29.1'
   - '@livekit/*'

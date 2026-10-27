@@ -62,6 +62,12 @@ export interface PrismGenerationCreatedEvent extends llm.GenerationCreatedEvent 
   providerRequestId: string | null;
 }
 
+/** SDK payload emitted as item_truncated. Retained text describes server history. */
+export type PrismItemTruncatedEvent = r.ItemTruncated;
+
+/** SDK payload emitted as response_ended. Truncation counts prompt exclusions, not deletions. */
+export type PrismResponseEndedEvent = r.ResponseEnded;
+
 /** Safe provider diagnostics. Provider error text is deliberately excluded. */
 export class PrismError extends llm.RealtimeError {
   /** Validated provider code, or provider_error for an unsafe code. */
@@ -180,6 +186,7 @@ interface Message {
   audio: OutputQueue<AudioFrame>;
   transcript: string;
   playedTranscript?: string;
+  retainedText?: string;
   discarded: boolean;
 }
 interface Generation {
@@ -195,7 +202,11 @@ interface Generation {
   pendingEvents?: r.SessionEvent<r.NormalizedRealtimeFault>[];
 }
 
-/** One Prism conversation managed through LiveKit's realtime session interface. */
+/**
+ * One Prism conversation managed through LiveKit's realtime session interface.
+ * Emits item_truncated and response_ended SDK diagnostics, including for discarded replies.
+ * Diagnostics for requested replies can arrive before generateReply returns their streams.
+ */
 export class RealtimeSession extends llm.RealtimeSession {
   private sdk?: r.RealtimeSession;
   private sdkTypes?: typeof r;
@@ -746,10 +757,11 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
   private onEvent(event: r.SessionEvent<r.NormalizedRealtimeFault>): void {
     const payload = event.payload;
-    this.history!.observe(
-      payload,
-      'itemId' in payload ? this.turnStarted.get(payload.itemId) : undefined,
-    );
+    if (payload.kind !== 'item.truncated')
+      this.history!.observe(
+        payload,
+        'itemId' in payload ? this.turnStarted.get(payload.itemId) : undefined,
+      );
     const responseId =
       'output' in payload
         ? payload.output.response.responseId
@@ -758,16 +770,26 @@ export class RealtimeSession extends llm.RealtimeSession {
           : payload.kind === 'response.ended'
             ? payload.response.responseId
             : undefined;
-    const pending = responseId && this.generations.get(responseId)?.pendingEvents;
+    // Truncation has no response reference. Its message can still be queued until
+    // requestReply returns, so preserve its order with that response's output.
+    const pending =
+      payload.kind === 'item.truncated'
+        ? [...this.generations.values()].find((generation) =>
+            generation.pendingEvents?.some(
+              ({ payload: queued }) =>
+                queued.kind === 'message.started' && queued.output.itemId === payload.itemId,
+            ),
+          )?.pendingEvents
+        : responseId && this.generations.get(responseId)?.pendingEvents;
     if (pending) {
       // The SDK may publish output before requestReply settles or before it reports
       // late acceptance as abandoned. Do not expose that output or record its history.
       if (pending.length >= 256)
         throw new llm.RealtimeError('Prism pending response exceeds 256 queued events');
       pending.push(event);
-      return;
-    }
-    this.handleEvent(event);
+    } else this.handleEvent(event);
+    if (payload.kind === 'item.truncated') this.emit('item_truncated', payload);
+    else if (payload.kind === 'response.ended') this.emit('response_ended', payload);
   }
   private handleEvent(event: r.SessionEvent<r.NormalizedRealtimeFault>): void {
     const payload = event.payload;
@@ -939,6 +961,19 @@ export class RealtimeSession extends llm.RealtimeSession {
         generation.functions.push(this.history!.recordToolCall(payload));
         break;
       }
+      case 'item.truncated':
+        // Apply after preceding buffered output, which may only now have entered history.
+        this.history!.observe(payload);
+        if (payload.keptText !== null && payload.contentIndex === 0) {
+          for (const generation of this.generations.values()) {
+            const message = generation.outputs.get(payload.itemId);
+            if (!generation.ended && message) {
+              message.retainedText = payload.keptText;
+              break;
+            }
+          }
+        }
+        break;
       case 'response.ended': {
         const generation = this.generations.get(payload.response.responseId);
         if (generation) this.end(generation, payload.status !== 'completed');
@@ -961,7 +996,11 @@ export class RealtimeSession extends llm.RealtimeSession {
     generation.pendingEvents = undefined;
     for (const [id, message] of generation.outputs) {
       if (!alreadyEnded)
-        this.history?.recordAssistant(id, message.playedTranscript ?? message.transcript);
+        this.history?.recordAssistant(
+          id,
+          message.retainedText ?? message.playedTranscript ?? message.transcript,
+        );
+      message.retainedText = undefined;
       if (discard) {
         message.text.discard();
         message.audio.discard();

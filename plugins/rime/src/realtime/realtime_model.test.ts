@@ -558,6 +558,7 @@ describe('standard AgentSession', () => {
     const output = new TestAudioOutput();
     session.output.audio = output;
     const execute = vi.fn(async () => '42');
+    const createSession = vi.spyOn(model, 'session');
     await session.start({
       agent: new voice.Agent({
         instructions: 'Test',
@@ -565,7 +566,8 @@ describe('standard AgentSession', () => {
       }),
     });
     cleanup.push(() => session.close());
-    return { peer, model, session, output, execute };
+    const realtime = createSession.mock.results[0]!.value as ReturnType<RealtimeModel['session']>;
+    return { peer, model, session, output, execute, realtime };
   }
   it('uses history for typed input and respects maxToolSteps', async () => {
     const { peer, session, execute, output } = await start(1);
@@ -637,7 +639,7 @@ describe('standard AgentSession', () => {
   it.each(['session', 'handle'] as const)(
     'truncates queued audio after generation ends using %s',
     async (mode) => {
-      const { peer, session, output } = await start();
+      const { peer, session, output, realtime } = await start();
       output.hold = true;
       const handle = session.generateReply();
       peer.reply(await request(peer));
@@ -649,6 +651,20 @@ describe('standard AgentSession', () => {
         expect(peer.requests.some((q) => q.type === 'conversation.item.truncate')).toBe(true),
       );
       expect(peer.requests.some((q) => q.type === 'response.cancel')).toBe(false);
+      const before = session.history.toJSON();
+      const truncated = vi.fn();
+      realtime.on('item_truncated', truncated);
+      peer.emit('conversation.item.truncated', {
+        item_id: 'message-reply-1',
+        content_index: 0,
+        audio_end_ms: 120,
+        prism_kept_text: 'All words retained by the server',
+      });
+      await vi.waitFor(() => expect(truncated).toHaveBeenCalledOnce());
+      expect((realtime.chatCtx.getById('message-reply-1') as llm.ChatMessage).content).toEqual([
+        'All words retained by the server',
+      ]);
+      expect(session.history.toJSON()).toEqual(before);
     },
   );
 });

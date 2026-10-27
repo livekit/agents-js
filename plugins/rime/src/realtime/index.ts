@@ -6,4 +6,6 @@ export type {
   RealtimeModelOptions,
   SessionOptions,
   PrismGenerationCreatedEvent,
+  PrismItemTruncatedEvent,
+  PrismResponseEndedEvent,
 } from './realtime_model.js';

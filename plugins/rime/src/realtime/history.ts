@@ -183,6 +183,17 @@ export class PrismHistory {
       case 'response.ended':
         this.active.delete(payload.response.responseId);
         break;
+      case 'item.truncated':
+        if (payload.keptText === null || payload.contentIndex !== 0) break;
+        // Late acknowledgments must not restore deleted items or change their replacements.
+        for (const [localId, serverId] of this.ids) {
+          if (serverId !== payload.itemId) continue;
+          const item = this.chat.getById(localId);
+          if (item?.type === 'message' && item.role === 'assistant')
+            item.content = [payload.keptText];
+          break;
+        }
+        break;
     }
   }
   sync(ctx: llm.ChatContext): Promise<{ ref: r.ToolCallRef; output: llm.FunctionCallOutput }[]> {
