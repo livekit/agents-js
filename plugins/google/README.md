@@ -63,7 +63,7 @@ References:
 
 ### Environment Variables
 
-- `GOOGLE_API_KEY` or `GOOGLE_GENAI_API_KEY`: Your Google AI Studio API key
+- `GOOGLE_API_KEY`: Your Google AI Studio API key
 - `GOOGLE_GENAI_USE_VERTEXAI`: Set to `true` or `1` to enable Vertex AI
 - `GOOGLE_CLOUD_PROJECT`: Your Google Cloud project ID (for Vertex AI)
 - `GOOGLE_CLOUD_LOCATION`: Your preferred location (default: `us-central1`)
