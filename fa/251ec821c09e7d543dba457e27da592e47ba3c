@@ -1,0 +1,63 @@
+plugins/openai/etc/agents-plugin-openai.api.md
+  s_6ec8ac762f82cc::t_dcb61cb49cfcd8 1357-1358,1376-1377
+agents/src/llm/realtime.ts
+  s_6ec8ac762f82cc::t_5b5d673a87683f 170-172,177
+agents/src/llm/duplex_adapter.ts
+  s_6ec8ac762f82cc::t_cab450ffec6a51 529,536-539
+agents/src/voice/agent_activity.test.ts
+  s_6ec8ac762f82cc::t_f7140154ac2ce1 1537
+  s_6ec8ac762f82cc::t_226dc796ebdabe 1552
+plugins/xai/src/realtime/realtime_model.test.ts
+  s_6ec8ac762f82cc::t_9039cfe3a58906 32-33,37-39
+  s_6ec8ac762f82cc::t_6776db20ef19ce 34-36
+agents/src/voice/agent_session.ts
+  s_6ec8ac762f82cc::t_a2d13956005a3e 1426-1431
+plugins/google/src/realtime/realtime_api.ts
+  s_6ec8ac762f82cc::t_68397b021610ee 938,940-942
+agents/src/llm/openai_realtime/realtime_model.ts
+  s_6ec8ac762f82cc::t_04cddc7de3be18 2355-2356
+  s_6ec8ac762f82cc::t_bdf1075ffac862 956-957
+  s_6ec8ac762f82cc::t_d5efddf6160611 943
+  s_6ec8ac762f82cc::t_068c193085d0a6 2322-2323,2328-2329
+  s_6ec8ac762f82cc::t_4b04d34999cd90 818
+  s_6ec8ac762f82cc::t_6f1fd139dbba6c 845-850
+plugins/xai/src/realtime/realtime_model.ts
+  s_6ec8ac762f82cc::t_4362230a57d0e1 58
+.changeset/per-response-realtime-tools.md
+  s_6ec8ac762f82cc::t_b48e7db2746a9b 1-8
+agents/src/llm/openai_realtime/realtime_model.test.ts
+  s_6ec8ac762f82cc::t_5756437c9266c7 144-194
+plugins/phonic/src/realtime/realtime_model.ts
+  s_6ec8ac762f82cc::t_3dfed4b2067f38 841,843-845
+agents/src/voice/agent_activity.ts
+  s_6ec8ac762f82cc::t_96779ba5de63e6 5360,5368
+  s_6ec8ac762f82cc::t_5c9aabdf2b55d6 3096-3097
+  s_6ec8ac762f82cc::t_9b8c4962ecfbf7 3113
+  s_6ec8ac762f82cc::t_6623f44ac739af 3202
+  s_6ec8ac762f82cc::t_7ba39a2e41108c 3220
+  s_6ec8ac762f82cc::t_6f93d83cc52151 3152-3157,3162-3174
+  s_6ec8ac762f82cc::t_2679e9d1003c0e 5478-5479,5486
+  s_6ec8ac762f82cc::t_5055d4ccb9048f 5415-5425,5427-5428,5431-5433,5438-5443,5445-5448,5456-5459
+  s_6ec8ac762f82cc::t_cf560dac21a55f 3158-3161
+agents/src/voice/generate_reply_tools.test.ts
+  s_6ec8ac762f82cc::t_c80380333e3fad 1-208,214-337
+  s_6ec8ac762f82cc::t_6776db20ef19ce 209-213
+agents/etc/agents.api.md
+  s_6ec8ac762f82cc::t_dcb61cb49cfcd8 511,6326-6327,9885-9887
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fa251ec821c09e7d543dba457e27da592e47ba3c",
+  "prompts": {},
+  "sessions": {
+    "s_6ec8ac762f82cc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "41cd7eaf-c24d-43a9-a414-7a6346d56423",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": null
+    }
+  }
+}
