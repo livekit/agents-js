@@ -17,6 +17,8 @@ import { initializeLogger, log } from '../log.js';
 import type { SimulationContext } from '../simulation.js';
 import { Future, waitUntilTimeout } from '../utils.js';
 import type { AgentSession } from './agent_session.js';
+import { createAMDPredictionEvent } from './amd/events.js';
+import { AMDCategory, AMDReason } from './amd/index.js';
 import { AgentSessionEventTypes, CloseReason, createCloseEvent } from './events.js';
 import { FinalizeSimulationError } from './index.js';
 import {
@@ -274,6 +276,38 @@ describe('SessionHost send order', () => {
     expect(transport.sent.map((m) => m.message.case)).toEqual(['event', 'response']);
     expect((transport.sent[1]!.message.value as pb.SessionResponse).error).toBe('session closed');
     await host.close();
+  });
+});
+
+describe('SessionHost AMD predictions', () => {
+  it.each([
+    [AMDCategory.MACHINE_SCREENING, 'Please state your name.'],
+    [AMDCategory.WAIT, 'Please hold while I connect your call.'],
+  ])('unsupported AMD prediction %s uses remote unknown', async (category, transcript) => {
+    const transport = new FakeTransport();
+    const host = new SessionHost(transport);
+    await host.start();
+    try {
+      host._onAmdPrediction(
+        createAMDPredictionEvent({
+          category,
+          reason: AMDReason.PREDICTION,
+          transcript,
+          speechDuration: 1_000,
+          delay: 100,
+        }),
+      );
+      await vi.waitFor(() => expect(transport.sent.length).toBe(1));
+      const message = transport.sent[0]!.message;
+      expect(message.case).toBe('event');
+      const event = (message.value as pb.AgentSessionEvent).event;
+      expect(event.case).toBe('amdPrediction');
+      const prediction = event.value as pb.AgentSessionEvent_AmdPrediction;
+      expect(prediction.category).toBe(pb.AmdCategory.AMD_UNKNOWN);
+      expect(prediction.transcript).toBe(transcript);
+    } finally {
+      await host.close();
+    }
   });
 });
 

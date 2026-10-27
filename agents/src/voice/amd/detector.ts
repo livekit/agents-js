@@ -6,7 +6,6 @@ import { ParticipantKind, RoomEvent, TrackKind } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
-import { performance } from 'node:perf_hooks';
 import { APIError } from '../../_exceptions.js';
 import * as inference from '../../inference/index.js';
 import type { ChatContext } from '../../llm/chat_context.js';
@@ -315,6 +314,8 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
   private finishTask: Promise<void> | undefined;
   private tasks = new Set<Task<void>>();
   private unsubscribers: Array<() => void> = [];
+  /** Detached after cleanup, when no model call can still report an error. */
+  private errorUnsubscribers: Array<() => void> = [];
   private timer: ReturnType<typeof setTimeout> | undefined;
   private logger = log();
   private dtmfTool: ToolContextEntry | undefined;
@@ -417,7 +418,7 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
 
   /**
    * Install AMD on the session. Mirrors Python's `async with AMD(session)` entry: call
-   * {@link aclose} when done, for example in a `finally` block.
+   * {@link AMD.aclose} when done, for example in a `finally` block.
    */
   async start(): Promise<this> {
     const session = this.session;
@@ -482,6 +483,17 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
         sessionAllowInterruptions: session.sessionOptions.turnHandling.interruption.enabled,
         agentAllowInterruptions: activity.agent._interruptionEnabled,
       };
+      // Model errors reach AMD as exceptions. Python emitters drop unhandled "error"
+      // events, but Node throws without a listener, which would stop LLM retries.
+      const ignoreError = () => {};
+      const llm = model;
+      llm.on('error', ignoreError);
+      this.errorUnsubscribers.push(() => llm.off('error', ignoreError));
+      const stt = this.stt;
+      if (stt !== undefined) {
+        stt.on('error', ignoreError);
+        this.errorUnsubscribers.push(() => stt.off('error', ignoreError));
+      }
     } catch (error) {
       this._lifecycle = AMDLifecycle.FINISHED;
       await this.closeResources();
@@ -501,8 +513,8 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
         event: K,
         handler: AgentSessionCallbacks[K],
       ): void => {
-        session.on(event, handler);
         this.unsubscribers.push(() => session.off(event, handler));
+        session.on(event, handler);
       };
       subscribe(AgentSessionEventTypes.UserStateChanged, this.onUserStateChanged);
       subscribe(AgentSessionEventTypes.UserInputTranscribed, this.onUserInputTranscribed);
@@ -514,10 +526,10 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
       const roomIO = session._roomIO;
       if (roomIO) {
         const room = roomIO.rtcRoom;
-        room.on(RoomEvent.ParticipantDisconnected, this.onDisconnected);
         this.unsubscribers.push(() =>
           room.off(RoomEvent.ParticipantDisconnected, this.onDisconnected),
         );
+        room.on(RoomEvent.ParticipantDisconnected, this.onDisconnected);
         if (this.participantIdentity !== undefined) {
           roomIO.setParticipant(this.participantIdentity);
         }
@@ -577,6 +589,8 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     const waitController = new AbortController();
     const onAbort = () => waitController.abort();
     signal.addEventListener('abort', onAbort, { once: true });
+    // Python's participant waits fail when the room disconnects; the JS helpers keep waiting
+    room.on(RoomEvent.Disconnected, onAbort);
     let timedOut = false;
     const publicationTimeout = setTimeout(() => {
       timedOut = true;
@@ -626,6 +640,7 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
       this.finish(reason);
     } finally {
       signal.removeEventListener('abort', onAbort);
+      room.off(RoomEvent.Disconnected, onAbort);
     }
   }
 
@@ -1092,6 +1107,9 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
       id: `${this.controlPrefix}${turnId}`,
       role: 'user',
       content: this._getInstructions(stage),
+      // Date.now() has millisecond resolution. Sort after a user message from the same
+      // millisecond, as Python's float clock does, so the instructions stay last.
+      createdAt: Date.now() + 0.001,
       extra: { amd_run: this.sessionId, amd_stage: this._state },
     });
   }
@@ -1363,6 +1381,17 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
   }
 
   private async closeResources(): Promise<void> {
+    try {
+      await this.closeModels();
+    } finally {
+      for (const unsubscribe of this.errorUnsubscribers) {
+        unsubscribe();
+      }
+      this.errorUnsubscribers = [];
+    }
+  }
+
+  private async closeModels(): Promise<void> {
     const closeTasks: Promise<void>[] = [];
     if (this.run !== undefined) {
       closeTasks.push(this.run.stt.aclose());
@@ -1399,7 +1428,17 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
 
   /** Run a background task that cleanup cancels and that ends the run if it fails. */
   private spawn(fn: (signal: AbortSignal) => Promise<void>, name: string): Task<void> {
-    const task = Task.from((controller) => fn(controller.signal), undefined, name);
+    const task = Task.from(
+      async (controller) => {
+        // like asyncio.create_task: start after the caller's synchronous work
+        await Promise.resolve();
+        if (!controller.signal.aborted) {
+          await fn(controller.signal);
+        }
+      },
+      undefined,
+      name,
+    );
     this.tasks.add(task);
     task.addDoneCallback(() => this.onTaskDone(task));
     return task;

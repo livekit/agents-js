@@ -5316,8 +5316,9 @@ export class AgentActivity implements RecognitionHooks {
         try {
           await realtimeSession.updateChatCtx(chatCtx);
         } catch (error) {
+          // the error type only: provider errors can quote private content
           this.logger.warn(
-            { error },
+            { errorType: errorTypeOf(error) },
             'failed to sync the tool results of an interrupted generation',
           );
         }
@@ -5468,7 +5469,7 @@ export class AgentActivity implements RecognitionHooks {
         await realtimeSession.updateChatCtx(chatCtx);
       } catch (error) {
         this.logger.warn(
-          { error },
+          { errorType: errorTypeOf(error) },
           'failed to update chat context before generating the function calls results',
         );
         if (fut && !fut.done) {
@@ -5692,12 +5693,12 @@ export class AgentActivity implements RecognitionHooks {
       } catch (error) {
         if (error instanceof RealtimeError) {
           this.logger.warn(
-            { error: error.message },
+            { errorType: errorTypeOf(error) },
             'failed to update the chat context before generating the reply',
           );
         } else {
           this.logger.error(
-            { error },
+            { errorType: errorTypeOf(error) },
             'failed to update the chat context before generating the reply',
           );
           speechHandle._markDone(error);
@@ -6698,4 +6699,8 @@ export class AgentActivity implements RecognitionHooks {
 function toOaiToolChoice(toolChoice: ToolChoice | null): ToolChoice | undefined {
   // we convert null to undefined, which maps to the default provider tool choice value
   return toolChoice !== null ? toolChoice : undefined;
+}
+
+function errorTypeOf(error: unknown): string {
+  return error instanceof Error ? error.name : typeof error;
 }

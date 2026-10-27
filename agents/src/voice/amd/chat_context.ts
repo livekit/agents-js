@@ -102,7 +102,8 @@ export class AMDChatContext extends ChatContext {
       stage,
       recommendedNextCategories: recommended,
       previousPrediction: previousPrediction ? { ...previousPrediction } : null,
-      chatCtx: this.truncate(HISTORY_LIMIT).copy(),
+      // Python's truncate keeps a context within the limit as is, leading DTMF calls included
+      chatCtx: (this.items.length > HISTORY_LIMIT ? this.truncate(HISTORY_LIMIT) : this).copy(),
       speechDuration: turn.speechDuration,
     };
   }
