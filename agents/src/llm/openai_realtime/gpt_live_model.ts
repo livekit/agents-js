@@ -201,11 +201,13 @@ export class GPTLiveSession extends llm.DuplexSession<{
   private readonly history = llm.ChatContext.empty();
   private readonly speech = new Map<Role, Speech>();
   // where on the model's clock it began answering, ascending: each of its messages, and each
-  // delegation at the caller audio pushed so far, which that clock follows. infinite when the
-  // start is unknown. a caller turn's answer is the first to begin after the turn did; the
-  // caller's transcript runs behind, so the answer can arrive before the turn opens
+  // delegation at the caller audio this connection has sent, which that clock follows.
+  // infinite when the start is unknown. a caller turn's answer is the first to begin after the
+  // turn did; the caller's transcript runs behind, so the answer can arrive first
   private answers: number[] = [];
-  private inputMs = 0;
+  private inputSamples = 0;
+  // delegation id -> where it answered, for delegations no newer caller turn has outdated
+  private delegations = new Map<string, number>();
   // delegation id -> call ids of its response that has not completed yet; on completion the
   // call ids move to the open set, and stay there until each output is sent to the backend.
   // backendResponsePending is set once an output is sent and cleared by the response.create
@@ -297,6 +299,8 @@ export class GPTLiveSession extends llm.DuplexSession<{
       if (context !== undefined)
         this.history.insert(new llm.ChatMessage({ role: 'developer', content: [context] }));
       this.wsSend(this.ws, event);
+      if (event.type === 'session.input_audio.append' && typeof event.audio === 'string')
+        this.inputSamples += Buffer.byteLength(event.audio, 'base64') / 2;
     }
   }
 
@@ -409,7 +413,8 @@ export class GPTLiveSession extends llm.DuplexSession<{
                 this.endSpeech('user');
                 this.speech.clear();
                 this.answers = [];
-                this.inputMs = 0;
+                this.inputSamples = 0;
+                this.delegations.clear();
                 this.backendRunningResponses.clear();
                 this.backendOpenCalls.clear();
                 this.backendResponsePending = false;
@@ -609,8 +614,10 @@ export class GPTLiveSession extends llm.DuplexSession<{
         break;
       case 'session.delegation.created': {
         // delegating is the model acting on what the caller said, whether or not it speaks
-        this.addAnswer(this.inputMs);
         const delegation = event.delegation;
+        const answerMs = (this.inputSamples * 1000) / SAMPLE_RATE;
+        this.addAnswer(answerMs);
+        if (delegation?.id) this.delegations.set(delegation.id, answerMs);
         if (!delegation?.id)
           this.logger.warn('GPT-Live delegation has no id; nothing can answer it');
         else if (delegation.target === 'client')
@@ -696,9 +703,11 @@ export class GPTLiveSession extends llm.DuplexSession<{
       );
       if (role === 'user') this.emit('input_speech_started', {});
       const startMs = event.start_ms;
-      if (role === 'user' && startMs != null)
+      if (role === 'user' && startMs != null) {
         this.answers = this.answers.filter((answer) => answer > startMs);
-      else if (role === 'assistant') this.addAnswer(startMs ?? undefined);
+        for (const [id, answer] of this.delegations)
+          if (answer <= startMs) this.delegations.delete(id);
+      } else if (role === 'assistant') this.addAnswer(startMs ?? undefined);
     }
     speech.text += event.delta;
     speech.quietMs = 0;
@@ -782,7 +791,13 @@ export class GPTLiveSession extends llm.DuplexSession<{
         // the tool reads the chat context, so the request it serves is committed first. a turn
         // that began after the delegation is not its request
         const user = this.speech.get('user');
-        if (user && this.replyMs(user) !== undefined) this.endSpeech('user');
+        const answerMs = delegationId === null ? undefined : this.delegations.get(delegationId);
+        if (
+          user &&
+          answerMs !== undefined &&
+          (user.startMs === undefined || user.startMs < answerMs)
+        )
+          this.endSpeech('user');
         this.history.insert(call);
         this.emit('function_call', call);
         break;
@@ -904,7 +919,6 @@ export class GPTLiveSession extends llm.DuplexSession<{
     // since their last fragment. the caller's transcript runs behind the model's, so their
     // last words can still arrive after the answer began
     const durationMs = Math.round((frame.samplesPerChannel / frame.sampleRate) * 1000);
-    this.inputMs += durationMs;
     const speech = this.speech.get('user');
     if (speech && this.replyMs(speech) !== undefined) {
       speech.quietMs += durationMs;

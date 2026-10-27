@@ -461,6 +461,31 @@ describe('GPTLiveModel', () => {
     ]);
   });
 
+  it('times a delegation by the audio its own session was sent', async () => {
+    const session = create({ connOptions: { timeoutMs: 1000, maxRetry: 1, retryIntervalMs: 200 } });
+    const finals: string[] = [];
+    session.on('input_audio_transcription_completed', (event) => {
+      if (event.isFinal) finals.push(event.transcript);
+    });
+    await ready(session);
+    for (let i = 0; i < 10; i++) session.pushAudio(pcm());
+
+    // audio pushed while reconnecting goes out on the new session, whose clock starts with it
+    const dropped = once(session, 'error');
+    server.sockets[0]!.terminate();
+    await dropped;
+    for (let i = 0; i < 20; i++) session.pushAudio(pcm());
+    await vi.waitFor(() => expect(session.sessionId).toBe('live_1'));
+
+    await server.send(session, transcript('user', 'Hello?', 1500));
+    await server.send(session, {
+      type: 'session.delegation.created',
+      delegation: { id: 'd1', target: 'client' },
+    });
+    for (let i = 0; i < 8; i++) session.pushAudio(pcm());
+    expect(finals).toEqual(['Hello?']);
+  });
+
   it('does not mute an unmuted session again on reconnect', async () => {
     const session = create();
     await ready(session);
@@ -1034,10 +1059,15 @@ describe('GPTLiveModel', () => {
     await server.response(session, { type: 'response.created' });
     await server.response(session, callDone('c1'));
     expect(order).toEqual(['final', 'call']);
-    // the caller starts their next request while the first one's tools still run
-    await server.send(session, transcript('user', 'Also', 3000));
+    // the caller starts their next request while the first one's tools still run, and the
+    // model answers it before the caller's last words arrive
+    await server.send(session, transcript('user', 'Also book', 3000));
+    await server.send(session, transcript('assistant', 'Sure.', 4000));
     await server.response(session, callDone('c2'));
+    await server.send(session, transcript('user', ' a table', 3800));
     expect(order).toEqual(['final', 'call', 'call']);
+    for (let i = 0; i < 8; i++) session.pushAudio(pcm());
+    expect(order).toEqual(['final', 'call', 'call', 'final']);
   });
 
   it('takes the first answer after each caller turn began on the model clock', async () => {
