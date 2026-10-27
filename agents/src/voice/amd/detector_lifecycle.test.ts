@@ -16,9 +16,10 @@ import {
 } from '@livekit/rtc-node';
 import { EventEmitter } from 'node:events';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
+import { sendDtmfEvents } from '../../beta/tools/send_dtmf.js';
 import { ChatContext, ChatMessage } from '../../llm/chat_context.js';
 import type { LLMStream } from '../../llm/llm.js';
-import { handoff, tool } from '../../llm/tool_context.js';
+import { ToolError, ToolResult, handoff, tool } from '../../llm/tool_context.js';
 import { FakeSTT } from '../../stt/testing/fake_stt.js';
 import { SynthesizeStream, TTS } from '../../tts/tts.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../../types.js';
@@ -51,7 +52,7 @@ import {
   waitFor,
 } from './amd_test_utils.js';
 import { AGENT_REPLY } from './chat_context.js';
-import { AMD, DEFAULT_SCREENING_INSTRUCTIONS } from './detector.js';
+import { AMD, DEFAULT_IVR_INSTRUCTIONS, DEFAULT_SCREENING_INSTRUCTIONS } from './detector.js';
 import {
   AMDCategory,
   type AMDCompletedEvent,
@@ -61,6 +62,44 @@ import {
   AMDReason,
 } from './events.js';
 import { CLASSIFY_PROMPT } from './inference.js';
+
+const jobContext = vi.hoisted(() => ({ current: undefined as unknown }));
+
+// `sendDtmfEvents` reads the job room when the session has no room IO; Python patches it
+vi.mock('../../job.js', async (importOriginal) => {
+  const actual = await importOriginal<{ getJobContext: (required?: boolean) => unknown }>();
+  return {
+    ...actual,
+    getJobContext: vi.fn((required = true) =>
+      jobContext.current !== undefined ? jobContext.current : actual.getJobContext(required),
+    ),
+  };
+});
+
+/** Use a fake job room for `sendDtmfEvents`. Set it after start: AgentSession reads the job. */
+function useJobRoom(publishDtmf: (code: number, digit: string) => Promise<void>): void {
+  jobContext.current = {
+    room: { localParticipant: { publishDtmf } },
+    simulationContext: () => undefined,
+  };
+  onTestFinished(() => {
+    jobContext.current = undefined;
+  });
+}
+
+/** Call `sendDtmfEvents` directly, with a session whose room IO publishes the digits. */
+function sendDtmf(
+  events: string[],
+  publishDtmf: (code: number, digit: string) => Promise<void>,
+  abortSignal: AbortSignal = new AbortController().signal,
+): Promise<unknown> {
+  const session = { _roomIO: { rtcRoom: { localParticipant: { publishDtmf } } } };
+  return sendDtmfEvents.execute({ events } as never, {
+    ctx: { session } as never,
+    toolCallId: 'dtmf',
+    abortSignal,
+  });
+}
 
 /** Long virtual-time waits run on fake timers that also follow real time. */
 function useVirtualTime(): void {
@@ -985,11 +1024,114 @@ describe('AMD lifecycle', () => {
     expect((request.chatCtx.items[0] as ChatMessage).textContent).toBe(CLASSIFY_PROMPT);
   });
 
-  it.skip('dtmf tool works without amd (waits for the #7340 ToolResult port)', () => {});
+  it('dtmf tool works without amd', async () => {
+    const publishDtmf = vi.fn(async () => {});
+    const result = await sendDtmf(['1'], publishDtmf);
+    expect(publishDtmf).toHaveBeenCalledExactlyOnceWith(1, '1');
+    expect(result).toEqual(
+      new ToolResult('Successfully sent DTMF events: 1', { replyRequired: false }),
+    );
+  });
 
-  it.skip('dtmf publish failure does not expose provider error (waits for the #7340 ToolResult port)', () => {});
+  it('dtmf publish failure does not expose provider error', async () => {
+    const publishDtmf = vi.fn(async () => {
+      throw new Error('private provider payload');
+    });
+    const error = await sendDtmf(['1'], publishDtmf).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(ToolError);
+    expect((error as ToolError).message).toBe('Failed to send DTMF events.');
+    // Python raises `from None`: no cause and no chained context
+    expect((error as ToolError).cause).toBeUndefined();
+    expect(String((error as ToolError).stack)).not.toContain('private provider payload');
+  });
 
-  it.skip('amd observes dtmf tool completion from session (waits for the #7340 ToolResult port)', () => {});
+  // Python's executor treats a CancelledError from the tool as a cancellation. The JS executor
+  // cancels through the call's abort signal and reports an AbortError that the tool throws on
+  // its own as an error; that difference predates livekit/agents#6202.
+  it.skip('amd observes dtmf tool completion from session (failure: cancelled) (JS ToolExecutor treats a tool-thrown AbortError as an error)', () => {});
 
-  it.skip('dtmf tool propagates cancelled publish (waits for the #7340 ToolResult port; JS has no CancelledError)', () => {});
+  it.each([undefined, 'error'])(
+    'amd observes dtmf tool completion from session (failure: %s)',
+    async (failure) => {
+      let published = 0;
+      const publishDtmf = vi.fn(async () => {
+        published += 1;
+        if (published === 2 && failure === 'error') {
+          throw new Error('publish failed');
+        }
+        if (published === 2 && failure === 'cancelled') {
+          throw new DOMException('publish cancelled', 'AbortError');
+        }
+      });
+      const { detector, session, classifier, model } = await running();
+      useJobRoom(publishDtmf);
+      const executed: FunctionToolsExecutedEvent[] = [];
+      session.on(AgentSessionEventTypes.FunctionToolsExecuted, (event) => executed.push(event));
+      const handles: SpeechHandle[] = [];
+      session.once(AgentSessionEventTypes.SpeechCreated, (event: SpeechCreatedEvent) => {
+        handles.push(event.speechHandle);
+      });
+      (model as unknown as { responseMap: Map<string, unknown> }).responseMap.set(
+        DEFAULT_IVR_INSTRUCTIONS,
+        {
+          input: DEFAULT_IVR_INSTRUCTIONS,
+          type: 'llm',
+          content: '',
+          ttft: 0,
+          duration: 0,
+          toolCalls: [{ name: 'send_dtmf_events', args: { events: ['1', '2'] } }],
+        },
+      );
+      await commit(detector, session, classifier, { reply: true });
+      classifier.prediction(1, AMDCategory.MACHINE_IVR);
+      await eventually(() => executed.length > 0);
+      await waitFor(handles[0]!.waitForPlayout());
+      expect(publishDtmf).toHaveBeenCalledTimes(2);
+      const output = executed[0]!.functionCallOutputs[0]!;
+      expect(output.isError).toBe(failure === 'error');
+      expect(output.replyRequired).toBe(failure === 'error');
+      expect(model.calls.size).toBe(failure === 'error' ? 2 : 1);
+      expect(session.agentState).toBe('listening');
+      if (failure === 'cancelled') {
+        expect(output.output).toBeFalsy();
+      }
+      if (failure === 'error') {
+        expect(output.output).toBe('Failed to send DTMF events.');
+      }
+      commitTurn(detector, endOfTurn('Connecting you.'));
+      const request = await classifier.request();
+      expect(dtmfCalls(request.chatCtx)).toEqual(failure ? [] : executed[0]!.functionCalls);
+      if (!failure) {
+        // JS serializes a tool's string output as JSON (older JS behavior)
+        expect(output.output).toBe(JSON.stringify('Successfully sent DTMF events: 1, 2'));
+        expect(request.chatCtx.items).toContainEqual(output);
+        expect(session.history.items).toContain(output);
+      }
+    },
+  );
+
+  it('dtmf tool propagates cancelled publish', async () => {
+    // Python cancels the task while `publish_dtmf` waits; JS cancels through the tool's
+    // abort signal, and the cancelled publish rejects with an AbortError
+    const controller = new AbortController();
+    let started!: () => void;
+    const publishStarted = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const publishDtmf = vi.fn(
+      () =>
+        new Promise<void>((_, reject) => {
+          started();
+          controller.signal.addEventListener('abort', () =>
+            reject(new DOMException('publish cancelled', 'AbortError')),
+          );
+        }),
+    );
+    const result = sendDtmf(['1'], publishDtmf, controller.signal);
+    await publishStarted;
+    controller.abort();
+    const error = await result.catch((caught: unknown) => caught);
+    expect(error).toMatchObject({ name: 'AbortError' });
+    expect(error).not.toBeInstanceOf(ToolError);
+  });
 });

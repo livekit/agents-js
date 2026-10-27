@@ -5494,7 +5494,15 @@ export class AgentActivity implements RecognitionHooks {
       }
     }
 
-    if (!functionToolsExecutedEvent.hasToolReply) return;
+    if (!functionToolsExecutedEvent.hasToolReply) {
+      // no reply follows, so nothing else clears the "thinking" the tool asserted
+      const noPendingSpeech =
+        !this.speechQueue.peek() && (!this._currentSpeech || this._currentSpeech.done());
+      if (noPendingSpeech && this._backgroundSpeeches.size === 0) {
+        this.releaseAgentStateLease(stateLease, 'thinking');
+      }
+      return;
+    }
 
     // the model generates the reply itself: its next generation continues this turn
     if (realtimeModel.capabilities.autoToolReplyGeneration) {

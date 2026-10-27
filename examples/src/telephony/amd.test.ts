@@ -295,12 +295,7 @@ describe('AMD telephony example', () => {
 
   it.for([false, true])(
     'voicemail keeps call open until AMD finishes (menu arrives: %s)',
-    async (menuArrives, { skip }) => {
-      if (menuArrives) {
-        // Python's DTMF tool returns ToolResult(reply_required=False), so a send has no
-        // follow-up reply and the IVR idle timeout completes AMD
-        skip('waits for the #7340 ToolResult port: the JS DTMF tool still requests a reply');
-      }
+    async (menuArrives) => {
       const publishDtmf = vi.fn(async () => {});
       const job = {
         shutdown: vi.fn(),
@@ -364,6 +359,13 @@ describe('AMD telephony example', () => {
       classifier.prediction(2, AMDCategory.MACHINE_IVR);
       call = await waitFor(model.calls.get());
       expect(toolIds(call)).toEqual(new Set(['send_dtmf_events']));
+      // the tool's publish delay uses node:timers/promises, which fake timers do not advance:
+      // let it pass in real time, as Python's virtual loop skips it
+      await eventually(() =>
+        session.history.items.some(
+          (item) => item.type === 'function_call_output' && item.name === 'send_dtmf_events',
+        ),
+      );
       const result = await advancing(detector.execute(), 12_000);
       expect(publishDtmf).toHaveBeenCalledExactlyOnceWith(1, '1');
       expect(result.reason).toBe(AMDReason.IDLE_TIMEOUT);

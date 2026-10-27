@@ -14,12 +14,11 @@ import {
   RealtimeModel,
   RealtimeSession,
 } from '../llm/realtime.js';
-import { type ToolChoice, ToolContext, tool } from '../llm/tool_context.js';
+import { type ToolChoice, ToolContext, ToolResult, tool } from '../llm/tool_context.js';
 import { initializeLogger, log } from '../log.js';
 import { Future } from '../utils.js';
 import { Agent } from './agent.js';
 import { AgentSession } from './agent_session.js';
-import { AgentSessionEventTypes } from './events.js';
 import { AudioOutput } from './io.js';
 
 initializeLogger({ pretty: false, level: 'silent' });
@@ -215,9 +214,6 @@ describe('realtime error logging', () => {
       if (interrupted) {
         session.output.audio = new InterruptibleAudioOutput();
       }
-      // Python's tool returns ToolResult(reply_required=False), which JS cannot return yet
-      // (#7340). cancelToolReply() marks the same outputs as not requiring a reply.
-      session.on(AgentSessionEventTypes.FunctionToolsExecuted, (event) => event.cancelToolReply());
       const toolExecuted = new Future<void>();
       const agent = new Agent({
         instructions: 'Test',
@@ -227,7 +223,7 @@ describe('realtime error logging', () => {
             execute: async () => {
               rt.updateError = new RealtimeError(PRIVATE_ERROR);
               toolExecuted.resolve();
-              return 'ok';
+              return new ToolResult('ok', { replyRequired: false });
             },
           }),
         },

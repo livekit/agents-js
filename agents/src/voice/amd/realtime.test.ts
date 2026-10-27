@@ -41,10 +41,24 @@ import {
 import {
   AMD,
   DEFAULT_HUMAN_INSTRUCTIONS,
+  DEFAULT_IVR_INSTRUCTIONS,
   DEFAULT_SCREENING_INSTRUCTIONS,
   DEFAULT_VOICEMAIL_INSTRUCTIONS,
 } from './detector.js';
 import { AMDCategory, AMDLifecycle } from './events.js';
+
+const jobContext = vi.hoisted(() => ({ current: undefined as unknown }));
+
+// `sendDtmfEvents` reads the job room when the session has no room IO; Python patches it
+vi.mock('../../job.js', async (importOriginal) => {
+  const actual = await importOriginal<{ getJobContext: (required?: boolean) => unknown }>();
+  return {
+    ...actual,
+    getJobContext: vi.fn((required = true) =>
+      jobContext.current !== undefined ? jobContext.current : actual.getJobContext(required),
+    ),
+  };
+});
 
 const SAMPLE_RATE = 24_000;
 
@@ -92,6 +106,8 @@ class FakeRealtimeSession extends RealtimeSession {
   readonly pushedAudio: AudioFrame[] = [];
   generateReplyCalls = 0;
   readonly replyInstructions: (string | undefined)[] = [];
+  /** Per-response tools, as Python's `reply_tools`; `undefined` when none were passed. */
+  readonly replyTools: (ToolContext | undefined)[] = [];
   updatedInstructions: string | undefined;
   toolChoice: ToolChoice | null | undefined;
   readonly replyFuts: Future<GenerationCreatedEvent>[] = [];
@@ -125,9 +141,13 @@ class FakeRealtimeSession extends RealtimeSession {
     this.pushedAudio.push(frame);
   }
 
-  async generateReply(instructions?: string): Promise<GenerationCreatedEvent> {
+  async generateReply(
+    instructions?: string,
+    options: { toolChoice?: ToolChoice; tools?: ToolContext } = {},
+  ): Promise<GenerationCreatedEvent> {
     this.generateReplyCalls += 1;
     this.replyInstructions.push(instructions);
+    this.replyTools.push(options.tools);
     const fut = new Future<GenerationCreatedEvent>();
     this.replyFuts.push(fut);
     return fut.await;
@@ -962,9 +982,53 @@ describe('AMD with realtime models', () => {
     await done(handle);
   });
 
-  it.skip.each([false, true])(
-    'IVR DTMF only generates a reply on failure (publish fails: %s) (waits for the #5310 per-response tools port and the #7340 ToolResult port)',
-    () => {},
+  it.each([false, true])(
+    'IVR DTMF only generates a reply on failure (publish fails: %s)',
+    async (publishFails) => {
+      const publishDtmf = vi.fn(async () => {
+        if (publishFails) {
+          throw new Error('publish failed');
+        }
+      });
+      const { session, classifier, rt } = await running();
+      // after start: AgentSession reads the job context while it starts
+      jobContext.current = {
+        room: { localParticipant: { publishDtmf } },
+        simulationContext: () => undefined,
+      };
+      onTestFinished(() => {
+        jobContext.current = undefined;
+      });
+      const { handle } = await reply(session, classifier, rt, AMDCategory.MACHINE_IVR);
+      expect(Object.keys(rt.replyTools[0]!.functionTools)).toEqual(['send_dtmf_events']);
+      expect(session.currentAgent.toolCtx.tools).toEqual([]);
+      respond(rt, {
+        toolCall: FunctionCall.create({
+          callId: 'dtmf-1',
+          name: 'send_dtmf_events',
+          args: '{"events": ["1"]}',
+        }),
+      });
+      if (publishFails) {
+        await eventually(() => rt.generateReplyCalls === 2);
+        expect(rt.replyInstructions).toEqual([DEFAULT_IVR_INSTRUCTIONS, DEFAULT_IVR_INSTRUCTIONS]);
+        expect(rt.replyTools[1]!.equals(rt.replyTools[0]!)).toBe(true);
+        respond(rt);
+      }
+      await done(handle);
+      expect(publishDtmf).toHaveBeenCalledExactlyOnceWith(1, '1');
+      expect(rt.generateReplyCalls).toBe(publishFails ? 2 : 1);
+      const outputs = rt.chatCtx.items.filter((item) => item.type === 'function_call_output');
+      expect(outputs).toHaveLength(1);
+      expect(outputs[0]!.isError).toBe(publishFails);
+      expect(outputs[0]!.replyRequired).toBe(publishFails);
+      expect(session.agentState).toBe('listening');
+
+      const { handle: human } = await reply(session, classifier, rt, AMDCategory.HUMAN);
+      expect(rt.replyTools[rt.replyTools.length - 1]).toBeUndefined();
+      respond(rt);
+      await done(human);
+    },
   );
 
   it.each([false, true])(
