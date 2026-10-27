@@ -170,7 +170,11 @@ export class LLM extends llm.LLM {
       user,
       client: new AzureOpenAI({
         ...clientOpts,
-        apiKey,
+        // `AzureOpenAI` falls back to `AZURE_OPENAI_API_KEY` and `OPENAI_BASE_URL` when these
+        // are undefined, which would conflict with a token provider or an explicit endpoint.
+        // An empty string disables that fallback.
+        apiKey: azureADTokenProvider ? '' : apiKey,
+        baseURL: clientOpts.baseURL ?? (azureEndpoint ? '' : undefined),
         azureADTokenProvider,
         endpoint: azureEndpoint,
         deployment: azureDeployment,

@@ -58,6 +58,23 @@ describe('LLM.withAzure', () => {
     expect(() => LLM.withAzure(baseOpts)).not.toThrow();
   });
 
+  it('prefers an explicit Azure AD token provider over AZURE_OPENAI_API_KEY', () => {
+    vi.stubEnv('AZURE_OPENAI_API_KEY', 'azure-key');
+
+    expect(() =>
+      LLM.withAzure({ ...baseOpts, azureAdTokenProvider: async () => 'token' }),
+    ).not.toThrow();
+    expect(() => LLM.withAzure({ ...baseOpts, azureAdToken: 'token' })).not.toThrow();
+  });
+
+  it('uses an explicit azureEndpoint even when OPENAI_BASE_URL is set', () => {
+    vi.stubEnv('OPENAI_BASE_URL', 'https://proxy.example/v1');
+
+    const llm = LLM.withAzure({ ...baseOpts, apiKey: 'azure-key' });
+
+    expect(llm.provider).toBe('example-resource.openai.azure.com');
+  });
+
   it('throws when no credentials are available', () => {
     expect(() => LLM.withAzure(baseOpts)).toThrow(/AZURE_OPENAI_API_KEY/);
   });
