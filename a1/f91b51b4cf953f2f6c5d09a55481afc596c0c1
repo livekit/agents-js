@@ -1,0 +1,27 @@
+agents/src/log.ts
+  s_5675a63c9f328c::t_e9944a723226cf 57
+  s_5675a63c9f328c::t_aba414a2286192 26-27,52,58-71,95
+  s_5675a63c9f328c::t_4c009299ca4bd8 53-56
+.changeset/fresh-log-context.md
+  s_5675a63c9f328c::t_aba414a2286192 1-5
+agents/src/log.test.ts
+  s_5675a63c9f328c::t_8590a45e5be479 6,8,256-264,289-351,354-357,359-362
+  s_5675a63c9f328c::t_070faabb3b993f 352,358
+  s_5675a63c9f328c::t_e5658585b3e4de 353,363
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a1f91b51b4cf953f2f6c5d09a55481afc596c0c1",
+  "prompts": {},
+  "sessions": {
+    "s_5675a63c9f328c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a17f10-b29c-71b1-80db-f56fbb00bdb8",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
