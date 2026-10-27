@@ -598,6 +598,7 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
 
   /** Close both the input and output of the STT stream */
   close() {
+    this.detachInputStream();
     if (!this.input.closed) this.input.close();
     if (!this.queue.closed) this.queue.close();
     if (!this.output.closed) this.output.close();
