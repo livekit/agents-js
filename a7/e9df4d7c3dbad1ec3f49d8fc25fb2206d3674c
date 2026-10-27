@@ -1,0 +1,19 @@
+examples/src/telephony/amd.ts
+  s_a76e625a99c445::t_56796445e0a665 26-28
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a7e9df4d7c3dbad1ec3f49d8fc25fb2206d3674c",
+  "prompts": {},
+  "sessions": {
+    "s_a76e625a99c445": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c9702b8a-b660-4f34-bd32-230591d391a0",
+        "model": "unknown"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}

@@ -1,0 +1,19 @@
+agents/src/voice/realtime_overlapping_speech.test.ts
+  s_a76e625a99c445::t_f30165159c522f 213,325
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2d2bb0eafd0b419af52a42636972976160f5cfda",
+  "prompts": {},
+  "sessions": {
+    "s_a76e625a99c445": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c9702b8a-b660-4f34-bd32-230591d391a0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
