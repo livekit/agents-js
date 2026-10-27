@@ -1,0 +1,62 @@
+agents/src/llm/index.ts
+  s_c124e1e86b7c58::t_bdfbd4ab209502 18
+agents/src/voice/generation.ts
+  s_c124e1e86b7c58::t_aeae0019b6b1fb 28,227-231,485-491,520
+  s_c124e1e86b7c58::t_8108c602a42945 349-354,381
+agents/src/voice/generation_tools.test.ts
+  s_c124e1e86b7c58::t_570a5998f53be2 187,191-195
+  s_c124e1e86b7c58::t_586f41980e9fb6 7,138-186,188-190,196-207
+  s_c124e1e86b7c58::t_0ee366b13e77f9 208
+agents/src/llm/tool_context.ts
+  s_c124e1e86b7c58::t_8fcc40ecebca8d 19
+  s_c124e1e86b7c58::t_109875271aafb4 149
+  s_c124e1e86b7c58::t_8523241073e158 118,120
+  s_c124e1e86b7c58::t_714309c6c947ec 933-936
+  s_c124e1e86b7c58::t_9e787136a6cc2c 94-117,119,121-123
+  s_6ec8ac762f82cc::t_89fc1229d7e415 932
+agents/src/llm/chat_context.ts
+  s_c124e1e86b7c58::t_21f505c862f0fe 564-569
+agents/src/voice/tool_executor.ts
+  s_c124e1e86b7c58::t_865672d0e2164f 20,558-562,565
+agents/src/llm/utils.ts
+  s_c124e1e86b7c58::t_4f02f002277baf 22,617-619,622,624
+agents/etc/agents.api.md
+  s_c124e1e86b7c58::t_bb1f717f58c9ec 4951,8566-8576,9889-9890
+agents/src/voice/realtime_tool_output_commit.test.ts
+  s_c124e1e86b7c58::t_15c16793c8af3c 435,442
+  s_c124e1e86b7c58::t_5776d1d08ba341 14,394-434,436-441,443-493
+agents/src/llm/utils.test.ts
+  s_c124e1e86b7c58::t_3ab6882475c468 16,565-589
+  s_c124e1e86b7c58::t_cbd633cd7711f5 590
+agents/src/voice/tool_output_per_call.test.ts
+  s_c124e1e86b7c58::t_ca51e9c79083c7 13,21-25,28,103-213
+agents/src/voice/tool_executor.test.ts
+  s_c124e1e86b7c58::t_40b8c2bb1bc294 7,187-255
+  s_c124e1e86b7c58::t_88459666407d7b 256
+.changeset/tool-result-reply-required.md
+  s_c124e1e86b7c58::t_bd002f3d2aa6e8 1-5
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a9bfcf5b182fe5764b0ae2e0d66265003dcb5e2f",
+  "prompts": {},
+  "sessions": {
+    "s_6ec8ac762f82cc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "41cd7eaf-c24d-43a9-a414-7a6346d56423",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    },
+    "s_c124e1e86b7c58": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "63653b1b-4f8b-4752-a6ea-580a06c763c7",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
