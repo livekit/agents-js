@@ -12,6 +12,7 @@
  * instruction block advertises only what that provider supports.
  */
 import { describe, expect, it } from 'vitest';
+import { TTS as InferenceTTS } from '../inference/tts.js';
 import { ChatContext, ChatMessage } from '../llm/chat_context.js';
 import { type TimedString, createTimedString } from '../voice/io.js';
 import { matchMood } from './mood.js';
@@ -176,6 +177,67 @@ describe('convertMarkup: expr -> Fish Audio', () => {
   });
 });
 
+describe('Fish Audio drama-3 dialect', () => {
+  it('uses free-form instructions with drama spans and Fish sounds', () => {
+    const instructions = llmInstructions('fishaudio_drama')!;
+    expect(instructions).toContain('<expr type="expression" label="DIRECTION"/>');
+    expect(instructions).not.toContain('NOT free-form');
+    expect(instructions).toContain('whisper, soft, slow, fast, emphasis');
+    expect(instructions).toContain('laughing, chuckling, clear throat');
+  });
+
+  it('lowers free-form direction, sounds, spans, and pauses to drama markup', () => {
+    const raw =
+      '<expr type="expression" label="a little sheepish, apologetic"/> That\'s on us. ' +
+      '<expr type="sound" label="laugh"/> You\'re set for <expr type="break" label="500ms"/> ' +
+      'Thursday the <expr type="prosody" label="emphasis">ninth</expr>. ' +
+      '<expr type="prosody" label="whisper">Keep it quiet</expr> okay? ' +
+      '<expr type="break" label="2s"/>';
+    expect(convertMarkup('fishaudio_drama', raw)).toBe(
+      "[a little sheepish, apologetic] That's on us. [laughing] You're set for " +
+        '[short pause] Thursday the <emphasis>ninth</emphasis>. ' +
+        '<whisper>Keep it quiet</whisper> okay? [pause]',
+    );
+  });
+
+  it('aliases S2 tone labels left in history and unwraps unknown spans', () => {
+    expect(
+      convertMarkup('fishaudio_drama', '<expr type="prosody" label="whispering">psst</expr>'),
+    ).toBe('<whisper>psst</whisper>');
+    expect(
+      convertMarkup('fishaudio_drama', '<expr type="prosody" label="hurried">quick</expr>'),
+    ).toBe('<fast>quick</fast>');
+    expect(
+      convertMarkup('fishaudio_drama', '<expr type="prosody" label="like a pirate">ahoy</expr>'),
+    ).toBe('ahoy');
+    expect(convertMarkup('fishaudio_drama', 'hey <expr type="prosody" label="soft"/> there')).toBe(
+      'hey there',
+    );
+  });
+
+  it('strips stray native spans from transcripts', () => {
+    expect(splitAllMarkup('<forceful>Stop</forceful> right <stress>now</stress>')[0]).toBe(
+      'Stop right now',
+    );
+  });
+
+  it('selects the dialect from the current gateway model', async () => {
+    const tts = new InferenceTTS({
+      model: 'fishaudio/s2.1-pro',
+      apiKey: 'fake',
+      apiSecret: 'fake',
+    });
+    try {
+      expect(tts.markup.providerKey).toBe('fishaudio');
+      tts.updateOptions({ model: 'fishaudio/drama-3' });
+      expect(tts.markup.providerKey).toBe('fishaudio_drama');
+      expect(tts.markup.llmInstructions()).toContain('label="DIRECTION"');
+    } finally {
+      await tts.close();
+    }
+  });
+});
+
 it('drops a stray expr tag rather than letting it reach the TTS', () => {
   // an unpaired prosody open/close (e.g. split across stream chunks) is dropped, keeping
   // the words
@@ -329,7 +391,7 @@ describe('transcript stripping (provider-agnostic)', () => {
 });
 
 describe('normalizeMarkup', () => {
-  it.each(['xai', 'inworld', 'cartesia', 'fishaudio', 'gemini'])(
+  it.each(['xai', 'inworld', 'cartesia', 'fishaudio', 'fishaudio_drama', 'gemini'])(
     'closes an unclosed self-closing expr marker for %s',
     (provider) => {
       const text = '<expr type="sound" label="laugh"> Hello';
@@ -346,7 +408,7 @@ describe('normalizeMarkup', () => {
 });
 
 describe('llmInstructions', () => {
-  it.each(['xai', 'inworld', 'cartesia', 'fishaudio', 'gemini'])(
+  it.each(['xai', 'inworld', 'cartesia', 'fishaudio', 'fishaudio_drama', 'gemini'])(
     'uses expr syntax for %s',
     (provider) => {
       const instructions = llmInstructions(provider);
@@ -406,6 +468,20 @@ describe('llmInstructions', () => {
     const instructions = llmInstructions('inworld', { nonverbalSounds: false })!;
     expect(instructions).not.toContain('type="sound"');
   });
+
+  it.each(['fishaudio', 'fishaudio_drama'])(
+    'filters Fish sounds and examples for %s',
+    (provider) => {
+      const off = llmInstructions(provider, { nonverbalSounds: false })!;
+      expect(off).not.toContain('laughing');
+      expect(off).not.toContain('clear throat');
+      expect(off).toContain('Examples:');
+
+      const sparse = llmInstructions(provider, { nonverbalSounds: { reflexSounds: false } })!;
+      expect(sparse).toContain('laughing');
+      expect(sparse).not.toContain('clear throat');
+    },
+  );
 
   it('renders identically when steering explicitly enables everything', () => {
     expect(llmInstructions('xai', { nonverbalSounds: true })).toBe(llmInstructions('xai'));
@@ -569,7 +645,7 @@ describe('speech steering', () => {
   it('renders nothing for the explicit all-on forms', () => {
     // equivalent configurations must produce identical instructions: the explicit all-on
     // forms add no sound guidance the default doesn't have
-    for (const provider of ['fishaudio', 'inworld', 'xai']) {
+    for (const provider of ['fishaudio', 'fishaudio_drama', 'inworld', 'xai']) {
       for (const steering of [{ nonverbalSounds: true } as const, { nonverbalSounds: {} }]) {
         expect(steeringInstructions(provider, steering), provider).toBe('');
         expect(llmInstructions(provider, steering), provider).toBe(llmInstructions(provider));
@@ -593,21 +669,25 @@ describe('speech steering', () => {
   });
 
   it('never mentions an opted-out concept, not even prohibitively', () => {
-    const composed = llmInstructions('fishaudio', {
-      nonverbalSounds: false,
-      disfluencies: false,
-    })!;
-    expect(composed.toLowerCase()).not.toContain('laugh');
-    expect(composed.toLowerCase()).not.toContain('filler');
-    expect(composed).not.toContain('Um, uh');
+    for (const provider of ['fishaudio', 'fishaudio_drama']) {
+      const composed = llmInstructions(provider, {
+        nonverbalSounds: false,
+        disfluencies: false,
+      })!;
+      expect(composed.toLowerCase(), provider).not.toContain('laugh');
+      expect(composed.toLowerCase(), provider).not.toContain('filler');
+      expect(composed, provider).not.toContain('Um, uh');
+    }
   });
 
   it('few-shots fillers only while disfluencies are enabled', () => {
-    expect(llmInstructions('fishaudio', { disfluencies: true })).toContain('Um, uh');
-    expect(llmInstructions('fishaudio')).toContain('Um, uh'); // default is on
-    const off = llmInstructions('fishaudio', { disfluencies: false })!;
-    expect(off).not.toContain('Um, uh');
-    expect(off).not.toContain(', um,');
+    for (const provider of ['fishaudio', 'fishaudio_drama']) {
+      expect(llmInstructions(provider, { disfluencies: true }), provider).toContain('Um, uh');
+      expect(llmInstructions(provider), provider).toContain('Um, uh'); // default is on
+      const off = llmInstructions(provider, { disfluencies: false })!;
+      expect(off, provider).not.toContain('Um, uh');
+      expect(off, provider).not.toContain(', um,');
+    }
   });
 
   it('exposes the queryable non-verbal capability matrix', () => {
@@ -640,7 +720,7 @@ describe('speech steering', () => {
   it('carries the register rule in every provider’s block', () => {
     // register inference is provider-neutral: every markup-capable provider's block
     // carries the rule via the shared preamble
-    for (const provider of ['fishaudio', 'inworld', 'xai', 'cartesia']) {
+    for (const provider of ['fishaudio', 'fishaudio_drama', 'inworld', 'xai', 'cartesia']) {
       expect(llmInstructions(provider), provider).toContain('REGISTER of the moment');
     }
   });

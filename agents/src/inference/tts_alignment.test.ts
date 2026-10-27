@@ -66,3 +66,58 @@ it('adds separators to Cartesia inference word timestamps', async () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 });
+
+it('keeps the stream model and markup dialect after a model update', async () => {
+  const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+  await once(server, 'listening');
+  const address = server.address() as AddressInfo;
+  const packets: Array<{
+    type: string;
+    transcript?: string;
+    generation_config?: { model?: string };
+  }> = [];
+
+  server.on('connection', (socket) => {
+    socket.on('message', (raw) => {
+      const event = JSON.parse(raw.toString()) as (typeof packets)[number];
+      packets.push(event);
+      if (event.type !== 'session.flush') return;
+      socket.send(
+        JSON.stringify({
+          type: 'output_audio',
+          session_id: 'session-1',
+          audio: Buffer.alloc(4800).toString('base64'),
+        }),
+      );
+      socket.send(JSON.stringify({ type: 'done', session_id: 'session-1' }));
+    });
+  });
+
+  const tts = new TTS({
+    model: 'fishaudio/s2.1-pro',
+    apiKey: 'test-key',
+    apiSecret: 'test-secret',
+    baseURL: `http://127.0.0.1:${address.port}`,
+  });
+  tts._setExpressive(true);
+
+  try {
+    const stream = tts.stream();
+    tts.updateOptions({ model: 'fishaudio/drama-3' });
+    stream.pushText('<expr type="expression" label="sad"/> Sorry about that.');
+    stream.endInput();
+    for await (const _event of stream) {
+      // drain the stream
+    }
+
+    const transcripts = packets.filter((packet) => packet.type === 'input_transcript');
+    expect(transcripts.map((packet) => packet.transcript)).toEqual([
+      '[very sad] Sorry about that. ',
+    ]);
+    expect(transcripts[0]?.generation_config?.model).toBe('fishaudio/s2.1-pro');
+  } finally {
+    await tts.close();
+    for (const client of server.clients) client.close();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
