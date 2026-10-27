@@ -561,7 +561,12 @@ export class FunctionCallOutput {
 
   isError: boolean;
 
-  /** Whether a realtime model should answer after receiving this output. */
+  /**
+   * Whether the model should answer once it receives this output.
+   *
+   * AgentSession uses it to decide whether to generate a follow-up reply.
+   * Realtime models can also use it to schedule their response.
+   */
   replyRequired: boolean;
 
   createdAt: number;

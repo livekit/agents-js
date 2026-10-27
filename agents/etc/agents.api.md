@@ -4963,6 +4963,7 @@ declare namespace llm {
         ToolContext,
         ToolError,
         ToolFlag,
+        ToolResult,
         Toolset,
         toToolContext,
         AgentHandoff,
@@ -8599,6 +8600,17 @@ export interface ToolOptions<UserData = UnknownUserData> {
 }
 
 // @public
+export class ToolResult {
+    // (undocumented)
+    readonly [TOOL_RESULT_SYMBOL]: true;
+    constructor(output: unknown, options?: {
+        replyRequired?: boolean;
+    });
+    output: unknown;
+    replyRequired: boolean;
+}
+
+// @public
 export class Toolset {
     // (undocumented)
     readonly [TOOLSET_SYMBOL]: true;
@@ -9912,8 +9924,8 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 // src/_exceptions.ts:128:5 - (ae-forgotten-export) The symbol "APIErrorOptions" needs to be exported by the entry point index.d.ts
 // src/inference/tts.ts:315:5 - (ae-forgotten-export) The symbol "TTSEncoding" needs to be exported by the entry point index.d.ts
 // src/llm/chat_context.ts:80:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "audio"
-// src/llm/tool_context.ts:709:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "ToolFlag" has more than one declaration; you need to add a TSDoc member reference selector
-// src/llm/tool_context.ts:756:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "ToolFlag" has more than one declaration; you need to add a TSDoc member reference selector
+// src/llm/tool_context.ts:740:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "ToolFlag" has more than one declaration; you need to add a TSDoc member reference selector
+// src/llm/tool_context.ts:787:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "ToolFlag" has more than one declaration; you need to add a TSDoc member reference selector
 // src/metrics/base.ts:226:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsInputTokenDetails" needs to be exported by the entry point index.d.ts
 // src/metrics/base.ts:230:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsOutputTokenDetails" needs to be exported by the entry point index.d.ts
 // src/stt/stt.ts:395:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "STT"
