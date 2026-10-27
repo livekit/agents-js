@@ -644,6 +644,15 @@ describe('standard AgentSession', () => {
       const handle = session.generateReply();
       peer.reply(await request(peer));
       await vi.waitFor(() => expect(output.frames.length).toBeGreaterThan(0));
+      const truncated = vi.fn();
+      realtime.on('item_truncated', truncated);
+      peer.emit('conversation.item.truncated', {
+        item_id: 'message-reply-1',
+        content_index: 0,
+        audio_end_ms: 120,
+        prism_kept_text: 'Known retained text before playback stops',
+      });
+      await vi.waitFor(() => expect(truncated).toHaveBeenCalledOnce());
       if (mode === 'session') session.interrupt();
       else handle.interrupt();
       await handle.waitForPlayout();
@@ -651,16 +660,19 @@ describe('standard AgentSession', () => {
         expect(peer.requests.some((q) => q.type === 'conversation.item.truncate')).toBe(true),
       );
       expect(peer.requests.some((q) => q.type === 'response.cancel')).toBe(false);
+      expect((realtime.chatCtx.getById('message-reply-1') as llm.ChatMessage).content).toEqual([
+        'Known retained text before playback stops',
+      ]);
       const before = session.history.toJSON();
-      const truncated = vi.fn();
-      realtime.on('item_truncated', truncated);
       peer.emit('conversation.item.truncated', {
         item_id: 'message-reply-1',
         content_index: 0,
         audio_end_ms: 120,
         prism_kept_text: 'All words retained by the server',
       });
-      await vi.waitFor(() => expect(truncated).toHaveBeenCalledOnce());
+      await vi.waitFor(() =>
+        expect(truncated.mock.lastCall?.[0].keptText).toBe('All words retained by the server'),
+      );
       expect((realtime.chatCtx.getById('message-reply-1') as llm.ChatMessage).content).toEqual([
         'All words retained by the server',
       ]);
