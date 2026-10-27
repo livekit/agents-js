@@ -503,6 +503,41 @@ describe('init timeout rejection handling', () => {
   });
 });
 
+describe('child process that fails to spawn', () => {
+  it('rejects initialize() instead of crashing the parent', async () => {
+    // Regression test: the 'error' listener used to be attached in run(), after
+    // `await this.init.await`. When the child fails to spawn, Node emits two
+    // 'error' events on the ChildProcess: the spawn error, then EPIPE for the
+    // initializeRequest written by initialize(). The `events.once` listeners in
+    // initialize() consumed the first one, and the second one crashed the parent
+    // with "Unhandled 'error' event".
+    const { SupervisedProc } = await import('./supervised_proc.js');
+    class TestProc extends SupervisedProc {
+      protected get processKind() {
+        return 'job';
+      }
+      createProcess() {
+        return fork(childScript, [], {
+          execPath: join(tmpdir(), 'nonexistent-node-binary'),
+          stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
+        });
+      }
+      async mainTask() {}
+    }
+
+    const proc = new TestProc(procOptions({ initializeTimeout: 1000, closeTimeout: 1000 }));
+    await proc.start();
+
+    await expect(proc.initialize()).rejects.toThrow('ENOENT');
+
+    const result = await Promise.race([
+      proc.join().then(() => 'joined'),
+      new Promise((r) => setTimeout(() => r('timeout'), 2000)),
+    ]);
+    expect(result).toBe('joined');
+  });
+});
+
 describe('timer cleanup', () => {
   it('clearInterval stops the interval', async () => {
     let count = 0;
