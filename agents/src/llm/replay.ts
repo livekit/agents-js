@@ -45,7 +45,14 @@ export async function replay(
     provider,
     chatCtx,
     toolCtx,
-  }: { model: string; provider: string; chatCtx: ChatContext; toolCtx?: ToolContext },
+    signal,
+  }: {
+    model: string;
+    provider: string;
+    chatCtx: ChatContext;
+    toolCtx?: ToolContext;
+    signal?: AbortSignal;
+  },
 ): Promise<ChatChunk[]> {
   // the same serialization the llm_request span records, so the server compares like with like
   const request = {
@@ -59,6 +66,7 @@ export async function replay(
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(request),
+    signal,
   });
   const body = (await resp.json()) as ReplayResponse;
   if (!resp.ok) {

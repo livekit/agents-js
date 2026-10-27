@@ -52,19 +52,20 @@ function chatCtx(): ChatContext {
 
 describe('LLM replay', () => {
   let server: Server;
-  let state: { requests: unknown[]; status: number; body: unknown };
+  let state: { requests: unknown[]; status: number; body: unknown; hold: boolean };
 
   beforeAll(() => {
     initializeLogger({ pretty: false, level: 'silent' });
   });
 
   beforeEach(async () => {
-    state = { requests: [], status: 200, body: {} };
+    state = { requests: [], status: 200, body: {}, hold: false };
     server = createServer((req, res) => {
       let data = '';
       req.on('data', (chunk) => (data += chunk));
       req.on('end', () => {
         state.requests.push(JSON.parse(data));
+        if (state.hold) return;
         res.writeHead(state.status, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(state.body));
       });
@@ -76,6 +77,7 @@ describe('LLM replay', () => {
 
   afterEach(async () => {
     delete process.env[ENV_LLM_REPLAY_URL];
+    server.closeAllConnections();
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
 
@@ -153,5 +155,23 @@ describe('LLM replay', () => {
     expect(error.statusCode).toBe(409);
     expect(error.retryable).toBe(false);
     expect(state.requests).toHaveLength(1);
+  });
+
+  it('abandons the request when the stream closes', async () => {
+    state.hold = true;
+    const aborted = new Promise<void>((resolve) => {
+      server.once('request', (_req, res) => res.once('close', () => resolve()));
+    });
+
+    const llm = new ProviderLLM();
+    const errors: LLMError[] = [];
+    llm.on('error', (e) => errors.push(e));
+    const stream = llm.chat({ chatCtx: chatCtx() });
+    await expect.poll(() => state.requests.length).toBe(1);
+    stream.close();
+
+    await aborted;
+    expect(await stream.collect()).toMatchObject({ text: '' });
+    expect(errors).toHaveLength(0);
   });
 });

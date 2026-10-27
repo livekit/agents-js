@@ -315,9 +315,15 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
           provider: this.#llm.provider,
           chatCtx: this.#chatCtx,
           toolCtx: this.#toolCtx,
+          // a closed stream abandons its request instead of leaving it open on the server
+          signal: AbortSignal.any([
+            this.abortController.signal,
+            AbortSignal.timeout(this._connOptions.timeoutMs),
+          ]),
         });
         for (const chunk of chunks) this.queue.put(chunk);
       } catch (error) {
+        if (this.abortController.signal.aborted) return;
         this.emitError({ error: toError(error), recoverable: false });
         throw error;
       }
