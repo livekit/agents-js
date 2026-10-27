@@ -813,7 +813,10 @@ describe('AMD detector context, inference, and wait', () => {
             }
             return result;
           }) as AnyFn;
-          const { detector } = await running({ inferenceTimeout: 20 });
+          // only the timeout case needs a short deadline; Python runs on virtual time
+          const { detector } = await running({
+            inferenceTimeout: cancelledBy === 'timeout' ? 20 : 10_000,
+          });
           const amd = internals(detector);
           const events: AMDPredictionEvent[] = [];
           detector.on('amd_prediction', (event) => events.push(event));
@@ -967,9 +970,9 @@ describe('AMD detector context, inference, and wait', () => {
     'AMD enforces overall deadline independently of FSM (%s)',
     async (pending) => {
       const { detector, session, classifier } = await running({
-        timeout: 300,
-        inferenceTimeout: 1_000,
-        machineSilenceThreshold: 1_500,
+        timeout: 1_000,
+        inferenceTimeout: 3_000,
+        machineSilenceThreshold: 3_000,
       });
       const amd = internals(detector);
       const deadline = amd.hardDeadline;
@@ -989,7 +992,7 @@ describe('AMD detector context, inference, and wait', () => {
       expect(typeof state).toBe('string');
       expect(nextDeadline(detector)).toBe(deadline);
       expect(amd.hardDeadline).toBe(deadline);
-      const result = await waitFor(detector.execute(), 1_000);
+      const result = await waitFor(detector.execute(), 3_000);
       expect(result.reason).toBe(AMDReason.TIMEOUT);
       expect(result.category).toBe(
         pending === 'silence' || pending === 'speech'

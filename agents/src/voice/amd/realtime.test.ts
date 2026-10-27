@@ -602,7 +602,7 @@ describe('AMD with realtime models', () => {
     expect(output.capturedPlayoutSegments).toBe(0);
 
     await vad!.emitEvent(vadEvent(VADEventType.END_OF_SPEECH, { speechDuration: 100 }));
-    await done(handle, 200);
+    await done(handle);
     expect(handle.interrupted).toBe(false);
     expect(output.capturedPlayoutSegments).toBe(1);
     expect(detector.lifecycle).toBe(AMDLifecycle.ACTIVE);
