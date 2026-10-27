@@ -185,7 +185,7 @@ describe('AMD telephony example', () => {
   ])('outbound call setup (%s)', async (outcome) => {
     vi.stubEnv('SIP_PHONE_NUMBER', '+15555550100');
     vi.stubEnv('SIP_PARTICIPANT_IDENTITY', 'callee');
-    vi.stubEnv('SIP_OUTBOUND_TRUNK_ID', 'test-trunk');
+    vi.stubEnv('LIVEKIT_OUTBOUND_TRUNK_ID', 'test-trunk');
     for (const name of ['STT', 'LLM', 'TTS']) {
       inference[name] = vi.fn(function () {
         return {};

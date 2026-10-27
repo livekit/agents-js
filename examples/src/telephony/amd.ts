@@ -9,7 +9,7 @@ import {
   cli,
   defineAgent,
   inference,
-  llm,
+  type llm,
   log,
   voice,
 } from '@livekit/agents';
@@ -25,7 +25,7 @@ import { fileURLToPath } from 'node:url';
  *
  *   SIP_PHONE_NUMBER          — number to dial, e.g. "+15551234"
  *   SIP_PARTICIPANT_IDENTITY  — identity to assign the dialed participant
- *   SIP_OUTBOUND_TRUNK_ID     — outbound trunk
+ *   LIVEKIT_OUTBOUND_TRUNK_ID     — outbound trunk
  */
 export class MyAgent extends voice.Agent {
   constructor() {
@@ -93,7 +93,7 @@ export async function entry(ctx: JobContext): Promise<void> {
 
   const phoneNumber = process.env.SIP_PHONE_NUMBER;
   const participantIdentity = process.env.SIP_PARTICIPANT_IDENTITY || undefined;
-  const outboundTrunkId = process.env.SIP_OUTBOUND_TRUNK_ID;
+  const outboundTrunkId = process.env.LIVEKIT_OUTBOUND_TRUNK_ID;
 
   // AMD needs a SIP participant, so console mode is not supported.
   if (!session._roomIO) {

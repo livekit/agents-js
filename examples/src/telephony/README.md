@@ -355,7 +355,7 @@ pnpm build && node ./examples/src/telephony/amd.ts dev
 ```
 
 To place an outbound call, also set
-`SIP_PHONE_NUMBER`, `SIP_PARTICIPANT_IDENTITY`, and `SIP_OUTBOUND_TRUNK_ID`.
+`SIP_PHONE_NUMBER`, `SIP_PARTICIPANT_IDENTITY`, and `LIVEKIT_OUTBOUND_TRUNK_ID`.
 
 ## Current limits
 
