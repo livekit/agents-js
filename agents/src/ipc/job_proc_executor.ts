@@ -21,7 +21,6 @@ export class JobProcExecutor extends SupervisedProc implements JobExecutor {
   #agent: string;
   #inferenceExecutor?: InferenceExecutor;
   #inferenceTasks: Promise<void>[] = [];
-  #logger = log();
 
   constructor({
     agent,
@@ -59,19 +58,6 @@ export class JobProcExecutor extends SupervisedProc implements JobExecutor {
     return 'job';
   }
 
-  protected override loggingFields(): Record<string, unknown> {
-    const fields = super.loggingFields();
-    if (this.#runningJob) {
-      fields.job_id = this.#runningJob.job.id;
-      fields.room = this.#runningJob.job.room?.name;
-      fields.room_id = this.#runningJob.job.room?.sid;
-      if (this.#runningJob.job.agentName) {
-        fields.agent_name = this.#runningJob.job.agentName;
-      }
-    }
-    return fields;
-  }
-
   createProcess(): ChildProcess {
     const forkUrl = new URL(`./job_proc_lazy_main${currentFileExtension}`, import.meta.url);
 
@@ -97,7 +83,7 @@ export class JobProcExecutor extends SupervisedProc implements JobExecutor {
     req: { method: string; requestId: string; data: unknown },
   ) {
     if (!this.#inferenceExecutor) {
-      this.#logger.warn('inference request received but no inference executor');
+      this.logger.warn('inference request received but no inference executor');
       proc.send({
         case: 'inferenceResponse',
         value: { requestId: req.requestId, error: new Error('no inference executor') },
@@ -122,6 +108,12 @@ export class JobProcExecutor extends SupervisedProc implements JobExecutor {
     }
     this.#jobStatus = JobStatus.RUNNING;
     this.#runningJob = info;
+    this.logger = log().child({
+      job_id: info.job.id,
+      room: info.job.room?.name,
+      room_id: info.job.room?.sid,
+      ...(info.job.agentName && { agent_name: info.job.agentName }),
+    });
 
     this.proc!.send({ case: 'startJobRequest', value: { runningJob: info } });
   }

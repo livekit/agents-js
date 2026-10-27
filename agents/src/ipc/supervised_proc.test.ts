@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { Job, Room } from '@livekit/protocol';
 import type { ChildProcess } from 'node:child_process';
 import { fork, spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
@@ -8,11 +9,13 @@ import { unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import pidusage from 'pidusage';
-import type { Logger } from 'pino';
+import { pino } from 'pino';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { log } from '../log.js';
+import { log, loggerOptions } from '../log.js';
+import { setLoggerState } from '../log_core.js';
+import { JobProcExecutor } from './job_proc_executor.js';
 import type { IPCMessage } from './message.js';
-import { type ProcOpts, SupervisedProc } from './supervised_proc.js';
+import type { ProcOpts } from './supervised_proc.js';
 
 const procOptions = (overrides: Partial<ProcOpts> = {}): ProcOpts => ({
   initializeTimeout: 100,
@@ -211,21 +214,16 @@ describe('supervised process shutdown', () => {
     child.send = sendSpy;
     child.kill = killSpy;
 
-    class TestProc extends SupervisedProc {
-      protected get processKind() {
-        return 'job';
-      }
-
+    class TestProc extends JobProcExecutor {
       createProcess(): ChildProcess {
         return child as unknown as ChildProcess;
       }
-
-      async mainTask() {}
     }
 
-    const proc = new TestProc(
-      procOptions({ closeTimeout, memoryLimitMB, pingInterval, pingTimeout }),
-    );
+    const proc = new TestProc({
+      agent: 'agent',
+      ...procOptions({ closeTimeout, memoryLimitMB, pingInterval, pingTimeout }),
+    });
     await proc.start();
     await proc.initialize({ sessionEndTimeout: 300_000 });
     await new Promise<void>((resolve) => setImmediate(resolve));
@@ -294,30 +292,84 @@ describe('supervised process shutdown', () => {
     await proc.join();
   });
 
-  it('logs the exit reason with the Python-compatible reason field', async () => {
-    const debug = vi.fn();
-    const childLogger = vi.fn().mockReturnValue({ debug } as unknown as Logger);
-    const logger = { child: childLogger } as unknown as Logger;
-    const rootChild = vi.spyOn(log(), 'child').mockReturnValueOnce(logger);
+  it.each(['named-agent', ''])(
+    'reuses the job logger after launch (agent: %j)',
+    async (agentName) => {
+      const records: Record<string, unknown>[] = [];
+      const onChild = vi.fn();
+      const logger = pino(
+        { level: 'debug', onChild },
+        { write: (line) => records.push(JSON.parse(line)) },
+      );
+      const previousLogger = log();
+      const options = loggerOptions()!;
+      setLoggerState(logger, options);
 
-    try {
-      const { child, proc } = await createProc();
-      child.emit('message', {
-        case: 'exiting',
-        value: { reason: 'user requested' },
-      } satisfies IPCMessage);
+      try {
+        const { child, proc } = await createProc();
+        try {
+          child.emit('message', {
+            case: 'exiting',
+            value: { reason: 'before job' },
+          } satisfies IPCMessage);
+          expect(records[0]).toMatchObject({ reason: 'before job', msg: 'job exiting' });
+          expect(records[0]).not.toHaveProperty('job_id');
+          expect(onChild).not.toHaveBeenCalled();
 
-      expect(childLogger).toHaveBeenCalledExactlyOnceWith({ reason: 'user requested' });
+          await proc.launchJob({
+            job: new Job({
+              id: 'AJ_test',
+              agentName,
+              room: new Room({ sid: 'RM_test', name: 'room' }),
+            }),
+            acceptArguments: { name: '', identity: 'agent', metadata: '' },
+            url: 'wss://example.com',
+            token: 'token',
+            workerId: 'AW_test',
+          });
+          child.emit('message', {
+            case: 'exiting',
+            value: { reason: 'user requested' },
+          } satisfies IPCMessage);
+          child.emit('message', {
+            case: 'inferenceRequest',
+            value: { method: 'test', requestId: 'request', data: null },
+          } satisfies IPCMessage);
+          child.emit('message', {
+            case: 'exiting',
+            value: { reason: 'shutdown' },
+          } satisfies IPCMessage);
 
-      child.emit('message', { case: 'done', value: undefined } satisfies IPCMessage);
-      child.connected = false;
-      child.exitCode = 0;
-      child.emit('exit', 0, null);
-      await proc.join();
-    } finally {
-      rootChild.mockRestore();
-    }
-  });
+          expect(records[1]).toMatchObject({ reason: 'user requested', msg: 'job exiting' });
+          expect(records[2]).toMatchObject({
+            msg: 'inference request received but no inference executor',
+          });
+          expect(records[3]).toMatchObject({ reason: 'shutdown', msg: 'job exiting' });
+          for (const record of records.slice(1)) {
+            expect(record).toMatchObject({ job_id: 'AJ_test', room: 'room', room_id: 'RM_test' });
+            if (agentName) {
+              expect(record).toHaveProperty('agent_name', agentName);
+            } else {
+              expect(record).not.toHaveProperty('agent_name');
+            }
+          }
+          expect(onChild).toHaveBeenCalledOnce();
+
+          logger.warn('unrelated worker log');
+          expect(records.at(-1)).not.toHaveProperty('job_id');
+          expect(records.at(-1)).not.toHaveProperty('agent_name');
+        } finally {
+          child.emit('message', { case: 'done', value: undefined } satisfies IPCMessage);
+          child.connected = false;
+          child.exitCode = 0;
+          child.emit('exit', 0, null);
+          await proc.join();
+        }
+      } finally {
+        setLoggerState(previousLogger, options);
+      }
+    },
+  );
 
   it('still bounds process teardown after session-end handling completes', async () => {
     const { killSpy, proc } = await createProc({ completeSessionEnd: true });
