@@ -52,7 +52,8 @@ export class MyAgent extends voice.Agent {
     modelSettings: ModelSettings,
   ) {
     if (this.session.amd !== null) {
-      toolCtx = new llm.ToolContext(toolCtx.tools.filter((tool) => tool.id !== 'end_call'));
+      // edit in place: the same context executes the tool calls
+      toolCtx.updateTools(toolCtx.tools.filter((tool) => tool.id !== 'end_call'));
     }
     return voice.Agent.default.llmNode(this, chatCtx, toolCtx, modelSettings);
   }
@@ -123,7 +124,11 @@ export async function entry(ctx: JobContext): Promise<void> {
           waitUntilAnswered: true,
           timeout: 45,
         });
-      } catch {
+      } catch (error) {
+        // a cancelled job propagates; only a failed or timed-out call ends here
+        if (error instanceof Error && error.name === 'AbortError') {
+          throw error;
+        }
         logger.info('sip call was not answered');
         ctx.shutdown('call not answered');
         return;
