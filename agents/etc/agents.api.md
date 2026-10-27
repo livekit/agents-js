@@ -507,6 +507,7 @@ export class AgentSession<UserData = UnknownUserData> extends AgentSession_base 
         chatCtx?: ChatContext;
         instructions?: string | Instructions;
         toolChoice?: ToolChoice;
+        tools?: string[];
         allowInterruptions?: boolean;
         inputModality?: 'audio' | 'text';
     }): SpeechHandle;
@@ -6340,9 +6341,10 @@ export abstract class RealtimeSession extends EventEmitter {
     // (undocumented)
     close(): Promise<void>;
     abstract commitAudio(): Promise<void>;
-    // (undocumented)
     abstract generateReply(instructions?: string, options?: {
         signal?: AbortSignal;
+        toolChoice?: ToolChoice;
+        tools?: ToolContext;
     }): Promise<GenerationCreatedEvent>;
     abstract interrupt(): Promise<void>;
     // (undocumented)

@@ -3173,6 +3173,8 @@ export class AgentActivity implements RecognitionHooks {
     chatCtx?: ChatContext;
     instructions?: string | Instructions;
     toolChoice?: ToolChoice | null;
+    /** IDs of the registered tools and toolsets to offer for this reply only. */
+    tools?: string[];
     allowInterruptions?: boolean;
     scheduleSpeech?: boolean;
     inputDetails?: InputDetails;
@@ -3188,6 +3190,7 @@ export class AgentActivity implements RecognitionHooks {
       chatCtx,
       instructions: defaultInstructions,
       toolChoice: defaultToolChoice,
+      tools: toolIds,
       allowInterruptions: defaultAllowInterruptions,
       scheduleSpeech = true,
       inputDetails,
@@ -3226,6 +3229,29 @@ export class AgentActivity implements RecognitionHooks {
       }
     }
 
+    const allTools = this.tools;
+
+    // resolve tool IDs to the registered tools and toolsets
+    let resolvedTools: ToolContextEntry[] | undefined;
+    if (toolIds !== undefined) {
+      const toolsetsById = new Map(allTools.toolsets.map((toolset) => [toolset.id, toolset]));
+      const toolsById = new Map<string, ToolContextEntry>([
+        ...Object.entries(allTools.functionTools),
+        ...allTools.providerTools.map((tool): [string, ToolContextEntry] => [tool.id, tool]),
+      ]);
+      resolvedTools = [];
+      for (const id of new Set(toolIds)) {
+        const tool = toolsetsById.get(id) ?? toolsById.get(id);
+        if (tool === undefined) {
+          throw new Error(
+            `tool '${id}' not found in agent's registered tools. ` +
+              `Available tools: ${JSON.stringify(Object.keys(allTools.functionTools))}`,
+          );
+        }
+        resolvedTools.push(tool);
+      }
+    }
+
     const handle = SpeechHandle.create({
       allowInterruptions: allowInterruptions ?? this.allowInterruptions,
       inputDetails,
@@ -3253,6 +3279,7 @@ export class AgentActivity implements RecognitionHooks {
             // TODO(brian): support llm.ChatMessage for the realtime model
             userInput: userMessage?.rawTextContent,
             instructions,
+            tools: resolvedTools,
             modelSettings: {
               // isGiven(toolChoice) = toolChoice !== undefined
               toolChoice: toOaiToolChoice(toolChoice !== undefined ? toolChoice : this.toolChoice),
@@ -3270,7 +3297,7 @@ export class AgentActivity implements RecognitionHooks {
         instructions = concatInstructions(this.agent.instructions, '\n', instructions);
       }
 
-      const tools = this.tools;
+      const tools = resolvedTools !== undefined ? new ToolContext(resolvedTools) : allTools;
       tools._exclude(this._onEnterIgnoredTools(tools));
 
       const task = this.createSpeechTask({
@@ -5547,6 +5574,7 @@ export class AgentActivity implements RecognitionHooks {
   private async realtimeReplyTask({
     stateLease,
     modelSettings: { toolChoice },
+    tools,
     userInput,
     instructions,
     abortController,
@@ -5554,6 +5582,7 @@ export class AgentActivity implements RecognitionHooks {
     stateLease: AgentStateLease;
     modelSettings: ModelSettings;
     abortController: AbortController;
+    tools?: ToolContextEntry[];
     userInput?: string;
     instructions?: string | Instructions;
   }): Promise<void> {
@@ -5600,20 +5629,40 @@ export class AgentActivity implements RecognitionHooks {
       this.agentSession._conversationItemAdded(message);
     }
 
+    // inside onEnter, hide flagged tools even when no tools were passed (fall back to this.tools)
+    let turnTools: ToolContext | undefined;
+    const toolCtx = tools !== undefined ? new ToolContext(tools) : this.tools;
+    const onEnterIgnored = this._onEnterIgnoredTools(toolCtx);
+    if (tools !== undefined || onEnterIgnored.length > 0) {
+      turnTools = toolCtx._flattenedCopy();
+      turnTools._exclude(onEnterIgnored);
+    }
+
+    const perResponseToolChoice =
+      !!this.realtimeSession.realtimeModel.capabilities.perResponseToolChoice;
     const originalToolChoice = this.toolChoice;
+    let resetToolChoice = false;
+    let resetTools = false;
     const onEnterData = onEnterStorage.getStore();
     const onEnterScope =
-      onEnterData?.agent === this.agent && onEnterData?.session === this.agentSession
+      !perResponseToolChoice &&
+      onEnterData?.agent === this.agent &&
+      onEnterData?.session === this.agentSession
         ? { toolsUpdated: false }
         : undefined;
     if (onEnterScope) this.realtimeOnEnterScopes.add(onEnterScope);
     try {
-      if (this._onEnterIgnoredTools(this.realtimeSession.tools).length > 0) {
-        await this.updateRealtimeTools();
-      }
+      if (!perResponseToolChoice) {
+        // update the tools and tool choice at the session level if they are specified
+        if (toolChoice !== undefined && !isSameToolChoice(toolChoice, originalToolChoice)) {
+          resetToolChoice = true;
+          this.realtimeSession.updateOptions({ toolChoice });
+        }
 
-      if (toolChoice !== undefined) {
-        this.realtimeSession.updateOptions({ toolChoice });
+        if (turnTools !== undefined) {
+          resetTools = true;
+          await this.realtimeSession.updateTools(turnTools);
+        }
       }
 
       const generateReplyAbortController = new AbortController();
@@ -5621,7 +5670,10 @@ export class AgentActivity implements RecognitionHooks {
         instructions !== undefined
           ? renderInstructions(instructions, speechHandle.inputDetails.modality)
           : undefined,
-        { signal: generateReplyAbortController.signal },
+        {
+          signal: generateReplyAbortController.signal,
+          ...(perResponseToolChoice && { toolChoice, tools: turnTools }),
+        },
       );
       void generationPromise.catch(() => undefined);
 
@@ -5640,15 +5692,15 @@ export class AgentActivity implements RecognitionHooks {
       );
     } finally {
       if (onEnterScope) this.realtimeOnEnterScopes.delete(onEnterScope);
-      // reset toolChoice value
-      if (toolChoice !== undefined && toolChoice !== originalToolChoice) {
+      // reset toolChoice and tools
+      if (resetToolChoice) {
         try {
           this.realtimeSession.updateOptions({ toolChoice: originalToolChoice });
         } catch (error) {
           this.logger.error({ error }, 'failed to reset tool_choice');
         }
       }
-      if (onEnterScope?.toolsUpdated) {
+      if (resetTools || onEnterScope?.toolsUpdated) {
         try {
           await this.updateRealtimeTools();
         } catch (error) {

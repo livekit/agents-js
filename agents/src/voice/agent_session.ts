@@ -1421,6 +1421,12 @@ export class AgentSession<
     chatCtx?: ChatContext;
     instructions?: string | Instructions;
     toolChoice?: ToolChoice;
+    /**
+     * IDs of the tools to make available for this reply. When set, only these tools can be used.
+     * Each ID must match a tool registered on the agent: a function tool's ID is its name
+     * (`myTool.id`), and a toolset's ID is the one given at construction (`myToolset.id`).
+     */
+    tools?: string[];
     allowInterruptions?: boolean;
     /** The input modality used for generating the reply. Defaults to `"text"`. */
     inputModality?: 'audio' | 'text';

@@ -526,14 +526,17 @@ export class DuplexRealtimeSession extends RealtimeSession {
 
   async generateReply(
     instructions?: string,
-    options?: { signal?: AbortSignal },
+    options?: { signal?: AbortSignal; toolChoice?: ToolChoice; tools?: ToolContext },
   ): Promise<GenerationCreatedEvent> {
     if (this.closed) throw new RealtimeError('the session is closed');
     const signal = options?.signal;
     const abortError = () =>
       signal?.reason instanceof Error ? signal.reason : new RealtimeError('the reply was aborted');
     if (signal?.aborted) throw abortError();
-    this.duplexSession._generateReply(instructions);
+    this.duplexSession._generateReply(instructions, {
+      toolChoice: options?.toolChoice,
+      tools: options?.tools,
+    });
     this.failPendingReply('a newer ask superseded this one');
     const reply = (this.pendingReply = new Future<GenerationCreatedEvent>());
     const timeout = setTimeout(() => {
