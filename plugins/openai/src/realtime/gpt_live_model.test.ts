@@ -966,6 +966,50 @@ describe('GPTLiveModel', () => {
     expect(started).toBe(2);
   });
 
+  it('does not take the rest of a sentence the model began first as its answer', async () => {
+    const session = create();
+    const finals: string[] = [];
+    session.on('input_audio_transcription_completed', (event) => {
+      if (event.isFinal) finals.push(event.transcript);
+    });
+    await ready(session);
+    await server.send(session, transcript('assistant', 'Your order', 0));
+    await server.send(session, transcript('assistant', ' ships', 800));
+    await server.send(session, transcript('user', 'Please', 900));
+    await server.send(session, transcript('assistant', ' today.', 1600));
+    await server.send(session, transcript('user', ' stop.', 1700));
+    await server.send(session, transcript('assistant', 'Sure.', 3000));
+    await server.send(session, transcript('user', 'Thanks', 4000));
+    expect(finals).toEqual(['Please stop.']);
+  });
+
+  it('ends a caller turn whose answer arrived before their own words', async () => {
+    const session = create();
+    const finals: string[] = [];
+    session.on('input_audio_transcription_completed', (event) => {
+      if (event.isFinal) finals.push(event.transcript);
+    });
+    await ready(session);
+    await server.send(session, transcript('assistant', 'Yes.', 1500));
+    await server.send(session, transcript('user', 'Can you hear me?', 1000));
+    for (let i = 0; i < 8; i++) session.pushAudio(pcm());
+    expect(finals).toEqual(['Can you hear me?']);
+  });
+
+  it('commits the caller request before a tool call reads it', async () => {
+    const session = create();
+    const order: string[] = [];
+    session.on('input_audio_transcription_completed', (event) => {
+      if (event.isFinal) order.push('final');
+    });
+    session.on('function_call', () => order.push('call'));
+    await ready(session);
+    await server.send(session, transcript('user', "What's the weather in Paris?", 1000));
+    await server.response(session, { type: 'response.created' });
+    await server.response(session, callDone('c1'));
+    expect(order).toEqual(['final', 'call']);
+  });
+
   it.each(['responses', 'client'] as const)(
     'carries typed input once in the next ask under %s delegation',
     async (delegation) => {
