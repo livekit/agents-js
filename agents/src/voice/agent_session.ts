@@ -58,6 +58,7 @@ import {
 } from '../llm/index.js';
 import { LLM as BaseLLM } from '../llm/llm.js';
 import type { LLMError } from '../llm/llm.js';
+import { replayUrl } from '../llm/replay.js';
 import { log } from '../log.js';
 import { type ModelUsage, ModelUsageCollector, filterZeroValues } from '../metrics/model_usage.js';
 import { SimulationMode } from '../simulation.js';
@@ -524,8 +525,10 @@ type ActivityTransitionOptions = {
 };
 
 /** True when the surrounding job runs under a text simulation (the simulated
- * user interacts over text streams only). */
+ * user interacts over text streams only), or replays a session's LLM responses
+ * (which replays its user turns as text). */
 function resolveTextOnly(): boolean {
+  if (replayUrl() !== undefined) return true;
   const jobCtx = getJobContext(false);
   const simCtx = jobCtx?.simulationContext();
   return simCtx !== undefined && simCtx.simulationMode === SimulationMode.TEXT;
@@ -943,6 +946,10 @@ export class AgentSession<
       }
 
       consoleInst.acquireIo(this);
+      if (this._textOnly) {
+        this.input.setAudioEnabled(false);
+        this.output.setAudioEnabled(false);
+      }
 
       if (consoleInst.transport) {
         this.sessionHost = new SessionHost(
