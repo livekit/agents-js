@@ -1,0 +1,46 @@
+agents/src/llm/duplex_adapter.ts
+  s_6ec8ac762f82cc::t_cab450ffec6a51 529,536-539
+agents/src/voice/agent_session.ts
+  s_6ec8ac762f82cc::t_a2d13956005a3e 1426-1431
+agents/src/llm/openai_realtime/realtime_model.ts
+  s_6ec8ac762f82cc::t_04cddc7de3be18 2355-2356
+  s_6ec8ac762f82cc::t_4b04d34999cd90 818
+  s_6ec8ac762f82cc::t_6f1fd139dbba6c 845-850
+  s_6ec8ac762f82cc::t_068c193085d0a6 2322-2323,2328-2329
+  s_6ec8ac762f82cc::t_d5efddf6160611 943
+  s_6ec8ac762f82cc::t_bdf1075ffac862 956-957
+agents/src/llm/realtime.ts
+  s_6ec8ac762f82cc::t_5b5d673a87683f 170-172,177
+plugins/google/src/realtime/realtime_api.ts
+  s_6ec8ac762f82cc::t_68397b021610ee 938,940-942
+plugins/phonic/src/realtime/realtime_model.ts
+  s_6ec8ac762f82cc::t_3dfed4b2067f38 841,843-845
+plugins/xai/src/realtime/realtime_model.ts
+  s_6ec8ac762f82cc::t_4362230a57d0e1 58
+agents/src/voice/agent_activity.ts
+  s_6ec8ac762f82cc::t_9b8c4962ecfbf7 3113
+  s_6ec8ac762f82cc::t_2679e9d1003c0e 5478-5479,5486
+  s_6ec8ac762f82cc::t_7ba39a2e41108c 3220
+  s_6ec8ac762f82cc::t_cf560dac21a55f 3158-3161
+  s_6ec8ac762f82cc::t_96779ba5de63e6 5360,5368
+  s_6ec8ac762f82cc::t_6f93d83cc52151 3152-3157,3162-3174
+  s_6ec8ac762f82cc::t_5055d4ccb9048f 5415-5425,5427-5428,5431-5433,5438-5443,5445-5448,5456-5459
+  s_6ec8ac762f82cc::t_5c9aabdf2b55d6 3096-3097
+  s_6ec8ac762f82cc::t_6623f44ac739af 3202
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "da40dbb366422e3fba70a184816c86325be059d7",
+  "prompts": {},
+  "sessions": {
+    "s_6ec8ac762f82cc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "41cd7eaf-c24d-43a9-a414-7a6346d56423",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
