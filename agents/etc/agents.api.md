@@ -5392,6 +5392,9 @@ const MAX_SPANS_PER_MINUTE = 6;
 // @public
 function maxInputLen(provider: string): number | undefined;
 
+// @internal
+export function _maybeRegisterLocalEotRunner(): void;
+
 // @public (undocumented)
 export type MCPHTTPTransportType = 'sse' | 'streamable_http';
 
