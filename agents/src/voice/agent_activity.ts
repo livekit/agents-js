@@ -4823,6 +4823,7 @@ export class AgentActivity implements RecognitionHooks {
     replyAbortController: AbortController,
     addToChatCtx: boolean = true,
     instructions?: string | Instructions,
+    tools?: ToolContextEntry[],
   ): Promise<void> {
     return withAgentTurn(
       stateLease.speechHandle,
@@ -4837,6 +4838,7 @@ export class AgentActivity implements RecognitionHooks {
             replyAbortController,
             addToChatCtx,
             instructions,
+            tools,
             span,
             inferenceSpan,
           });
@@ -4854,6 +4856,7 @@ export class AgentActivity implements RecognitionHooks {
     replyAbortController,
     addToChatCtx,
     instructions,
+    tools,
     span,
     inferenceSpan,
   }: {
@@ -4864,6 +4867,8 @@ export class AgentActivity implements RecognitionHooks {
     addToChatCtx: boolean;
     /** The reply's instructions, reused by its tool follow-up. */
     instructions?: string | Instructions;
+    /** The reply's own tools: they run its tool calls and stay on its tool follow-up. */
+    tools?: ToolContextEntry[];
     span: Span;
     inferenceSpan: Span;
   }): Promise<void> {
@@ -4915,7 +4920,7 @@ export class AgentActivity implements RecognitionHooks {
     const textOutput = this.agentSession.output.transcriptionEnabled
       ? this.agentSession.output.transcription
       : null;
-    const toolCtx = realtimeSession.tools;
+    const toolCtx = tools !== undefined ? new ToolContext(tools) : realtimeSession.tools;
 
     const authorizationTasks: Promise<unknown>[] = [speechHandle._waitForAuthorization()];
     if (speechHandle.allowInterruptions && !this.rtOverlappingSpeechEnabled) {
@@ -5522,6 +5527,7 @@ export class AgentActivity implements RecognitionHooks {
           stateLease: replyLease,
           modelSettings: { toolChoice },
           instructions,
+          tools,
           abortController,
         }),
       ownedSpeechHandle: speechHandle,
@@ -5780,6 +5786,7 @@ export class AgentActivity implements RecognitionHooks {
         abortController,
         true,
         instructions,
+        tools,
       );
     } finally {
       if (onEnterScope) this.realtimeOnEnterScopes.delete(onEnterScope);
