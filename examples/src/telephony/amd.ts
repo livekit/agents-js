@@ -23,9 +23,9 @@ import { fileURLToPath } from 'node:url';
  *
  * To place an outbound call, set all three:
  *
- *   SIP_PHONE_NUMBER          — number to dial, e.g. "+15551234"
- *   SIP_PARTICIPANT_IDENTITY  — identity to assign the dialed participant
- *   LIVEKIT_OUTBOUND_TRUNK_ID     — outbound trunk
+ *   SIP_PHONE_NUMBER           — number to dial, e.g. "+15551234"
+ *   SIP_PARTICIPANT_IDENTITY   — identity to assign the dialed participant
+ *   LIVEKIT_OUTBOUND_TRUNK_ID  — outbound trunk
  */
 export class MyAgent extends voice.Agent {
   constructor() {
