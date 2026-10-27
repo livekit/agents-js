@@ -142,6 +142,77 @@ it.each(['delete', 'replace'])('ignores stale acknowledgments after history %s',
   }
 });
 
+it.each(
+  [false, true].flatMap((beforeEnd) =>
+    ['', 'Server retained all words'].flatMap((keptText) =>
+      ['unavailable', 'stale'].map((reply) => ({ beforeEnd, keptText, reply })),
+    ),
+  ),
+)(
+  'keeps retained text through late playback cuts beforeEnd=$beforeEnd keptText=$keptText reply=$reply',
+  async ({ beforeEnd, keptText, reply }) => {
+    const { peer, session, cuts, ends } = await setup();
+    peer.accepted();
+    peer.message();
+    peer.text('Generated words');
+    if (beforeEnd) acknowledge(peer, keptText);
+    peer.ended();
+    if (!beforeEnd) acknowledge(peer, keptText);
+    await vi.waitFor(() => {
+      expect(cuts).toHaveLength(1);
+      expect(ends).toHaveLength(1);
+    });
+    const before = session.chatCtx;
+    if (reply === 'stale') {
+      peer.onRequest = (request) => {
+        if (request.type === 'conversation.item.truncate') {
+          peer.fault(request, 'truncate_not_current');
+          return true;
+        }
+      };
+    }
+    await session.truncate({
+      messageId: 'message-reply-1',
+      audioEndMs: 120,
+      audioTranscript: 'Played',
+    });
+    // Repeated playback reports, including an empty transcript, cannot erase server text.
+    await session.truncate({ messageId: 'message-reply-1', audioEndMs: 0 });
+    expect(session.chatCtx.items).toEqual(before.items);
+    expect(session.isClosed).toBe(false);
+
+    acknowledge(peer, 'Updated retained text');
+    await vi.waitFor(() => expect(cuts.at(-1)?.keptText).toBe('Updated retained text'));
+    await session.truncate({ messageId: 'message-reply-1', audioEndMs: 0 });
+    expect((session.chatCtx.getById('message-reply-1') as llm.ChatMessage).content).toEqual([
+      'Updated retained text',
+    ]);
+  },
+);
+
+it.each(['delete', 'replace'])(
+  'does not restore cached retained text after a history %s',
+  async (edit) => {
+    const state = await setup();
+    const { peer, session, cuts } = state;
+    await completed(state);
+    acknowledge(peer, 'Retained words');
+    await vi.waitFor(() => expect(cuts).toHaveLength(1));
+    const target = session.chatCtx;
+    if (edit === 'delete') target.items = [];
+    else (target.getById('message-reply-1') as llm.ChatMessage).content = ['Replacement'];
+    await session.updateChatCtx(target);
+    await session.truncate({
+      messageId: 'message-reply-1',
+      audioEndMs: 120,
+      audioTranscript: 'Played',
+    });
+    expect(session.chatCtx.items).toEqual(target.items);
+    await session.close();
+    expect(session.chatCtx.items).toEqual(target.items);
+  },
+);
+
 it.each(['append', 'delete', 'replace'])(
   'preserves acknowledged history during a pending %s edit',
   async (edit) => {

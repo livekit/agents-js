@@ -186,6 +186,7 @@ interface Message {
   audio: OutputQueue<AudioFrame>;
   transcript: string;
   playedTranscript?: string;
+  // Keep server history through completion: queued playback can still be interrupted.
   retainedText?: string;
   discarded: boolean;
 }
@@ -730,7 +731,8 @@ export class RealtimeSession extends llm.RealtimeSession {
     message.audio.discard();
     if (options.audioTranscript !== undefined || options.audioEndMs === 0) {
       message.playedTranscript = options.audioTranscript ?? '';
-      this.history!.recordAssistant(options.messageId, message.playedTranscript);
+      if (message.retainedText === undefined)
+        this.history!.recordAssistant(options.messageId, message.playedTranscript);
     }
     try {
       await this.track(
@@ -967,7 +969,7 @@ export class RealtimeSession extends llm.RealtimeSession {
         if (payload.keptText !== null && payload.contentIndex === 0) {
           for (const generation of this.generations.values()) {
             const message = generation.outputs.get(payload.itemId);
-            if (!generation.ended && message) {
+            if (message) {
               message.retainedText = payload.keptText;
               break;
             }
@@ -1000,7 +1002,6 @@ export class RealtimeSession extends llm.RealtimeSession {
           id,
           message.retainedText ?? message.playedTranscript ?? message.transcript,
         );
-      message.retainedText = undefined;
       if (discard) {
         message.text.discard();
         message.audio.discard();
