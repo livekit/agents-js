@@ -70,7 +70,10 @@ const detector = new voice.AMD(session, {
 });
 
 detector.on('amd_prediction', (event) => {
-  log().info({ turnId: event.turnId, category: event.category, reason: event.reason }, 'amd prediction');
+  log().info(
+    { turnId: event.turnId, category: event.category, reason: event.reason },
+    'amd prediction',
+  );
 });
 
 detector.on('amd_menu_observed', (event) => {
@@ -187,7 +190,10 @@ const session = new voice.AgentSession({
   vad: await silero.VAD.load(),
   turnHandling: { turnDetection: 'vad' },
 });
-await session.start({ agent: new voice.Agent({ instructions: 'Call about an appointment.' }), room: ctx.room });
+await session.start({
+  agent: new voice.Agent({ instructions: 'Call about an appointment.' }),
+  room: ctx.room,
+});
 
 const detector = new voice.AMD(session, {
   llm: 'google/gemma-4-31b-it',
@@ -209,15 +215,15 @@ history. The DTMF tool is available only to IVR replies and their tool follow-up
 
 ## Stage behavior
 
-| Prediction | Reply behavior | AMD lifecycle |
-| --- | --- | --- |
-| `uncertain` | Before a machine stage, permit normal reply handling. In a machine stage, keep that stage's reply rule. | Keep the current stage. |
-| `wait` | Skip the reply to an advertisement, promotion, or request to keep waiting. | Keep the current stage and pause the idle timer. |
-| `machine-screening` | Answer the screener's latest question briefly. | Continue listening for the next turn. |
-| `machine-vm` | Deliver one complete, uninterrupted message. | Keep listening during and after playback. |
-| `machine-ivr` | Use the actual prompt to choose DTMF or a spoken response. | Continue listening for the next turn. |
-| `human` | After a machine stage, supply temporary human instructions. Otherwise use normal Agent instructions. | Complete AMD. |
-| `machine-unavailable` | Cancel held replies; do not generate a machine reply. | Complete AMD. |
+| Prediction            | Reply behavior                                                                                          | AMD lifecycle                                    |
+| --------------------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| `uncertain`           | Before a machine stage, permit normal reply handling. In a machine stage, keep that stage's reply rule. | Keep the current stage.                          |
+| `wait`                | Skip the reply to an advertisement, promotion, or request to keep waiting.                              | Keep the current stage and pause the idle timer. |
+| `machine-screening`   | Answer the screener's latest question briefly.                                                          | Continue listening for the next turn.            |
+| `machine-vm`          | Deliver one complete, uninterrupted message.                                                            | Keep listening during and after playback.        |
+| `machine-ivr`         | Use the actual prompt to choose DTMF or a spoken response.                                              | Continue listening for the next turn.            |
+| `human`               | After a machine stage, supply temporary human instructions. Otherwise use normal Agent instructions.    | Complete AMD.                                    |
+| `machine-unavailable` | Cancel held replies; do not generate a machine reply.                                                   | Complete AMD.                                    |
 
 `uncertain` and `wait` are per-turn predictions, not stages. Each
 `amd_prediction` event carries both the `category` predicted for the turn and the
@@ -236,11 +242,11 @@ The last accepted prediction can be `wait` or `uncertain` while the retained sta
 is still voicemail, screening, or IVR. Empty-turn reuse does not replace this
 prediction snapshot.
 
-| Retained stage | Categories outside the recommendations |
-| --- | --- |
-| `machine-screening` | `machine-ivr` |
-| `machine-vm` | `machine-screening` |
-| `machine-ivr` | `machine-screening` |
+| Retained stage      | Categories outside the recommendations |
+| ------------------- | -------------------------------------- |
+| `machine-screening` | `machine-ivr`                          |
+| `machine-vm`        | `machine-screening`                    |
+| `machine-ivr`       | `machine-screening`                    |
 
 A prediction outside the recommendations corrects an earlier machine
 classification. For example, after a mistaken voicemail classification, the model
@@ -315,15 +321,15 @@ or execute the observed menu. Extraction has a 5-second deadline and at most
 
 All durations are in milliseconds.
 
-| Option | Default | Behavior |
-| --- | --- | --- |
-| `inferenceTimeout` | 2000 | Use the current stage on timeout; its silence rule still applies. |
-| `machineSilenceThreshold` | 1500 | Wait for continuous silence before authorizing a machine reply. Set to `0` to disable. |
-| `idleTimeout` | 10000 | Complete after inactivity outside voicemail. |
-| `voicemailIdleTimeout` | 60000 | Allow a delayed post-message menu after playback. |
-| `timeout` | 120000 | Fixed overall limit from the start of listening. |
-| `maxUncertainTurns` | 3 | Complete with the current stage after this many consecutive uncertain predictions. Any other valid prediction, including `wait`, resets the count. |
-| `maxInferenceTimeouts` | 3 | Complete after this many prediction timeouts. A valid prediction resets the count. |
+| Option                    | Default | Behavior                                                                                                                                           |
+| ------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `inferenceTimeout`        | 2000    | Use the current stage on timeout; its silence rule still applies.                                                                                  |
+| `machineSilenceThreshold` | 1500    | Wait for continuous silence before authorizing a machine reply. Set to `0` to disable.                                                             |
+| `idleTimeout`             | 10000   | Complete after inactivity outside voicemail.                                                                                                       |
+| `voicemailIdleTimeout`    | 60000   | Allow a delayed post-message menu after playback.                                                                                                  |
+| `timeout`                 | 120000  | Fixed overall limit from the start of listening.                                                                                                   |
+| `maxUncertainTurns`       | 3       | Complete with the current stage after this many consecutive uncertain predictions. Any other valid prediction, including `wait`, resets the count. |
+| `maxInferenceTimeouts`    | 3       | Complete after this many prediction timeouts. A valid prediction resets the count.                                                                 |
 
 At the inference deadline, AMD cancels the request and keeps the current stage.
 Results that arrive after the deadline are ignored. The next transcribed turn
