@@ -3,10 +3,18 @@
 // SPDX-License-Identifier: Apache-2.0
 import { initializeLogger, llm, voice } from '@livekit/agents';
 import { AudioFrame } from '@livekit/rtc-node';
+import type * as r from '@rimelabs/sdk';
+import { execFile } from 'node:child_process';
 import { ReadableStream } from 'node:stream/web';
+import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { RealtimeModel } from './realtime_model.js';
-import { PrismPeer, TestAudioOutput } from './test_helpers.js';
+import {
+  type PrismItemTruncatedEvent,
+  type PrismResponseEndedEvent,
+  RealtimeModel,
+} from './realtime_model.js';
+import { PrismPeer, type Request, TestAudioOutput } from './test_helpers.js';
 
 initializeLogger({ pretty: false, level: 'silent' });
 async function collect<T>(source: AsyncIterable<T>): Promise<T[]> {
@@ -677,6 +685,526 @@ describe('standard AgentSession', () => {
         'All words retained by the server',
       ]);
       expect(session.history.toJSON()).toEqual(before);
+    },
+  );
+});
+
+describe('Prism history', () => {
+  async function setupHistory() {
+    const state = await setup();
+    const { session } = state;
+    const ctx = llm.ChatContext.empty();
+    ctx.addMessage({ role: 'system', content: 'Context', id: 'system' });
+    ctx.addMessage({ role: 'user', content: 'Hello', id: 'user' });
+    ctx.addMessage({ role: 'assistant', content: 'Welcome', id: 'assistant' });
+    await session.updateChatCtx(ctx);
+    return { ...state, ctx };
+  }
+
+  it('keeps independent acknowledged snapshots', async () => {
+    const { session, ctx } = await setupHistory();
+    (ctx.items[0] as llm.ChatMessage).content[0] = 'Changed externally';
+    const copy = session.chatCtx;
+    (copy.items[1] as llm.ChatMessage).content[0] = 'Changed snapshot';
+    expect((session.chatCtx.items[0] as llm.ChatMessage).textContent).toBe('Context');
+    expect((session.chatCtx.items[1] as llm.ChatMessage).textContent).toBe('Hello');
+    const history = await session.getHistory();
+    expect(history).toHaveLength(3);
+  });
+
+  it('preserves deletion-only edits without recreating surviving turns', async () => {
+    const { peer, session } = await setupHistory();
+    const ctx = session.chatCtx;
+    ctx.remove('user');
+    await session.updateChatCtx(ctx);
+    expect(peer.requests.filter((q) => q.type === 'conversation.item.create')).toHaveLength(3);
+    expect(peer.requests.filter((q) => q.type === 'conversation.item.delete')).toHaveLength(1);
+    expect(
+      (await session.getHistory()).map((item) => item.type === 'message' && item.text),
+    ).toEqual(['Context', 'Welcome']);
+  });
+
+  it('rebuilds completed history when its order or content changes', async () => {
+    const { peer, session } = await setupHistory();
+    const ctx = session.chatCtx;
+    ctx.items.reverse();
+    (ctx.items[0] as llm.ChatMessage).content = ['Revised'];
+    await session.updateChatCtx(ctx);
+    expect(peer.requests.filter((q) => q.type === 'conversation.item.delete')).toHaveLength(3);
+    expect(
+      (await session.getHistory()).map((item) => item.type === 'message' && item.text),
+    ).toEqual(['Revised', 'Hello', 'Context']);
+  });
+
+  it.each(['media', 'long', 'unicode', 'pending', 'orphan', 'duplicate', 'split-tool'])(
+    'validates the whole %s edit before mutation',
+    async (kind) => {
+      const { peer, session } = await setupHistory();
+      const ctx = session.chatCtx;
+      ctx.addMessage({ role: 'user', content: 'This valid message must not be sent' });
+      if (kind === 'media')
+        ctx.addMessage({
+          role: 'user',
+          content: [
+            { type: 'image_content', image: 'https://example.com/image.png' } as llm.ImageContent,
+          ],
+        });
+      if (kind === 'long') ctx.addMessage({ role: 'user', content: 'x'.repeat(4001) });
+      if (kind === 'unicode') ctx.addMessage({ role: 'user', content: '\ud800' });
+      if (kind === 'duplicate') ctx.items.push(ctx.items[0]!);
+      if (kind === 'pending' || kind === 'split-tool')
+        ctx.items.push(new llm.FunctionCall({ callId: 'call', name: 'lookup', args: '{}' }));
+      if (kind === 'split-tool')
+        ctx.addMessage({ role: 'assistant', content: 'Between call and result' });
+      if (kind === 'orphan' || kind === 'split-tool')
+        ctx.items.push(
+          new llm.FunctionCallOutput({ callId: 'call', output: '42', isError: false }),
+        );
+      const before = peer.requests.length;
+      await expect(session.updateChatCtx(ctx)).rejects.toThrow();
+      expect(peer.requests).toHaveLength(before);
+      expect(session.chatCtx.items).toHaveLength(3);
+    },
+  );
+
+  it('imports completed tools and deletes each pair once', async () => {
+    const { peer, session } = await setupHistory();
+    const ctx = session.chatCtx;
+    ctx.items.push(new llm.FunctionCall({ callId: 'old', name: 'lookup', args: '{}' }));
+    ctx.items.push(new llm.FunctionCallOutput({ callId: 'old', output: 'Oops', isError: true }));
+    await session.updateChatCtx(ctx);
+    expect(peer.history.at(-1)?.output).toContain('tool_error');
+    await session.updateChatCtx(llm.ChatContext.empty());
+    expect(peer.requests.filter((q) => q.type === 'conversation.item.delete')).toHaveLength(4);
+    expect(peer.history).toEqual([]);
+  });
+
+  it('fails the session when a batch partially applies', async () => {
+    const { peer, session, errors } = await setupHistory();
+    let mutations = 0;
+    peer.onRequest = (q) => {
+      if (q.type === 'conversation.item.create' && ++mutations === 2) {
+        peer.fault(q, 'invalid_item');
+        return true;
+      }
+    };
+    const ctx = session.chatCtx;
+    ctx.addMessage({ role: 'user', content: 'First' });
+    ctx.addMessage({ role: 'user', content: 'Second' });
+    await expect(session.updateChatCtx(ctx)).rejects.toThrow('partially applied');
+    await session.close();
+    expect(errors.filter((error) => !error.recoverable)).toHaveLength(1);
+    await expect(session.updateInstructions('Do not continue')).rejects.toThrow();
+  });
+
+  it('preserves events received while an edit waits for acknowledgment', async () => {
+    const { peer, session } = await setupHistory();
+    peer.onRequest = (q) => {
+      if (q.type !== 'conversation.item.create') return;
+      peer.emit('input_audio_buffer.committed', { item_id: 'spoken' });
+      peer.emit('conversation.item.input_audio_transcription.completed', {
+        item_id: 'spoken',
+        transcript: 'Spoken during update',
+      });
+    };
+    const ctx = session.chatCtx;
+    ctx.addMessage({ role: 'user', content: 'Typed' });
+    await session.updateChatCtx(ctx);
+    await vi.waitFor(() => expect(session.chatCtx.getById('spoken')).toBeDefined());
+    expect(session.chatCtx.items).toHaveLength(5);
+  });
+
+  it('does not replace live records with an incomplete server snapshot', async () => {
+    const { peer, session } = await setupHistory();
+    peer.accepted(undefined, 'live');
+    peer.tool('live');
+    await vi.waitFor(() => expect(session.chatCtx.getById('item-call-1')).toBeDefined());
+    peer.history = [];
+    expect(await session.getHistory()).toEqual([]);
+    expect(session.chatCtx.getById('item-call-1')).toBeDefined();
+    const ctx = session.chatCtx;
+    ctx.items.reverse();
+    await expect(session.updateChatCtx(ctx)).rejects.toThrow();
+    peer.ended('live');
+  });
+});
+
+describe('Prism truncation', () => {
+  async function setupTruncation() {
+    const { peer, session } = await setup({ requestTimeout: 1000 });
+    const cuts: PrismItemTruncatedEvent[] = [];
+    const ends: PrismResponseEndedEvent[] = [];
+    session.on('item_truncated', (event) => cuts.push(event));
+    session.on('response_ended', (event) => ends.push(event));
+    return { peer, session, cuts, ends };
+  }
+  function acknowledge(
+    peer: PrismPeer,
+    keptText: string | null,
+    itemId = 'message-reply-1',
+    contentIndex = 0,
+  ) {
+    peer.emit('conversation.item.truncated', {
+      item_id: itemId,
+      content_index: contentIndex,
+      audio_end_ms: 120,
+      ...(keptText === null ? {} : { prism_kept_text: keptText }),
+    });
+  }
+  async function completed({ peer, session }: Awaited<ReturnType<typeof setupTruncation>>) {
+    peer.accepted();
+    peer.message();
+    peer.text('The full generated answer');
+    peer.ended();
+    await vi.waitFor(() => expect(session.chatCtx.getById('message-reply-1')).toBeDefined());
+  }
+
+  it.each([null, '', 'The full', 'The full generated answer'])(
+    'applies retained text %j without changing snapshots or metadata',
+    async (keptText) => {
+      const state = await setupTruncation();
+      const { peer, session, cuts } = state;
+      await completed(state);
+      const before = session.chatCtx.getById('message-reply-1') as llm.ChatMessage;
+      acknowledge(peer, keptText);
+      await vi.waitFor(() => expect(cuts).toHaveLength(1));
+      const after = session.chatCtx.getById(before.id) as llm.ChatMessage;
+      expect(after.content).toEqual([keptText ?? before.textContent]);
+      expect(after.createdAt).toBe(before.createdAt);
+      expect(before.textContent).toBe('The full generated answer');
+      expect(cuts[0]).toMatchObject({
+        itemId: before.id,
+        contentIndex: 0,
+        audioEndMs: 120,
+        keptText,
+      });
+      acknowledge(peer, null);
+      await vi.waitFor(() => expect(cuts).toHaveLength(2));
+      expect(session.chatCtx.getById(before.id)).toEqual(after);
+    },
+  );
+
+  it.each([null, '', 'Retained words'])(
+    'preserves early retained text %j through completion and cleanup',
+    async (keptText) => {
+      const { peer, session, cuts, ends } = await setupTruncation();
+      peer.accepted();
+      peer.message();
+      peer.text('Generated words');
+      acknowledge(peer, keptText);
+      acknowledge(peer, null);
+      await vi.waitFor(() => expect(cuts).toHaveLength(2));
+      peer.ended();
+      await vi.waitFor(() => expect(ends).toHaveLength(1));
+      expect((session.chatCtx.getById('message-reply-1') as llm.ChatMessage).content).toEqual([
+        keptText ?? 'Generated words',
+      ]);
+      await session.updateChatCtx(llm.ChatContext.empty());
+      await session.close();
+      expect(session.chatCtx.items).toEqual([]);
+    },
+  );
+
+  it.each(['', 'Server retained all words'])(
+    'keeps early retained text %j when cancellation records a playback transcript',
+    async (keptText) => {
+      const { peer, session, cuts } = await setupTruncation();
+      peer.accepted();
+      peer.message();
+      peer.text('Generated words');
+      acknowledge(peer, keptText);
+      await vi.waitFor(() => expect(cuts).toHaveLength(1));
+      await session.truncate({
+        messageId: 'message-reply-1',
+        audioEndMs: 120,
+        audioTranscript: 'Played',
+      });
+      expect((session.chatCtx.getById('message-reply-1') as llm.ChatMessage).content).toEqual([
+        keptText,
+      ]);
+    },
+  );
+
+  it.each(['delete', 'replace'])('ignores stale acknowledgments after history %s', async (edit) => {
+    const state = await setupTruncation();
+    const { peer, session, cuts } = state;
+    await completed(state);
+    const target = session.chatCtx;
+    if (edit === 'delete') target.items = [];
+    else (target.getById('message-reply-1') as llm.ChatMessage).content = ['Replacement'];
+    await session.updateChatCtx(target);
+    acknowledge(peer, 'Stale text');
+    await vi.waitFor(() => expect(cuts).toHaveLength(1));
+    expect(session.chatCtx.items).toEqual(target.items);
+    if (edit === 'replace') {
+      const serverId = peer.history.find((item) => item.role === 'assistant')!.id!;
+      acknowledge(peer, 'New retained text', serverId);
+      await vi.waitFor(() => expect(cuts).toHaveLength(2));
+      expect((session.chatCtx.getById('message-reply-1') as llm.ChatMessage).content).toEqual([
+        'New retained text',
+      ]);
+    }
+  });
+
+  it.each(
+    [false, true].flatMap((beforeEnd) =>
+      ['', 'Server retained all words'].flatMap((keptText) =>
+        ['unavailable', 'stale'].map((reply) => ({ beforeEnd, keptText, reply })),
+      ),
+    ),
+  )(
+    'keeps retained text through late playback cuts beforeEnd=$beforeEnd keptText=$keptText reply=$reply',
+    async ({ beforeEnd, keptText, reply }) => {
+      const { peer, session, cuts, ends } = await setupTruncation();
+      peer.accepted();
+      peer.message();
+      peer.text('Generated words');
+      if (beforeEnd) acknowledge(peer, keptText);
+      peer.ended();
+      if (!beforeEnd) acknowledge(peer, keptText);
+      await vi.waitFor(() => {
+        expect(cuts).toHaveLength(1);
+        expect(ends).toHaveLength(1);
+      });
+      const before = session.chatCtx;
+      if (reply === 'stale') {
+        peer.onRequest = (request) => {
+          if (request.type === 'conversation.item.truncate') {
+            peer.fault(request, 'truncate_not_current');
+            return true;
+          }
+        };
+      }
+      await session.truncate({
+        messageId: 'message-reply-1',
+        audioEndMs: 120,
+        audioTranscript: 'Played',
+      });
+      // Repeated playback reports, including an empty transcript, cannot erase server text.
+      await session.truncate({ messageId: 'message-reply-1', audioEndMs: 0 });
+      expect(session.chatCtx.items).toEqual(before.items);
+      expect(session.isClosed).toBe(false);
+
+      acknowledge(peer, 'Updated retained text');
+      await vi.waitFor(() => expect(cuts.at(-1)?.keptText).toBe('Updated retained text'));
+      await session.truncate({ messageId: 'message-reply-1', audioEndMs: 0 });
+      expect((session.chatCtx.getById('message-reply-1') as llm.ChatMessage).content).toEqual([
+        'Updated retained text',
+      ]);
+    },
+  );
+
+  it.each(['delete', 'replace'])(
+    'does not restore cached retained text after a history %s',
+    async (edit) => {
+      const state = await setupTruncation();
+      const { peer, session, cuts } = state;
+      await completed(state);
+      acknowledge(peer, 'Retained words');
+      await vi.waitFor(() => expect(cuts).toHaveLength(1));
+      const target = session.chatCtx;
+      if (edit === 'delete') target.items = [];
+      else (target.getById('message-reply-1') as llm.ChatMessage).content = ['Replacement'];
+      await session.updateChatCtx(target);
+      await session.truncate({
+        messageId: 'message-reply-1',
+        audioEndMs: 120,
+        audioTranscript: 'Played',
+      });
+      expect(session.chatCtx.items).toEqual(target.items);
+      await session.close();
+      expect(session.chatCtx.items).toEqual(target.items);
+    },
+  );
+
+  it.each(['append', 'delete', 'replace'])(
+    'preserves acknowledged history during a pending %s edit',
+    async (edit) => {
+      const state = await setupTruncation();
+      const { peer, session, cuts } = state;
+      await completed(state);
+      const target = session.chatCtx;
+      if (edit === 'append') target.addMessage({ role: 'user', content: 'Next' });
+      else if (edit === 'delete') target.items = [];
+      else (target.getById('message-reply-1') as llm.ChatMessage).content = ['Replacement'];
+      let held: Request | undefined;
+      peer.onRequest = (request) => {
+        if (
+          request.type === 'conversation.item.create' ||
+          request.type === 'conversation.item.delete'
+        ) {
+          held = request;
+          return true;
+        }
+      };
+      const update = session.updateChatCtx(target);
+      try {
+        await vi.waitFor(() => expect(held).toBeDefined());
+        acknowledge(peer, 'Retained words');
+        await vi.waitFor(() => expect(cuts).toHaveLength(1));
+      } finally {
+        peer.onRequest = undefined;
+        if (held?.type === 'conversation.item.create') {
+          const item = { ...held.item!, id: 'held-item' };
+          peer.history.push(item);
+          peer.emit('conversation.item.created', { prism_request_event_id: held.event_id, item });
+        } else if (held)
+          peer.emit('conversation.item.deleted', {
+            prism_request_event_id: held.event_id,
+            item_id: held.item_id,
+          });
+        await update;
+      }
+      if (edit === 'append') {
+        expect((session.chatCtx.getById('message-reply-1') as llm.ChatMessage).content).toEqual([
+          'Retained words',
+        ]);
+        expect(session.chatCtx.items.at(-1)).toEqual(target.items.at(-1));
+      } else expect(session.chatCtx.items).toEqual(target.items);
+    },
+  );
+
+  it('treats unknown items and other content parts as diagnostics only', async () => {
+    const state = await setupTruncation();
+    const { peer, session, cuts } = state;
+    await completed(state);
+    const before = session.chatCtx;
+    acknowledge(peer, 'Unknown', 'unknown');
+    acknowledge(peer, 'Other part', 'message-reply-1', 1);
+    await vi.waitFor(() => expect(cuts).toHaveLength(2));
+    expect(session.chatCtx.items).toEqual(before.items);
+  });
+
+  it.each(['completed', 'cancelled', 'failed'])(
+    'exposes %s response summaries without deleting history',
+    async (status) => {
+      const state = await setupTruncation();
+      const { peer, session, cuts, ends } = state;
+      await completed(state);
+      const before = session.chatCtx;
+      for (const [index, summary] of [
+        undefined,
+        { items_left_out: 3 },
+        { items_left_out: 3, first_kept_item_id: 'kept' },
+      ].entries()) {
+        const id = `summary-${index}`;
+        peer.accepted(undefined, id);
+        peer.emit('response.done', {
+          response: { id, status, ...(summary === undefined ? {} : { prism_truncation: summary }) },
+        });
+        await vi.waitFor(() => expect(ends).toHaveLength(index + 2));
+        expect(ends.at(-1)).toMatchObject({
+          status,
+          truncation: summary
+            ? { itemsLeftOut: 3, firstKeptItemId: summary.first_kept_item_id ?? null }
+            : null,
+        });
+        expect(session.chatCtx.items).toEqual(before.items);
+      }
+      // History acknowledgments do not depend on completed response records.
+      (session as unknown as { generations: Map<string, unknown> }).generations.clear();
+      acknowledge(peer, 'Retained');
+      await vi.waitFor(() => expect(cuts).toHaveLength(1));
+      expect((session.chatCtx.getById('message-reply-1') as llm.ChatMessage).content).toEqual([
+        'Retained',
+      ]);
+    },
+  );
+
+  it.each(
+    [false, true].flatMap((abandoned) =>
+      [false, true].flatMap((afterEnd) =>
+        ['', 'Retained'].map((keptText) => ({ abandoned, afterEnd, keptText })),
+      ),
+    ),
+  )(
+    'preserves buffered truncation with abandoned=$abandoned afterEnd=$afterEnd keptText=$keptText',
+    async ({ abandoned, afterEnd, keptText }) => {
+      const { peer, session, cuts, ends } = await setupTruncation();
+      const sdk = (session as unknown as { sdk: r.RealtimeSession }).sdk;
+      const original = sdk.requestReply.bind(sdk);
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      vi.spyOn(sdk, 'requestReply').mockImplementation(async (...args) => {
+        const ref = await original(...args);
+        await gate;
+        return ref;
+      });
+      const controller = new AbortController();
+      const reply = session.generateReply(undefined, { signal: controller.signal });
+      const result = reply.then(
+        (value) => ({ value }),
+        (error: unknown) => ({ error }),
+      );
+      try {
+        await vi.waitFor(() =>
+          expect(peer.requests.some((q) => q.type === 'response.create')).toBe(true),
+        );
+        peer.accepted(peer.requests.find((q) => q.type === 'response.create'));
+        peer.message();
+        peer.text('Generated');
+        if (afterEnd) peer.ended();
+        acknowledge(peer, keptText);
+        acknowledge(peer, null);
+        if (!afterEnd) peer.ended();
+        await vi.waitFor(() => {
+          expect(cuts).toHaveLength(2);
+          expect(ends).toHaveLength(1);
+        });
+        expect(session.chatCtx.items).toEqual([]);
+        if (abandoned) controller.abort();
+      } finally {
+        release();
+      }
+      const outcome = await result;
+      if (abandoned) {
+        expect(outcome).toHaveProperty('error');
+        expect(session.chatCtx.items).toEqual([]);
+      } else {
+        expect(outcome).toHaveProperty('value');
+        expect((session.chatCtx.getById('message-reply-1') as llm.ChatMessage).content).toEqual([
+          keptText,
+        ]);
+      }
+      expect(cuts).toHaveLength(2);
+    },
+  );
+});
+
+describe('Prism packaging', () => {
+  it.each(['esm', 'cjs'])(
+    'connects from the built %s package and retains TTS exports',
+    async (format) => {
+      const peer = await new PrismPeer().start();
+      try {
+        const load =
+          format === 'esm'
+            ? "const { realtime, TTS } = await import('./dist/index.js'); const core = await import('@livekit/agents');"
+            : "const { realtime, TTS } = require('./dist/index.cjs'); const core = require('@livekit/agents');";
+        const script = `${load}
+      core.initializeLogger({ pretty: false, level: 'silent' });
+      if (typeof TTS !== 'function') throw new Error('Missing TTS');
+      const model = new realtime.RealtimeModel({ apiKey: 'test', endpoint: process.argv[1] });
+      const session = model.session();
+      await session.updateInstructions('Packaging check');
+      if (model.sessionInfo.voice !== 'test') throw new Error('Connection failed');
+      await model.close();
+      console.log('connected');`;
+        const wrapped =
+          format === 'cjs'
+            ? `(async () => { ${script} })().catch(error => { console.error(error); process.exitCode = 1; });`
+            : script;
+        const { stdout } = await promisify(execFile)(
+          process.execPath,
+          [...(format === 'esm' ? ['--input-type=module'] : []), '-e', wrapped, peer.endpoint],
+          { cwd: fileURLToPath(new URL('../..', import.meta.url)), timeout: 5000 },
+        );
+        expect(stdout).toContain('connected');
+      } finally {
+        await peer.close();
+      }
     },
   );
 });
