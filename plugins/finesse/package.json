@@ -1,6 +1,6 @@
 {
   "name": "@livekit/agents-plugin-finesse",
-  "version": "1.9.3",
+  "version": "1.9.4",
   "description": "Finesse plugin for LiveKit Node Agents",
   "main": "dist/index.js",
   "require": "dist/index.cjs",

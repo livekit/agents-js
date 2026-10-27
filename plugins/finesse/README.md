@@ -26,8 +26,8 @@ pnpm add @livekit/agents-plugin-finesse
 
 ## Usage
 
-Set `FINESSE_API_KEY` in your environment, or pass `apiKey`. Create a key in the
-[Finesse dashboard](https://finesse.flamapp.ai/dashboard) under **Settings → API keys**.
+Set `FINESSE_API_KEY` in your environment, or pass `apiKey`. Create a key on the
+[API keys page](https://finesse.flamapp.ai/dashboard/settings?tab=api-keys) of the Finesse dashboard.
 
 ```typescript
 import { voice } from '@livekit/agents';
