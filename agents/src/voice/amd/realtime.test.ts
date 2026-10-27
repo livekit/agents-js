@@ -936,6 +936,32 @@ describe('AMD with realtime models', () => {
     expect(session.history.items).toContain(outputs[0]);
   });
 
+  it('a tool follow-up keeps the stage instructions', async () => {
+    const original = new Agent({
+      instructions: 'Call about an appointment.',
+      tools: {
+        lookup: tool({
+          description: 'Look up the appointment.',
+          execute: async () => 'Tomorrow at 10 AM.',
+        }),
+      },
+    });
+    const { session, classifier, rt } = await running({ agent: original });
+    const { handle } = await reply(session, classifier, rt, AMDCategory.MACHINE_SCREENING);
+    expect(rt.replyInstructions).toEqual([DEFAULT_SCREENING_INSTRUCTIONS]);
+    respond(rt, {
+      toolCall: FunctionCall.create({ callId: 'lookup', name: 'lookup', args: '{}' }),
+    });
+    await eventually(() => rt.generateReplyCalls === 2);
+    // Python passes the reply's instructions to its tool follow-up (#6202)
+    expect(rt.replyInstructions).toEqual([
+      DEFAULT_SCREENING_INSTRUCTIONS,
+      DEFAULT_SCREENING_INSTRUCTIONS,
+    ]);
+    respond(rt);
+    await done(handle);
+  });
+
   it.skip.each([false, true])(
     'IVR DTMF only generates a reply on failure (publish fails: %s) (waits for the #5310 per-response tools port and the #7340 ToolResult port)',
     () => {},

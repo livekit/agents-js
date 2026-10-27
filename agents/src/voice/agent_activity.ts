@@ -2696,8 +2696,11 @@ export class AgentActivity implements RecognitionHooks {
    */
   get _isAgentBusy(): boolean {
     const agentState = this.agentSession.agentState;
+    // the scheduler stops popping while authorization is paused, so skip finished handles
+    // the Python scheduler would already have dropped
+    const queued = [...this.speechQueue.clone()].some(([, , speech]) => !speech.done());
     return (
-      this.speechQueue.size() > 0 ||
+      queued ||
       (this._currentSpeech !== undefined && !this._currentSpeech.done()) ||
       this.pausedSpeech !== undefined ||
       this.falseInterruptionTimer !== undefined ||
@@ -4819,6 +4822,7 @@ export class AgentActivity implements RecognitionHooks {
     modelSettings: ModelSettings,
     replyAbortController: AbortController,
     addToChatCtx: boolean = true,
+    instructions?: string | Instructions,
   ): Promise<void> {
     return withAgentTurn(
       stateLease.speechHandle,
@@ -4832,6 +4836,7 @@ export class AgentActivity implements RecognitionHooks {
             modelSettings,
             replyAbortController,
             addToChatCtx,
+            instructions,
             span,
             inferenceSpan,
           });
@@ -4848,6 +4853,7 @@ export class AgentActivity implements RecognitionHooks {
     modelSettings,
     replyAbortController,
     addToChatCtx,
+    instructions,
     span,
     inferenceSpan,
   }: {
@@ -4856,6 +4862,8 @@ export class AgentActivity implements RecognitionHooks {
     modelSettings: ModelSettings;
     replyAbortController: AbortController;
     addToChatCtx: boolean;
+    /** The reply's instructions, reused by its tool follow-up. */
+    instructions?: string | Instructions;
     span: Span;
     inferenceSpan: Span;
   }): Promise<void> {
@@ -5513,6 +5521,7 @@ export class AgentActivity implements RecognitionHooks {
         this.realtimeReplyTask({
           stateLease: replyLease,
           modelSettings: { toolChoice },
+          instructions,
           abortController,
         }),
       ownedSpeechHandle: speechHandle,
@@ -5769,6 +5778,8 @@ export class AgentActivity implements RecognitionHooks {
         generationEvent,
         { toolChoice },
         abortController,
+        true,
+        instructions,
       );
     } finally {
       if (onEnterScope) this.realtimeOnEnterScopes.delete(onEnterScope);

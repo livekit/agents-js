@@ -421,6 +421,9 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
    * {@link AMD.aclose} when done, for example in a `finally` block.
    */
   async start(): Promise<this> {
+    // Imported lazily, like Python, to keep the beta tools out of the voice import graph.
+    // Import first, so the checks below and the installation run without a yield.
+    this.dtmfTool ??= (await import('../../beta/tools/send_dtmf.js')).sendDtmfEvents;
     const session = this.session;
     const activity = session._activity;
     if (activity === undefined) {
@@ -458,8 +461,6 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     }
 
     try {
-      // imported lazily, like Python, to keep the beta tools out of the voice import graph
-      this.dtmfTool = (await import('../../beta/tools/send_dtmf.js')).sendDtmfEvents;
       if (this.llmModel !== undefined) {
         this.llm = inference.LLM.fromModelString(this.llmModel);
       }
@@ -883,7 +884,7 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
 
       for (const released of events) {
         const copy = { ...released };
-        this.emit('amd_prediction', copy);
+        this.emitEvent('amd_prediction', copy);
         this.session._onAmdPrediction(copy);
         this.logger.info(
           {
@@ -966,7 +967,11 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     const controller = new AbortController();
     const onAbort = () => controller.abort();
     signal.addEventListener('abort', onAbort, { once: true });
-    const timeout = setTimeout(() => controller.abort(), MENU_TIMEOUT);
+    let timedOut = false;
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, MENU_TIMEOUT);
     let menu: amdInference.AMDIVRMenuResponse;
     try {
       menu = await amdInference.extractIvrMenu(this.resources.llm, transcript, {
@@ -974,7 +979,13 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
         signal: controller.signal,
       });
     } catch (error) {
-      this.logger.debug({ errorType: errorType(error) }, 'amd menu extraction failed');
+      // a cancelled task ends quietly, as Python's CancelledError does
+      if (!signal.aborted) {
+        this.logger.debug(
+          { errorType: timedOut ? 'TimeoutError' : errorType(error) },
+          'amd menu extraction failed',
+        );
+      }
       return;
     } finally {
       clearTimeout(timeout);
@@ -987,7 +998,7 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     ) {
       return;
     }
-    this.emit('amd_menu_observed', {
+    this.emitEvent('amd_menu_observed', {
       type: 'amd_menu_observed',
       sessionId: this.sessionId,
       turnId,
@@ -1418,13 +1429,33 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     } finally {
       const result = this.completion();
       this.resources.completion.resolve(result);
-      this.emit('amd_completed', result);
+      this.emitEvent('amd_completed', result);
     }
   }
 
   // endregion
 
   // region: utilities
+
+  /**
+   * Emit like Python's `rtc.EventEmitter`: each listener runs, and a listener error is logged
+   * instead of thrown, except a `TypeError`.
+   */
+  private emitEvent<K extends keyof AMDCallbacks>(
+    event: K,
+    ...args: Parameters<AMDCallbacks[K]>
+  ): void {
+    for (const listener of this.rawListeners(event)) {
+      try {
+        (listener as (...values: Parameters<AMDCallbacks[K]>) => void).apply(this, args);
+      } catch (error) {
+        if (error instanceof TypeError) {
+          throw error;
+        }
+        this.logger.error({ error }, `failed to emit event ${event}`);
+      }
+    }
+  }
 
   /** Run a background task that cleanup cancels and that ends the run if it fails. */
   private spawn(fn: (signal: AbortSignal) => Promise<void>, name: string): Task<void> {
