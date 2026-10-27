@@ -24,6 +24,7 @@ import { buildMetadataHeaders, connectWs, createAccessToken } from '../utils.js'
 import {
   type BaseStreamingTurnDetectorOptions,
   type BaseStreamingTurnDetectorStream,
+  DEFAULT_SAMPLE_RATE,
   type FlushSentinel,
   type StreamingTurnDetectionTransport,
 } from './base.js';
@@ -228,8 +229,9 @@ export class LocalTransport implements StreamingTurnDetectionTransport {
     this._turnSamples += frame.data.length;
   }
 
-  onStartOfTurn(turnSamples: number): void {
-    this._turnSamples = Math.min(this._turnSamples, turnSamples);
+  onStartOfTurn(elapsed: number): void {
+    const elapsedSamples = Math.floor((elapsed * DEFAULT_SAMPLE_RATE) / 1000);
+    this._turnSamples = Math.min(this._turnSamples, elapsedSamples);
   }
 
   async flush(_sentinel: FlushSentinel): Promise<void> {
@@ -346,7 +348,7 @@ export class CloudTransport implements StreamingTurnDetectionTransport {
     );
   }
 
-  onStartOfTurn(_turnSamples: number): void {}
+  onStartOfTurn(_elapsed: number): void {}
 
   async flush(_sentinel: FlushSentinel): Promise<void> {
     this._enqueue(

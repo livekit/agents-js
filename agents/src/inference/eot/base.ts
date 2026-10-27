@@ -65,12 +65,12 @@ export function isFlushSentinel(value: unknown): value is FlushSentinel {
 }
 
 /**
- * Marks the start of the user turn: it covers the last `turnSamples` of the frames
- * queued before it. Carried on the audio channel so it stays in order with the frames.
+ * Marks the start of the user turn, `elapsed` ms before the end of the frames queued
+ * before it. Carried on the audio channel so it stays in order with the frames.
  */
 export interface StartOfTurnSentinel {
   readonly kind: 'start_of_turn';
-  turnSamples: number;
+  elapsed: number;
 }
 
 export function isStartOfTurnSentinel(value: unknown): value is StartOfTurnSentinel {
@@ -92,7 +92,7 @@ export interface StreamingTurnDetectionTransport {
   run(): Promise<void>;
   runInference(requestId: string): void;
   pushFrame(frame: AudioFrame): Promise<void>;
-  onStartOfTurn(turnSamples: number): void;
+  onStartOfTurn(elapsed: number): void;
   flush(sentinel: FlushSentinel): Promise<void>;
   detach(): void;
 }
@@ -350,9 +350,8 @@ export class BaseStreamingTurnDetectorStream {
     }
     // measured now, while the frames queued so far end at the present; the transport may
     // drain them much later, e.g. after a cloud reconnect backlog
-    const elapsedMs = Math.max(0, Date.now() - startedAt);
-    const turnSamples = Math.floor((elapsedMs * this._opts.sampleRate) / 1000);
-    const sentinel: StartOfTurnSentinel = { kind: 'start_of_turn', turnSamples };
+    const elapsed = Math.max(0, Date.now() - startedAt);
+    const sentinel: StartOfTurnSentinel = { kind: 'start_of_turn', elapsed };
     void this._audioChannel.write(sentinel);
   }
 
@@ -519,7 +518,7 @@ export class BaseStreamingTurnDetectorStream {
         if (isFlushSentinel(value)) {
           await this._transport.flush(value);
         } else if (isStartOfTurnSentinel(value)) {
-          this._transport.onStartOfTurn(value.turnSamples);
+          this._transport.onStartOfTurn(value.elapsed);
         } else {
           await this._transport.pushFrame(value);
         }

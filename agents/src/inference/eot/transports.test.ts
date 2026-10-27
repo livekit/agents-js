@@ -313,7 +313,7 @@ describe('LocalTransportTurnSamples', () => {
     const local = makeLocal();
     await local.transport.pushFrame(pcmFrame(8000));
     await local.transport.pushFrame(pcmFrame(4000));
-    local.transport.onStartOfTurn(4000);
+    local.transport.onStartOfTurn(250);
     for (let i = 0; i < 40; i++) {
       await local.transport.pushFrame(pcmFrame(1600));
     }
@@ -327,7 +327,7 @@ describe('LocalTransportTurnSamples', () => {
   it('forgets the turn start after a flush', async () => {
     const local = makeLocal();
     await local.transport.pushFrame(pcmFrame(16000));
-    local.transport.onStartOfTurn(1600);
+    local.transport.onStartOfTurn(100);
     await local.transport.flush({ kind: 'flush' });
     await local.transport.pushFrame(pcmFrame(6000));
 
@@ -337,7 +337,7 @@ describe('LocalTransportTurnSamples', () => {
   it('covers at least the audio the model reads', async () => {
     const local = makeLocal();
     await local.transport.pushFrame(pcmFrame(WINDOW_SAMPLES));
-    local.transport.onStartOfTurn(800);
+    local.transport.onStartOfTurn(50);
 
     expect((await predictOnce(local)).turnSamples).toBe(WINDOW_SAMPLES);
   });
@@ -345,7 +345,7 @@ describe('LocalTransportTurnSamples', () => {
   it('clamps a turn longer than the audio to the flush', async () => {
     const local = makeLocal();
     await local.transport.pushFrame(pcmFrame(1600));
-    local.transport.onStartOfTurn(16000);
+    local.transport.onStartOfTurn(1000);
 
     expect((await predictOnce(local)).turnSamples).toBe(1600);
   });

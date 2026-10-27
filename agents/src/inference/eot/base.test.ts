@@ -47,8 +47,8 @@ class FakeTransport implements StreamingTurnDetectionTransport {
   async pushFrame(frame: AudioFrame): Promise<void> {
     this.audioEvents.push(['push_frame', frame.samplesPerChannel]);
   }
-  onStartOfTurn(turnSamples: number): void {
-    this.audioEvents.push(['on_start_of_turn', turnSamples]);
+  onStartOfTurn(elapsed: number): void {
+    this.audioEvents.push(['on_start_of_turn', elapsed]);
   }
   async flush(_sentinel: FlushSentinel): Promise<void> {
     this.audioEvents.push(['flush', undefined]);
@@ -127,7 +127,7 @@ describe('AudioTurnDetectionRequests', () => {
       }
       expect(s.fakeTransport.audioEvents).toEqual([
         ['push_frame', 160],
-        ['on_start_of_turn', 4000],
+        ['on_start_of_turn', 250],
         ['push_frame', 160],
         ['flush', undefined],
       ]);
