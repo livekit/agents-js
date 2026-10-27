@@ -1,0 +1,21 @@
+agents/src/voice/agent_activity.ts
+  s_a76e625a99c445::t_41436e488db88e 4647,4662,4680,4691-4692,4744,5313,5572
+agents/src/beta/tools/send_dtmf.ts
+  s_a76e625a99c445::t_ad8485a7bbe4ba 7,50,58,69,71-75,79-81
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cc631d17c817727f2109ab83314345d2dd2f33a3",
+  "prompts": {},
+  "sessions": {
+    "s_a76e625a99c445": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c9702b8a-b660-4f34-bd32-230591d391a0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
