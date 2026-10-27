@@ -233,9 +233,9 @@ export class LocalTransport implements StreamingTurnDetectionTransport {
   }
 
   onStartOfTurn(startedAt: number): void {
-    const turnDuration = Math.max(0, Date.now() - startedAt);
-    const turnSamples = Math.floor((turnDuration * DEFAULT_SAMPLE_RATE) / 1000);
-    this._turnStart = Math.max(0, this._numSamples - turnSamples);
+    const elapsed = Math.max(0, Date.now() - startedAt);
+    const elapsedSamples = Math.floor((elapsed * DEFAULT_SAMPLE_RATE) / 1000);
+    this._turnStart = Math.max(0, this._numSamples - elapsedSamples);
   }
 
   async flush(_sentinel: FlushSentinel): Promise<void> {
