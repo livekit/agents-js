@@ -68,6 +68,10 @@ export abstract class SupervisedProc {
     return undefined;
   }
 
+  /**
+   * Fields added to every log line this supervisor writes. Subclasses override this to add job
+   * context.
+   */
   protected loggingFields(): Record<string, unknown> {
     return {};
   }
