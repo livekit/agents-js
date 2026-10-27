@@ -19,7 +19,7 @@ import { fileURLToPath } from 'node:url';
 
 /**
  * Multi-turn answering-machine detection (AMD) on an outbound call. Mirrors python
- * `examples/telephony/amd.py`; see `telephony_amd.md` for how AMD works.
+ * `examples/telephony/amd.py`; see `README.md` for how AMD works.
  *
  * To place an outbound call, set all three:
  *
