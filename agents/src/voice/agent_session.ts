@@ -92,7 +92,7 @@ import {
   cleanupReusableResources,
   isSchedulingPausedError,
 } from './agent_activity.js';
-import type { AMD, AMDPredictionEvent } from './amd.js';
+import type { AMD, AMDPredictionEvent } from './amd/index.js';
 import type { _TurnDetector } from './audio_recognition.js';
 import { AgentsConsole } from './console_io.js';
 import {
@@ -146,6 +146,7 @@ import type {
   TurnHandlingOptions,
 } from './turn_config/turn_handling.js';
 import { migrateLegacyOptions, stripUndefined } from './turn_config/utils.js';
+import type { TurnHooks } from './turn_hooks.js';
 import { setParticipantSpanAttributes } from './utils.js';
 
 const SIP_RULE_ID_ATTR = 'sip.ruleID';
@@ -654,12 +655,11 @@ export class AgentSession<
   /** @internal */
   _roomIO?: RoomIO;
 
-  /**
-   * Currently active AMD instance, if one was constructed against this session.
-   * Mirrors python `AgentSession._amd`. Useful for tests, telemetry, and
-   * higher-level helpers that need to introspect classification state.
-   */
+  /** The running AMD instance, if any. Mirrors python `AgentSession._amd`. */
   private _amd: AMD | null = null;
+
+  /** @internal Hooks that observe committed turns and control their replies. */
+  _turnHooks: TurnHooks | undefined = undefined;
 
   /** @internal */
   _aecWarmupRemaining = 0;
@@ -1179,6 +1179,9 @@ export class AgentSession<
   }
 
   updateAgent(agent: Agent): void {
+    if (this._amd) {
+      throw new Error('agent handoffs are not supported while AMD is running');
+    }
     this.agent = agent;
 
     if (!this.started) {
@@ -1307,10 +1310,7 @@ export class AgentSession<
     super.emit(AgentSessionEventTypes.DebugMessage, debugMessage);
   }
 
-  /**
-   * The currently bound `AMD` instance, or `null` if AMD is not in use.
-   * Mirrors python `AgentSession.amd`.
-   */
+  /** The Answering Machine Detection (AMD) instance, or `null` if AMD is not running. */
   get amd(): AMD | null {
     return this._amd;
   }
@@ -1318,6 +1318,11 @@ export class AgentSession<
   /** @internal — used by AMD to register/unregister itself with the session. */
   _setAmd(amd: AMD | null): void {
     this._amd = amd;
+  }
+
+  /** @internal The activity being started by an agent handoff, if any. */
+  get _nextActivity(): AgentActivity | undefined {
+    return this.nextActivity;
   }
 
   /**
@@ -1337,15 +1342,6 @@ export class AgentSession<
    */
   _onAmdPrediction(event: AMDPredictionEvent): void {
     this.sessionHost?._onAmdPrediction(event);
-  }
-
-  /**
-   * @internal — returns a tee'd branch of the active participant audio stream
-   * for AMD's dedicated STT. Returns `undefined` when no `AgentActivity` is
-   * running yet (the AMD STT pump retries until an activity is available).
-   */
-  _subscribeAudioStream(): ReadableStream<AudioFrame> | undefined {
-    return this.activity?.subscribeAudioStream();
   }
 
   pauseReplyAuthorization(): void {
@@ -1567,6 +1563,9 @@ export class AgentSession<
       let handoffCtx: Context | undefined;
 
       try {
+        if (this._amd) {
+          throw new Error('agent handoffs are not supported while AMD is running');
+        }
         if (this.closing && newActivity === 'start') {
           this.logger.warn({ agentId: agent.id }, 'Session is closing, skipping start of activity');
           return;
@@ -1973,7 +1972,7 @@ export class AgentSession<
 
     this.emit(
       AgentSessionEventTypes.UserStateChanged,
-      createUserStateChangedEvent(oldState, state),
+      createUserStateChangedEvent(oldState, state, Date.now(), options?.lastSpeakingTime),
     );
   }
 
@@ -1991,7 +1990,7 @@ export class AgentSession<
   private onAudioEnabledChanged(enabled: boolean): void {
     if (!enabled && this._userState === 'speaking') {
       if (this.activity) {
-        this.activity.onEndOfSpeech(undefined);
+        this.activity.onEndOfSpeech(undefined, Date.now());
       } else {
         this._updateUserState('listening');
       }
@@ -2193,6 +2192,12 @@ export class AgentSession<
     this.closingController.abort();
     this._cancelUserAwayTimer();
     this._onAecWarmupExpired();
+
+    if (this._amd) {
+      await this._amd.aclose();
+      this._amd = null;
+      this._turnHooks = undefined;
+    }
 
     let activity = this.activity;
     // Let inline tasks finish their handoffs before closing the resumed parent.

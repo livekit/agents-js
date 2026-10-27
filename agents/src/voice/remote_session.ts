@@ -33,7 +33,7 @@ import type { SimulationContext } from '../simulation.js';
 import { AsyncIterableQueue, Event, Future, Task, asError, delay, shortuuid } from '../utils.js';
 import { version } from '../version.js';
 import type { AgentSession, AgentSessionUsage } from './agent_session.js';
-import { AMDCategory, type AMDPredictionEvent } from './amd.js';
+import { AMDCategory, type AMDPredictionEvent } from './amd/index.js';
 import type { TcpAudioInput, TcpAudioOutput } from './console_io.js';
 import {
   type AgentFalseInterruptionEvent,
@@ -584,9 +584,12 @@ const USER_STATE_MAP: Record<UserState, pb.UserState> = {
 const AMD_CATEGORY_MAP: Record<AMDCategory, pb.AmdCategory> = {
   [AMDCategory.HUMAN]: pb.AmdCategory.AMD_HUMAN,
   [AMDCategory.MACHINE_IVR]: pb.AmdCategory.AMD_MACHINE_IVR,
+  // TODO: The session-observability protocol does not yet represent screening or wait.
+  [AMDCategory.MACHINE_SCREENING]: pb.AmdCategory.AMD_UNKNOWN,
   [AMDCategory.MACHINE_VM]: pb.AmdCategory.AMD_MACHINE_VM,
   [AMDCategory.MACHINE_UNAVAILABLE]: pb.AmdCategory.AMD_MACHINE_UNAVAILABLE,
   [AMDCategory.UNCERTAIN]: pb.AmdCategory.AMD_UNCERTAIN,
+  [AMDCategory.WAIT]: pb.AmdCategory.AMD_UNKNOWN,
 };
 
 // ===========================================================================
@@ -1115,8 +1118,8 @@ export class SessionHost {
     this.emitEvent({
       case: 'amdPrediction',
       value: new pb.AgentSessionEvent_AmdPrediction({
-        speechDuration: msToDuration(event.speechDurationMs),
-        delay: msToDuration(event.delayMs),
+        speechDuration: msToDuration(event.speechDuration),
+        delay: msToDuration(event.delay),
         category: AMD_CATEGORY_MAP[event.category],
         reason: event.reason,
         transcript: event.transcript,

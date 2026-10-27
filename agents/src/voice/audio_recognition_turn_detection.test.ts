@@ -333,7 +333,7 @@ describe('VAD task lifecycle', () => {
 
     await vad.stop();
 
-    expect(hooks.onEndOfSpeech).toHaveBeenCalledWith(undefined);
+    expect(hooks.onEndOfSpeech).toHaveBeenCalledWith(undefined, expect.any(Number));
     expect(internals.speaking).toBe(false);
   });
 });
