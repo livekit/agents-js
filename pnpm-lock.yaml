@@ -1316,8 +1316,8 @@ importers:
         specifier: 0.0.1
         version: 0.0.1
       '@rimelabs/sdk':
-        specifier: 0.1.0-alpha.22
-        version: 0.1.0-alpha.22
+        specifier: 0.1.0-alpha.23
+        version: 0.1.0-alpha.23
       ws:
         specifier: 'catalog:'
         version: 8.21.3
@@ -2822,8 +2822,8 @@ packages:
   '@rimelabs/api@0.4.0':
     resolution: {integrity: sha512-Tj59qnCEOQPk68fTAXtpj6TqDh88zpasya9ZuzqHDs1uwJH2ZKUwRIlddzGfc/SaA9tCW8GxoJZGd9DFmhKigw==}
 
-  '@rimelabs/sdk@0.1.0-alpha.22':
-    resolution: {integrity: sha512-S8pQjKHJCgFQrNV4Qs7zjJUB+Vj3nkt9QEnfOoHw4oE/9NjPbvON7bBW/aDjxSM1g2d1zjXWw8rQJ68kwVq5lQ==}
+  '@rimelabs/sdk@0.1.0-alpha.23':
+    resolution: {integrity: sha512-55dh/3SOLK0+5bd/oXKHChI36r/i9mxoSPjO8p4/+0f8RaEpBgqTfkPKAqGg028sVc0VLRuH6YGshPI7WuDMxQ==}
     engines: {node: '>=22'}
 
   '@rollup/rollup-android-arm-eabi@4.62.2':
@@ -6890,7 +6890,7 @@ snapshots:
     dependencies:
       '@bufbuild/protobuf': 2.14.1
 
-  '@rimelabs/sdk@0.1.0-alpha.22':
+  '@rimelabs/sdk@0.1.0-alpha.23':
     dependencies:
       '@bufbuild/protobuf': 2.14.1
       '@grpc/grpc-js': 1.14.6

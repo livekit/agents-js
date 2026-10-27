@@ -93,7 +93,7 @@ Both local protocol tests and standard-session tests passed with the repository 
 at `f03a68ef` and published `@livekit/agents@1.9.4`, using Node.js 24.18.0. Earlier
 versions were not tested. The peer dependency remains the repository's release version.
 
-The plugin pins `@rimelabs/sdk` to `0.1.0-alpha.22` from public npm. If your machine
+The plugin pins `@rimelabs/sdk` to `0.1.0-alpha.23` from public npm. If your machine
 routes `@rimelabs` to GitHub Packages, install with
 `pnpm install --@rimelabs:registry=https://registry.npmjs.org`.
 
