@@ -674,11 +674,18 @@ export class GPTLiveSession extends llm.DuplexSession<{
       const replyMs = speech && this.replyMs(speech);
       ends = replyMs !== undefined && event.start_ms != null && event.start_ms >= replyMs;
     } else {
-      // a pause on the model's clock ends its message even when its fragments arrived together
+      // a pause on the model's clock ends its message even when its fragments arrived together,
+      // and so does the caller speaking within a silence of the model's
+      const user = this.speech.get('user');
+      const startMs = event.start_ms;
       ends =
         speech?.endMs !== undefined &&
-        event.start_ms != null &&
-        event.start_ms - speech.endMs > MIN_SILENCE_DURATION;
+        startMs != null &&
+        (startMs - speech.endMs > MIN_SILENCE_DURATION ||
+          (user?.startMs !== undefined &&
+            user.endMs !== undefined &&
+            speech.endMs <= user.startMs &&
+            user.endMs <= startMs));
     }
     if (ends) {
       this.endSpeech(role);
@@ -744,9 +751,10 @@ export class GPTLiveSession extends llm.DuplexSession<{
     const speech = this.speech.get(role);
     this.speech.delete(role);
     if (!speech || role !== 'user') return;
-    // its answer is spent: no later turn began before it
+    // its answer is spent, and with it every earlier or untimed one, for no later turn to reuse
     const replyMs = this.replyMs(speech);
-    if (replyMs !== undefined) this.answers = this.answers.filter((answer) => answer > replyMs);
+    if (replyMs !== undefined)
+      this.answers = this.answers.filter((answer) => replyMs < answer && answer < Infinity);
     this.emit('input_audio_transcription_completed', {
       itemId: speech.messageId,
       transcript: speech.text,

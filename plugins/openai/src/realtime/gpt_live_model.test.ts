@@ -1042,6 +1042,48 @@ describe('GPTLiveModel', () => {
     expect(finals).toEqual(['Where is my order?']);
   });
 
+  it('takes a quick reply as an answer but not the model continuing over a barge-in', async () => {
+    const session = create();
+    const finals: string[] = [];
+    session.on('input_audio_transcription_completed', (event) => {
+      if (event.isFinal) finals.push(event.transcript);
+    });
+    await ready(session);
+    await server.send(session, transcript('assistant', 'Ready?', 0));
+    await server.send(session, transcript('user', 'Yes', 400));
+    await server.send(session, transcript('assistant', 'Great.', 800));
+    for (let i = 0; i < 8; i++) session.pushAudio(pcm());
+    expect(finals).toEqual(['Yes']);
+
+    await server.send(session, transcript('assistant', ' Your order', 1000));
+    await server.send(session, transcript('user', 'Wait', 1300));
+    await server.send(session, transcript('assistant', ' ships', 1400));
+    await server.send(session, transcript('user', ' stop', 1600));
+    for (let i = 0; i < 8; i++) session.pushAudio(pcm());
+    expect(finals).toEqual(['Yes']);
+  });
+
+  it('spends an untimed answer with its turn', async () => {
+    const session = create();
+    const finals: string[] = [];
+    session.on('input_audio_transcription_completed', (event) => {
+      if (event.isFinal) finals.push(event.transcript);
+    });
+    await ready(session);
+    for (let i = 0; i < 20; i++) session.pushAudio(pcm());
+    await server.send(session, transcript('user', 'Hi', 1000));
+    await server.send(session, {
+      type: 'session.delegation.created',
+      delegation: { id: 'd1', target: 'client' },
+    });
+    await server.send(session, { type: 'session.output_transcript.delta', delta: 'Hello.' });
+    for (let i = 0; i < 8; i++) session.pushAudio(pcm());
+    expect(finals).toEqual(['Hi']);
+    await server.send(session, transcript('user', 'Also', 5000));
+    for (let i = 0; i < 8; i++) session.pushAudio(pcm());
+    expect(finals).toEqual(['Hi']);
+  });
+
   it('commits the caller request before a tool call reads it', async () => {
     const session = create();
     const order: string[] = [];
