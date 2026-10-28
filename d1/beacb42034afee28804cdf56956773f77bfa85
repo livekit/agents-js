@@ -1,0 +1,19 @@
+agents/src/voice/remote_session_lifecycle.test.ts
+  s_de5d34fcc7db11::t_480f506ecc76b9 7,911,918,942-944,958-960
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d1beacb42034afee28804cdf56956773f77bfa85",
+  "prompts": {},
+  "sessions": {
+    "s_de5d34fcc7db11": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1461f-331c-7182-920c-a8752fbaf7b8",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
