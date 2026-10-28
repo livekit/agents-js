@@ -6,7 +6,7 @@
  * Audio EOT transports: cloud (WebSocket) + local (@livekit/local-inference).
  */
 import { type Duration, Timestamp } from '@bufbuild/protobuf';
-import { AgentInference } from '@livekit/protocol';
+import { AgentInference, AgentSession } from '@livekit/protocol';
 import type { AudioFrame } from '@livekit/rtc-node';
 import {
   APIConnectionError,
@@ -15,6 +15,7 @@ import {
   APITimeoutError,
 } from '../../_exceptions.js';
 import type { InferenceExecutor } from '../../ipc/inference_executor.js';
+import type { ChatContext } from '../../llm/chat_context.js';
 import { log } from '../../log.js';
 import { type StreamChannel, createStreamChannel } from '../../stream/stream_channel.js';
 import { type APIConnectOptions, intervalForRetry } from '../../types.js';
@@ -167,7 +168,7 @@ export class LocalTransport implements StreamingTurnDetectionTransport {
     this._streamRef = new WeakRef(stream);
   }
 
-  runInference(requestId: string): void {
+  runInference(requestId: string, _chatCtx?: ChatContext): void {
     const snapshot = this._buf.read();
     const task = this._predict(requestId, snapshot);
     this._tasks.add(task);
@@ -311,7 +312,28 @@ export class CloudTransport implements StreamingTurnDetectionTransport {
     return this._ws !== undefined && this._ws.readyState === WS_OPEN;
   }
 
-  runInference(requestId: string): void {
+  runInference(requestId: string, chatCtx?: ChatContext): void {
+    const context = new AgentInference.EotInputChatContext();
+    if (chatCtx !== undefined) {
+      for (let i = chatCtx.items.length - 1; i >= 0; i--) {
+        const item = chatCtx.items[i]!;
+        if (item.type === 'message' && item.role === 'assistant') {
+          const text = item.textContent;
+          if (text) {
+            context.messages.push(
+              new AgentSession.ChatMessage({
+                role: AgentSession.ChatRole.ASSISTANT,
+                content: [{ payload: { case: 'text', value: text } }],
+              }),
+            );
+          }
+          break;
+        }
+      }
+    }
+    this._enqueue(
+      new ClientMessageCtor({ message: { case: 'eotInputChatContext', value: context } }),
+    );
     this._enqueue(
       new ClientMessageCtor({
         message: { case: 'inferenceStart', value: new InferenceStart({ requestId }) },
