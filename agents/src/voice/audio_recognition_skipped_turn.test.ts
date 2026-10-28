@@ -51,10 +51,16 @@ class SilentVAD extends VAD {
   }
 }
 
-const finalTranscript = (text: string): SpeechEvent => ({
-  type: SpeechEventType.FINAL_TRANSCRIPT,
-  alternatives: [{ language: 'en', text, startTime: 0, endTime: 0.5, confidence: 0.9 }],
-});
+/** A final for speech that ends now; times are seconds since the STT input started. */
+const finalTranscript = (text: string, inputStartedAt: number, confidence: number): SpeechEvent => {
+  const endTime = (Date.now() - inputStartedAt) / 1000;
+  return {
+    type: SpeechEventType.FINAL_TRANSCRIPT,
+    alternatives: [
+      { language: 'en', text, startTime: Math.max(endTime - 0.4, 0), endTime, confidence },
+    ],
+  };
+};
 
 /**
  * Starts recognition with an `onEndOfTurn` hook that behaves like AgentActivity's `minWords`
@@ -67,6 +73,7 @@ async function startRecognition(
   const { dropSkipped = true, beforeDecision } = options;
   const seen: string[] = [];
   const committed: string[] = [];
+  const infos: EndOfTurnInfo[] = [];
 
   const hooks: RecognitionHooks = {
     interruptionByAudioActivityEnabled: false,
@@ -83,6 +90,7 @@ async function startRecognition(
     retrieveChatCtx: () => ChatContext.empty(),
     onEndOfTurn: vi.fn(async (info: EndOfTurnInfo) => {
       seen.push(info.newTranscript);
+      infos.push(info);
       await beforeDecision?.(seen.length);
       if (splitWords(info.newTranscript, true).length < MIN_WORDS) {
         if (dropSkipped) info.dropTranscript = true;
@@ -119,13 +127,13 @@ async function startRecognition(
   await ar.start({ sttPipeline: pipeline });
   await vi.advanceTimersByTimeAsync(0);
 
-  /** The user says `text`, then pauses long enough for end-of-turn detection to decide. */
-  const say = async (text: string, pauseMs = 2_500) => {
-    sttController.enqueue(finalTranscript(text));
+  /** The user says `text`, then pauses for `pauseMs` (long enough for a decision by default). */
+  const say = async (text: string, pauseMs = 2_500, confidence = 0.9) => {
+    sttController.enqueue(finalTranscript(text, pipeline.inputStartedAt!, confidence));
     await vi.advanceTimersByTimeAsync(pauseMs);
   };
 
-  return { ar, seen, committed, say };
+  return { ar, seen, committed, infos, say };
 }
 
 describe('AudioRecognition - turns skipped below minWords', () => {
@@ -182,6 +190,54 @@ describe('AudioRecognition - turns skipped below minWords', () => {
       await vi.advanceTimersByTimeAsync(0);
       await say('Thanks a lot.');
       expect(committed).toEqual(['Wait. hold on', 'Thanks a lot.']);
+    } finally {
+      await ar.close();
+    }
+  });
+
+  it('drops the confidence of skipped words but keeps a newer final', async () => {
+    let releaseFirstDecision!: () => void;
+    const firstDecision = new Promise<void>((resolve) => (releaseFirstDecision = resolve));
+    const { ar, committed, infos, say } = await startRecognition({
+      beforeDecision: async (call) => {
+        if (call === 1) await firstDecision;
+      },
+    });
+    try {
+      await say('Okay.', 400, 0.2);
+      // the user speaks again while "Okay." is being decided. Production VAD refreshes
+      // lastSpeakingTime for the new speech, so its decision waits for the endpointing delay;
+      // this VAD is silent, so set it as the duplicate-commit test does
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (ar as any).lastSpeakingTime = Date.now();
+      await say('Stop right there.', 0, 0.9);
+      releaseFirstDecision();
+      await vi.advanceTimersByTimeAsync(2_500);
+
+      expect(committed).toEqual(['Stop right there.']);
+      expect(infos.at(-1)!.transcriptConfidence).toBeCloseTo(0.9);
+    } finally {
+      await ar.close();
+    }
+  });
+
+  it('ends the skipped turn so the next one does not inherit its start', async () => {
+    const { ar, infos, say } = await startRecognition();
+    try {
+      await say('Okay.');
+      // the skipped turn's span and start anchor are gone
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const arAny = ar as any;
+      expect(arAny.userTurnStart).toBeUndefined();
+      expect(arAny.userTurnSpan).toBeUndefined();
+
+      await vi.advanceTimersByTimeAsync(10_000);
+      await say('Stop right there.');
+
+      // this VAD is silent, so a fresh turn has no speech-start anchor: the second turn must
+      // report what the first did, not the skipped word's start 12.5s earlier
+      expect(infos[1]!.newTranscript).toBe('Stop right there.');
+      expect(infos[1]!.startedSpeakingAt).toBe(infos[0]!.startedSpeakingAt);
     } finally {
       await ar.close();
     }

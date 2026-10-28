@@ -1936,6 +1936,8 @@ export class AudioRecognition {
           backchannelOverAgent: this.turnBackchannelOverAgent,
           userTurnSpan,
         };
+        // finals evaluated here; any that arrive while the hook runs are not part of this decision
+        const evaluatedFinals = this.finalTranscriptConfidence.length;
         const committed = await this.hooks.onEndOfTurn(endOfTurn);
 
         if (committed) {
@@ -1975,7 +1977,13 @@ export class AudioRecognition {
           }
           this.resetTranscriptionTimeout();
         } else {
-          if (endOfTurn.dropTranscript) this.dropSkippedTranscript(endOfTurn.newTranscript);
+          if (endOfTurn.dropTranscript) {
+            this.dropSkippedTranscript(endOfTurn.newTranscript, evaluatedFinals, {
+              turn: userTurnSpan,
+              wait: eouWaitSpan,
+              lastSpeakingTime,
+            });
+          }
           if (eouWaitSpan.isRecording()) {
             // the decision is deferred (below min words, realtime backchannel): keep waiting
             this.eouWaitNotCommitted += 1;
@@ -2443,10 +2451,15 @@ export class AudioRecognition {
 
   /**
    * Drops a transcript the activity skipped (see `EndOfTurnInfo.dropTranscript`). Only the
-   * evaluated text is removed: finals that arrived while `onEndOfTurn` ran start a new
-   * utterance and stay.
+   * evaluated text and its finals' confidences are removed: finals that arrived while
+   * `onEndOfTurn` ran start a new utterance and stay. When nothing is left, the skipped turn
+   * ends as dropped, so the next utterance opens its own turn with its own start time.
    */
-  private dropSkippedTranscript(skipped: string) {
+  private dropSkippedTranscript(
+    skipped: string,
+    skippedFinals: number,
+    decided: { turn: Span; wait: Span; lastSpeakingTime: number | undefined },
+  ) {
     const rest = this.audioTranscript.slice(skipped.length);
     if (!skipped || !this.audioTranscript.startsWith(skipped) || /^\S/.test(rest)) return;
     this.audioTranscript = rest.trimStart();
@@ -2455,9 +2468,16 @@ export class AudioRecognition {
         .slice(skipped.length)
         .trimStart();
     }
-    if (!this.audioTranscript) {
-      this.finalTranscriptConfidence = [];
-      this.lastFinalTranscriptTime = 0;
+    this.finalTranscriptConfidence.splice(0, skippedFinals);
+    if (this.audioTranscript) return;
+
+    this.lastFinalTranscriptTime = 0;
+    this._endUserTurnSpan(undefined, { turn: decided.turn, wait: decided.wait });
+    // as on commit: concurrent user speech might have changed it; only reset if there is none
+    if (this.lastSpeakingTime === decided.lastSpeakingTime) {
+      this.speechStartTime = undefined;
+      this.vadSpeechStarted = false;
+      this.lastSpeakingTime = undefined;
     }
   }
 
