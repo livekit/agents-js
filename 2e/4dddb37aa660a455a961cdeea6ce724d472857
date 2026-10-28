@@ -1,0 +1,29 @@
+.changeset/bright-sessions-wait.md
+  s_de5d34fcc7db11::t_6b5bfa5a6bfc6e 16-17
+agents/src/voice/remote_session_lifecycle.test.ts
+  s_de5d34fcc7db11::t_6b5bfa5a6bfc6e 317-319,403-405
+  s_de5d34fcc7db11::t_912e9c150dc949 6,13,18,334,342,345,402
+  s_de5d34fcc7db11::t_0661888d9b46f0 320-333,335-341,343-344,346-401
+  s_de5d34fcc7db11::t_4e8d2cad279935 406
+agents/src/voice/remote_session.ts
+  s_de5d34fcc7db11::t_6b5bfa5a6bfc6e 111,165-188,825-826
+agents/src/voice/console_io.test.ts
+  s_de5d34fcc7db11::t_6b5bfa5a6bfc6e 7,107-129,132-133
+  s_de5d34fcc7db11::t_fe3149a9c21213 130-131
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2e4dddb37aa660a455a961cdeea6ce724d472857",
+  "prompts": {},
+  "sessions": {
+    "s_de5d34fcc7db11": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1461f-331c-7182-920c-a8752fbaf7b8",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
