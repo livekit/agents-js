@@ -248,7 +248,10 @@ export class RoomSessionTransport extends SessionTransport {
     };
     signal.addEventListener('abort', closeReader, { once: true });
     try {
-      signal.throwIfAborted();
+      if (signal.aborted) {
+        await reader.close();
+        return;
+      }
       const chunks = await reader.readAll();
       if (signal.aborted) return;
       let totalLength = 0;

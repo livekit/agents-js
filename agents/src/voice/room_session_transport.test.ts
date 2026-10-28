@@ -6,7 +6,7 @@ import { ByteStreamReader, type Room } from '@livekit/rtc-node';
 import { LocalParticipant } from '@livekit/rtc-node';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { initializeLogger } from '../log.js';
-import { Future, Task } from '../utils.js';
+import { type AsyncIterableQueue, Future, Task } from '../utils.js';
 import { RoomSessionTransport } from './remote_session.js';
 import type { RoomIO } from './room_io/room_io.js';
 import { createRoomTransport, messageEvent, pingMessage } from './testing/remote_session.js';
@@ -273,4 +273,32 @@ it('closes active and queued RTC readers and joins the single read task', async 
   await f.transport.close();
   expect(task.done).toBe(true);
   cancelled.forEach((cancel) => expect(cancel).toHaveBeenCalledTimes(1));
+});
+
+it('closes a dequeued reader when shutdown wins before reading starts', async () => {
+  const f = createRoomTransport();
+  const queue = (
+    f.transport as unknown as {
+      incomingReaders: AsyncIterableQueue<ByteStreamReader>;
+    }
+  ).incomingReaders;
+  const next = queue.next.bind(queue);
+  let closing: Promise<void> | undefined;
+  vi.spyOn(queue, 'next').mockImplementation(async (options) => {
+    const item = await next(options);
+    if (!item.done) closing = f.transport.close();
+    return item;
+  });
+  const readAll = vi.fn(async () => []);
+  const close = vi.fn(async () => {});
+  try {
+    await f.transport.start();
+    f.raw({ readAll, close } as unknown as ByteStreamReader);
+    await tick();
+    await closing;
+    expect(readAll).not.toHaveBeenCalled();
+    expect(close).toHaveBeenCalledOnce();
+  } finally {
+    await f.transport.close();
+  }
 });
