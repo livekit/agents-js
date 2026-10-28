@@ -13,3 +13,5 @@ Keep transcription input available during deferred hook setup. Drain independent
 Release pending SDK input readers before joining public async-generator transcription hooks, so session close and remote-run cancellation finish without late history changes.
 
 Cancel activity-owned transcription inputs while public hook setup is pending, including setup that reads input before returning its output.
+
+Bound remote-host cancellation cleanup to a shared three-second grace after the response drain, so a stalled custom speech hook cannot keep the transport open indefinitely.

@@ -3,18 +3,19 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { Mutex } from '@livekit/mutex';
 import { AgentSession as pb } from '@livekit/protocol';
-import { ByteStreamReader, LocalParticipant, type Room } from '@livekit/rtc-node';
+import { type AudioFrame, ByteStreamReader, LocalParticipant, type Room } from '@livekit/rtc-node';
 import type { Throws } from '@livekit/throws-transformer/throws';
 import * as net from 'node:net';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { LLM, LLMStream } from '../llm/llm.js';
 import { tool } from '../llm/tool_context.js';
 import { initializeLogger, log } from '../log.js';
+import { TTS } from '../tts/tts.js';
 import { DEFAULT_API_CONNECT_OPTIONS, FlushSentinel } from '../types.js';
 import { Future, Task } from '../utils.js';
 import { Agent } from './agent.js';
 import { AgentSession } from './agent_session.js';
-import { TextOutput } from './io.js';
+import { AudioOutput, TextOutput } from './io.js';
 import {
   RemoteSession,
   RoomSessionTransport,
@@ -312,6 +313,96 @@ it('cancels the real run and releases its handles when the drain deadline expire
     ),
   ).toBe(false);
 }, 8000);
+
+it.each(['resolve', 'reject'] as const)(
+  'closes the transport before a stalled tool say TTS hook can %s',
+  async (settlement) => {
+    const entered = new Future<void>();
+    const release = new Future<void>();
+    let speech: SpeechHandle | undefined;
+    class TestTTS extends TTS {
+      label = 'unused';
+      constructor() {
+        super(24000, 1, { streaming: true });
+      }
+      synthesize(): never {
+        throw new Error('unused');
+      }
+      stream(): never {
+        throw new Error('unused');
+      }
+    }
+    class TestAgent extends Agent {
+      override async ttsNode(): Promise<ReadableStream<AudioFrame> | null> {
+        entered.resolve();
+        await release.await;
+        if (settlement === 'reject') throw new Error('late TTS failure');
+        return null;
+      }
+    }
+    class Output extends AudioOutput {
+      override clearBuffer() {}
+    }
+    const session = new AgentSession({
+      llm: new FakeLLM([{ input: 'go', toolCalls: [{ name: 'speak', args: {} }] }]),
+      tts: new TestTTS(),
+    });
+    session.output.audio = new Output(24000);
+    const agent = new TestAgent({
+      instructions: 'test',
+      tools: [
+        tool({
+          name: 'speak',
+          description: 'Say text',
+          execute: async () => {
+            speech = session.say('hello');
+            await speech;
+            return 'said';
+          },
+        }),
+      ],
+    });
+    const transport = new Transport();
+    const host = new SessionHost(transport);
+    await session.start({ agent });
+    host.registerSession(session);
+    await host.start();
+    transport.push(
+      request('held', { case: 'runInput', value: new pb.SessionRequest_RunInput({ text: 'go' }) }),
+    );
+    let closing: Promise<void> | undefined;
+    try {
+      await entered.await;
+      const requests = [...internals(host).tasks];
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
+      closing = host.close();
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(transport.closed).toBe(false);
+      expect(speech?.interrupted).toBe(true);
+      await vi.advanceTimersByTimeAsync(2999);
+      expect(transport.closed).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(transport.closed).toBe(true);
+      await closing;
+      expect(requests.some((task) => !task.done)).toBe(true);
+      expect(internals(host).eventMessages).toHaveLength(0);
+      const sent = [...transport.sent];
+      release.resolve();
+      await vi.advanceTimersByTimeAsync(3000);
+      await Promise.allSettled(requests.map((task) => task.result));
+      expect(speech?._tasks.every((task) => task.done)).toBe(true);
+      expect(transport.sent).toEqual(sent);
+      expect(transport.sent.some((m) => m.message.case === 'response')).toBe(false);
+    } finally {
+      release.resolve();
+      vi.useRealTimers();
+      await closing;
+      await host.close();
+      await session.close();
+    }
+  },
+  10000,
+);
 
 it('joins a tool say and cancels its open source before host and session close return', async () => {
   const first = new Future<void>();

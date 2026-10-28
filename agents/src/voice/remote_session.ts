@@ -108,6 +108,7 @@ export abstract class SessionTransport {
 }
 
 const SHUTDOWN_DRAIN_TIMEOUT = 3000;
+const SHUTDOWN_CANCEL_TIMEOUT = 3000;
 
 // Only use this around external operations or waits with separate cancellation ownership.
 // It stops our continuation; it cannot cancel a promise supplied by another library.
@@ -161,7 +162,30 @@ async function drainTasks(tasks: Set<Task<void>>, deadline: number): Promise<Set
       task.cancel();
     }
   }
-  await Promise.allSettled([...pending].map((task) => task.result));
+  // A custom hook can ignore cancellation. Keep its rejection handled, but do
+  // not let it prevent transport closure after the shared cleanup deadline.
+  const cleanup = Promise.allSettled([...pending].map((task) => task.result));
+  let cleanupTimer: NodeJS.Timeout | undefined;
+  try {
+    await Promise.race([
+      cleanup,
+      new Promise<void>((resolve) => {
+        cleanupTimer = setTimeout(
+          resolve,
+          Math.max(0, deadline + SHUTDOWN_CANCEL_TIMEOUT - performance.now()),
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(cleanupTimer);
+  }
+  const unfinished = [...pending].filter((task) => !task.done);
+  if (unfinished.length > 0) {
+    log().warn(
+      { taskNames: [...new Set(unfinished.map((task) => task.name ?? 'unknown'))].sort() },
+      'session tasks did not finish cancellation before shutdown',
+    );
+  }
   return pending;
 }
 
@@ -798,8 +822,8 @@ export class SessionHost {
     }
 
     const deadline = performance.now() + SHUTDOWN_DRAIN_TIMEOUT;
-    // Cancelling a run may need speech cleanup. Stop event writes at the same
-    // deadline, even while that cleanup is still joining the request task.
+    // Stop event writes at the response deadline while speech cleanup uses its
+    // separate grace period. Both drains share the same cleanup deadline.
     const writerDeadline = setTimeout(() => this.writeTask?.cancel(), SHUTDOWN_DRAIN_TIMEOUT);
     const cancelled = await drainTasks(this.tasks, deadline);
     if (cancelled.size > 0) {
