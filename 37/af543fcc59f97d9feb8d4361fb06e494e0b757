@@ -1,0 +1,28 @@
+agents/src/voice/agent_activity.ts
+  s_de5d34fcc7db11::t_afae950a20036f 348-349,354,378,3744,4190,4251,4270,4495,4863,4944,5031-5032,5035-5036,5038,5048-5051,5119-5120,5142-5143,5190
+agents/src/voice/agent_activity_child_cleanup.test.ts
+  s_de5d34fcc7db11::t_7d00b83c0778aa 8,54,215-219,264-271,278-280,294-328,332-344
+  s_de5d34fcc7db11::t_1d13ba3e962fe5 9,329-331,345-400
+  s_de5d34fcc7db11::t_659cd6e207c8e3 1-7,10-53,55-214,220-263,272-277,281-293
+  s_de5d34fcc7db11::t_0eeaf3b0a78c70 401-413
+.changeset/bright-sessions-wait.md
+  s_de5d34fcc7db11::t_4dc4cf826ee91b 21-22
+agents/src/voice/speech_handle.ts
+  s_de5d34fcc7db11::t_ffa115d135c492 19,21-23
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "37af543fcc59f97d9feb8d4361fb06e494e0b757",
+  "prompts": {},
+  "sessions": {
+    "s_de5d34fcc7db11": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1461f-331c-7182-920c-a8752fbaf7b8",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
