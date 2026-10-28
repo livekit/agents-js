@@ -1,0 +1,27 @@
+agents/src/inference/eot/detector.test.ts
+  s_b6ebb92b33ee85::t_9366aacb1afa92 27,31,860-901
+agents/src/inference/eot/detector.ts
+  s_b6ebb92b33ee85::t_6fd4b7e8b7cb8f 14,144-146
+agents/src/inference/eot/runner.test.ts
+  s_b6ebb92b33ee85::t_1e429038d9583b 63-78
+agents/src/inference/eot/runner.ts
+  s_b6ebb92b33ee85::t_97fe46c054c68d 61,69
+agents/src/inference/eot/transports.ts
+  s_b6ebb92b33ee85::t_8fcf80bb526f71 162
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "59b2ccffa0d7bb0ffdc43ed89fb6438202d60f19",
+  "prompts": {},
+  "sessions": {
+    "s_b6ebb92b33ee85": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7ffd5347-5f1e-4331-bcb5-8dce87ae0dd4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
