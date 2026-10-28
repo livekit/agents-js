@@ -137,6 +137,37 @@ describe('OpenAI Responses WS incomplete events', () => {
     expect(parsed.response.incomplete_details?.reason).toBeUndefined();
   });
 
+  it('keeps server-side provider tool output items on completed responses', () => {
+    const parsed = wsServerEventSchema.parse({
+      type: 'response.completed',
+      response: {
+        id: 'resp_1',
+        output: [
+          { type: 'web_search_call', id: 'ws_1' },
+          { type: 'custom_tool_call', name: 'x_keyword_search' },
+        ],
+      },
+    });
+
+    expect(parsed.type).toBe('response.completed');
+    if (parsed.type !== 'response.completed') throw new Error('expected completed event');
+    expect(parsed.response.output).toEqual([
+      { type: 'web_search_call', id: 'ws_1' },
+      { type: 'custom_tool_call', name: 'x_keyword_search' },
+    ]);
+  });
+
+  it('parses unknown provider tool output_item.done events', () => {
+    const parsed = wsServerEventSchema.parse({
+      type: 'response.output_item.done',
+      item: { type: 'custom_tool_call', name: 'x_keyword_search' },
+    });
+
+    expect(parsed.type).toBe('response.output_item.done');
+    if (parsed.type !== 'response.output_item.done') throw new Error('expected output_item.done');
+    expect(parsed.item.type).toBe('custom_tool_call');
+  });
+
   it('closes the request channel after the terminal frame', async () => {
     class RecordingSocket extends EventEmitter {
       readyState = 1;
