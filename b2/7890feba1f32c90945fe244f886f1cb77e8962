@@ -1,0 +1,23 @@
+.changeset/bright-sessions-wait.md
+  s_de5d34fcc7db11::t_df37002691e443 21
+agents/src/voice/agent_activity_child_cleanup.test.ts
+  s_de5d34fcc7db11::t_f190055a636c5e 300-435
+agents/src/voice/agent_activity.ts
+  s_de5d34fcc7db11::t_df37002691e443 4387,4389,4391
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b27890feba1f32c90945fe244f886f1cb77e8962",
+  "prompts": {},
+  "sessions": {
+    "s_de5d34fcc7db11": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1461f-331c-7182-920c-a8752fbaf7b8",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
