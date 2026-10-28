@@ -520,3 +520,51 @@ describeLiveKitInference('LiveKit Inference LLM integration', agents, async (har
     );
   });
 });
+
+describe('inference.LLM streamed tool calls without an index', () => {
+  const toolChunk = (tool: Record<string, unknown>, finishReason: string | null = null) => ({
+    id: 'chatcmpl_test',
+    choices: [{ index: 0, finish_reason: finishReason, delta: { tool_calls: [tool] } }],
+  });
+
+  it('keeps parallel tool calls apart when the server sends no index', async () => {
+    const llm = new LLM({
+      model: 'google/gemma-4-31b-it',
+      apiKey: 'test-key',
+      apiSecret: 'test-secret',
+      baseURL: 'https://example.livekit.cloud',
+    });
+    const chunks = [
+      toolChunk({ id: 'call_a', function: { name: 'get_weather', arguments: '{"city":"Paris"}' } }),
+      toolChunk({ id: 'call_b', function: { name: 'get_weather', arguments: '{"city":"Tokyo"}' } }),
+      { id: 'chatcmpl_test', choices: [{ index: 0, finish_reason: 'tool_calls', delta: {} }] },
+    ];
+    const stub = async () => ({
+      async *[Symbol.asyncIterator]() {
+        for (const chunk of chunks) {
+          yield chunk;
+        }
+      },
+    });
+    const internal = llm as unknown as {
+      client: { chat: { completions: { create: typeof stub } } };
+    };
+    internal.client.chat.completions.create = stub;
+
+    const stream = llm.chat({
+      chatCtx: new ChatContext(),
+      connOptions: { maxRetry: 0, retryIntervalMs: 0, timeoutMs: 5000 },
+    });
+    const calls: { callId: string; name: string; args: string }[] = [];
+    for await (const chunk of stream) {
+      for (const call of chunk.delta?.toolCalls ?? []) {
+        calls.push({ callId: call.callId, name: call.name, args: call.args });
+      }
+    }
+
+    expect(calls).toEqual([
+      { callId: 'call_a', name: 'get_weather', args: '{"city":"Paris"}' },
+      { callId: 'call_b', name: 'get_weather', args: '{"city":"Tokyo"}' },
+    ]);
+  });
+});
