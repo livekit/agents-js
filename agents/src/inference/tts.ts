@@ -189,9 +189,8 @@ export function parseTTSModelString(model: string): [string, string | undefined]
  * Whether the given Inference TTS provider+options combination emits aligned
  * (word- or character-level) timestamps alongside the synthesized audio.
  *
- * Mirrors the Python implementation: support is opt-in through the provider's
- * `extra_kwargs` / `modelOptions` payload — the gateway only emits
- * `output_alignment` events when the provider-specific flag is set.
+ * Mirrors the Python implementation: the gateway only emits `output_alignment`
+ * events when the provider-specific timestamp behavior is enabled.
  */
 export function hasAlignedTranscript(
   model: string | undefined,
@@ -205,6 +204,12 @@ export function hasAlignedTranscript(
   }
   if (provider === 'inworld') {
     return opts.timestamp_type === 'WORD' || opts.timestamp_type === 'CHARACTER';
+  }
+  if (provider === 'assemblyai') {
+    // Word timings are on by default on the service (word_boundaries=true),
+    // and the gateway forwards them as an aligned transcript, so this is
+    // opt-out rather than opt-in: only an explicit false turns them off.
+    return opts.word_timestamps !== false;
   }
   return false;
 }
@@ -237,6 +242,24 @@ export function normalizeTTSFallback(
     return fallback.map(makeFallback);
   }
   return [makeFallback(fallback)];
+}
+
+/**
+ * Whether every model the gateway may serve the request from emits aligned timestamps.
+ *
+ * Server-side fallback is resolved by the gateway after the agent has already chosen the
+ * timed-transcript path, so a fallback that sends no `output_alignment` would leave the
+ * transcript empty. Only claim alignment when the primary and all fallbacks support it.
+ */
+function hasAlignedTranscriptWithFallback(
+  model: string | undefined,
+  modelOptions: Record<string, unknown> | undefined,
+  fallback: TTSFallbackModel[] | undefined,
+): boolean {
+  return (
+    hasAlignedTranscript(model, modelOptions) &&
+    (fallback ?? []).every((m) => hasAlignedTranscript(m.model, m.extraKwargs))
+  );
 }
 
 type TTSEncoding = 'pcm_s16le';
@@ -287,9 +310,10 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
     connOptions?: APIConnectOptions;
   }) {
     const sampleRate = opts?.sampleRate ?? DEFAULT_SAMPLE_RATE;
-    const initialAligned = hasAlignedTranscript(
+    const initialAligned = hasAlignedTranscriptWithFallback(
       opts?.model,
       opts?.modelOptions as Record<string, unknown> | undefined,
+      opts?.fallback ? normalizeTTSFallback(opts.fallback) : undefined,
     );
     super(sampleRate, 1, { streaming: true, alignedTranscript: initialAligned });
 
@@ -353,9 +377,10 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
       connOptions: connOptions ?? DEFAULT_API_CONNECT_OPTIONS,
     };
 
-    this.#alignedTranscript = hasAlignedTranscript(
+    this.#alignedTranscript = hasAlignedTranscriptWithFallback(
       nextModel,
       modelOptions as Record<string, unknown>,
+      normalizedFallback,
     );
 
     // Initialize connection pool
@@ -429,9 +454,10 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
       language: opts.language !== undefined ? normalizeLanguage(opts.language) : this.opts.language,
     };
 
-    this.#alignedTranscript = hasAlignedTranscript(
+    this.#alignedTranscript = hasAlignedTranscriptWithFallback(
       this.opts.model,
       this.opts.modelOptions as Record<string, unknown>,
+      this.opts.fallback,
     );
 
     // The inference gateway only consumes `model` / `voice` / `language` /
