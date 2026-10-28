@@ -18,6 +18,8 @@ Bound remote-host cancellation cleanup to a shared three-second grace after the 
 
 Keep cancelled runs busy through reentrant callbacks until speech cleanup settles. Release transcription abort listeners between segments and close outputs interrupted during setup handoff.
 
+Join generated and realtime speech children before admitting another run. Cancel pending realtime input reads and preserve interrupted text after child cleanup.
+
 Stop Room intake before reader cleanup and close readers delivered after shutdown starts. Enforce readiness deadlines during blocked sends and discard obsolete send errors after retrying.
 
 Dispose native RTC resources after console cleanup so the CLI can exit normally.

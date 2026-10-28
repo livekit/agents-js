@@ -345,13 +345,13 @@ async function raceWithAbort<T>(
   }
 }
 
-function createTranscriptionInput(
-  source: ReadableStream<string | TimedString>,
+function createActivityInput<T>(
+  source: ReadableStream<T>,
   signal: AbortSignal,
   { preventCancel = false }: { preventCancel?: boolean } = {},
 ) {
   const finished = new Future<void>();
-  let reader: ReadableStreamDefaultReader<string | TimedString> | undefined;
+  let reader: ReadableStreamDefaultReader<T> | undefined;
   let cancelled = false;
   let outputCancelled = false;
   const releaseReader = () => {
@@ -375,7 +375,7 @@ function createTranscriptionInput(
     releaseReader();
     void cancellation.catch(() => {}).finally(finish);
   };
-  const stream = new ReadableStream<string | TimedString>(
+  const stream = new ReadableStream<T>(
     {
       start(controller) {
         try {
@@ -3741,7 +3741,7 @@ export class AgentActivity implements RecognitionHooks {
         );
       }
     };
-    const transcriptionInput = createTranscriptionInput(textSource, forwardingController.signal);
+    const transcriptionInput = createActivityInput(textSource, forwardingController.signal);
 
     const tasks: Array<Task<void>> = [];
 
@@ -4187,7 +4187,7 @@ export class AgentActivity implements RecognitionHooks {
     if (speechHandle.interrupted) {
       recordInterruption(speechHandle);
       replyAbortController.abort();
-      await cancelAndWait(tasks, REPLY_TASK_CANCEL_TIMEOUT);
+      await cancelAndWait(tasks);
       return;
     }
 
@@ -4248,7 +4248,7 @@ export class AgentActivity implements RecognitionHooks {
       if (replyAbortController.signal.aborted) abortSegment();
       const forwardTasks: Task<void>[] = [];
       let textForwardTask: Task<void> | undefined;
-      let nodeInput: ReturnType<typeof createTranscriptionInput> | undefined;
+      let nodeInput: ReturnType<typeof createActivityInput<string | TimedString>> | undefined;
       let trNodeResult: ReadableStream<string | TimedString> | null = null;
 
       try {
@@ -4267,7 +4267,7 @@ export class AgentActivity implements RecognitionHooks {
         }
 
         // The segment producer also feeds TTS and must finish independently.
-        nodeInput = createTranscriptionInput(transcriptionInput, segmentAbortController.signal, {
+        nodeInput = createActivityInput(transcriptionInput, segmentAbortController.signal, {
           preventCancel: true,
         });
         trNodeResult = await this.resolveTranscriptionNode(
@@ -4492,7 +4492,7 @@ export class AgentActivity implements RecognitionHooks {
       );
 
       replyAbortController.abort();
-      await cancelAndWait(tasks, REPLY_TASK_CANCEL_TIMEOUT);
+      await cancelAndWait(tasks);
 
       const forwardedText = segmentOutputs.map(forwardedTextFor).join('');
 
@@ -4860,7 +4860,7 @@ export class AgentActivity implements RecognitionHooks {
       const forwardTasks: Array<Task<void>> = [];
       let ttsTextInput: ReadableStream<string | TimedString> | null = null;
       let trTextInput: ReadableStream<string | TimedString> | undefined;
-      let nodeInput: ReturnType<typeof createTranscriptionInput> | undefined;
+      let nodeInput: ReturnType<typeof createActivityInput<string | TimedString>> | undefined;
       let generatedAudio: ReadableStream<AudioFrame> | undefined;
       const unusedInputs: Promise<unknown>[] = [];
       const cancelUnusedInput = (source: ReadableStream<unknown> | null | undefined) => {
@@ -4941,7 +4941,7 @@ export class AgentActivity implements RecognitionHooks {
           }
         }
 
-        nodeInput = createTranscriptionInput(trTextInput, messageAbortController.signal);
+        nodeInput = createActivityInput(trTextInput, messageAbortController.signal);
         const trNodeResult = await this.agent.transcriptionNode(nodeInput.stream, modelSettings);
         if (trNodeResult) {
           const [textForwardTask, textOut] = performTextForwarding(
@@ -5028,11 +5028,14 @@ export class AgentActivity implements RecognitionHooks {
     };
 
     const processMessages = async (abortController: AbortController, outputs: MessageOutput[]) => {
-      replyAbortController.signal.addEventListener('abort', () => abortController.abort(), {
+      const abortMessages = () => abortController.abort();
+      replyAbortController.signal.addEventListener('abort', abortMessages, {
         once: true,
       });
+      if (replyAbortController.signal.aborted) abortMessages();
+      const input = createActivityInput(ev.messageStream, abortController.signal);
       try {
-        for await (const msg of ev.messageStream) {
+        for await (const msg of input.stream) {
           if (speechHandle.interrupted) {
             break;
           }
@@ -5042,6 +5045,10 @@ export class AgentActivity implements RecognitionHooks {
         }
       } catch (error) {
         this.logger.error(error, 'error reading messages from the realtime API');
+      } finally {
+        replyAbortController.signal.removeEventListener('abort', abortMessages);
+        input.cancel();
+        await input.done;
       }
     };
 
@@ -5109,7 +5116,8 @@ export class AgentActivity implements RecognitionHooks {
       }
     };
 
-    const [toolCallStream, toolCallStreamForTracing] = ev.functionStream.tee();
+    const toolCallInput = createActivityInput(ev.functionStream, replyAbortController.signal);
+    const [toolCallStream, toolCallStreamForTracing] = toolCallInput.stream.tee();
     // TODO(brian): append to tracing tees
     const toolCalls: FunctionCall[] = [];
 
@@ -5131,6 +5139,8 @@ export class AgentActivity implements RecognitionHooks {
         }
       } finally {
         reader.releaseLock();
+        toolCallInput.cancel();
+        await toolCallInput.done;
       }
     };
 
@@ -5177,7 +5187,7 @@ export class AgentActivity implements RecognitionHooks {
         'Aborting all realtime generation tasks due to interruption',
       );
       replyAbortController.abort();
-      await cancelAndWait(tasks, REPLY_TASK_CANCEL_TIMEOUT);
+      await cancelAndWait(tasks);
       addRealtimeMessageOutputs(messageOutputs);
 
       const anySkipped = messageOutputs.some((output) => output.played === 'skipped');
