@@ -21,6 +21,7 @@ import type {
   ResponseStartedEvent,
   TextChunk,
 } from '@mistralai/mistralai/models/components';
+import { mistralAPIError } from './errors.js';
 import type { MistralChatModels } from './models.js';
 
 const DEFAULT_MODEL: MistralChatModels = 'ministral-8b-latest';
@@ -267,22 +268,20 @@ export class LLMStream extends llm.LLMStream {
       if (error instanceof APIStatusError) {
         throw new APIStatusError({
           message: error.message,
-          options: { statusCode: error.statusCode, retryable: retryable && error.retryable },
+          options: {
+            statusCode: error.statusCode,
+            requestId: error.requestId,
+            body: error.body,
+            retryable: retryable && error.retryable,
+          },
         });
       }
 
-      const err = error as { statusCode?: number; status?: number; message?: string };
-      const statusCode = err.statusCode ?? err.status;
-
-      if (statusCode !== undefined) {
-        throw new APIStatusError({
-          message: `Mistral LLM: error (${statusCode}) - ${err.message ?? 'unknown error'}`,
-          options: { statusCode, retryable },
-        });
-      }
+      const apiError = mistralAPIError(error, retryable);
+      if (apiError) throw apiError;
 
       throw new APIConnectionError({
-        message: `Mistral LLM: connection error - ${err.message ?? 'unknown error'}`,
+        message: `Mistral LLM: connection error - ${error instanceof Error ? error.message : String(error)}`,
         options: { retryable },
       });
     }
