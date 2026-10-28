@@ -244,6 +244,24 @@ export function normalizeTTSFallback(
   return [makeFallback(fallback)];
 }
 
+/**
+ * Whether every model the gateway may serve the request from emits aligned timestamps.
+ *
+ * Server-side fallback is resolved by the gateway after the agent has already chosen the
+ * timed-transcript path, so a fallback that sends no `output_alignment` would leave the
+ * transcript empty. Only claim alignment when the primary and all fallbacks support it.
+ */
+function hasAlignedTranscriptWithFallback(
+  model: string | undefined,
+  modelOptions: Record<string, unknown> | undefined,
+  fallback: TTSFallbackModel[] | undefined,
+): boolean {
+  return (
+    hasAlignedTranscript(model, modelOptions) &&
+    (fallback ?? []).every((m) => hasAlignedTranscript(m.model, m.extraKwargs))
+  );
+}
+
 type TTSEncoding = 'pcm_s16le';
 
 const DEFAULT_ENCODING: TTSEncoding = 'pcm_s16le';
@@ -292,9 +310,10 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
     connOptions?: APIConnectOptions;
   }) {
     const sampleRate = opts?.sampleRate ?? DEFAULT_SAMPLE_RATE;
-    const initialAligned = hasAlignedTranscript(
+    const initialAligned = hasAlignedTranscriptWithFallback(
       opts?.model,
       opts?.modelOptions as Record<string, unknown> | undefined,
+      opts?.fallback ? normalizeTTSFallback(opts.fallback) : undefined,
     );
     super(sampleRate, 1, { streaming: true, alignedTranscript: initialAligned });
 
@@ -358,9 +377,10 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
       connOptions: connOptions ?? DEFAULT_API_CONNECT_OPTIONS,
     };
 
-    this.#alignedTranscript = hasAlignedTranscript(
+    this.#alignedTranscript = hasAlignedTranscriptWithFallback(
       nextModel,
       modelOptions as Record<string, unknown>,
+      normalizedFallback,
     );
 
     // Initialize connection pool
@@ -434,9 +454,10 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
       language: opts.language !== undefined ? normalizeLanguage(opts.language) : this.opts.language,
     };
 
-    this.#alignedTranscript = hasAlignedTranscript(
+    this.#alignedTranscript = hasAlignedTranscriptWithFallback(
       this.opts.model,
       this.opts.modelOptions as Record<string, unknown>,
+      this.opts.fallback,
     );
 
     // The inference gateway only consumes `model` / `voice` / `language` /

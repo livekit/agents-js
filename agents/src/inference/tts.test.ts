@@ -14,6 +14,7 @@ import { describeLiveKitInference } from './test_utils.js';
 import {
   TTS,
   type TTSFallbackModel,
+  type TTSFallbackModelType,
   hasAlignedTranscript,
   normalizeTTSFallback,
   parseTTSModelString,
@@ -444,6 +445,20 @@ describe('TTS alignedTranscript capability', () => {
     expect(capabilities({ word_timestamps: true })).toBe(true);
     expect(capabilities({ word_timestamps: false })).toBe(false);
     expect(capabilities({ word_timestamps: 'no' })).toBe(true);
+  });
+
+  it('drops alignedTranscript when a server-side fallback cannot emit alignment', () => {
+    const capabilities = (fallback: TTSFallbackModelType | TTSFallbackModelType[]) =>
+      makeTts({ model: 'assemblyai/assemblyai-tts-1', fallback }).capabilities.alignedTranscript;
+
+    expect(capabilities('deepgram/aura-2')).toBe(false);
+    expect(capabilities({ model: 'cartesia/sonic', voice: 'v' })).toBe(false);
+    expect(
+      capabilities([
+        { model: 'cartesia/sonic', voice: 'v', extraKwargs: { add_timestamps: true } },
+        'assemblyai/assemblyai-tts-1',
+      ]),
+    ).toBe(true);
   });
 
   it('recomputes alignedTranscript when updateOptions changes modelOptions', () => {
