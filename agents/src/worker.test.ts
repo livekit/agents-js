@@ -1,9 +1,19 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { Job } from '@livekit/protocol';
+import {
+  Job,
+  JobState,
+  type MigrateJobRequest,
+  RegisterWorkerResponse,
+  ServerMessage,
+  WorkerMessage,
+} from '@livekit/protocol';
+import { once } from 'node:events';
+import type { AddressInfo } from 'node:net';
 import { setImmediate } from 'node:timers/promises';
 import { describe, expect, it, vi } from 'vitest';
+import { WebSocketServer } from 'ws';
 import { type JobExecutor, JobStatus } from './ipc/job_executor.js';
 import { JobProcExecutor } from './ipc/job_proc_executor.js';
 import { ProcPool } from './ipc/proc_pool.js';
@@ -101,6 +111,75 @@ describe('AgentServer drain', () => {
       }
     },
   );
+});
+
+describe('AgentServer reconnect', () => {
+  it('reports the jobs it runs, as assigned, after it registers', async () => {
+    const wss = new WebSocketServer({ port: 0 });
+    await once(wss, 'listening');
+    const migrated = new Future<MigrateJobRequest>();
+    wss.on('connection', (ws) => {
+      ws.on('message', (data: Buffer) => {
+        const msg = WorkerMessage.fromBinary(new Uint8Array(data));
+        if (msg.message.case === 'register') {
+          const res = new RegisterWorkerResponse({ workerId: 'AW_test' });
+          ws.send(new ServerMessage({ message: { case: 'register', value: res } }).toBinary());
+        } else if (msg.message.case === 'migrateJob') {
+          migrated.resolve(msg.message.value);
+        }
+      });
+    });
+
+    // the job as the availability request carried it: the identity is the one
+    // the worker accepted it with
+    const job = new Job({ id: 'AJ_running', state: new JobState({ workerId: 'AW_test' }) });
+    const activeProc: JobExecutor = {
+      started: true,
+      userArguments: {},
+      runningJob: {
+        job,
+        acceptArguments: { name: 'test', identity: 'agent-identity', metadata: '' },
+        url: 'ws://localhost',
+        token: 'test-token',
+        workerId: 'AW_test',
+      },
+      status: JobStatus.RUNNING,
+      start: vi.fn(async () => {}),
+      initialize: vi.fn(async () => {}),
+      launchJob: vi.fn(async () => {}),
+      join: vi.fn(async () => {}),
+      close: vi.fn(async () => {}),
+    };
+    const processes = vi
+      .spyOn(ProcPool.prototype, 'processes', 'get')
+      .mockReturnValue([activeProc]);
+    const server = new AgentServer(
+      new ServerOptions({
+        agent: 'test-agent.js',
+        wsURL: `ws://127.0.0.1:${(wss.address() as AddressInfo).port}`,
+        apiKey: 'devkey',
+        apiSecret: 'devsecret',
+        numIdleProcesses: 0,
+        simulation: true,
+      }),
+    );
+
+    const run = server.run().catch(() => undefined);
+    try {
+      const req = await migrated.await;
+      expect(req.jobIds).toEqual(['AJ_running']);
+      expect(req.jobs).toHaveLength(1);
+      expect(req.jobs[0]!.id).toBe('AJ_running');
+      expect(req.jobs[0]!.state?.workerId).toBe('AW_test');
+      expect(req.jobs[0]!.state?.participantIdentity).toBe('agent-identity');
+      expect(job.state?.participantIdentity, 'the running job is not changed').toBe('');
+    } finally {
+      await server.close();
+      await run;
+      processes.mockRestore();
+      wss.close();
+    }
+  });
 });
 
 describe('ServerOptions sessionEndTimeout', () => {

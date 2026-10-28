@@ -10,6 +10,7 @@ import {
   type DuplicateMode,
   type FunctionTool,
   type JSONObject,
+  type ToolChoice,
   type ToolContextEntry,
   ToolError,
   ToolFlag,
@@ -125,7 +126,27 @@ type PendingUpdate = {
   ctx: RunContext<any>;
   items: [FunctionCall, FunctionCallOutput];
   target: ToolExecutorAgent;
+  /** What the reply may call: an update's request, or undefined for a result to act on. */
+  toolChoice?: ToolChoice;
 };
+
+/**
+ * The tool choice of one reply step answering several tool outputs.
+ *
+ * The step honours a single shared request, and is otherwise unconstrained: outputs that
+ * disagree cannot all be satisfied, and one of them wanting the tools is enough to need them.
+ * @internal
+ */
+export function _replyToolChoice(
+  requests: Iterable<ToolChoice | undefined>,
+): ToolChoice | undefined {
+  // a named choice is an object, so compare by value
+  const distinct = new Map<string, ToolChoice | undefined>();
+  for (const request of requests) {
+    distinct.set(JSON.stringify(request ?? null), request);
+  }
+  return distinct.size === 1 ? distinct.values().next().value : undefined;
+}
 
 const runningTasks = new WeakMap<AgentSession<any>, Map<string, RunningTask>>();
 
@@ -424,6 +445,7 @@ export class ToolExecutor {
   async enqueueReply(
     ctx: RunContext<any>,
     items: [FunctionCall, FunctionCallOutput],
+    { silent = false, toolChoice }: { silent?: boolean; toolChoice?: ToolChoice } = {},
   ): Promise<void> {
     const target = this.owningActivity?.agent ?? getCurrentAgent(ctx.session);
     const chatCtx = target.chatCtx.copy();
@@ -432,7 +454,10 @@ export class ToolExecutor {
     ctx.session.history.insert(items);
     if (!items[1].replyRequired) return;
 
-    this.pendingUpdates.push({ ctx, items, target });
+    // recorded above for the model; a silent update is not queued to be voiced
+    if (silent) return;
+
+    this.pendingUpdates.push({ ctx, items, target, toolChoice });
     if (this._replyTask === undefined || this._replyTaskDone) {
       this._replyTaskDone = false;
       // a Task, not a bare promise: an active RunResult watches it like a speech handle
@@ -533,7 +558,9 @@ export class ToolExecutor {
     pair[1].isError = exception !== undefined;
     pair[1].replyRequired = output !== null && output !== undefined;
     runCtx._recordUpdatePair(pair);
-    await this.enqueueReply(runCtx, pair);
+    // a return is a result to act on, unlike a report, so the reply that phrases it is as free
+    // to call something as the reply to an ordinary tool would be
+    await this.enqueueReply(runCtx, pair, { toolChoice: undefined });
   }
 
   private async checkDuplicate(
@@ -626,7 +653,7 @@ export class ToolExecutor {
 
       session.generateReply({
         instructions,
-        toolChoice: 'none',
+        toolChoice: _replyToolChoice(updates.map((update) => update.toolChoice)),
         chatCtx,
       });
     } finally {

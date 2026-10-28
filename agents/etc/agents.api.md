@@ -362,7 +362,7 @@ export interface AgentHooks<UserData, ContextT extends AgentContext<UserData> = 
 }
 
 // @public (undocumented)
-export type AgentMetrics = STTMetrics | LLMMetrics | TTSMetrics | VADMetrics | EOUMetrics | EOTInferenceMetrics | RealtimeModelMetrics | InterruptionMetrics | AvatarMetrics;
+export type AgentMetrics = STTMetrics | LLMMetrics | DecisionMetrics | TTSMetrics | VADMetrics | EOUMetrics | EOTInferenceMetrics | RealtimeModelMetrics | InterruptionMetrics | AvatarMetrics;
 
 // @public (undocumented)
 type AgentMood = 'excited' | 'happy' | 'playful' | 'curious' | 'surprised' | 'hopeful' | 'empathetic' | 'sad' | 'angry' | 'anxious' | 'calm';
@@ -2349,6 +2349,17 @@ interface ChatMessagePayload {
 // @public (undocumented)
 export type ChatRole = 'developer' | 'system' | 'user' | 'assistant';
 
+// @public
+export class Choice {
+    constructor(prompt: string, options: Record<string, string>);
+    // (undocumented)
+    readonly kind: "choice";
+    // (undocumented)
+    readonly options: Record<string, string>;
+    // (undocumented)
+    readonly prompt: string;
+}
+
 // @public (undocumented)
 export interface ChoiceDelta {
     // (undocumented)
@@ -2359,6 +2370,22 @@ export interface ChoiceDelta {
     role: ChatRole;
     // (undocumented)
     toolCalls?: FunctionCall[];
+}
+
+// @public (undocumented)
+export class ChoiceResult {
+    constructor(input: {
+        value: string;
+        probabilities?: Record<string, number> | null;
+        providerData?: Record<string, unknown>;
+    });
+    // (undocumented)
+    readonly kind: "choice";
+    probabilities?: Record<string, number>;
+    // (undocumented)
+    providerData: Record<string, unknown>;
+    // (undocumented)
+    value: string;
 }
 
 // @public
@@ -2567,7 +2594,7 @@ export const CONFIRM_DUPLICATE_PARAM = "lk_agents_confirm_duplicate";
 export class ConnectionPool<T> {
     constructor(options: ConnectionPoolOptions<T>);
     close(): Promise<void>;
-    get(timeout?: number): Promise<T>;
+    get(timeout?: number, signal?: AbortSignal): Promise<T>;
     invalidate(): void;
     prewarm(): void;
     put(conn: T): void;
@@ -2582,7 +2609,7 @@ export class ConnectionPool<T> {
 // @public
 export interface ConnectionPoolOptions<T> {
     closeCb?: (conn: T) => Promise<void>;
-    connectCb: (timeout: number) => Promise<T>;
+    connectCb: (timeout: number, signal?: AbortSignal) => Promise<T>;
     connectTimeout?: number;
     markRefreshedOnGet?: boolean;
     maxSessionDuration?: number;
@@ -2795,6 +2822,94 @@ export interface DataStreamAudioOutputOptions {
     waitRemoteTrack?: TrackKind;
 }
 
+// @public (undocumented)
+export type Decision = Probability | Choice | Score;
+
+// @public (undocumented)
+export interface DecisionCapabilities {
+    decisionKinds: DecisionKind[];
+}
+
+// @public (undocumented)
+export type DecisionKind = 'probability' | 'choice' | 'score';
+
+// @public (undocumented)
+export type DecisionMetrics = {
+    type: 'decision_metrics';
+    label: string;
+    requestId: string;
+    timestamp: number;
+    durationMs: number;
+    inputTokens?: number;
+    outputTokens?: number;
+    metadata?: MetricsMetadata;
+};
+
+// Warning: (ae-forgotten-export) The symbol "DecisionModel_base" needs to be exported by the entry point index.d.ts
+//
+// @public
+export abstract class DecisionModel extends DecisionModel_base {
+    constructor(input: {
+        capabilities: DecisionCapabilities;
+    });
+    aclose(): Promise<void>;
+    // (undocumented)
+    readonly capabilities: DecisionCapabilities;
+    evaluate(input: {
+        input: string | ChatContext;
+        decisions: Readonly<Record<string, Decision>>;
+        connOptions?: APIConnectOptions;
+        abortSignal?: AbortSignal;
+    }): Promise<DecisionResponse>;
+    // (undocumented)
+    protected abstract _evaluateImpl(input: {
+        input: string;
+        decisions: Readonly<Record<string, Decision>>;
+        connOptions: APIConnectOptions;
+        abortSignal: AbortSignal;
+    }): Promise<DecisionResponse>;
+    // (undocumented)
+    label(): string;
+    // (undocumented)
+    get model(): string;
+    // (undocumented)
+    get provider(): string;
+}
+
+// @public (undocumented)
+export type DecisionModelCallbacks = {
+    ['metrics_collected']: (metrics: DecisionMetrics) => void;
+};
+
+// @public (undocumented)
+export class DecisionResponse {
+    constructor(input: {
+        results: Record<string, DecisionResult>;
+        errors?: Record<string, string>;
+        model?: string;
+        provider?: string;
+        requestId?: string;
+        inputTokens?: number;
+        outputTokens?: number;
+    });
+    errors: Record<string, string>;
+    // (undocumented)
+    inputTokens?: number;
+    // (undocumented)
+    model: string;
+    // (undocumented)
+    outputTokens?: number;
+    // (undocumented)
+    provider: string;
+    // (undocumented)
+    requestId: string;
+    // (undocumented)
+    results: Record<string, DecisionResult>;
+}
+
+// @public (undocumented)
+export type DecisionResult = ProbabilityResult | ChoiceResult | ScoreResult;
+
 // @public
 export function dedent(strings: TemplateStringsArray, ...values: unknown[]): string;
 
@@ -2808,7 +2923,7 @@ interface DeepgramFluxOptions {
     eot_threshold?: number;
     eot_timeout_ms?: number;
     keyterm?: string | string[];
-    language_hint?: string;
+    language_hint?: string | string[];
     mip_opt_out?: boolean;
 }
 
@@ -2823,6 +2938,7 @@ interface DeepgramOptions {
     interim_results?: boolean;
     keyterm?: string | string[];
     keywords?: Array<[string, number]>;
+    language_hint?: string | string[];
     mip_opt_out?: boolean;
     numerals?: boolean;
     profanity_filter?: boolean;
@@ -4891,6 +5007,19 @@ declare namespace llm {
         CollectedResponse,
         CompletionUsage,
         LLMCallbacks,
+        Choice,
+        ChoiceResult,
+        DecisionModel,
+        DecisionResponse,
+        Probability,
+        ProbabilityResult,
+        Score,
+        ScoreResult,
+        Decision,
+        DecisionCapabilities,
+        DecisionKind,
+        DecisionModelCallbacks,
+        DecisionResult,
         RealtimeError,
         RealtimeModel,
         RealtimeSession,
@@ -5496,6 +5625,7 @@ declare namespace metrics {
     export {
         AgentMetrics,
         AvatarMetrics,
+        DecisionMetrics,
         EOTInferenceMetrics,
         EOUMetrics,
         InterruptionMetrics,
@@ -5933,6 +6063,29 @@ function prepareCloudTracer(options: ObservabilityEndpoint & {
     jobId: string;
     agentName?: string;
 }): Promise<void>;
+
+// @public
+export class Probability {
+    constructor(prompt: string);
+    // (undocumented)
+    readonly kind: "probability";
+    // (undocumented)
+    readonly prompt: string;
+}
+
+// @public (undocumented)
+export class ProbabilityResult {
+    constructor(input: {
+        value: number;
+        providerData?: Record<string, unknown>;
+    });
+    // (undocumented)
+    readonly kind: "probability";
+    // (undocumented)
+    providerData: Record<string, unknown>;
+    // (undocumented)
+    value: number;
+}
 
 // @public (undocumented)
 export type ProviderFormat = 'openai' | 'openai.responses' | 'google' | 'mistralai';
@@ -6563,10 +6716,14 @@ export class RunContext<UserData = UnknownUserData> {
     _makeUpdatePair(message: unknown, callIdSuffix?: string): [FunctionCall, FunctionCallOutput];
     // (undocumented)
     _recordUpdatePair(pair: [FunctionCall, FunctionCallOutput]): void;
+    // @internal (undocumented)
+    _replyToolChoice?: ToolChoice;
     // (undocumented)
     readonly session: AgentSession<UserData>;
     // (undocumented)
     readonly speechHandle: SpeechHandle;
+    // @internal (undocumented)
+    _suppressReply: boolean;
     // Warning: (ae-forgotten-export) The symbol "RunContextUpdateOptions" needs to be exported by the entry point index.d.ts
     // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "RunContextUpdateOptions"
     // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "RunContextUpdateOptions"
@@ -6659,6 +6816,36 @@ export { ScenarioGroup }
 export type ScenarioUserdata = {
     [key: string]: unknown;
 };
+
+// @public
+export class Score {
+    constructor(prompt: string, levels: string[]);
+    // (undocumented)
+    readonly kind: "score";
+    // (undocumented)
+    readonly levels: string[];
+    // (undocumented)
+    readonly prompt: string;
+}
+
+// @public (undocumented)
+export class ScoreResult {
+    constructor(input: {
+        value: number;
+        probabilities: Record<number, number>;
+        levels: string[];
+        providerData?: Record<string, unknown>;
+    });
+    // (undocumented)
+    readonly kind: "score";
+    // (undocumented)
+    levels: string[];
+    probabilities: Record<number, number>;
+    // (undocumented)
+    providerData: Record<string, unknown>;
+    // (undocumented)
+    value: number;
+}
 
 // @public (undocumented)
 const sendDtmfEvents: FunctionTool<    {
@@ -6850,6 +7037,7 @@ export class SessionHost {
 
 // @public (undocumented)
 export interface SessionReport {
+    agentName?: string;
     audioRecordingPath?: string;
     audioRecordingStartedAt?: number;
     // (undocumented)
@@ -6875,7 +7063,14 @@ export interface SessionReport {
 }
 
 // @public (undocumented)
+export interface SessionReportJSONOptions {
+    includeChatHistory?: boolean;
+    includeEvents?: boolean;
+}
+
+// @public (undocumented)
 export interface SessionReportOptions {
+    agentName?: string;
     audioRecordingPath?: string;
     audioRecordingStartedAt?: number;
     // (undocumented)
@@ -6898,7 +7093,7 @@ export interface SessionReportOptions {
 }
 
 // @public (undocumented)
-export function sessionReportToJSON(report: SessionReport): Record<string, unknown>;
+export function sessionReportToJSON(report: SessionReport, jsonOptions?: SessionReportJSONOptions): Record<string, unknown>;
 
 // @public (undocumented)
 export abstract class SessionTransport {
@@ -7682,6 +7877,8 @@ class STT_2<TModel extends STTModels> extends STT {
     // (undocumented)
     _updateSessionKeyterms(keyterms: string[]): void;
     get vadPromise(): Promise<VAD | undefined>;
+    // @internal
+    _warnLanguageHintIgnored(model: string | undefined, language: string | undefined): void;
 }
 
 declare namespace stt_2 {
@@ -9371,6 +9568,7 @@ declare namespace voice {
         sessionReportToJSON,
         SessionReport,
         SessionReportOptions,
+        SessionReportJSONOptions,
         TranscriptionOutputOptions,
         ParticipantTranscriptionOutputOptions,
         ParticipantTranscriptionOutput,
@@ -9677,8 +9875,8 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 // src/llm/chat_context.ts:80:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "audio"
 // src/llm/tool_context.ts:709:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "ToolFlag" has more than one declaration; you need to add a TSDoc member reference selector
 // src/llm/tool_context.ts:756:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "ToolFlag" has more than one declaration; you need to add a TSDoc member reference selector
-// src/metrics/base.ts:213:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsInputTokenDetails" needs to be exported by the entry point index.d.ts
-// src/metrics/base.ts:217:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsOutputTokenDetails" needs to be exported by the entry point index.d.ts
+// src/metrics/base.ts:226:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsInputTokenDetails" needs to be exported by the entry point index.d.ts
+// src/metrics/base.ts:230:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsOutputTokenDetails" needs to be exported by the entry point index.d.ts
 // src/stt/stt.ts:378:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "STT"
 // src/utils.ts:468:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "cancelled"
 // src/voice/agent_session.ts:411:3 - (ae-unresolved-link) The @link reference could not be resolved: This type of declaration is not supported yet by the resolver

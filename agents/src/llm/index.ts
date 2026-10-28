@@ -92,6 +92,22 @@ export {
 } from './llm.js';
 
 export {
+  Choice,
+  ChoiceResult,
+  DecisionModel,
+  DecisionResponse,
+  Probability,
+  ProbabilityResult,
+  Score,
+  ScoreResult,
+  type Decision,
+  type DecisionCapabilities,
+  type DecisionKind,
+  type DecisionModelCallbacks,
+  type DecisionResult,
+} from './decisions.js';
+
+export {
   RealtimeError,
   RealtimeModel,
   RealtimeSession,

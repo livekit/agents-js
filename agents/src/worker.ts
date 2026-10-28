@@ -4,7 +4,9 @@
 import type { JobAssignment, JobTermination, TrackSource } from '@livekit/protocol';
 import {
   type AvailabilityRequest,
+  JobState,
   JobType,
+  MigrateJobRequest,
   ParticipantPermission,
   ServerMessage,
   WorkerMessage,
@@ -544,6 +546,30 @@ export class AgentServer {
       .map((proc) => proc.runningJob!);
   }
 
+  // a reconnected worker reports the jobs it still runs, as they were assigned,
+  // so the server tracks them again
+  #reportActiveJobs() {
+    const jobs = this.activeJobs.map(({ job, acceptArguments }) => {
+      const j = job.clone();
+      j.state = j.state ?? new JobState();
+      j.state.participantIdentity = acceptArguments.identity;
+      return j;
+    });
+    if (jobs.length === 0) return;
+
+    const jobIds = jobs.map((j) => j.id);
+    this.event.emit(
+      'worker_msg',
+      new WorkerMessage({
+        message: {
+          case: 'migrateJob',
+          value: new MigrateJobRequest({ jobIds, jobs }),
+        },
+      }),
+    );
+    this.#logger.child({ jobIds }).debug('reported active jobs after registration');
+  }
+
   /** @throws {@link WorkerError} if worker did not drain in time */
   async drain(timeout?: number): Promise<Throws<void, WorkerError | Error>> {
     if (this.#draining) {
@@ -711,6 +737,7 @@ export class AgentServer {
             msg.message.value.serverInfo,
           );
           this.#connecting = false;
+          this.#reportActiveJobs();
           break;
         }
         case 'availability': {

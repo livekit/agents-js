@@ -135,6 +135,7 @@ export interface STTOptions {
     keywords: [string, number][];
     // (undocumented)
     language?: STTLanguages | string;
+    languageHint?: string[];
     // (undocumented)
     mipOptOut: boolean;
     // (undocumented)

@@ -2,10 +2,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it, vi } from 'vitest';
-import { delay } from '../utils.js';
+import { APIConnectionError } from '../_exceptions.js';
+import { Future, delay } from '../utils.js';
 import { Agent } from './agent.js';
 import type { AgentActivity } from './agent_activity.js';
 import { AgentSession } from './agent_session.js';
+import { AgentSessionEventTypes } from './events.js';
 import { FakeLLM } from './testing/fake_llm.js';
 
 async function startSession(llm?: FakeLLM) {
@@ -14,7 +16,7 @@ async function startSession(llm?: FakeLLM) {
   const activity = (session as unknown as { activity: AgentActivity }).activity;
   // every pass of the idle loop checks for an end of turn first
   const passes = vi.spyOn(activity as never, 'waitForEndOfTurn');
-  return { session, passes };
+  return { session, activity, passes };
 }
 
 describe('AgentActivity.waitForIdle', () => {
@@ -49,5 +51,128 @@ describe('AgentActivity.waitForIdle', () => {
     } finally {
       await session.close();
     }
+  });
+
+  it.each(['close', 'shutdown'] as const)(
+    'rejects pending foreground work during %s',
+    async (method) => {
+      const { session } = await startSession();
+      const callback = vi.fn();
+      const event = AgentSessionEventTypes.UserStateChanged;
+      const listeners = session.listenerCount(event);
+      session._updateUserState('speaking');
+      const pending = session.waitForIdleAndHold(callback).catch((error: unknown) => error);
+
+      try {
+        await vi.waitFor(() => expect(session.listenerCount(event)).toBe(listeners + 1));
+        if (method === 'shutdown') session.shutdown({ drain: true });
+        await session.close();
+
+        expect(await pending).toMatchObject({ name: 'AbortError' });
+        expect(callback).not.toHaveBeenCalled();
+        expect(session.listenerCount(event)).toBe(listeners);
+      } finally {
+        await session.close();
+      }
+    },
+  );
+
+  it.each(['close', 'shutdown'] as const)(
+    'rejects pending foreground work while onExit drains during %s',
+    async (method) => {
+      const enteredExit = new Future<void>();
+      const releaseExit = new Future<void>();
+      class BlockingExitAgent extends Agent {
+        async onExit() {
+          enteredExit.resolve();
+          await releaseExit.await;
+        }
+      }
+      const session = new AgentSession({ vad: null, turnHandling: { turnDetection: null } });
+      await session.start({ agent: new BlockingExitAgent({ instructions: 'test' }) });
+      const callback = vi.fn();
+      const event = AgentSessionEventTypes.UserStateChanged;
+      const listeners = session.listenerCount(event);
+      session._updateUserState('speaking');
+      const pending = session.waitForIdleAndHold(callback).catch((error: unknown) => error);
+      let closing: Promise<void> | undefined;
+
+      try {
+        await vi.waitFor(() => expect(session.listenerCount(event)).toBe(listeners + 1));
+        if (method === 'shutdown') session.shutdown({ drain: true });
+        closing = session.close();
+        await enteredExit.await;
+        session._updateUserState('listening');
+
+        const result = await pending;
+        expect(callback).not.toHaveBeenCalled();
+        expect(result).toMatchObject({ name: 'AbortError' });
+        expect(session.listenerCount(event)).toBe(listeners);
+      } finally {
+        releaseExit.resolve();
+        await (closing ?? session.close());
+      }
+    },
+  );
+
+  it('rejects pending foreground work when its activity is replaced', async () => {
+    const { session } = await startSession();
+    const callback = vi.fn();
+    const event = AgentSessionEventTypes.UserStateChanged;
+    const listeners = session.listenerCount(event);
+    session._updateUserState('speaking');
+    const pending = session.waitForIdleAndHold(callback).catch((error: unknown) => error);
+
+    try {
+      await vi.waitFor(() => expect(session.listenerCount(event)).toBe(listeners + 1));
+      await session._updateActivity(new Agent({ instructions: 'next agent' }));
+
+      expect(await pending).toMatchObject({ name: 'AbortError' });
+      expect(callback).not.toHaveBeenCalled();
+    } finally {
+      await session.close();
+    }
+  });
+
+  it('reports provider-triggered shutdown as idle cancellation', async () => {
+    const session = new AgentSession({
+      vad: null,
+      turnHandling: { turnDetection: null },
+      connOptions: { maxUnrecoverableErrors: 0 },
+    });
+    await session.start({ agent: new Agent({ instructions: 'test' }) });
+    const activity = session._activity!;
+    const callback = vi.fn();
+    const providerError = new APIConnectionError({ message: 'STT unavailable' });
+    const event = AgentSessionEventTypes.UserStateChanged;
+    const listeners = session.listenerCount(event);
+    session._updateUserState('speaking');
+    const pending = session.waitForIdleAndHold(callback).catch((error: unknown) => error);
+
+    try {
+      await vi.waitFor(() => expect(session.listenerCount(event)).toBe(listeners + 1));
+      session._onError({
+        type: 'stt_error',
+        timestamp: Date.now(),
+        label: 'test',
+        error: providerError,
+        recoverable: false,
+      });
+
+      expect(await pending).toMatchObject({ name: 'AbortError' });
+      expect(callback).not.toHaveBeenCalled();
+      expect(session.listenerCount(event)).toBe(listeners);
+      expect(session._closingSignal.reason).toBe(providerError);
+      await expect(activity.waitForIdle()).rejects.toMatchObject({ name: 'AbortError' });
+    } finally {
+      await session.close();
+    }
+  });
+
+  it('rejects an idle wait on an already closed activity', async () => {
+    const { session, activity } = await startSession();
+    await session.close();
+
+    await expect(activity.waitForIdle()).rejects.toMatchObject({ name: 'AbortError' });
   });
 });
