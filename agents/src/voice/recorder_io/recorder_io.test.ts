@@ -15,7 +15,13 @@ import type { AgentSession } from '../agent_session.js';
 import { AudioInput, AudioOutput, type PlaybackFinishedEvent, TextOutput } from '../io.js';
 import { ParticipantAudioOutput } from '../room_io/_output.js';
 import { TranscriptionSynchronizer } from '../transcription/synchronizer.js';
-import { INPUT_STALL_TIMEOUT_MS, RecorderIO, Track, WRITE_INTERVAL_MS } from './recorder_io.js';
+import {
+  INPUT_STALL_TIMEOUT_MS,
+  RecorderIO,
+  type RecorderOptions,
+  Track,
+  WRITE_INTERVAL_MS,
+} from './recorder_io.js';
 
 class FakeAudioInput extends AudioInput {
   private chan: StreamChannel<AudioFrame> = createStreamChannel<AudioFrame>();
@@ -1302,6 +1308,86 @@ describe('Track', () => {
 });
 
 describe('RecorderIO end to end', () => {
+  /** Return the sizes of the audio packets in an Ogg stream, excluding headers and padding. */
+  function oggPacketSizes(filePath: string): number[] {
+    const data = fs.readFileSync(filePath);
+    const sizes: number[] = [];
+    let offset = 0;
+    let packetSize = 0;
+
+    while (offset < data.length) {
+      expect(data.subarray(offset, offset + 4).toString()).toBe('OggS');
+      const segmentCount = data[offset + 26]!;
+      const segments = data.subarray(offset + 27, offset + 27 + segmentCount);
+      const bodyOffset = offset + 27 + segmentCount;
+      let bodySize = 0;
+
+      for (const segmentSize of segments) {
+        bodySize += segmentSize;
+        packetSize += segmentSize;
+        if (segmentSize < 255) {
+          sizes.push(packetSize);
+          packetSize = 0;
+        }
+      }
+      offset = bodyOffset + bodySize;
+    }
+
+    // OpusHead and OpusTags are not audio; the last packet holds encoder padding.
+    return sizes.slice(2, -1);
+  }
+
+  /** Record one second of silence followed by one second of tone. */
+  async function packetSizes(options: Partial<RecorderOptions> = {}): Promise<number[]> {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(1_000_000);
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'recorder-io-test-'));
+      const outputPath = path.join(dir, 'packets.ogg');
+      const recorder = new RecorderIO({ agentSession: {} as AgentSession, ...options });
+      const source = new FakeAudioInput();
+      const audioIn = recorder.recordInput(source);
+      recorder.recordOutput(new FakeAudioOutput());
+      await recorder.start(outputPath);
+
+      const reader = audioIn.stream.getReader();
+      for (let i = 0; i < 20; i++) {
+        vi.setSystemTime(Date.now() + 100);
+        await source.push(i < 10 ? makeFrame(100) : makeToneFrame(100));
+        await reader.read();
+      }
+      reader.releaseLock();
+      await recorder.close();
+
+      return oggPacketSizes(outputPath);
+    } finally {
+      vi.useRealTimers();
+    }
+  }
+
+  it('packs silence into smaller packets with the default variable bit rate', async () => {
+    const sizes = await packetSizes();
+    expect(Math.min(...sizes)).toBeLessThan(Math.max(...sizes));
+  }, 30000);
+
+  it('encodes every packet at the same size with a constant bit rate', async () => {
+    const sizes = await packetSizes({ bitRate: 128_000, constantBitRate: true });
+    expect(new Set(sizes)).toEqual(new Set([320]));
+  }, 30000);
+
+  it.each([499, 512_001, -1, true, 128_000.5, '128000'])(
+    'rejects an invalid bit rate at construction: %s',
+    (bitRate) => {
+      expect(
+        () =>
+          new RecorderIO({
+            agentSession: {} as AgentSession,
+            bitRate: bitRate as number,
+          }),
+      ).toThrow(/bitRate/);
+    },
+  );
+
   /** Decode the recording back to two float channels at its own sample rate. */
   function decodeStereo(filePath: string): [Float32Array, Float32Array] {
     const raw = execFileSync(

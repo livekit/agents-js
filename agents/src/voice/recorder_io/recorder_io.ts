@@ -38,6 +38,22 @@ export const WRITE_INTERVAL_MS = 2500;
 const DEFAULT_SAMPLE_RATE = 48000;
 const CLOSE_PLAYOUT_FLUSH_TIMEOUT_MS = 2000;
 
+// The range libopus accepts for a stereo stream.
+const MIN_BIT_RATE = 500;
+const MAX_BIT_RATE = 512_000;
+
+/** @internal */
+export function _validateBitRate(bitRate: number | undefined): void {
+  if (
+    bitRate !== undefined &&
+    (!Number.isInteger(bitRate) || bitRate < MIN_BIT_RATE || bitRate > MAX_BIT_RATE)
+  ) {
+    throw new Error(
+      `bitRate must be an integer between ${MIN_BIT_RATE} and ${MAX_BIT_RATE}, got ${String(bitRate)}`,
+    );
+  }
+}
+
 /** How long the writer waits on a source that stopped delivering before taking the silence as real. */
 export const INPUT_STALL_TIMEOUT_MS = 1000;
 
@@ -50,6 +66,10 @@ const RESYNC_TOLERANCE_MS = 100;
 export interface RecorderOptions {
   agentSession: AgentSession;
   sampleRate?: number;
+  /** Target Opus bit rate in bits per second. The encoder default is used when omitted. */
+  bitRate?: number;
+  /** Encode at a constant bit rate instead of a variable one. Defaults to `false`. */
+  constantBitRate?: boolean;
 }
 
 type QueueItem =
@@ -182,6 +202,8 @@ export class RecorderIO {
 
   private session: AgentSession;
   private sampleRate: number;
+  private bitRate?: number;
+  private constantBitRate: boolean;
 
   private _outputPath?: string;
   private writeTask?: Task<void>;
@@ -205,10 +227,19 @@ export class RecorderIO {
   private logger = log();
 
   constructor(opts: RecorderOptions) {
-    const { agentSession, sampleRate = DEFAULT_SAMPLE_RATE } = opts;
+    const {
+      agentSession,
+      sampleRate = DEFAULT_SAMPLE_RATE,
+      bitRate,
+      constantBitRate = false,
+    } = opts;
+
+    _validateBitRate(bitRate);
 
     this.session = agentSession;
     this.sampleRate = sampleRate;
+    this.bitRate = bitRate;
+    this.constantBitRate = constantBitRate;
   }
 
   async start(outputPath: string): Promise<void> {
@@ -379,13 +410,22 @@ export class RecorderIO {
     this.pcmStream = new PassThrough();
 
     this.ffmpegPromise = new Promise<void>((resolve, reject) => {
-      ffmpeg(this.pcmStream!)
+      const command = ffmpeg(this.pcmStream!)
         .inputFormat('s16le')
         .inputOptions([`-ar ${this.sampleRate}`, '-ac 2'])
         .audioCodec('libopus')
         .audioChannels(2)
         .audioFrequency(this.sampleRate)
-        .format('ogg')
+        .format('ogg');
+
+      if (this.bitRate !== undefined) {
+        command.outputOptions(['-b:a', String(this.bitRate)]);
+      }
+      if (this.constantBitRate) {
+        command.outputOptions(['-vbr', 'off']);
+      }
+
+      command
         .output(this._outputPath!)
         .on('end', () => {
           this.logger.debug('FFmpeg encoding finished');
