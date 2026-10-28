@@ -11,6 +11,7 @@ import { getJobContext } from '../../job.js';
 import { log } from '../../log.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../../types.js';
 import { isDevMode, isHosted, resolveEnvVar } from '../../utils.js';
+import { _getLocalInferenceModule } from '../_warmup.js';
 import { getDefaultInferenceUrl } from '../utils.js';
 import {
   BaseStreamingTurnDetector,
@@ -140,6 +141,9 @@ export class TurnDetector extends BaseStreamingTurnDetector {
     // (the local model then resolves a positive default) rather than throwing.
     if (opts.executor !== undefined) {
       this._executor = opts.executor;
+    } else if (_getLocalInferenceModule() === undefined) {
+      // without the binding the inference process has no EOT runner
+      this._executor = undefined;
     } else {
       try {
         this._executor = getJobContext().inferenceExecutor;

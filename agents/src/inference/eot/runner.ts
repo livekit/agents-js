@@ -58,7 +58,7 @@ export default class EotRunner extends InferenceRunner<EotInferenceInput, EotInf
     const bytes = Buffer.from(data.pcm, 'base64');
     const pcm = new Int16Array(bytes.buffer, bytes.byteOffset, Math.floor(bytes.byteLength / 2));
     const t0 = performance.now();
-    let probability = 0.0;
+    let probability: number;
     try {
       probability = await mod.predict(pcm);
     } catch (err) {
@@ -66,6 +66,7 @@ export default class EotRunner extends InferenceRunner<EotInferenceInput, EotInf
         { err: err instanceof Error ? err.message : String(err) },
         'local audio EOT prediction failed',
       );
+      throw err;
     }
     return { probability, inferenceDurationMs: performance.now() - t0 };
   }

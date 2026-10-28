@@ -60,6 +60,22 @@ describe('EotRunner', () => {
     await runner.close();
   });
 
+  it('rejects when the native prediction fails', async () => {
+    const fakeMod = {
+      initEot: vi.fn(),
+      predict: vi.fn(async () => {
+        throw new Error('predict failed');
+      }),
+    };
+    vi.spyOn(warmup, '_getLocalInferenceModule').mockReturnValue(
+      fakeMod as unknown as ReturnType<typeof warmup._getLocalInferenceModule>,
+    );
+
+    const runner = new EotRunner();
+    await runner.initialize();
+    await expect(runner.run({ pcm: '' })).rejects.toThrow('predict failed');
+  });
+
   it('throws on initialize when the native binding is unavailable', async () => {
     vi.spyOn(warmup, '_getLocalInferenceModule').mockReturnValue(undefined);
     const runner = new EotRunner();

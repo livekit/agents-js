@@ -19,7 +19,6 @@ import { log } from '../../log.js';
 import { type StreamChannel, createStreamChannel } from '../../stream/stream_channel.js';
 import { type APIConnectOptions, intervalForRetry } from '../../types.js';
 import { Task, delay } from '../../utils.js';
-import { _getLocalInferenceModule } from '../_warmup.js';
 import { buildMetadataHeaders, connectWs, createAccessToken } from '../utils.js';
 import {
   type BaseStreamingTurnDetectorOptions,
@@ -160,8 +159,7 @@ export class LocalTransport implements StreamingTurnDetectionTransport {
     executor: InferenceExecutor | undefined;
   }) {
     this._opts = opts.opts;
-    // without the binding the inference process has no EOT runner, so predict the positive default
-    this._executor = _getLocalInferenceModule() === undefined ? undefined : opts.executor;
+    this._executor = opts.executor;
     this._buf = new PcmRingBuffer(CLIENT_BUFFER_SAMPLES);
   }
 
