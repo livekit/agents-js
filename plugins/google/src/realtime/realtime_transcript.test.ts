@@ -2,8 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type * as genai from '@google/genai';
-import { Modality } from '@google/genai';
-import type { llm } from '@livekit/agents';
+import { Behavior, Modality } from '@google/genai';
+import { llm } from '@livekit/agents';
 import { describe, expect, it, vi } from 'vitest';
 import { RealtimeModel } from './realtime_api.js';
 
@@ -67,6 +67,7 @@ async function openSession(options: SessionOptions = {}) {
   await vi.waitFor(() => expect(internals.activeSession).toBeDefined());
 
   return {
+    session,
     generations,
     serverSends: (message: ServerFrame) => live.callbacks!.onmessage(message),
   };
@@ -164,5 +165,81 @@ describe('Gemini realtime transcript', () => {
       audioFrames: 0,
       functionCalls: [],
     });
+  });
+});
+
+describe('Gemini realtime user speech with a NON_BLOCKING tool call pending', () => {
+  /**
+   * The user asks, the model calls a NON_BLOCKING tool (the plugin answers `willContinue` at
+   * once) and keeps talking in a generation of its own while the tool runs.
+   */
+  async function modelTalksDuringToolCall() {
+    const opened = await openSession({ toolBehavior: Behavior.NON_BLOCKING });
+    const speechStarted = vi.fn();
+    opened.session.on('input_speech_started', speechStarted);
+
+    opened.serverSends({ serverContent: { inputTranscription: { text: 'Find me a house' } } });
+    opened.serverSends({
+      toolCall: { functionCalls: [{ id: 'fc-1', name: 'searchHouses', args: {} }] },
+    });
+    opened.serverSends({ serverContent: { modelTurn: { parts: [AUDIO_PART] } } });
+    await vi.waitFor(() => expect(opened.generations).toHaveLength(2));
+
+    return { ...opened, speechStarted };
+  }
+
+  it("does not report the model's own generation as user speech", async () => {
+    const { generations, speechStarted } = await modelTalksDuringToolCall();
+
+    // Only the user's turn. A second event interrupts the speech that owns the tool call,
+    // and the tool's result is never sent.
+    expect(speechStarted).toHaveBeenCalledTimes(1);
+    expect(generations[1]!.userInitiated).toBe(false);
+  });
+
+  it('still reports a barge-in', async () => {
+    const { serverSends, speechStarted } = await modelTalksDuringToolCall();
+    const before = speechStarted.mock.calls.length;
+
+    serverSends({ serverContent: { interrupted: true } });
+
+    await vi.waitFor(() => expect(speechStarted).toHaveBeenCalledTimes(before + 1));
+  });
+
+  it('still reports the user starting a new turn', async () => {
+    const { generations, serverSends, speechStarted } = await modelTalksDuringToolCall();
+    serverSends({ serverContent: { turnComplete: true } });
+    const before = speechStarted.mock.calls.length;
+
+    serverSends({ serverContent: { inputTranscription: { text: 'With a pool' } } });
+
+    await vi.waitFor(() => expect(generations).toHaveLength(3));
+    expect(speechStarted).toHaveBeenCalledTimes(before + 1);
+  });
+
+  it("reports the model's next generation once the final tool response is sent", async () => {
+    const { session, generations, serverSends, speechStarted } = await modelTalksDuringToolCall();
+    serverSends({ serverContent: { turnComplete: true } });
+
+    const chatCtx = session.chatCtx.copy();
+    chatCtx.insert([
+      llm.FunctionCall.create({ callId: 'fc-1', name: 'searchHouses', args: '{}' }),
+      llm.FunctionCallOutput.create({
+        callId: 'fc-1',
+        name: 'searchHouses',
+        output: '3 houses',
+        isError: false,
+      }),
+    ]);
+    await session.updateChatCtx(chatCtx);
+    const internals = session as unknown as { pendingToolCallIds: Set<string> };
+    await vi.waitFor(() => expect(internals.pendingToolCallIds.size).toBe(0));
+    const before = speechStarted.mock.calls.length;
+
+    // with no call pending, a new generation cuts any playout left, as before
+    serverSends({ serverContent: { modelTurn: { parts: [AUDIO_PART] } } });
+
+    await vi.waitFor(() => expect(generations).toHaveLength(3));
+    expect(speechStarted).toHaveBeenCalledTimes(before + 1);
   });
 });
