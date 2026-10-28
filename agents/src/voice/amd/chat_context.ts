@@ -3,7 +3,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /** AMD turn bookkeeping and independent classifier history. */
-import { ChatContext, FunctionCall, FunctionCallOutput } from '../../llm/chat_context.js';
+import {
+  ChatContext,
+  ChatMessage,
+  FunctionCall,
+  FunctionCallOutput,
+} from '../../llm/chat_context.js';
 import type { AMDCategory, AMDPredictionEvent } from './events.js';
 
 export type AMDTranscriptSource = 'session' | 'amd';
@@ -69,9 +74,16 @@ export class AMDChatContext extends ChatContext {
     });
   }
 
-  addAgentReply(): void {
-    // that the agent spoke, never its words
-    this.addMessage({ role: 'assistant', content: AGENT_REPLY });
+  /**
+   * Mark that the agent spoke, never its words, at the time its speech started.
+   *
+   * The session adds a reply when its speech ends, so a participant turn committed
+   * during that speech can arrive first. Inserting by start time keeps speaking order.
+   */
+  addAgentReply(startedAt: number): void {
+    this.insert(
+      ChatMessage.create({ role: 'assistant', content: [AGENT_REPLY], createdAt: startedAt }),
+    );
   }
 
   addToolResult(call: FunctionCall, output: FunctionCallOutput): void {

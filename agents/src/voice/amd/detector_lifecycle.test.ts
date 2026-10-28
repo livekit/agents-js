@@ -1024,6 +1024,38 @@ describe('AMD lifecycle', () => {
     expect((request.chatCtx.items[0] as ChatMessage).textContent).toBe(CLASSIFY_PROMPT);
   });
 
+  it('agent reply keeps speaking order when a turn commits during it', async () => {
+    const { detector, session, classifier } = await running();
+    commitTurn(detector, endOfTurn('Please state your name.'));
+    const first = await classifier.request();
+    // millisecond timestamps can tie where Python's float seconds do not
+    await eventually(() => Date.now() > first.currentTurn.createdAt);
+    commitTurn(detector, endOfTurn('Okay.'));
+    const second = await classifier.request();
+    expect(first.currentTurn.createdAt).toBeLessThan(second.currentTurn.createdAt);
+    // the reply started between the two turns but is added when its speech ends
+    session._conversationItemAdded(
+      ChatMessage.create({
+        role: 'assistant',
+        content: ['This is Alex from Acme.'],
+        createdAt: (first.currentTurn.createdAt + second.currentTurn.createdAt) / 2,
+      }),
+    );
+    commitTurn(detector, endOfTurn('Please hold.'));
+    const request = await classifier.request();
+
+    const history = request.chatCtx.items
+      .filter((item): item is ChatMessage => item instanceof ChatMessage)
+      .slice(2)
+      .map((message) => [message.role, message.textContent]);
+    expect(history).toEqual([
+      ['user', 'Please state your name.'],
+      ['assistant', AGENT_REPLY],
+      ['user', 'Okay.'],
+      ['user', 'Please hold.'],
+    ]);
+  });
+
   it('dtmf tool works without amd', async () => {
     const publishDtmf = vi.fn(async () => {});
     const result = await sendDtmf(['1'], publishDtmf);

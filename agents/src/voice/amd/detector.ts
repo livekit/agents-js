@@ -143,8 +143,8 @@ export interface AMDOptions {
   inferenceTimeout?: number;
   /**
    * Continuous participant silence before a machine reply plays, in ms. Includes silence
-   * before and during classification. Reply generation starts before the silence ends.
-   * Predictions update the category immediately. Replies outside a machine stage do not
+   * before and during classification. Pipeline reply generation starts before the silence
+   * ends; realtime generation starts after it. Predictions update the category immediately. Replies outside a machine stage do not
    * wait. Set to zero to disable the extra silence wait. Defaults to 1.5 s.
    */
   machineSilenceThreshold?: number;
@@ -679,7 +679,7 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
       item.textContent &&
       item.createdAt >= this.startedAt!
     ) {
-      this.chatCtx.addAgentReply();
+      this.chatCtx.addAgentReply(item.createdAt);
     }
   };
 
