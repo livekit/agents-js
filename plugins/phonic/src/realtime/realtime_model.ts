@@ -552,7 +552,6 @@ export class RealtimeSession extends llm.RealtimeSession {
     const diffOps = llm.computeChatCtxDiff(this._chatCtx, chatCtx);
     let sentToolCallOutput = false;
     let sentAddSystemMessage = false;
-    let forbidSpeech = false;
     let bufferedUserText = false;
     const lastItemId =
       chatCtx.items.length > 0 ? chatCtx.items[chatCtx.items.length - 1]?.id : undefined;
@@ -568,12 +567,6 @@ export class RealtimeSession extends llm.RealtimeSession {
           output: item.output,
         });
         sentToolCallOutput = true;
-        if (
-          !item.replyRequired ||
-          (item.name && this.configsForTools.get(item.name)?.forbid_speech_after_tool_call)
-        ) {
-          forbidSpeech = true;
-        }
       }
       if (item?.type === 'message') {
         if ((item.role === 'system' || item.role === 'developer') && item.rawTextContent) {
@@ -604,12 +597,9 @@ export class RealtimeSession extends llm.RealtimeSession {
         'updateChatCtx called but no new tool call outputs to send. Phonic does not support general chat context updates.',
       );
     }
-    // Skip opening a new assistant turn when the tool forbids speech after its call:
-    // Phonic will not speak, so the generation would otherwise dangle open (never
-    // receiving audio nor a finished-speaking event) until the handoff reset / close.
-    if (sentToolCallOutput && !forbidSpeech) {
-      this.startNewAssistantTurn({ userInitiated: false });
-    }
+    // Let the server's speech-start or text event open the next generation. Opening
+    // one here queues an empty speech handle that a concurrent handoff must drain,
+    // delaying the reset until an outgoing reply that has not started yet finishes.
   }
 
   async updateTools(tools: llm.ToolContext): Promise<void> {
