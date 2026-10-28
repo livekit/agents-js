@@ -10,11 +10,118 @@ The Agents Framework is designed for building realtime, programmable
 participants that run on servers. Use it to create conversational, multi-modal
 voice agents that can see, hear, and understand.
 
-This package contains the Rime plugin, which provides high-quality text-to-speech (TTS) capabilities for voice synthesis. Refer to the
-[documentation](https://docs.livekit.io/agents/overview/) for information on how to use it,
-or browse the [API reference](https://docs.livekit.io/agents-js/modules/plugins_agents_plugin_rime.html).
-See the [repository](https://github.com/livekit/agents-js) for more information
-about the framework as a whole.
+Rime provides text-to-speech and Prism realtime speech-to-speech through this plugin.
+See the [LiveKit documentation](https://docs.livekit.io/agents/overview/),
+[API reference](https://docs.livekit.io/agents-js/modules/plugins_agents_plugin_rime.html),
+and [framework source](https://github.com/livekit/agents-js).
+
+## Prism realtime
+
+Prism handles speech input and output through `voice.AgentSession`. It requires
+server turn detection and Node.js 22 or later. ESM and CommonJS are supported.
+
+Set `RIME_API_KEY`. In your agent entrypoint, use the room from your job context:
+
+```ts
+import { voice } from '@livekit/agents';
+import { realtime } from '@livekit/agents-plugin-rime';
+
+const model = new realtime.RealtimeModel({
+  voice: process.env.PRISM_VOICE,
+});
+const session = new voice.AgentSession({ llm: model });
+await session.start({
+  agent: new voice.Agent({ instructions: 'Give short replies in English.' }),
+  room, // The LiveKit room from your job context.
+});
+session.generateReply({ userInput: 'Hello.' });
+```
+
+Connection options also accept an `apiKey` or SDK `client`. If you supply a client,
+you must close it yourself. The default endpoint is `wss://prism.api.rime.ai/v1/realtime`.
+Omit `voice` to use the deployment default. For a trusted host outside `rime.ai`, set
+`allowCustomEndpoint: true`. Remote endpoints require WSS; loopback IPs can use WS.
+
+### Settings and tools
+
+Use `await agent.updateInstructions()` and `await agent.updateTools()` for agent settings.
+For provider settings, call
+`await model.updateSession({ voice, truncation, responseMetadata, toolFillers })`.
+Omitted fields keep their values. `model.sessionInfo` returns confirmed settings;
+`await model.getHistory()` reads provider history without replacing local history.
+On a direct Prism session, `await session.generateReply('Check in', {
+  metadata: { step: '3' },
+})` labels one requested reply. These labels replace matching session labels.
+Replies that Prism starts from caller speech use session labels.
+
+LiveKit executes tools. The plugin submits each result once and requests a continuation.
+To add filler speech, use the registered tool name:
+`toolFillers: { lookup: { type: 'text', text: 'Checking your order.' } }`.
+
+Updates are not atomic. Each accepted setting remains applied if a later update fails.
+With `toolChoice: 'none'`, the plugin removes tools until Prism accepts the reply or
+the request is cancelled, then restores them. The SDK cancels responses accepted after
+cancellation. An automatic speech reply can start during that gap with no tools.
+This also applies when LiveKit reaches `maxToolSteps`. Failed tool restoration or a
+partially applied history edit closes the session.
+
+### Interruption and limits
+
+For application stop, use `session.interrupt()` to cancel the provider response.
+In core 1.9.4, `SpeechHandle.interrupt()` does not notify the provider between response
+creation and the first message. It works during audio and clears queued playback
+after generation ends.
+
+Prism estimates playback completion because the standard interface cannot measure it
+reliably. The plugin reports interrupted playback, but sends no normal completion
+receipt. Early speech hints do not lower the volume.
+
+These limits apply:
+
+- One open realtime session per model. Close it before starting a fresh conversation.
+  Closing the model prevents new sessions. There is no custom fallback session.
+- Server turn detection is required. Manual audio commits are unsupported.
+- Tool choice accepts `auto` and `none`. Tools must be functions.
+- History accepts text and completed tool calls/results. Pending calls cannot resume
+  in a fresh session. Typed input enters history before the reply request.
+- PCM16 input is downmixed or resampled when needed. Output is 24 kHz mono PCM16.
+  Queues are bounded; overflow closes the session.
+
+The realtime session emits SDK payloads as `item_truncated` and `response_ended`.
+`response_ended.usage` reports token counts when Prism provides them.
+Available `keptText` updates the plugin's history while the server item ID still
+matches. An empty string means no words remain; `null` means unavailable and leaves
+known text unchanged. Early acknowledgments may have no retained text, with no later
+update guaranteed. Retained text can differ from the words heard and does not replace
+LiveKit's playback transcript.
+
+`response_ended.truncation` reports items excluded from that reply's prompt through
+`itemsLeftOut` and `firstKeptItemId`. It does not delete local history or change the
+truncation policy. A missing or null summary means no exclusions were reported or the
+information was unavailable. Diagnostics include discarded replies and can arrive
+before `generateReply()` returns a requested response.
+
+`generation.instructionItemId` names a saved instruction from an explicit
+reply. After that reply ends, call `await model.deleteInstructionItem(id)` to
+remove it from later Prism history. The method accepts only IDs observed in
+this session while they remain among the last 128 saved instruction IDs that
+the adapter observed.
+It does not change local LiveKit history. An idle close produces
+`PrismIdleTimeoutError` in the session error event, with `idleTimeoutS` in seconds.
+
+### Configuration and compatibility
+
+Constructor options include turn detection, history truncation, request IDs, response
+metadata, and tool fillers. Timeouts use milliseconds. See
+[`RealtimeModelOptions`](src/realtime/realtime_model.ts) for defaults.
+
+Both local protocol tests and standard-session tests passed with the repository core
+at `f03a68ef` and published `@livekit/agents@1.9.4`, using Node.js 24.18.0. Earlier
+versions were not tested. The peer dependency remains the repository's release version.
+
+The plugin pins `@rimelabs/sdk` to `0.1.0-alpha.25` from public npm. If your machine
+routes `@rimelabs` to GitHub Packages, install with
+`pnpm install --@rimelabs:registry=https://registry.npmjs.org`.
 
 ## WebSocket v1 streaming
 
