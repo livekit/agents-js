@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { Mutex } from '@livekit/mutex';
 import { AudioFrame, AudioResampler, combineAudioFrames } from '@livekit/rtc-node';
+import { createHash } from 'node:crypto';
 import { type MessageEvent, WebSocket } from 'ws';
 import {
   APIConnectionError,
@@ -30,6 +31,54 @@ const NUM_CHANNELS = 1;
 const BASE_URL = 'https://api.openai.com/v1';
 
 const MOCK_AUDIO_ID_PREFIX = 'lk_mock_audio_item_';
+const MAX_ID_LENGTH = 32;
+
+function shortenId(id: string): string {
+  // OpenAI caps call and item IDs at 32 chars. Hashing keeps references deterministic.
+  if (id.length <= MAX_ID_LENGTH) return id;
+  return createHash('sha256').update(id).digest('hex').slice(0, MAX_ID_LENGTH);
+}
+
+/** @internal Exported for testing purposes */
+export class ItemIdMap {
+  private originals = new Map<string, string>();
+
+  private shorten(id: unknown): unknown {
+    if (typeof id !== 'string' || id.length <= MAX_ID_LENGTH) return id;
+    const short = shortenId(id);
+    this.originals.set(short, id);
+    return short;
+  }
+
+  shortenEvent(event: Record<string, unknown>): void {
+    const items: unknown[] = [event.item];
+    if (event.response && typeof event.response === 'object') {
+      const input = (event.response as Record<string, unknown>).input;
+      if (Array.isArray(input)) items.push(...input);
+    }
+    for (const item of items) {
+      if (item && typeof item === 'object' && 'id' in item) {
+        const record = item as Record<string, unknown>;
+        record.id = this.shorten(record.id);
+      }
+    }
+    for (const key of ['previous_item_id', 'item_id']) {
+      if (key in event) event[key] = this.shorten(event[key]);
+    }
+  }
+
+  restoreEvent(event: Record<string, unknown>): void {
+    if (this.originals.size === 0) return;
+    if (event.item && typeof event.item === 'object') {
+      const item = event.item as Record<string, unknown>;
+      if (typeof item.id === 'string') item.id = this.originals.get(item.id) ?? item.id;
+    }
+    for (const key of ['previous_item_id', 'item_id']) {
+      const id = event[key];
+      if (typeof id === 'string') event[key] = this.originals.get(id) ?? id;
+    }
+  }
+}
 
 interface RealtimeOptions {
   model: api_proto.Model;
@@ -457,6 +506,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   private _tools: llm.ToolContext = llm.ToolContext.empty();
   protected remoteChatCtx: llm.RemoteChatContext = new llm.RemoteChatContext();
   private messageChannel = new Queue<api_proto.ClientEvent>();
+  private pendingMessage?: Promise<api_proto.ClientEvent>;
   private inputResampler?: AudioResampler;
   private inputRate?: number;
   private instructions?: string;
@@ -477,6 +527,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   private sentChatCtxEvents: { [id: string]: api_proto.ClientEvent } = {};
   private replayItemCreateEventIds: { [id: string]: string[] } = {};
   private replayItemCreateEventItems: { [eventId: string]: string } = {};
+  private itemIds = new ItemIdMap();
 
   private inputTranscriptAccumulators = new Map<string, Map<number, string>>();
 
@@ -1280,10 +1331,11 @@ export class RealtimeSession extends llm.RealtimeSession {
 
       try {
         for (const ev of events) {
-          this.emit('openai_client_event_queued', ev);
           if (this._options.isAzure && this._options.apiVersion) {
             normalizeAzureClientEvent(ev as unknown as Record<string, unknown>);
           }
+          this.itemIds.shortenEvent(ev as unknown as Record<string, unknown>);
+          this.emit('openai_client_event_queued', ev);
           wsConn!.send(JSON.stringify(ev));
         }
       } catch (error) {
@@ -1369,10 +1421,12 @@ export class RealtimeSession extends llm.RealtimeSession {
 
       while (!this.#closed && wsConn.readyState === WebSocket.OPEN && !signal.aborted) {
         try {
-          const event = await Promise.race([this.messageChannel.get(), abortFuture.await]);
+          const pendingMessage = (this.pendingMessage ??= this.messageChannel.get());
+          const event = await Promise.race([pendingMessage, abortFuture.await]);
           if (signal.aborted || abortFuture.done || event === undefined) {
             break;
           }
+          if (this.pendingMessage === pendingMessage) this.pendingMessage = undefined;
 
           if (lkOaiDebug && event.type !== 'input_audio_buffer.append') {
             this.#logger.debug(
@@ -1384,10 +1438,11 @@ export class RealtimeSession extends llm.RealtimeSession {
             );
           }
 
-          this.emit('openai_client_event_queued', event);
           if (this._options.isAzure && this._options.apiVersion) {
             normalizeAzureClientEvent(event as unknown as Record<string, unknown>);
           }
+          this.itemIds.shortenEvent(event as unknown as Record<string, unknown>);
+          this.emit('openai_client_event_queued', event);
           wsConn.send(JSON.stringify(event));
           if (event.event_id && this.chatCtxEventFutures[event.event_id]) {
             this.sentChatCtxEvents[event.event_id] = event;
@@ -1412,6 +1467,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     wsConn.onmessage = (message: MessageEvent) => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const event: any = JSON.parse(message.data as string);
+      this.itemIds.restoreEvent(event);
 
       this.emit('openai_server_event_received', event);
       if (lkOaiDebug) {
@@ -2358,7 +2414,7 @@ export async function livekitItemToOpenAIItem(item: llm.ChatItem): Promise<api_p
       return {
         id: item.id,
         type: 'function_call',
-        call_id: item.callId,
+        call_id: shortenId(item.callId),
         name: item.name,
         arguments: item.args,
       } as api_proto.FunctionCallItem;
@@ -2366,7 +2422,7 @@ export async function livekitItemToOpenAIItem(item: llm.ChatItem): Promise<api_p
       return {
         id: item.id,
         type: 'function_call_output',
-        call_id: item.callId,
+        call_id: shortenId(item.callId),
         output: item.output,
       } as api_proto.FunctionCallOutputItem;
     case 'message':
