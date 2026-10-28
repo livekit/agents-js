@@ -1,0 +1,28 @@
+agents/src/voice/amd/detector_lifecycle.test.ts
+  s_a76e625a99c445::t_bcac3b86ca133a 1027-1058
+agents/src/voice/amd/detector.ts
+  s_a76e625a99c445::t_4d263997bec730 146-147
+  s_a76e625a99c445::t_c3466bb7d8a895 682
+examples/src/telephony/README.md
+  s_a76e625a99c445::t_d46665a639141b 287-289
+agents/src/voice/amd/chat_context.ts
+  s_a76e625a99c445::t_86808c172244af 6-11
+  s_a76e625a99c445::t_49a71dd86fc88c 77-83
+  s_a76e625a99c445::t_1d2e173da16aba 84-86
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a7f44adc1e5384034ff43f377b9df46301099be8",
+  "prompts": {},
+  "sessions": {
+    "s_a76e625a99c445": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c9702b8a-b660-4f34-bd32-230591d391a0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
