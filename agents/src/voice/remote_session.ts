@@ -226,7 +226,10 @@ export class RoomSessionTransport extends SessionTransport {
     if (this.getRemoteIdentity() && participantInfo.identity !== this.getRemoteIdentity()) {
       return;
     }
-    if (this.closed) return;
+    if (this.closed) {
+      void reader.close();
+      return;
+    }
     this.incomingReaders.put(reader);
   };
 
@@ -324,14 +327,6 @@ export class RoomSessionTransport extends SessionTransport {
   override async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
-    this.closing.abort();
-    this.readTask?.cancel();
-    this.incomingReaders.close();
-    const closingReaders: Promise<void>[] = [];
-    for await (const reader of this.incomingReaders) closingReaders.push(reader.close());
-    await Promise.allSettled([...closingReaders, ...(this.readTask ? [this.readTask.result] : [])]);
-    this.readTask = undefined;
-
     if (this.handlerRegistered) {
       try {
         this.room.unregisterByteStreamHandler(TOPIC_SESSION_MESSAGES);
@@ -340,6 +335,14 @@ export class RoomSessionTransport extends SessionTransport {
       }
       this.handlerRegistered = false;
     }
+
+    this.closing.abort();
+    this.readTask?.cancel();
+    this.incomingReaders.close();
+    const closingReaders: Promise<void>[] = [];
+    for await (const reader of this.incomingReaders) closingReaders.push(reader.close());
+    await Promise.allSettled([...closingReaders, ...(this.readTask ? [this.readTask.result] : [])]);
+    this.readTask = undefined;
 
     if (this.waitingResolve) {
       this.waitingResolve({
@@ -1558,6 +1561,7 @@ export class RemoteSession extends (EventEmitter as new () => TypedEventEmitter<
         const remaining = deadline - performance.now();
         if (remaining <= 0) throw sendError ?? timeoutError;
         try {
+          sendError = undefined;
           await this.sendRequest(
             (id) =>
               new pb.SessionRequest({

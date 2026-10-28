@@ -16,6 +16,8 @@ Cancel activity-owned transcription inputs while public hook setup is pending, i
 
 Bound remote-host cancellation cleanup to a shared three-second grace after the response drain, so a stalled custom speech hook cannot keep the transport open indefinitely.
 
-Keep cancelled runs busy until speech cleanup settles, release transcription abort listeners between segments, and enforce readiness deadlines during blocked sends.
+Keep cancelled runs busy through reentrant callbacks until speech cleanup settles. Release transcription abort listeners between segments and close outputs interrupted during setup handoff.
+
+Stop Room intake before reader cleanup and close readers delivered after shutdown starts. Enforce readiness deadlines during blocked sends and discard obsolete send errors after retrying.
 
 Dispose native RTC resources after console cleanup so the CLI can exit normally.

@@ -26,6 +26,51 @@ type Hook = NonNullable<AgentHooks<unknown>['transcriptionNode']>;
 const modes = ['text', 'custom TTS', 'default TTS'] as const;
 type Mode = (typeof modes)[number];
 
+it.each(
+  (['say', 'generate'] as const).flatMap((mode) =>
+    Array.from({ length: 24 }, (_, checkpoint) => ({ mode, checkpoint })),
+  ),
+)(
+  'owns transcription output through interrupted $mode setup at checkpoint $checkpoint',
+  async ({ mode, checkpoint }) => {
+    const entered = new Future<void>();
+    const release = new Future<ReadableStream<string>>();
+    const cancel = vi.fn();
+    const output = new ReadableStream<string>({ cancel });
+    class TestAgent extends Agent {
+      override async transcriptionNode() {
+        entered.resolve();
+        return release.await;
+      }
+    }
+    const session = new AgentSession({
+      llm: new FakeLLM([{ input: 'go', content: 'source' }]),
+    });
+    const text = new Text();
+    session.output.transcription = text;
+    try {
+      await session.start({ agent: new TestAgent({ instructions: 'test' }) });
+      const speech =
+        mode === 'say' ? session.say('source') : session.generateReply({ userInput: 'go' });
+      await entered.await;
+      release.resolve(output);
+      // Interruption can land on either side of each asynchronous handoff.
+      for (let i = 0; i < checkpoint; i++) await Promise.resolve();
+      speech.interrupt(true);
+      await Promise.allSettled(speech._tasks.map((task) => task.result));
+      await tick();
+      expect(cancel).toHaveBeenCalledOnce();
+      expect(speech._tasks.every((task) => task.done)).toBe(true);
+      expect(output.locked).toBe(false);
+      expect(text.chunks).toEqual([]);
+    } finally {
+      release.resolve(output);
+      await output.cancel();
+      await session.close();
+    }
+  },
+);
+
 class Text extends TextOutput {
   chunks: string[] = [];
   override async captureText(text: string) {

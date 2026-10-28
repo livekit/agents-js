@@ -736,6 +736,30 @@ it('readiness timeouts and failed sends do not retain pending requests', async (
   ).toBe(0);
 });
 
+it.each([60, 120])(
+  'reports a readiness timeout after sending recovers with a %d ms budget',
+  async (timeout) => {
+    const transport = new Transport();
+    const send = vi.spyOn(transport, 'sendMessage');
+    send.mockRejectedValueOnce(new Error('temporary disconnect'));
+    const client = new RemoteSession(transport);
+    await client.start();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
+    const waiting = client.waitForReady(timeout, 40).catch((error: unknown) => error);
+    try {
+      await vi.advanceTimersByTimeAsync(timeout);
+      expect(send.mock.calls.length).toBeGreaterThanOrEqual(2);
+      expect(await waiting).toMatchObject({ message: 'waitForReady timed out' });
+      expect(
+        (client as unknown as { pendingRequests: Map<string, unknown> }).pendingRequests.size,
+      ).toBe(0);
+    } finally {
+      vi.useRealTimers();
+      await client.close();
+    }
+  },
+);
+
 it.each(['cooperative', 'late resolve', 'late reject'] as const)(
   'bounds readiness while a send is pending: %s',
   async (settlement) => {

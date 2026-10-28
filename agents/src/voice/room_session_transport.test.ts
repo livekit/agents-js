@@ -275,6 +275,50 @@ it('closes active and queued RTC readers and joins the single read task', async 
   cancelled.forEach((cancel) => expect(cancel).toHaveBeenCalledTimes(1));
 });
 
+it('detaches Room intake before cleanup and closes readers from callbacks already in flight', async () => {
+  const f = createRoomTransport();
+  const release = new Future<void>();
+  const entered = new Future<void>();
+  const firstCancel = vi.fn(() => {
+    entered.resolve();
+    return release.await;
+  });
+  const lateCancel = vi.fn();
+  const readers = [firstCancel, lateCancel].map(
+    (cancel) =>
+      new ByteStreamReader(
+        {
+          id: 'test',
+          mimeType: 'application/octet-stream',
+          topic: 'lk.agent.session',
+          timestamp: 0,
+          attributes: {},
+          name: 'test',
+        },
+        new ReadableStream({ cancel }),
+      ),
+  );
+  let closing: Promise<void> | undefined;
+  try {
+    await f.transport.start();
+    f.raw(readers[0]!);
+    closing = f.transport.close();
+    await entered.await;
+    expect.soft(f.room.unregisterByteStreamHandler).toHaveBeenCalledOnce();
+    // The fixture retains the callback to model delivery already in flight.
+    f.raw(readers[1]!);
+    release.resolve();
+    await closing;
+    expect(firstCancel).toHaveBeenCalledOnce();
+    expect(lateCancel).toHaveBeenCalledOnce();
+  } finally {
+    release.resolve();
+    await closing;
+    await Promise.all(readers.map((reader) => reader.close()));
+    await f.transport.close();
+  }
+});
+
 it('closes a dequeued reader when shutdown wins before reading starts', async () => {
   const f = createRoomTransport();
   const queue = (

@@ -260,7 +260,15 @@ export class RunResult<T = unknown> {
 
   /** @internal Stop a remote run and join its interrupted speech cleanup. */
   _cancel(): Promise<void> {
-    this.cancellation ??= this.cancel();
+    if (!this.cancellation) {
+      const cancellation = new Future<void>();
+      // Abort callbacks can re-enter the run before cancel() returns.
+      this.cancellation = cancellation.await;
+      void this.cancel().then(
+        () => cancellation.resolve(),
+        (error: Error) => cancellation.reject(error),
+      );
+    }
     return this.cancellation;
   }
 
