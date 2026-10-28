@@ -77,6 +77,7 @@ export class RunResult<T = unknown> {
   private outputRetryInstructions: string;
   private outputRetryError?: unknown;
   private session?: AgentSession;
+  private cancellation?: Promise<void>;
   private finalOutputValue?: T;
   private hasFinalOutput = false;
 
@@ -252,8 +253,18 @@ export class RunResult<T = unknown> {
     return this.handles.size;
   }
 
+  /** @internal A rejected run remains active until its speech cleanup settles. */
+  _isActive(): boolean {
+    return !this.done() || (this.cancellation !== undefined && this.session !== undefined);
+  }
+
   /** @internal Stop a remote run and join its interrupted speech cleanup. */
-  async _cancel(): Promise<void> {
+  _cancel(): Promise<void> {
+    this.cancellation ??= this.cancel();
+    return this.cancellation;
+  }
+
+  private async cancel(): Promise<void> {
     this._reject(new DOMException('Remote session run cancelled', 'AbortError'));
     const speeches: SpeechHandle[] = [];
     for (const handle of this.handles) {
@@ -266,13 +277,16 @@ export class RunResult<T = unknown> {
       // Non-speech tasks (such as activity transitions) belong to the session.
       // The run observes them but does not own their lifetime.
     }
-    if (this.session?._globalRunState === this) this.session._globalRunState = undefined;
-    this.session = undefined;
-    // The playout watchdog can mark a handle done while its reply still runs.
-    // Join the actual speech tasks before releasing ownership of their cleanup.
-    await Promise.allSettled(
-      speeches.flatMap((handle) => handle._tasks.map((task) => task.result)),
-    );
+    try {
+      // The playout watchdog can mark a handle done while its reply still runs.
+      // Keep the session busy until the actual speech tasks finish cleanup.
+      await Promise.allSettled(
+        speeches.flatMap((handle) => handle._tasks.map((task) => task.result)),
+      );
+    } finally {
+      if (this.session?._globalRunState === this) this.session._globalRunState = undefined;
+      this.session = undefined;
+    }
   }
 
   /** @internal – Reject the run with an error (e.g. when deferred generateReply fails). */

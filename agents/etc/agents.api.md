@@ -6781,6 +6781,8 @@ class RunResult<T = unknown> {
     get expect(): RunAssert;
     get finalOutput(): T;
     // @internal
+    _isActive(): boolean;
+    // @internal
     _itemAdded(item: ChatItem): void;
     // @internal (undocumented)
     _markDoneIfNeeded(handle?: SpeechHandle | Task<void> | null): void;
@@ -7023,7 +7025,6 @@ export interface SessionConnectOptions {
 // @public (undocumented)
 export class SessionHost {
     constructor(transport: SessionTransport, audioInput?: TcpAudioInput, audioOutput?: TcpAudioOutput);
-    // (undocumented)
     close(): Promise<void>;
     // @internal
     _onAmdPrediction(event: AMDPredictionEvent): void;
@@ -9890,6 +9891,6 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 // src/voice/amd.ts:517:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "gateListening"
 // src/voice/events.ts:437:3 - (ae-forgotten-export) The symbol "InterruptionDetectionError" needs to be exported by the entry point index.d.ts
 // src/voice/room_io/_output.ts:183:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "segmentTags"
-// src/voice/testing/run_result.ts:93:5 - (ae-forgotten-export) The symbol "OutputSchema" needs to be exported by the entry point index.d.ts
+// src/voice/testing/run_result.ts:94:5 - (ae-forgotten-export) The symbol "OutputSchema" needs to be exported by the entry point index.d.ts
 
 ```

@@ -3,11 +3,13 @@
 // SPDX-License-Identifier: Apache-2.0
 import { AgentSession as pb } from '@livekit/protocol';
 import { AudioFrame } from '@livekit/rtc-node';
+import { getEventListeners } from 'node:events';
 import { ReadableStream, TransformStream } from 'node:stream/web';
 import { beforeAll, expect, it, vi } from 'vitest';
 import { tool } from '../llm/tool_context.js';
 import { initializeLogger } from '../log.js';
 import { SynthesizeStream, TTS } from '../tts/tts.js';
+import { FlushSentinel } from '../types.js';
 import { AsyncIterableQueue, Future, Task } from '../utils.js';
 import { Agent, AgentTask } from './agent.js';
 import { AgentSession } from './agent_session.js';
@@ -548,3 +550,41 @@ it.each([false, true])(
     }
   },
 );
+
+it('releases transcription setup abort listeners between successful segments', async () => {
+  let replySignal: AbortSignal | undefined;
+  const counts: number[] = [];
+  const from = Task.from;
+  const spy = vi.spyOn(Task, 'from').mockImplementation((fn, controller, name) => {
+    if (name === 'AgentActivity.pipelineReply.produceSegments') replySignal = controller?.signal;
+    return from.call(Task, fn, controller, name);
+  });
+  class SegmentedAgent extends Agent {
+    override async llmNode() {
+      return new ReadableStream<string | typeof FlushSentinel>({
+        start(controller) {
+          for (let i = 0; i < 24; i++) {
+            controller.enqueue(`segment ${i}.`);
+            controller.enqueue(FlushSentinel);
+          }
+          controller.close();
+        },
+      });
+    }
+    override async transcriptionNode(text: Parameters<Agent['transcriptionNode']>[0]) {
+      counts.push(getEventListeners(replySignal!, 'abort').length);
+      return text;
+    }
+  }
+  const session = new AgentSession({ llm: new FakeLLM([]) });
+  session.output.transcription = new Text();
+  try {
+    await session.start({ agent: new SegmentedAgent({ instructions: 'test' }) });
+    await session.run({ userInput: 'go' }).wait();
+    expect(counts).toHaveLength(24);
+    expect(counts.every((count) => count <= counts[0]!)).toBe(true);
+  } finally {
+    await session.close();
+    spy.mockRestore();
+  }
+});

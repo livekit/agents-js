@@ -332,10 +332,17 @@ async function raceWithAbort<T>(
   if (signal.aborted) {
     return (await isPending(p)) ? undefined : ThrowsPromise.fromPromise<T | undefined, Error>(p);
   }
-  return ThrowsPromise.race([
-    ThrowsPromise.fromPromise<T | undefined, Error>(p),
-    ThrowsPromise.fromPromise<undefined, Error>(waitForAbort(signal).then(() => undefined)),
-  ]);
+  const aborted = new Future<undefined>();
+  const onAbort = () => aborted.resolve(undefined);
+  signal.addEventListener('abort', onAbort, { once: true });
+  try {
+    return await ThrowsPromise.race([
+      ThrowsPromise.fromPromise<T | undefined, Error>(p),
+      aborted.await,
+    ]);
+  } finally {
+    signal.removeEventListener('abort', onAbort);
+  }
 }
 
 function createTranscriptionInput(
@@ -3628,6 +3635,24 @@ export class AgentActivity implements RecognitionHooks {
     );
   }
 
+  private async resolveTranscriptionNode(
+    transcription: ReturnType<Agent['transcriptionNode']>,
+    speechHandle: SpeechHandle,
+    signal: AbortSignal,
+  ): Promise<Awaited<ReturnType<Agent['transcriptionNode']>>> {
+    await speechHandle.waitIfNotInterrupted([raceWithAbort(transcription, signal)]);
+    if (speechHandle.interrupted || signal.aborted) {
+      // A hook may ignore cancellation. Only dispose of its eventual stream.
+      void transcription
+        .then((source) => source?.cancel())
+        .catch((error) => {
+          this.logger.debug({ error }, 'failed to close cancelled transcription node');
+        });
+      return null;
+    }
+    return transcription;
+  }
+
   private async ttsTask(
     stateLease: AgentStateLease,
     text: string | ReadableStream<string>,
@@ -3724,19 +3749,12 @@ export class AgentActivity implements RecognitionHooks {
     let textOut: _TextOut | null = null;
     let replyTtsGenData: _TTSGenerationData | null = null;
     try {
-      const transcription = this.agent.transcriptionNode(transcriptionInput.stream, {});
-      await speechHandle.waitIfNotInterrupted([
-        raceWithAbort(transcription, replyAbortController.signal),
-      ]);
-      if (speechHandle.interrupted || replyAbortController.signal.aborted) {
-        void transcription
-          .then((source) => source?.cancel())
-          .catch((error) => {
-            this.logger.debug({ error }, 'failed to close cancelled say transcription node');
-          });
-        return;
-      }
-      const trNode = await transcription;
+      const trNode = await this.resolveTranscriptionNode(
+        this.agent.transcriptionNode(transcriptionInput.stream, {}),
+        speechHandle,
+        replyAbortController.signal,
+      );
+      if (speechHandle.interrupted || replyAbortController.signal.aborted) return;
       if (trNode) {
         const [textForwardTask, _textOut] = performTextForwarding(
           trNode,
@@ -4248,21 +4266,12 @@ export class AgentActivity implements RecognitionHooks {
         nodeInput = createTranscriptionInput(transcriptionInput, segmentAbortController.signal, {
           preventCancel: true,
         });
-        const transcription = this.agent.transcriptionNode(nodeInput.stream, modelSettings);
-        await speechHandle.waitIfNotInterrupted([
-          raceWithAbort(transcription, replyAbortController.signal),
-        ]);
-        if (speechHandle.interrupted || replyAbortController.signal.aborted) {
-          // The hook may ignore cancellation. Retain only cleanup for its eventual
-          // stream; it must not resume forwarding or history mutation in this reply.
-          void transcription
-            .then((source) => source?.cancel())
-            .catch((error) => {
-              this.logger.debug({ error }, 'failed to close cancelled transcription node');
-            });
-          return output;
-        }
-        const trNodeResult = await transcription;
+        const trNodeResult = await this.resolveTranscriptionNode(
+          this.agent.transcriptionNode(nodeInput.stream, modelSettings),
+          speechHandle,
+          replyAbortController.signal,
+        );
+        if (speechHandle.interrupted || replyAbortController.signal.aborted) return output;
         if (trNodeResult) {
           const [task, textOut] = performTextForwarding(
             trNodeResult,
@@ -4997,7 +5006,6 @@ export class AgentActivity implements RecognitionHooks {
         cancelUnusedInput(trTextInput);
         cancelUnusedInput(ttsTextInput);
         cancelUnusedInput(generatedAudio);
-        await cancelAndWait(forwardTasks, REPLY_TASK_CANCEL_TIMEOUT);
         await Promise.allSettled([
           nodeInput?.done,
           ...forwardTasks.map((task) => task.result),

@@ -1517,7 +1517,7 @@ export class AgentSession<
     outputType?: z.ZodType<T>;
     outputOptions?: RunOutputOptions | null;
   }): RunResult<T> {
-    if (this._globalRunState && !this._globalRunState.done()) {
+    if (this._globalRunState?._isActive()) {
       throw new Error('nested runs are not supported');
     }
 

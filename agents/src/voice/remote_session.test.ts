@@ -2,8 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { AgentSession as pb } from '@livekit/protocol';
-import type { ByteStreamReader, Room } from '@livekit/rtc-node';
-import * as net from 'node:net';
+import type { Room } from '@livekit/rtc-node';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { InferenceExecutor } from '../ipc/inference_executor.js';
 import {
@@ -15,25 +14,25 @@ import {
 import { ChatMessage } from '../llm/chat_context.js';
 import { initializeLogger, log } from '../log.js';
 import type { SimulationContext } from '../simulation.js';
+import { Future } from '../utils.js';
 import type { AgentSession } from './agent_session.js';
 import { FinalizeSimulationError } from './index.js';
+import { RemoteSession, SessionHost, SessionTransport } from './remote_session.js';
 import {
-  RemoteSession,
-  RoomSessionTransport,
-  SessionHost,
-  SessionTransport,
-  TcpSessionTransport,
-} from './remote_session.js';
-import type { RoomIO } from './room_io/room_io.js';
+  InMemoryTransport as FakeTransport,
+  InMemoryTransport as Transport,
+  createConnectedTransportPair,
+  messageEvent,
+} from './testing/remote_session.js';
 
-beforeAll(() => {
-  initializeLogger({ pretty: true, level: 'info' });
+beforeAll(() => initializeLogger({ pretty: false, level: 'warn' }));
+const cleanup: (() => Promise<unknown>)[] = [];
+afterEach(async () => {
+  vi.useRealTimers();
+  for (const close of cleanup.splice(0).reverse()) await close();
+  vi.restoreAllMocks();
 });
 
-// Every session event the host forwards to a remote consumer. Asserting the set
-// rather than its size says which events are forwarded, and pairs register with
-// close: an `on` added without its `off` leaks a handler across reconnects and
-// only shows up as a mismatch between these two.
 const FORWARDED_EVENTS = new Set([
   'agent_false_interruption',
   'agent_state_changed',
@@ -48,253 +47,7 @@ const FORWARDED_EVENTS = new Set([
   'user_state_changed',
 ]);
 
-function frame(msg: pb.AgentSessionMessage): Buffer {
-  const data = msg.toBinary();
-  const header = Buffer.allocUnsafe(4);
-  header.writeUInt32BE(data.length, 0);
-  return Buffer.concat([header, Buffer.from(data)]);
-}
-
-function pingMessage(requestId: string): pb.AgentSessionMessage {
-  return new pb.AgentSessionMessage({
-    message: {
-      case: 'request',
-      value: new pb.SessionRequest({
-        requestId,
-        request: { case: 'ping', value: new pb.SessionRequest_Ping() },
-      }),
-    },
-  });
-}
-
-async function listen(server: net.Server): Promise<number> {
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-  return (server.address() as net.AddressInfo).port;
-}
-
-describe('TcpSessionTransport framing', () => {
-  let server: net.Server | undefined;
-  let transport: TcpSessionTransport | undefined;
-
-  afterEach(async () => {
-    await transport?.close();
-    transport = undefined;
-    if (server) {
-      await new Promise<void>((resolve) => server!.close(() => resolve()));
-      server = undefined;
-    }
-  });
-
-  it('decodes a single framed message', async () => {
-    server = net.createServer((sock) => {
-      sock.write(frame(pingMessage('r1')));
-    });
-    const port = await listen(server);
-
-    transport = new TcpSessionTransport('127.0.0.1', port);
-    await transport.start();
-
-    const it = transport[Symbol.asyncIterator]();
-    const { value, done } = await it.next();
-    expect(done).toBe(false);
-    expect(value.message.case).toBe('request');
-    expect((value.message.value as pb.SessionRequest).requestId).toBe('r1');
-  });
-
-  it('reassembles a frame delivered across multiple chunks', async () => {
-    const buf = frame(pingMessage('split'));
-    server = net.createServer((sock) => {
-      // header + 1 byte, then the remainder after a tick
-      sock.write(buf.subarray(0, 5));
-      setTimeout(() => sock.write(buf.subarray(5)), 10);
-    });
-    const port = await listen(server);
-
-    transport = new TcpSessionTransport('127.0.0.1', port);
-    await transport.start();
-
-    const it = transport[Symbol.asyncIterator]();
-    const { value } = await it.next();
-    expect((value.message.value as pb.SessionRequest).requestId).toBe('split');
-  });
-
-  it('decodes multiple frames coalesced into one chunk', async () => {
-    server = net.createServer((sock) => {
-      sock.write(Buffer.concat([frame(pingMessage('a')), frame(pingMessage('b'))]));
-    });
-    const port = await listen(server);
-
-    transport = new TcpSessionTransport('127.0.0.1', port);
-    await transport.start();
-
-    const it = transport[Symbol.asyncIterator]();
-    const first = await it.next();
-    const second = await it.next();
-    expect((first.value.message.value as pb.SessionRequest).requestId).toBe('a');
-    expect((second.value.message.value as pb.SessionRequest).requestId).toBe('b');
-  });
-
-  it('round-trips a sent message back through the wire', async () => {
-    const received: Buffer[] = [];
-    const sawFullFrame = new Promise<void>((resolve) => {
-      server = net.createServer((sock) => {
-        sock.on('data', (d) => {
-          received.push(d);
-          resolve();
-        });
-      });
-    });
-    const port = await listen(server!);
-
-    transport = new TcpSessionTransport('127.0.0.1', port);
-    await transport.start();
-    await transport.sendMessage(pingMessage('outbound'));
-
-    await sawFullFrame;
-    const wire = Buffer.concat(received);
-    const length = wire.readUInt32BE(0);
-    const decoded = pb.AgentSessionMessage.fromBinary(wire.subarray(4, 4 + length));
-    expect((decoded.message.value as pb.SessionRequest).requestId).toBe('outbound');
-  });
-
-  it('rejects start() when nothing is listening', async () => {
-    // ephemeral port that is (almost certainly) closed
-    const t = new TcpSessionTransport('127.0.0.1', 1);
-    await expect(t.start()).rejects.toThrow();
-  });
-
-  it('rejects a backpressured sendMessage when the transport closes', async () => {
-    // Self-contained: a non-reading server leaves its connection open, so we
-    // manage its lifecycle here rather than via the shared afterEach.
-    let serverSocket: net.Socket | undefined;
-    const localServer = net.createServer((sock) => {
-      serverSocket = sock; // intentionally never consume incoming data
-    });
-    const port = await listen(localServer);
-
-    const t = new TcpSessionTransport('127.0.0.1', port);
-    await t.start();
-    try {
-      // Fill the socket buffer so the write callback must wait for the peer.
-      const huge = 'x'.repeat(4 * 1024 * 1024);
-      const msg = new pb.AgentSessionMessage({
-        message: {
-          case: 'request',
-          value: new pb.SessionRequest({
-            requestId: huge,
-            request: { case: 'ping', value: new pb.SessionRequest_Ping() },
-          }),
-        },
-      });
-
-      const sendPromise = t.sendMessage(msg);
-      const rejected = expect(sendPromise).rejects.toThrow();
-      await new Promise((r) => setTimeout(r, 50)); // ensure we're parked in the drain wait
-      await t.close();
-
-      // Without the close/error race this would hang until the test times out.
-      await rejected;
-    } finally {
-      await t.close();
-      serverSocket?.destroy();
-      await new Promise<void>((resolve) => localServer.close(() => resolve()));
-    }
-  });
-});
-
-/** In-memory transport so SessionHost can be driven without a socket. */
-class FakeTransport extends SessionTransport {
-  readonly sent: pb.AgentSessionMessage[] = [];
-  private readonly inbound: pb.AgentSessionMessage[] = [];
-  private waitingResolve: ((value: IteratorResult<pb.AgentSessionMessage>) => void) | null = null;
-  private closed = false;
-  protected peer?: FakeTransport;
-
-  connect(peer: FakeTransport): void {
-    this.peer = peer;
-  }
-
-  push(msg: pb.AgentSessionMessage): void {
-    if (this.waitingResolve) {
-      const resolve = this.waitingResolve;
-      this.waitingResolve = null;
-      resolve({ value: msg, done: false });
-    } else {
-      this.inbound.push(msg);
-    }
-  }
-
-  override async sendMessage(msg: pb.AgentSessionMessage): Promise<void> {
-    this.sent.push(msg);
-    this.peer?.push(msg);
-  }
-
-  override async close(): Promise<void> {
-    this.closed = true;
-    if (this.waitingResolve) {
-      const resolve = this.waitingResolve;
-      this.waitingResolve = null;
-      resolve({ value: undefined as unknown as pb.AgentSessionMessage, done: true });
-    }
-  }
-
-  override [Symbol.asyncIterator](): AsyncIterator<pb.AgentSessionMessage> {
-    return {
-      next: () => {
-        const pending = this.inbound.shift();
-        if (pending) return Promise.resolve({ value: pending, done: false });
-        if (this.closed) {
-          return Promise.resolve({
-            value: undefined as unknown as pb.AgentSessionMessage,
-            done: true,
-          });
-        }
-        return new Promise((resolve) => {
-          this.waitingResolve = resolve;
-        });
-      },
-    };
-  }
-}
-
-function createConnectedTransportPair(): [FakeTransport, FakeTransport] {
-  const client = new FakeTransport();
-  const host = new FakeTransport();
-  client.connect(host);
-  host.connect(client);
-  return [client, host];
-}
-
-// A message that cannot be sent is a request somebody waits out in full, so the
-// transport reports the failure and each caller decides what to do with it, as
-// the Python SessionTransport does. Events are the one caller nobody awaits.
 describe('SessionTransport failures surface to the caller', () => {
-  it('room transport rejects when the room is not connected', async () => {
-    const room = { isConnected: false, registerByteStreamHandler: () => {} };
-    const transport = new RoomSessionTransport(
-      room as unknown as Room,
-      { linkedParticipant: undefined } as unknown as RoomIO,
-    );
-    await expect(transport.sendMessage(pingMessage('r1'))).rejects.toThrow(
-      /room session transport is closed/,
-    );
-  });
-
-  it('tcp transport rejects once closed', async () => {
-    const server = net.createServer(() => {});
-    const port = await listen(server);
-    const t = new TcpSessionTransport('127.0.0.1', port);
-    try {
-      await t.start();
-      await t.close();
-      await expect(t.sendMessage(pingMessage('r2'))).rejects.toThrow(
-        /tcp session transport is closed/,
-      );
-    } finally {
-      await new Promise<void>((resolve) => server.close(() => resolve()));
-    }
-  });
-
   it('session host logs a failed event send instead of leaving it unhandled', async () => {
     const warn = vi.spyOn(log(), 'warn').mockImplementation(() => log());
     const transport = new (class extends SessionTransport {
@@ -306,7 +59,7 @@ describe('SessionTransport failures surface to the caller', () => {
         return { next: () => new Promise(() => {}) };
       }
     })();
-    const host = new SessionHost(transport, fakeSimJobContext());
+    const host = new SessionHost(transport);
     await host.start();
     const rejections: unknown[] = [];
     const onRejection = (e: unknown) => rejections.push(e);
@@ -802,45 +555,11 @@ describe('SessionHost finalizeSimulation', () => {
   });
 });
 
-function fakeRoom({
-  connected = true,
-  streamError,
-}: { connected?: boolean; streamError?: Error } = {}): Room {
-  const streamBytes = vi.fn(async () => {
-    if (streamError) throw streamError;
-    return { write: vi.fn(async () => {}), close: vi.fn(async () => {}) };
-  });
-  return {
-    isConnected: connected,
-    localParticipant: { streamBytes },
-    registerByteStreamHandler: vi.fn(),
-    unregisterByteStreamHandler: vi.fn(),
-  } as unknown as Room;
-}
-
-function roomTransport(room: Room): RoomSessionTransport {
-  return new RoomSessionTransport(room, { linkedParticipant: undefined } as never);
-}
-
-function messageEvent(transcript: string) {
-  return new pb.AgentSessionEvent({
-    event: {
-      case: 'userInputTranscribed',
-      value: new pb.AgentSessionEvent_UserInputTranscribed({ transcript }),
-    },
-  });
-}
-
 function sendHostEvent(host: SessionHost, event: pb.AgentSessionEvent): void {
   (host as unknown as { sendEvent(event: pb.AgentSessionEvent): void }).sendEvent(event);
 }
 
 describe('session response delivery', () => {
-  afterEach(() => {
-    vi.useRealTimers();
-    vi.restoreAllMocks();
-  });
-
   it('flushes the response of an in-flight request while closing', async () => {
     const [clientTransport, hostTransport] = createConnectedTransportPair();
     let release!: () => void;
@@ -884,39 +603,6 @@ describe('session response delivery', () => {
       items: [{ item: { case: 'message', value: { content: [{ payload: { value: 'done' } }] } } }],
     });
     await client.close();
-  });
-
-  it('raises instead of dropping room transport messages', async () => {
-    await expect(
-      roomTransport(fakeRoom({ streamError: new Error('stream refused') })).sendMessage(
-        new pb.AgentSessionMessage(),
-      ),
-    ).rejects.toThrow('failed to send binary stream message');
-    await expect(
-      roomTransport(fakeRoom({ connected: false })).sendMessage(new pb.AgentSessionMessage()),
-    ).rejects.toThrow('closed');
-    await expect(
-      roomTransport(fakeRoom()).sendMessage(new pb.AgentSessionMessage()),
-    ).resolves.toBeUndefined();
-  });
-
-  it('serializes concurrent room transport sends', async () => {
-    let inFlight = 0;
-    let overlapping = false;
-    const room = fakeRoom();
-    vi.mocked(room.localParticipant!.streamBytes).mockImplementation(async () => {
-      inFlight += 1;
-      if (inFlight > 1) overlapping = true;
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      inFlight -= 1;
-      return { write: vi.fn(async () => {}), close: vi.fn(async () => {}) } as never;
-    });
-
-    const transport = roomTransport(room);
-    await Promise.all(
-      Array.from({ length: 8 }, () => transport.sendMessage(new pb.AgentSessionMessage())),
-    );
-    expect(overlapping).toBe(false);
   });
 
   it('logs event send failures without leaking a task rejection', async () => {
@@ -999,48 +685,6 @@ describe('session response delivery', () => {
     await client.close();
   });
 
-  it('reads inbound room messages sequentially and keeps them ordered', async () => {
-    type StreamHandler = (reader: ByteStreamReader, info: { identity: string }) => void;
-    let handler: StreamHandler | undefined;
-    const room = fakeRoom();
-    vi.mocked(room.registerByteStreamHandler).mockImplementation((_topic, callback) => {
-      handler = callback as StreamHandler;
-    });
-    const transport = roomTransport(room);
-    await transport.start();
-
-    let active = 0;
-    let overlapping = false;
-    for (let i = 0; i < 10; i += 1) {
-      const data = new pb.AgentSessionMessage({
-        message: { case: 'event', value: messageEvent(String(i)) },
-      }).toBinary();
-      handler?.(
-        {
-          readAll: async () => {
-            active += 1;
-            if (active > 1) overlapping = true;
-            await new Promise((resolve) => setTimeout(resolve, 1));
-            active -= 1;
-            return [data.subarray(0, 1), data.subarray(1)];
-          },
-        } as unknown as ByteStreamReader,
-        { identity: 'remote' },
-      );
-    }
-
-    const iterator = transport[Symbol.asyncIterator]();
-    const received: string[] = [];
-    for (let i = 0; i < 10; i += 1) {
-      const msg = (await iterator.next()).value;
-      const event = msg.message.value as pb.AgentSessionEvent;
-      received.push((event.event.value as pb.AgentSessionEvent_UserInputTranscribed).transcript);
-    }
-    expect(overlapping).toBe(false);
-    expect(received).toEqual(Array.from({ length: 10 }, (_, i) => String(i)));
-    await transport.close();
-  });
-
   it('logs cancelled requests by type', async () => {
     vi.useFakeTimers();
     const warn = vi.spyOn(log(), 'warn');
@@ -1073,3 +717,75 @@ describe('session response delivery', () => {
     await client.close();
   });
 });
+
+it('readiness timeouts and failed sends do not retain pending requests', async () => {
+  const transport = new Transport();
+  const client = new RemoteSession(transport);
+  await client.start();
+  cleanup.push(() => client.close());
+  await expect(client.waitForReady(30, 5)).rejects.toThrow('waitForReady timed out');
+  expect(
+    (client as unknown as { pendingRequests: Map<string, unknown> }).pendingRequests.size,
+  ).toBe(0);
+  transport.sendMessage = async () => {
+    throw new Error('down');
+  };
+  await expect(client.waitForReady(30, 5)).rejects.toThrow('down');
+  expect(
+    (client as unknown as { pendingRequests: Map<string, unknown> }).pendingRequests.size,
+  ).toBe(0);
+});
+
+it.each(['cooperative', 'late resolve', 'late reject'] as const)(
+  'bounds readiness while a send is pending: %s',
+  async (settlement) => {
+    const release = new Future<void>();
+    let signal: AbortSignal | undefined;
+    class HeldTransport extends Transport {
+      override async sendMessage(_message: pb.AgentSessionMessage, abort?: AbortSignal) {
+        signal = abort;
+        if (settlement === 'cooperative') {
+          await new Promise<void>((resolve, reject) => {
+            const onAbort = () => reject(abort?.reason);
+            abort?.addEventListener('abort', onAbort, { once: true });
+            void release.await.then(() => {
+              abort?.removeEventListener('abort', onAbort);
+              resolve();
+            });
+          });
+        } else {
+          await release.await;
+          if (settlement === 'late reject') throw new Error('late send failure');
+        }
+      }
+    }
+    const client = new RemoteSession(new HeldTransport());
+    await client.start();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
+    let result: unknown;
+    const waiting = client.waitForReady(100, 10).then(
+      () => {
+        result = 'ready';
+      },
+      (error) => {
+        result = error;
+      },
+    );
+    try {
+      await vi.advanceTimersByTimeAsync(100);
+      expect(result).toBeInstanceOf(Error);
+      expect((result as Error).message).toBe('waitForReady timed out');
+      expect(signal?.aborted).toBe(true);
+      expect(
+        (client as unknown as { pendingRequests: Map<string, unknown> }).pendingRequests.size,
+      ).toBe(0);
+      await waiting;
+    } finally {
+      release.resolve();
+      await vi.runAllTimersAsync();
+      vi.useRealTimers();
+      await waiting;
+      await client.close();
+    }
+  },
+);

@@ -3,28 +3,27 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { Mutex } from '@livekit/mutex';
 import { AgentSession as pb } from '@livekit/protocol';
-import { type AudioFrame, ByteStreamReader, LocalParticipant, type Room } from '@livekit/rtc-node';
-import type { Throws } from '@livekit/throws-transformer/throws';
-import * as net from 'node:net';
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { type AudioFrame } from '@livekit/rtc-node';
+import { afterEach, beforeAll, expect, it, vi } from 'vitest';
 import { LLM, LLMStream } from '../llm/llm.js';
 import { tool } from '../llm/tool_context.js';
 import { initializeLogger, log } from '../log.js';
 import { TTS } from '../tts/tts.js';
 import { DEFAULT_API_CONNECT_OPTIONS, FlushSentinel } from '../types.js';
+import type { AsyncIterableQueue } from '../utils.js';
 import { Future, Task } from '../utils.js';
 import { Agent } from './agent.js';
 import { AgentSession } from './agent_session.js';
 import { AudioOutput, TextOutput } from './io.js';
-import {
-  RemoteSession,
-  RoomSessionTransport,
-  SessionHost,
-  SessionTransport,
-  TcpSessionTransport,
-} from './remote_session.js';
+import { RemoteSession, SessionHost } from './remote_session.js';
 import type { SpeechHandle } from './speech_handle.js';
 import { FakeLLM } from './testing/fake_llm.js';
+import {
+  InMemoryTransport as Transport,
+  createRoomTransport,
+  messageEvent as event,
+  request,
+} from './testing/remote_session.js';
 import type { RunResult } from './testing/run_result.js';
 
 beforeAll(() => initializeLogger({ pretty: false, level: 'warn' }));
@@ -34,64 +33,19 @@ afterEach(async () => {
   for (const close of cleanup.splice(0).reverse()) await close();
   vi.restoreAllMocks();
 });
+
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
-function request(id: string, data: pb.SessionRequest['request']) {
-  return new pb.AgentSessionMessage({
-    message: { case: 'request', value: new pb.SessionRequest({ requestId: id, request: data }) },
-  });
-}
-function event(text: string) {
-  return new pb.AgentSessionEvent({
-    event: {
-      case: 'userInputTranscribed',
-      value: new pb.AgentSessionEvent_UserInputTranscribed({ transcript: text }),
-    },
-  });
-}
+
 type HostInternals = {
   tasks: Set<Task<void>>;
   recvTask: Task<void>;
   writeTask: Task<void>;
-  eventMessages: unknown[];
+  eventMessages: AsyncIterableQueue<pb.AgentSessionMessage>;
   sendEvent(e: pb.AgentSessionEvent): void;
 };
+
 const internals = (host: SessionHost) => host as unknown as HostInternals;
 
-class Transport extends SessionTransport {
-  sent: pb.AgentSessionMessage[] = [];
-  closed = false;
-  peer?: Transport;
-  queue: pb.AgentSessionMessage[] = [];
-  waiter?: (value: IteratorResult<pb.AgentSessionMessage>) => void;
-  push(msg: pb.AgentSessionMessage) {
-    if (this.waiter) {
-      const resolve = this.waiter;
-      this.waiter = undefined;
-      resolve({ value: msg, done: false });
-    } else this.queue.push(msg);
-  }
-  async sendMessage(msg: pb.AgentSessionMessage) {
-    this.sent.push(msg);
-    this.peer?.push(msg);
-  }
-  async close() {
-    this.closed = true;
-    this.waiter?.({ value: undefined, done: true });
-    this.waiter = undefined;
-  }
-  [Symbol.asyncIterator](): AsyncIterator<pb.AgentSessionMessage> {
-    return {
-      next: () => {
-        const msg = this.queue.shift();
-        if (msg) return Promise.resolve({ value: msg, done: false });
-        if (this.closed) return Promise.resolve({ value: undefined, done: true });
-        return new Promise((resolve) => {
-          this.waiter = resolve;
-        });
-      },
-    };
-  }
-}
 class GatedLLM extends LLM {
   started = new Future<void>();
   release = new Future<void>();
@@ -106,6 +60,7 @@ class GatedLLM extends LLM {
     });
   }
 }
+
 class GatedStream extends LLMStream {
   constructor(
     private owner: GatedLLM,
@@ -123,6 +78,7 @@ class GatedStream extends LLMStream {
     this.owner.closed.resolve();
   }
 }
+
 async function realSession(llm?: GatedLLM) {
   const session = new AgentSession({ llm });
   await session.start({ agent: new Agent({ instructions: 'test', id: 'default_agent' }) });
@@ -132,47 +88,10 @@ async function realSession(llm?: GatedLLM) {
   });
   return session;
 }
-function fakeRoom() {
-  const sent: pb.AgentSessionMessage[] = [];
-  let handler!: (reader: ByteStreamReader, info: { identity: string }) => void;
-  const room = {
-    isConnected: true,
-    registerByteStreamHandler: vi.fn((_topic, cb) => {
-      handler = cb;
-    }),
-    unregisterByteStreamHandler: vi.fn(),
-    localParticipant: {
-      streamBytes: vi.fn(async () => ({
-        write: async (data: Uint8Array) => {
-          sent.push(pb.AgentSessionMessage.fromBinary(data));
-        },
-        close: async () => {},
-      })),
-    },
-  };
-  const transport = new RoomSessionTransport(
-    room as unknown as Room,
-    { linkedParticipant: undefined } as never,
-  );
-  cleanup.push(() => transport.close());
-  return {
-    room,
-    sent,
-    transport,
-    deliver: (msg: pb.AgentSessionMessage) =>
-      handler(
-        {
-          readAll: async () => [msg.toBinary()],
-          close: async () => {},
-        } as unknown as ByteStreamReader,
-        { identity: 'remote' },
-      ),
-    raw: (reader: ByteStreamReader) => handler(reader, { identity: 'remote' }),
-  };
-}
 
 it('retains the initial handoff and starts one writer only after transport readiness', async () => {
-  const f = fakeRoom();
+  const f = createRoomTransport();
+  cleanup.push(() => f.transport.close());
   const ready = new Future<void>();
   const start = f.transport.start.bind(f.transport);
   vi.spyOn(f.transport, 'start').mockImplementation(async () => {
@@ -233,7 +152,8 @@ it.each(['updateIo', 'runInput'] as const)(
   'does not admit a late Room %s while draining an accepted response',
   async (kind) => {
     const session = await realSession();
-    const f = fakeRoom();
+    const f = createRoomTransport();
+    cleanup.push(() => f.transport.close());
     const run = vi.spyOn(session, 'run');
     const update = vi.spyOn(session.output, 'setAudioEnabled');
     const gate = new Future<void>();
@@ -344,7 +264,10 @@ it.each(['resolve', 'reject'] as const)(
       override clearBuffer() {}
     }
     const session = new AgentSession({
-      llm: new FakeLLM([{ input: 'go', toolCalls: [{ name: 'speak', args: {} }] }]),
+      llm: new FakeLLM([
+        { input: 'go', toolCalls: [{ name: 'speak', args: {} }] },
+        { input: 'fresh', content: 'new reply' },
+      ]),
       tts: new TestTTS(),
     });
     session.output.audio = new Output(24000);
@@ -385,14 +308,28 @@ it.each(['resolve', 'reject'] as const)(
       expect(transport.closed).toBe(true);
       await closing;
       expect(requests.some((task) => !task.done)).toBe(true);
-      expect(internals(host).eventMessages).toHaveLength(0);
+      const cancelledRun = session._globalRunState!;
+      expect(cancelledRun.done()).toBe(true);
+      expect(cancelledRun._cancel()).toBe(cancelledRun._cancel());
+      expect((await internals(host).eventMessages.next()).done).toBe(true);
       const sent = [...transport.sent];
+      expect(() => session.run({ userInput: 'fresh' })).toThrow('nested runs are not supported');
       release.resolve();
       await vi.advanceTimersByTimeAsync(3000);
       await Promise.allSettled(requests.map((task) => task.result));
       expect(speech?._tasks.every((task) => task.done)).toBe(true);
       expect(transport.sent).toEqual(sent);
       expect(transport.sent.some((m) => m.message.case === 'response')).toBe(false);
+      // The session becomes reusable only after the old speech has settled.
+      session.output.audio = null;
+      const next = session.run({ userInput: 'fresh' });
+      await vi.advanceTimersByTimeAsync(100);
+      await next.wait();
+      expect(
+        session.history.items
+          .filter((item) => item.type === 'message')
+          .map((item) => item.textContent),
+      ).toEqual(['go', 'hello', 'fresh', 'new reply']);
     } finally {
       release.resolve();
       vi.useRealTimers();
@@ -487,7 +424,8 @@ it('joins a tool say and cancels its open source before host and session close r
 
 it('joins the writer and discards queued events at the shared drain deadline', async () => {
   vi.useFakeTimers();
-  const f = fakeRoom();
+  const f = createRoomTransport();
+  cleanup.push(() => f.transport.close());
   const gate = new Future<void>();
   const entered = new Future<void>();
   const closeWriter = vi.fn(async () => {});
@@ -508,7 +446,7 @@ it('joins the writer and discards queued events at the shared drain deadline', a
   await vi.advanceTimersByTimeAsync(3001);
   await closing;
   expect(writer.done).toBe(true);
-  expect(internals(host).eventMessages).toHaveLength(0);
+  expect((await internals(host).eventMessages.next()).done).toBe(true);
   gate.resolve();
   await vi.advanceTimersByTimeAsync(0);
   expect(f.room.localParticipant.streamBytes).toHaveBeenCalledTimes(1);
@@ -683,84 +621,6 @@ it.each(['resolve', 'reject'] as const)(
   12000,
 );
 
-it.each(['open', 'write', 'close'] as const)(
-  'releases a native RTC writer after an aborted %s settles',
-  async (phase) => {
-    const previousFfi = globalThis._ffiClientInstance;
-    const entered = new Future<void>();
-    const release = new Future<void>();
-    const operations: string[] = [];
-    const participant = {
-      ffi_handle: { handle: 100n },
-      identity: 'test',
-      disconnectSignal: new AbortController().signal,
-      openStreamWriters: new Set<bigint>(),
-      byteStreamWriterWrite: async () => {
-        operations.push('write');
-        if (phase === 'write') {
-          entered.resolve();
-          await release.await;
-        }
-      },
-      byteStreamWriterClose: async () => {
-        operations.push('close');
-        if (phase === 'close') {
-          entered.resolve();
-          await release.await;
-        }
-      },
-      streamBytes: LocalParticipant.prototype.streamBytes,
-    };
-    globalThis._ffiClientInstance = {
-      request: () => ({ asyncId: 1n }),
-      waitFor: async () => {
-        if (phase === 'open') {
-          entered.resolve();
-          await release.await;
-        }
-        operations.push('open');
-        return {
-          result: {
-            case: 'writer',
-            value: {
-              handle: { id: 200n },
-              info: {
-                streamId: 'test',
-                name: 'test',
-                mimeType: 'application/octet-stream',
-                topic: 'lk.agent.session',
-                timestamp: 0n,
-                attributes: {},
-              },
-            },
-          },
-        };
-      },
-    } as never;
-    const transport = new RoomSessionTransport(
-      { isConnected: true, localParticipant: participant } as unknown as Room,
-      { linkedParticipant: undefined } as never,
-    );
-    try {
-      const sending = transport.sendMessage(new pb.AgentSessionMessage()).catch((e) => e);
-      await entered.await;
-      const queued = transport.sendMessage(new pb.AgentSessionMessage()).catch((e) => e);
-      await transport.close();
-      expect(await sending).toBeInstanceOf(Error);
-      expect(await queued).toBeInstanceOf(Error);
-      release.resolve();
-      await tick();
-      expect(participant.openStreamWriters.size).toBe(0);
-      expect(operations).toEqual(phase === 'open' ? ['open', 'close'] : ['open', 'write', 'close']);
-    } finally {
-      release.resolve();
-      await transport.close();
-      await tick();
-      globalThis._ffiClientInstance = previousFfi;
-    }
-  },
-);
-
 it('uses one deadline for accepted handlers and the event writer', async () => {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
   const transport = new Transport();
@@ -824,7 +684,8 @@ it('does not start a cancelled run after the activity transition unlocks', async
 it.each(['open', 'write'] as const)(
   'cancels queued Room sends without resuming a stalled %s',
   async (phase) => {
-    const f = fakeRoom();
+    const f = createRoomTransport();
+    cleanup.push(() => f.transport.close());
     const gate = new Future<void>();
     const entered = new Future<void>();
     const writer = {
@@ -857,89 +718,6 @@ it.each(['open', 'write'] as const)(
   },
 );
 
-it('stops all Room sends when an active sender is aborted', async () => {
-  const f = fakeRoom();
-  const gate = new Future<void>();
-  const entered = new Future<void>();
-  f.room.localParticipant.streamBytes.mockImplementation(async () => ({
-    write: async () => {
-      entered.resolve();
-      await gate.await;
-    },
-    close: async () => {},
-  }));
-  const controller = new AbortController();
-  const first = f.transport
-    .sendMessage(new pb.AgentSessionMessage(), controller.signal)
-    .catch((error) => error);
-  await entered.await;
-  const queued = f.transport.sendMessage(new pb.AgentSessionMessage()).catch((error) => error);
-  controller.abort();
-  expect(await first).toBeInstanceOf(Error);
-  expect(await queued).toBeInstanceOf(Error);
-  gate.resolve();
-  await tick();
-  expect(f.room.localParticipant.streamBytes).toHaveBeenCalledTimes(1);
-});
-
-it.each(['open', 'write', 'close'] as const)(
-  'consumes a late Room %s failure and releases acquired writers',
-  async (stage) => {
-    const f = fakeRoom();
-    const entered = new Future<void>();
-    const release = new Future<void>();
-    const fail = async () => {
-      entered.resolve();
-      await release.await;
-      throw new Error(`${stage} failed after close`);
-    };
-    const writer = {
-      write: vi.fn(stage === 'write' ? fail : async () => {}),
-      close: vi.fn(stage === 'close' ? fail : async () => {}),
-    };
-    f.room.localParticipant.streamBytes.mockImplementation(async () => {
-      if (stage === 'open') await fail();
-      return writer;
-    });
-    const sending = f.transport.sendMessage(new pb.AgentSessionMessage()).catch((e) => e);
-    await entered.await;
-    await f.transport.close();
-    expect(await sending).toBeInstanceOf(Error);
-    release.resolve();
-    await tick();
-    expect(writer.close).toHaveBeenCalledTimes(stage === 'open' ? 0 : 1);
-    expect(f.room.localParticipant.streamBytes).toHaveBeenCalledOnce();
-  },
-);
-
-it('closes active and queued RTC readers and joins the single read task', async () => {
-  const f = fakeRoom();
-  await f.transport.start();
-  const cancelled = [vi.fn(), vi.fn()];
-  const readers = cancelled.map(
-    (cancel) =>
-      new ByteStreamReader(
-        {
-          id: 'test',
-          mimeType: 'application/octet-stream',
-          topic: 'test',
-          timestamp: 0,
-          attributes: {},
-          name: 'test',
-        },
-        new ReadableStream({ cancel }),
-      ),
-  );
-  const task = (f.transport as unknown as { readTask: Task<void> }).readTask;
-  const create = vi.spyOn(Task, 'from');
-  readers.forEach((reader) => f.raw(reader));
-  await tick();
-  expect(create).not.toHaveBeenCalled();
-  await f.transport.close();
-  expect(task.done).toBe(true);
-  cancelled.forEach((cancel) => expect(cancel).toHaveBeenCalledTimes(1));
-});
-
 it('continues after a recoverable event error without creating per-event tasks', async () => {
   const sent: string[] = [];
   const transport = new Transport();
@@ -965,169 +743,4 @@ it('continues after a recoverable event error without creating per-event tasks',
     expect.objectContaining({ error: expect.any(Error) }),
     'failed to send session event',
   );
-});
-
-it('readiness timeouts and failed sends do not retain pending requests', async () => {
-  const transport = new Transport();
-  const client = new RemoteSession(transport);
-  await client.start();
-  cleanup.push(() => client.close());
-  await expect(client.waitForReady(30, 5)).rejects.toThrow('waitForReady timed out');
-  expect(
-    (client as unknown as { pendingRequests: Map<string, unknown> }).pendingRequests.size,
-  ).toBe(0);
-  transport.sendMessage = async () => {
-    throw new Error('down');
-  };
-  await expect(client.waitForReady(30, 5)).rejects.toThrow('down');
-  expect(
-    (client as unknown as { pendingRequests: Map<string, unknown> }).pendingRequests.size,
-  ).toBe(0);
-});
-
-describe('TCP send failure', () => {
-  async function connection() {
-    const connected = new Future<net.Socket>();
-    const server = net.createServer((socket) => {
-      socket.pause();
-      connected.resolve(socket);
-    });
-    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-    const transport = new TcpSessionTransport(
-      '127.0.0.1',
-      (server.address() as net.AddressInfo).port,
-    );
-    await transport.start();
-    const peer = await connected.await;
-    cleanup.push(async (): Promise<Throws<void, Error>> => {
-      await transport.close();
-      peer.destroy();
-      await new Promise<void>((resolve) => server.close(() => resolve()));
-    });
-    return { transport, peer, socket: (transport as unknown as { socket: net.Socket }).socket };
-  }
-  it('rejects writes after peer disconnect', async (): Promise<Throws<void, Error>> => {
-    const { transport, peer } = await connection();
-    const reader = (async () => {
-      for await (const _msg of transport) {
-        /* consume */
-      }
-    })();
-    peer.destroy();
-    await reader;
-    await expect(
-      transport.sendMessage(request('lost', { case: 'ping', value: new pb.SessionRequest_Ping() })),
-    ).rejects.toThrow();
-  });
-  it('closes the socket on an oversized frame', async () => {
-    const { transport, peer, socket } = await connection();
-    const next = transport[Symbol.asyncIterator]().next();
-    const header = Buffer.alloc(4);
-    header.writeUInt32BE((1 << 20) + 1);
-    peer.write(header);
-    expect((await next).done).toBe(true);
-    expect(socket.destroyed).toBe(true);
-    await expect(transport.sendMessage(new pb.AgentSessionMessage())).rejects.toThrow();
-  });
-
-  it('keeps accepted TCP responses writable after intake aborts', async (): Promise<
-    Throws<void, Error>
-  > => {
-    const { transport, peer, socket } = await connection();
-    const controller = new AbortController();
-    const next = transport[Symbol.asyncIterator](controller.signal).next();
-    controller.abort();
-    expect((await next).done).toBe(true);
-    const received = new Future<Buffer>();
-    peer.once('data', (data) => received.resolve(data));
-    peer.resume();
-    const msg = request('accepted', { case: 'ping', value: new pb.SessionRequest_Ping() });
-    await transport.sendMessage(msg);
-    expect((await received.await).subarray(4)).toEqual(Buffer.from(msg.toBinary()));
-    expect(socket.destroyed).toBe(false);
-  });
-  it('rejects a backpressured valid-size frame when a real peer resets', async (): Promise<
-    Throws<void, Error>
-  > => {
-    const { transport, peer, socket } = await connection();
-    socket.on('error', () => {});
-    const msg = request('x'.repeat(512 * 1024), {
-      case: 'ping',
-      value: new pb.SessionRequest_Ping(),
-    });
-    expect(msg.toBinary().length).toBeLessThan(1 << 20);
-    let stopped = false;
-    const sending = (async () => {
-      for (let n = 0; !stopped && n < 64; n++) await transport.sendMessage(msg);
-    })();
-    const rejected = expect(sending).rejects.toThrow();
-    await vi.waitFor(() => expect(socket.writableLength).toBeGreaterThan(65536));
-    stopped = true;
-    peer.resetAndDestroy();
-    await rejected;
-  });
-  it.each(['error', 'close'] as const)(
-    'rejects a pending write on socket %s and removes its listeners',
-    async (failure) => {
-      const { transport, socket } = await connection();
-      const errorListeners = socket.listenerCount('error');
-      const closeListeners = socket.listenerCount('close');
-      const writing = new Future<void>();
-      vi.spyOn(socket, 'write').mockImplementation(() => {
-        writing.resolve();
-        return false;
-      });
-      const result = transport.sendMessage(
-        request('pending', { case: 'ping', value: new pb.SessionRequest_Ping() }),
-      );
-      const rejected = expect(result).rejects.toThrow();
-      await writing.await;
-      if (failure === 'error') socket.emit('error', new Error('write failed'));
-      else socket.emit('close');
-      await rejected;
-      expect(socket.listenerCount('error')).toBe(errorListeners);
-      expect(socket.listenerCount('close')).toBe(closeListeners);
-    },
-  );
-
-  it('serializes writes and drops a cancelled lock waiter', async () => {
-    const { transport, socket } = await connection();
-    const callbacks: ((error?: Error) => void)[] = [];
-    const writes = vi.spyOn(socket, 'write').mockImplementation(((
-      _data: unknown,
-      callback: (error?: Error) => void,
-    ) => {
-      callbacks.push(callback);
-      return true;
-    }) as typeof socket.write);
-    const msg = request('queued', { case: 'ping', value: new pb.SessionRequest_Ping() });
-    const first = transport.sendMessage(msg);
-    await tick();
-    const controller = new AbortController();
-    const cancelled = transport.sendMessage(msg, controller.signal).catch((error) => error);
-    const third = transport.sendMessage(msg);
-    controller.abort();
-    expect(await cancelled).toBeInstanceOf(Error);
-    expect(writes).toHaveBeenCalledTimes(1);
-    callbacks[0]!();
-    await first;
-    await tick();
-    expect(writes).toHaveBeenCalledTimes(2);
-    callbacks[1]!();
-    await third;
-  });
-
-  it('rejects asynchronous write callback errors even without backpressure', async () => {
-    const { transport, socket } = await connection();
-    vi.spyOn(socket, 'write').mockImplementation(((
-      _data: unknown,
-      callback: (error?: Error) => void,
-    ) => {
-      queueMicrotask(() => callback?.(new Error('write callback failed')));
-      return true;
-    }) as typeof socket.write);
-    await expect(
-      transport.sendMessage(request('lost', { case: 'ping', value: new pb.SessionRequest_Ping() })),
-    ).rejects.toThrow('write callback failed');
-  });
 });

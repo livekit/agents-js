@@ -30,7 +30,7 @@ import type {
 } from '../metrics/model_usage.js';
 import { encodeChatItem, msToTimestamp } from '../proto.js';
 import type { SimulationContext } from '../simulation.js';
-import { Future, Task, asError, shortuuid } from '../utils.js';
+import { AsyncIterableQueue, Future, Task, asError, delay, shortuuid } from '../utils.js';
 import { version } from '../version.js';
 import type { AgentSession, AgentSessionUsage } from './agent_session.js';
 import { AMDCategory, type AMDPredictionEvent } from './amd.js';
@@ -197,8 +197,7 @@ export class RoomSessionTransport extends SessionTransport {
   private waitingResolve: ((value: IteratorResult<pb.AgentSessionMessage>) => void) | null = null;
   private roomIO: RoomIO;
   private readonly sendLock = new Mutex();
-  private readonly incomingReaders: ByteStreamReader[] = [];
-  private incomingResolve: (() => void) | null = null;
+  private readonly incomingReaders = new AsyncIterableQueue<ByteStreamReader>();
   private readTask: Task<void> | undefined;
   private readonly closing = new AbortController();
 
@@ -228,21 +227,18 @@ export class RoomSessionTransport extends SessionTransport {
       return;
     }
     if (this.closed) return;
-    this.incomingReaders.push(reader);
-    this.incomingResolve?.();
-    this.incomingResolve = null;
+    this.incomingReaders.put(reader);
   };
 
   private async readLoop(signal: AbortSignal): Promise<void> {
-    while (!this.closed) {
-      const reader = this.incomingReaders.shift();
-      if (reader) {
+    try {
+      while (!this.closed) {
+        const { value: reader, done } = await this.incomingReaders.next({ signal });
+        if (done) break;
         await this.readStream(reader, signal);
-        continue;
       }
-      await new Promise<void>((resolve) => {
-        this.incomingResolve = resolve;
-      });
+    } catch (error) {
+      if (!signal.aborted) throw error;
     }
   }
 
@@ -326,14 +322,11 @@ export class RoomSessionTransport extends SessionTransport {
     if (this.closed) return;
     this.closed = true;
     this.closing.abort();
-    const readers = this.incomingReaders.splice(0);
-    this.incomingResolve?.();
-    this.incomingResolve = null;
     this.readTask?.cancel();
-    await Promise.allSettled([
-      ...readers.map((reader) => reader.close()),
-      ...(this.readTask ? [this.readTask.result] : []),
-    ]);
+    this.incomingReaders.close();
+    const closingReaders: Promise<void>[] = [];
+    for await (const reader of this.incomingReaders) closingReaders.push(reader.close());
+    await Promise.allSettled([...closingReaders, ...(this.readTask ? [this.readTask.result] : [])]);
     this.readTask = undefined;
 
     if (this.handlerRegistered) {
@@ -749,9 +742,7 @@ export class SessionHost {
   private eventsRegistered = false;
   private recvTask: Task<void> | undefined;
   private readonly tasks = new Set<Task<void>>();
-  private readonly eventMessages: pb.AgentSessionMessage[] = [];
-  private eventResolve: (() => void) | null = null;
-  private eventsClosed = false;
+  private readonly eventMessages = new AsyncIterableQueue<pb.AgentSessionMessage>();
   private writeTask: Task<void> | undefined;
 
   constructor(
@@ -794,6 +785,10 @@ export class SessionHost {
     this.recvTask = Task.from(async ({ signal }) => this.recvLoop(signal));
   }
 
+  /**
+   * Drain accepted responses for three seconds, then allow three seconds for cancellation.
+   * Hooks that ignore cancellation may outlive transport closure; their cleanup stays observed.
+   */
   async close(): Promise<void> {
     if (!this.started) return;
     this.started = false;
@@ -834,14 +829,15 @@ export class SessionHost {
     }
     this.tasks.clear();
 
-    this.eventsClosed = true;
-    this.eventResolve?.();
-    this.eventResolve = null;
+    this.eventMessages.close();
     if (this.writeTask) {
       await drainTasks(new Set([this.writeTask]), deadline);
       this.writeTask = undefined;
     }
-    this.eventMessages.length = 0;
+    // The writer may have stopped at its deadline with buffered events remaining.
+    for await (const _message of this.eventMessages) {
+      // Discard events after the writer has settled.
+    }
     clearTimeout(writerDeadline);
 
     await this.transport.close();
@@ -885,37 +881,24 @@ export class SessionHost {
     const msg = new pb.AgentSessionMessage({
       message: { case: 'event', value: event },
     });
-    if (this.eventsClosed) return;
-    this.eventMessages.push(msg);
-    this.eventResolve?.();
-    this.eventResolve = null;
+    if (this.eventMessages.closed) return;
+    this.eventMessages.put(msg);
   }
 
   private async writeLoop(signal: AbortSignal): Promise<void> {
-    while (!signal.aborted && (!this.eventsClosed || this.eventMessages.length > 0)) {
-      const msg = this.eventMessages.shift();
-      if (!msg) {
+    try {
+      while (!signal.aborted) {
+        const { value: msg, done } = await this.eventMessages.next({ signal });
+        if (done) break;
         try {
-          await abortable(
-            new Promise<void>((resolve) => {
-              this.eventResolve = resolve;
-            }),
-            signal,
-          );
+          await abortable(this.transport.sendMessage(msg, signal), signal);
         } catch (error) {
-          if (!signal.aborted) throw error;
-          return;
-        } finally {
-          this.eventResolve = null;
+          if (signal.aborted) return;
+          log().warn({ error }, 'failed to send session event');
         }
-        continue;
       }
-      try {
-        await abortable(this.transport.sendMessage(msg, signal), signal);
-      } catch (error) {
-        if (signal.aborted) return;
-        log().warn({ error }, 'failed to send session event');
-      }
+    } catch (error) {
+      if (!signal.aborted) throw error;
     }
   }
 
@@ -1518,6 +1501,7 @@ export class RemoteSession extends (EventEmitter as new () => TypedEventEmitter<
   private async sendRequestRaw(
     buildReq: (requestId: string) => pb.SessionRequest,
     timeout = 60000,
+    signal?: AbortSignal,
   ): Promise<pb.SessionResponse> {
     const requestId = shortuuid('req_');
     const req = buildReq(requestId);
@@ -1531,13 +1515,14 @@ export class RemoteSession extends (EventEmitter as new () => TypedEventEmitter<
     });
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      await this.transport.sendMessage(msg);
+      signal?.throwIfAborted();
+      await abortable(this.transport.sendMessage(msg, signal), signal);
       timer = setTimeout(() => {
         if (!future.done) {
           future.reject(new Error('RemoteSession request timed out'));
         }
       }, timeout);
-      return await future.await;
+      return await abortable(future.await, signal);
     } finally {
       clearTimeout(timer);
       this.pendingRequests.delete(requestId);
@@ -1547,8 +1532,9 @@ export class RemoteSession extends (EventEmitter as new () => TypedEventEmitter<
   private async sendRequest(
     buildReq: (requestId: string) => pb.SessionRequest,
     timeout = 60000,
+    signal?: AbortSignal,
   ): Promise<pb.SessionResponse> {
-    const response = await this.sendRequestRaw(buildReq, timeout);
+    const response = await this.sendRequestRaw(buildReq, timeout, signal);
     if (response.error) {
       throw new Error(response.error);
     }
@@ -1558,36 +1544,41 @@ export class RemoteSession extends (EventEmitter as new () => TypedEventEmitter<
   /** Poll until the host answers a ping. Both timeout and retryInterval are in milliseconds. */
   async waitForReady(timeout = 5000, retryInterval = 500): Promise<void> {
     const deadline = performance.now() + timeout;
+    const controller = new AbortController();
+    const timeoutError = new Error('waitForReady timed out');
+    const timer = setTimeout(() => controller.abort(timeoutError), Math.max(0, timeout));
     let sendError: unknown;
 
-    while (true) {
-      const remaining = deadline - performance.now();
-      if (remaining <= 0) {
-        if (sendError) throw sendError;
-        throw new Error('waitForReady timed out');
-      }
-
-      try {
-        await this.sendRequest(
-          (id) =>
-            new pb.SessionRequest({
-              requestId: id,
-              request: { case: 'ping', value: new pb.SessionRequest_Ping() },
-            }),
-          Math.min(retryInterval, remaining),
-        );
-        return;
-      } catch (error) {
-        if (asError(error).message === 'RemoteSession request timed out') {
-          if (performance.now() >= deadline) throw new Error('waitForReady timed out');
-          continue;
+    try {
+      while (true) {
+        controller.signal.throwIfAborted();
+        const remaining = deadline - performance.now();
+        if (remaining <= 0) throw sendError ?? timeoutError;
+        try {
+          await this.sendRequest(
+            (id) =>
+              new pb.SessionRequest({
+                requestId: id,
+                request: { case: 'ping', value: new pb.SessionRequest_Ping() },
+              }),
+            Math.min(retryInterval, remaining),
+            controller.signal,
+          );
+          return;
+        } catch (error) {
+          if (controller.signal.aborted) throw error;
+          if (asError(error).message === 'RemoteSession request timed out') continue;
+          sendError = error;
+          await delay(Math.min(retryInterval, Math.max(0, deadline - performance.now())), {
+            signal: controller.signal,
+          });
         }
-        sendError = error;
-        if (performance.now() >= deadline) throw error;
-        await new Promise((resolve) =>
-          setTimeout(resolve, Math.min(retryInterval, Math.max(0, deadline - performance.now()))),
-        );
       }
+    } catch (error) {
+      if (controller.signal.aborted) throw sendError ?? timeoutError;
+      throw error;
+    } finally {
+      clearTimeout(timer);
     }
   }
 
