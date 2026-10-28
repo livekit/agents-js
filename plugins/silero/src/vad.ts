@@ -43,17 +43,20 @@ const defaultVADOptions: VADOptions = {
   forceCPU: true,
 };
 
+// A caller-owned VAD must not retain each detector that a segmenting STT closes.
+const forgetStream = new WeakMap<VADStream, () => void>();
+
 export class VAD extends baseVAD {
   #session: InferenceSession;
   #opts: VADOptions;
-  #streams: VADStream[];
+  #streams: Set<VADStream>;
   label = 'silero.VAD';
 
   constructor(session: InferenceSession, opts: VADOptions) {
     super({ updateInterval: 32 });
     this.#session = session;
     this.#opts = opts;
-    this.#streams = [];
+    this.#streams = new Set();
   }
 
   /**
@@ -113,7 +116,8 @@ export class VAD extends baseVAD {
       this.#opts,
       new OnnxModel(this.#session, this.#opts.sampleRate),
     );
-    this.#streams.push(stream);
+    this.#streams.add(stream);
+    forgetStream.set(stream, () => this.#streams.delete(stream));
     return stream;
   }
 }
@@ -428,9 +432,20 @@ export class VADStream extends baseStream {
     this.#task = runInference()
       .catch((error) => {
         this.#logger.error(error, 'Error in VAD inference task');
-        if (!this.closed) this.close();
+        if (!this.closed) super.close();
       })
-      .finally(() => resampler?.close());
+      .finally(() => {
+        resampler?.close();
+        super.close();
+        forgetStream.get(this)?.();
+        forgetStream.delete(this);
+      });
+  }
+
+  /** Cancel input and await the in-flight inference and native resampler cleanup. */
+  override async close(): Promise<void> {
+    super.close();
+    await this.#task;
   }
 
   /**

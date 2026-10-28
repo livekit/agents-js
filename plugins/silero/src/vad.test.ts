@@ -317,3 +317,82 @@ describe('Silero VAD checkpoint', () => {
     expect(windows).toBeGreaterThan(100);
   });
 });
+
+it('endInput drains inference and closes output and metrics without an explicit close', async () => {
+  const vad = await VAD.load();
+  const stream = vad.stream();
+  const frames = new Int16Array(512 * 3);
+  stream.pushFrame(new AudioFrame(frames, TARGET_SAMPLE_RATE, 1, frames.length));
+  stream.endInput();
+  const events: VADEvent[] = [];
+  for await (const event of stream) events.push(event);
+  expect(events.filter((event) => event.type === VADEventType.INFERENCE_DONE)).toHaveLength(3);
+  // Repeated cancellation after natural completion is safe.
+  stream.close();
+  stream.close();
+});
+
+it('close unblocks an idle VAD reader and is safe to repeat', async () => {
+  const vad = await VAD.load();
+  const stream = vad.stream();
+  const next = stream.next();
+  stream.close();
+  stream.close();
+  await expect(next).resolves.toEqual({ done: true, value: undefined });
+});
+
+it('close settles queued input writes without unhandled rejections', async () => {
+  const vad = await VAD.load();
+  const stream = vad.stream();
+  for (let i = 0; i < 10; i++)
+    stream.pushFrame(new AudioFrame(new Int16Array(512), TARGET_SAMPLE_RATE, 1, 512));
+  await stream.close();
+  await expect(stream.next()).resolves.toEqual({ done: true, value: undefined });
+});
+
+it('close waits for an in-flight inference before releasing the owned stream', async () => {
+  const vad = await VAD.load();
+  const stream = vad.stream();
+  let finish!: (value: number) => void;
+  const run = vi.spyOn(OnnxModel.prototype, 'run').mockImplementationOnce(
+    () =>
+      new Promise<number>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  try {
+    stream.pushFrame(new AudioFrame(new Int16Array(512), TARGET_SAMPLE_RATE, 1, 512));
+    await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
+    let settled = false;
+    const closing = Promise.resolve(stream.close()).then(() => {
+      settled = true;
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    finish(0);
+    await closing;
+  } finally {
+    finish?.(0);
+    await stream.close();
+    run.mockRestore();
+  }
+});
+
+it('releases closed streams from the caller-owned VAD across segmentation resets', async () => {
+  const vad = (await VAD.load()) as VAD;
+  const completed = vad.stream();
+  const active = vad.stream();
+  const completedUpdates = vi.spyOn(completed, 'updateOptions');
+  const activeUpdates = vi.spyOn(active, 'updateOptions');
+  try {
+    completed.endInput();
+    await completed.close();
+    vad.updateOptions({ minSilenceDuration: 700 });
+    expect(completedUpdates).not.toHaveBeenCalled();
+    expect(activeUpdates).toHaveBeenCalledOnce();
+  } finally {
+    await Promise.all([completed.close(), active.close()]);
+    completedUpdates.mockRestore();
+    activeUpdates.mockRestore();
+  }
+});

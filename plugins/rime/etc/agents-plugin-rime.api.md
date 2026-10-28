@@ -4,11 +4,16 @@
 
 ```ts
 
-import type { AudioFrame } from '@livekit/rtc-node';
+import { AudioFrame } from '@livekit/rtc-node';
 import { AudioResampler } from '@livekit/rtc-node';
+import { Logger } from 'pino';
 import type { ReadableStream as ReadableStream_2 } from 'node:stream/web';
+import type { ReadableStreamDefaultReader as ReadableStreamDefaultReader_2 } from 'node:stream/web';
 import type { Span } from '@opentelemetry/api';
+import { TransformStream as TransformStream_2 } from 'node:stream/web';
 import type { TypedEventEmitter } from '@livekit/typed-emitter';
+import type { VideoFrame as VideoFrame_2 } from '@livekit/rtc-node';
+import type { WritableStreamDefaultWriter as WritableStreamDefaultWriter_2 } from 'node:stream/web';
 
 // Warning: (ae-forgotten-export) The symbol "tts" needs to be exported by the entry point index.d.ts
 // Warning: (ae-missing-release-tag) "ChunkedStream" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -32,6 +37,43 @@ export type DefaultLanguages = 'eng' | 'spa' | 'fra' | 'ger';
 //
 // @public (undocumented)
 export type RimeAudioFormat = 'audio/pcm' | 'audio/pcmu' | 'audio/wav' | 'audio/mpeg' | 'audio/ogg;codecs=opus' | 'audio/webm;codecs=opus';
+
+// Warning: (ae-forgotten-export) The symbol "stt" needs to be exported by the entry point index.d.ts
+//
+// @public
+export class STT extends stt.STT {
+    constructor(options?: STTOptions);
+    close(): Promise<void>;
+    label: string;
+    get provider(): string;
+    // Warning: (ae-forgotten-export) The symbol "AudioBuffer_2" needs to be exported by the entry point index.d.ts
+    protected _recognize(audio: AudioBuffer_2, abortSignal?: AbortSignal): Promise<stt.SpeechEvent>;
+    stream(options?: {
+        connOptions?: APIConnectOptions;
+    }): stt.SpeechStream;
+    updateOptions(options: STTUpdateOptions): void;
+    // @internal (undocumented)
+    _updateSessionKeyterms(keyterms: string[]): void;
+}
+
+// @public
+export interface STTOptions extends STTUpdateOptions {
+    apiKey?: string;
+    outputContract?: STTOutputContract;
+    // Warning: (ae-forgotten-export) The symbol "VAD" needs to be exported by the entry point index.d.ts
+    vad?: VAD;
+}
+
+// @public
+export type STTOutputContract = 'revised_hypotheses' | 'append_fragments';
+
+// @public
+export interface STTUpdateOptions {
+    connOptions?: Partial<APIConnectOptions>;
+    contextTerms?: readonly string[];
+    language?: string;
+    mode?: 'written' | 'verbatim';
+}
 
 // Warning: (ae-missing-release-tag) "SynthesizeStream" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
