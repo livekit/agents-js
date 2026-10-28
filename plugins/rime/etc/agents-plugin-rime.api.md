@@ -70,9 +70,16 @@ class PrismError extends llm.RealtimeError {
 // @public
 interface PrismGenerationCreatedEvent extends llm.GenerationCreatedEvent {
     inputItemIds: readonly string[];
+    instructionItemId?: string | null;
     metadata: r.Labels;
     providerRequestId: string | null;
     settingsRevision: number | null;
+}
+
+// @public
+class PrismIdleTimeoutError extends llm.RealtimeError {
+    constructor(idleTimeoutS: number);
+    readonly idleTimeoutS: number;
 }
 
 // Warning: (ae-missing-release-tag) "PrismItemTruncatedEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -90,6 +97,7 @@ declare namespace realtime {
         RealtimeModel,
         RealtimeSession_2 as RealtimeSession,
         PrismError,
+        PrismIdleTimeoutError,
         RealtimeModelOptions,
         SessionOptions,
         PrismGenerationCreatedEvent,
@@ -104,6 +112,7 @@ declare namespace realtime {
 class RealtimeModel extends llm.RealtimeModel {
     constructor(options?: RealtimeModelOptions);
     close(): Promise<void>;
+    deleteInstructionItem(itemId: string): Promise<void>;
     getHistory(): Promise<readonly r.HistoryItem[]>;
     label(): string;
     get model(): string;
@@ -144,8 +153,10 @@ class RealtimeSession_2 extends llm.RealtimeSession {
     clearAudio(): Promise<void>;
     close(): Promise<void>;
     commitAudio(): Promise<void>;
+    deleteInstructionItem(itemId: string): Promise<void>;
     generateReply(instructions?: string, options?: {
         signal?: AbortSignal;
+        metadata?: r.Labels;
     }): Promise<PrismGenerationCreatedEvent>;
     getHistory(): Promise<readonly r.HistoryItem[]>;
     interrupt(): Promise<void>;
