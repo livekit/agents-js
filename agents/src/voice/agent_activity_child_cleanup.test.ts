@@ -297,6 +297,142 @@ it.each(
   12000,
 );
 
+it.each(
+  (['cancel', 'host close'] as const).flatMap((boundary) =>
+    (['resolve', 'reject', 'immediate'] as const).map((ending) => ({ boundary, ending })),
+  ),
+)(
+  'retains generated audio capture through $boundary and $ending before reusing its sink',
+  async ({ boundary, ending }) => {
+    const entered = new Future<void>();
+    const release = new Future<void>();
+    let oldForward: Task<unknown> | undefined;
+    const flushes: (Task<unknown> | undefined)[] = [];
+    class HeldAudio extends Audio {
+      private first = true;
+      override async captureFrame(frame: AudioFrame) {
+        const held = this.first;
+        this.first = false;
+        if (held) oldForward = Task.current();
+        await super.captureFrame(frame);
+        if (held) {
+          entered.resolve();
+          await release.await;
+        }
+      }
+      override flush() {
+        flushes.push(Task.current());
+        super.flush();
+      }
+    }
+    class FiniteAgent extends Agent {
+      override async ttsNode() {
+        return stream(new AudioFrame(new Int16Array(480), 24000, 1, 480));
+      }
+    }
+    const session = new AgentSession({
+      llm: new FakeLLM([
+        { input: 'go', content: 'old reply' },
+        { input: 'fresh', content: 'fresh reply' },
+      ]),
+      tts: new HookTTS(),
+      vad: null,
+      useTtsAlignedTranscript: false,
+    });
+    session.output.audio = new HeldAudio();
+    const transport = new InMemoryTransport();
+    const host = new SessionHost(transport);
+    let run: RunResult | undefined;
+    let cancellation: Promise<void> | undefined;
+    let closing: Promise<void> | undefined;
+    let fresh: RunResult | undefined;
+    try {
+      await session.start({ agent: new FiniteAgent({ instructions: 'test' }) });
+      if (boundary === 'host close') {
+        host.registerSession(session);
+        await host.start();
+        transport.push(
+          request('held', {
+            case: 'runInput',
+            value: new pb.SessionRequest_RunInput({ text: 'go' }),
+          }),
+        );
+      } else {
+        run = session.run({ userInput: 'go' });
+      }
+      await entered.await;
+      run ??= session._globalRunState;
+      expect(run).toBeDefined();
+      void run!.wait().catch(() => {});
+      expect(oldForward?.name).toBe('performAudioForwarding');
+      let settled = false;
+      if (boundary === 'host close') {
+        closing = host.close();
+        if (ending === 'immediate') {
+          await expect.poll(() => run!.done(), { timeout: 4000 }).toBe(true);
+          release.resolve();
+        }
+        await closing;
+        expect(transport.closed).toBe(true);
+        if (ending !== 'immediate') {
+          expect.soft(session._globalRunState === run).toBe(true);
+          expect.soft(oldForward!.done).toBe(false);
+        }
+      }
+      cancellation = run!._cancel();
+      void cancellation.then(() => (settled = true));
+      if (ending === 'immediate') {
+        release.resolve();
+        await cancellation;
+      } else {
+        // Observe beyond both segment waits, including time after host closure.
+        await delay(boundary === 'host close' ? 1600 : 2 * REPLY_TASK_CANCEL_TIMEOUT + 500);
+        expect.soft(oldForward!.done).toBe(false);
+        expect.soft(settled).toBe(false);
+        expect.soft(run!._isActive()).toBe(true);
+        expect.soft(session._globalRunState === run).toBe(true);
+      }
+      const wireCount = transport.sent.length;
+      let firstFreshFlush = flushes.length;
+      let admissionError: unknown;
+      try {
+        fresh = session.run({ userInput: 'fresh' });
+      } catch (error) {
+        admissionError = error;
+      }
+      if (ending !== 'immediate') {
+        expect.soft(admissionError).toMatchObject({ message: 'nested runs are not supported' });
+      } else {
+        expect(admissionError).toBeUndefined();
+      }
+      await fresh?.wait();
+      if (ending === 'reject') release.reject(new Error('late audio capture failed'));
+      else release.resolve();
+      await cancellation;
+      await Promise.allSettled([oldForward!.result]);
+      expect(oldForward!.done).toBe(true);
+      expect(flushes.filter((task) => task === oldForward)).toHaveLength(1);
+      if (!fresh) {
+        firstFreshFlush = flushes.length;
+        fresh = session.run({ userInput: 'fresh' });
+      }
+      await fresh.wait();
+      fresh.expect.nextEvent().isMessage({ role: 'assistant', textContent: 'fresh reply' });
+      fresh.expect.noMoreEvents();
+      expect.soft(flushes.slice(firstFreshFlush).includes(oldForward)).toBe(false);
+      if (boundary === 'host close') expect(transport.sent.length).toBe(wireCount);
+    } finally {
+      release.resolve();
+      await cancellation;
+      await closing;
+      await Promise.allSettled(oldForward ? [oldForward.result] : []);
+      await host.close();
+      await session.close();
+    }
+  },
+  15000,
+);
+
 it('releases preemptive synthesis streams when cancelled before scheduling', async () => {
   const entered = new Future<void>();
   const tasks: Task<unknown>[] = [];

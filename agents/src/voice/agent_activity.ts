@@ -4247,7 +4247,6 @@ export class AgentActivity implements RecognitionHooks {
       replyAbortController.signal.addEventListener('abort', abortSegment, { once: true });
       if (replyAbortController.signal.aborted) abortSegment();
       const forwardTasks: Task<void>[] = [];
-      let textForwardTask: Task<void> | undefined;
       let nodeInput: ReturnType<typeof createActivityInput<string | TimedString>> | undefined;
       let trNodeResult: ReadableStream<string | TimedString> | null = null;
 
@@ -4282,7 +4281,6 @@ export class AgentActivity implements RecognitionHooks {
             segmentAbortController,
             transcriptionOutput,
           );
-          textForwardTask = task;
           forwardTasks.push(task);
           trNodeResult = null;
           output.textOut = textOut;
@@ -4386,15 +4384,13 @@ export class AgentActivity implements RecognitionHooks {
         return output;
       } finally {
         replyAbortController.signal.removeEventListener('abort', abortSegment);
+        abortSegment();
         nodeInput?.cancel();
-        const textCleanup = Promise.allSettled([
+        await Promise.allSettled([
           nodeInput?.done,
-          textForwardTask?.result,
+          ...forwardTasks.map((task) => task.result),
           trNodeResult?.cancel(),
         ]);
-        await cancelAndWait(forwardTasks, REPLY_TASK_CANCEL_TIMEOUT);
-        // Join the reader's cancellation cleanup, not just the bounded task wait.
-        await textCleanup;
         // The segment's playout window is over; settle a still-pending
         // firstFrameFut so the playback-started listener is detached.
         this.settleFirstFrameFut(output.audioOut);
