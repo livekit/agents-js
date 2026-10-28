@@ -1,0 +1,31 @@
+.changeset/bright-sessions-wait.md
+  s_de5d34fcc7db11::t_8456171b030af7 20-21
+agents/src/cli.ts
+  s_948d99d9bf9770::t_a0d1c5ce7fc4a1 4,263-275
+agents/src/cli_console.test.ts
+  s_948d99d9bf9770::t_8e3e89c97e9801 1-48
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c69f13614fa3b0edd6766ea502bb8139412f8220",
+  "prompts": {},
+  "sessions": {
+    "s_948d99d9bf9770": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13539-ee92-7c42-9eec-a77c81012b50",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    },
+    "s_de5d34fcc7db11": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1461f-331c-7182-920c-a8752fbaf7b8",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
