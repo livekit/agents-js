@@ -60,6 +60,8 @@ export type FishAudioModels =
   | 'fishaudio/s2.1-pro-free'
   | 'fishaudio/s2-pro';
 
+export type AssemblyAIModels = 'assemblyai' | 'assemblyai/assemblyai-tts-1';
+
 export interface CartesiaOptions {
   emotion?: string;
   /** Maximum duration of audio in seconds. */
@@ -143,13 +145,20 @@ export interface FishAudioOptions {
   early_stop_threshold?: number;
 }
 
+/** AssemblyAI TTS options passed through to LiveKit Inference. */
+export interface AssemblyAIOptions {
+  /** Default true; word timings are forwarded as an aligned transcript. */
+  word_timestamps?: boolean;
+}
+
 type _TTSModels =
   | CartesiaModels
   | DeepgramTTSModels
   | RimeModels
   | InworldModels
   | XaiTTSModels
-  | FishAudioModels;
+  | FishAudioModels
+  | AssemblyAIModels;
 
 export type TTSModels =
   | CartesiaModels
@@ -158,6 +167,7 @@ export type TTSModels =
   | InworldModels
   | XaiTTSModels
   | FishAudioModels
+  | AssemblyAIModels
   | AnyString;
 
 export type ModelWithVoice = `${_TTSModels}:${string}` | TTSModels;
@@ -174,7 +184,9 @@ export type TTSOptions<TModel extends TTSModels> = TModel extends CartesiaModels
           ? XaiTTSOptions
           : TModel extends FishAudioModels
             ? FishAudioOptions
-            : Record<string, unknown>;
+            : TModel extends AssemblyAIModels
+              ? AssemblyAIOptions
+              : Record<string, unknown>;
 
 /** Parse a model string into [model, voice]. Voice is undefined if not specified. */
 export function parseTTSModelString(model: string): [string, string | undefined] {
