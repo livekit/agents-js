@@ -8,7 +8,7 @@ import { ChatContext } from '../llm/chat_context.js';
 import { initializeLogger } from '../log.js';
 import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
 import { splitWords } from '../tokenize/basic/word.js';
-import { VAD, type VADEvent, type VADStream } from '../vad.js';
+import { VAD, type VADEvent, VADEventType, type VADStream } from '../vad.js';
 import {
   AudioRecognition,
   type EndOfTurnInfo,
@@ -46,18 +46,81 @@ class SilentVAD extends VAD {
   constructor() {
     super({ updateInterval: 1 });
   }
-  stream(): any {
+  stream(): VADStream {
     return new SilentVADStream();
   }
 }
 
-/** A final for speech that ends now; times are seconds since the STT input started. */
+// A VAD the test drives: each pushed event is delivered to recognition as it happens.
+class ScriptedVADStream extends (Object as unknown as { new (): VADStream }) {
+  private queue: VADEvent[] = [];
+  private waiter?: (result: IteratorResult<VADEvent>) => void;
+  private closed = false;
+  push(ev: VADEvent) {
+    const waiter = this.waiter;
+    this.waiter = undefined;
+    if (waiter) waiter({ done: false, value: ev });
+    else this.queue.push(ev);
+  }
+  updateInputStream() {}
+  detachInputStream() {}
+  close() {
+    this.closed = true;
+    this.waiter?.({ done: true, value: undefined });
+    this.waiter = undefined;
+  }
+  [Symbol.asyncIterator]() {
+    return this;
+  }
+  async next(): Promise<IteratorResult<VADEvent>> {
+    const ev = this.queue.shift();
+    if (ev) return { done: false, value: ev };
+    if (this.closed) return { done: true, value: undefined };
+    return new Promise((resolve) => (this.waiter = resolve));
+  }
+}
+
+class ScriptedVAD extends VAD {
+  label = 'scripted-vad';
+  readonly vadStream = new ScriptedVADStream();
+  constructor() {
+    super({ updateInterval: 1 });
+  }
+  stream(): VADStream {
+    return this.vadStream;
+  }
+}
+
+const vadEvent = (
+  type: VADEventType.START_OF_SPEECH | VADEventType.END_OF_SPEECH,
+  durations: { speechDuration?: number; silenceDuration?: number } = {},
+): VADEvent => ({
+  type,
+  samplesIndex: 0,
+  timestamp: Date.now(),
+  speechDuration: durations.speechDuration ?? 0,
+  silenceDuration: durations.silenceDuration ?? 0,
+  frames: [],
+  probability: 0,
+  inferenceDuration: 0,
+  speaking: type === VADEventType.START_OF_SPEECH,
+  rawAccumulatedSilence: 0,
+  rawAccumulatedSpeech: 0,
+});
+
+/** A final for speech that ends now, timed against the STT input start. */
 const finalTranscript = (text: string, inputStartedAt: number, confidence: number): SpeechEvent => {
-  const endTime = (Date.now() - inputStartedAt) / 1000;
+  const endTimeInS = (Date.now() - inputStartedAt) / 1000;
   return {
     type: SpeechEventType.FINAL_TRANSCRIPT,
     alternatives: [
-      { language: 'en', text, startTime: Math.max(endTime - 0.4, 0), endTime, confidence },
+      {
+        language: 'en',
+        text,
+        startTime: Math.max(endTimeInS - 0.4, 0),
+        endTime: endTimeInS,
+        confidence,
+      },
     ],
   };
 };
@@ -68,9 +131,13 @@ const finalTranscript = (text: string, inputStartedAt: number, confidence: numbe
  * ones commit.
  */
 async function startRecognition(
-  options: { dropSkipped?: boolean; beforeDecision?: (call: number) => Promise<void> } = {},
+  options: {
+    dropSkipped?: boolean;
+    beforeDecision?: (call: number) => Promise<void>;
+    vad?: VAD;
+  } = {},
 ) {
-  const { dropSkipped = true, beforeDecision } = options;
+  const { dropSkipped = true, beforeDecision, vad = new SilentVAD() } = options;
   const seen: string[] = [];
   const committed: string[] = [];
   const infos: EndOfTurnInfo[] = [];
@@ -112,7 +179,7 @@ async function startRecognition(
   const ar = new AudioRecognition({
     recognitionHooks: hooks,
     stt: sttNode,
-    vad: new SilentVAD(),
+    vad,
     turnDetector: fastTurnDetector,
     turnDetectionMode: 'vad',
     minEndpointingDelay: 300,
@@ -238,6 +305,37 @@ describe('AudioRecognition - turns skipped below minWords', () => {
       // report what the first did, not the skipped word's start 12.5s earlier
       expect(infos[1]!.newTranscript).toBe('Stop right there.');
       expect(infos[1]!.startedSpeakingAt).toBe(infos[0]!.startedSpeakingAt);
+    } finally {
+      await ar.close();
+    }
+  });
+
+  it('keeps the turn of speech that resumed during the skip decision, starting at the resume', async () => {
+    const vad = new ScriptedVAD();
+    let releaseFirstDecision!: () => void;
+    const firstDecision = new Promise<void>((resolve) => (releaseFirstDecision = resolve));
+    const { ar, committed, infos, say } = await startRecognition({
+      vad,
+      beforeDecision: async (call) => {
+        if (call === 1) await firstDecision;
+      },
+    });
+    try {
+      await say('Okay.', 400);
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      // the user starts "Stop right there" while "Okay." is still being decided; no final yet
+      vad.vadStream.push(vadEvent(VADEventType.START_OF_SPEECH, { speechDuration: 100 }));
+      await vi.advanceTimersByTimeAsync(0);
+      const resumedAt = Date.now() - 100;
+      releaseFirstDecision();
+      await vi.advanceTimersByTimeAsync(800);
+
+      vad.vadStream.push(vadEvent(VADEventType.END_OF_SPEECH));
+      await say('Stop right there.');
+
+      expect(committed).toEqual(['Stop right there.']);
+      expect(infos.at(-1)!.startedSpeakingAt).toBe(resumedAt);
     } finally {
       await ar.close();
     }

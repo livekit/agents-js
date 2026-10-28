@@ -2469,16 +2469,26 @@ export class AudioRecognition {
         .trimStart();
     }
     this.finalTranscriptConfidence.splice(0, skippedFinals);
-    if (this.audioTranscript) return;
+
+    const resumed =
+      this.audioTranscript !== '' ||
+      this.speaking ||
+      this.lastSpeakingTime !== decided.lastSpeakingTime;
+    if (resumed) {
+      // the user spoke again while the skip was decided: that speech keeps the turn open, and
+      // with the skipped words gone it is where the turn now starts
+      const resumedAt = this.activeVadSpeechStartedAt ?? this.speechStartTime;
+      if (resumedAt !== undefined && resumedAt > (this.userTurnStart ?? -Infinity)) {
+        this.userTurnStart = resumedAt;
+      }
+      return;
+    }
 
     this.lastFinalTranscriptTime = 0;
     this._endUserTurnSpan(undefined, { turn: decided.turn, wait: decided.wait });
-    // as on commit: concurrent user speech might have changed it; only reset if there is none
-    if (this.lastSpeakingTime === decided.lastSpeakingTime) {
-      this.speechStartTime = undefined;
-      this.vadSpeechStarted = false;
-      this.lastSpeakingTime = undefined;
-    }
+    this.speechStartTime = undefined;
+    this.vadSpeechStarted = false;
+    this.lastSpeakingTime = undefined;
   }
 
   clearUserTurn() {
