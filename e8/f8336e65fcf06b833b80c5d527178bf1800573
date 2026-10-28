@@ -1,0 +1,35 @@
+agents/src/inference/eot/transports.ts
+  s_948d99d9bf9770::t_6d97836f0ce1ec 9,18,171,315-336
+agents/src/voice/audio_recognition.ts
+  s_948d99d9bf9770::t_6d97836f0ce1ec 2203-2205
+.changeset/eot-assistant-context.md
+  s_948d99d9bf9770::t_6d97836f0ce1ec 1-5
+agents/src/inference/eot/detector.test.ts
+  s_948d99d9bf9770::t_02cbf2c8ec1d25 27,860,872-873,875,877
+agents/src/inference/eot/transports.test.ts
+  s_948d99d9bf9770::t_70c7c26a7d0a2f 17,21-26,258-260,262-263,265,275-315,317,319-364
+  s_948d99d9bf9770::t_6d97836f0ce1ec 316,318
+  s_948d99d9bf9770::t_f0b6729aec8f2a 365-369
+agents/src/voice/audio_recognition_turn_detection.test.ts
+  s_948d99d9bf9770::t_70c7c26a7d0a2f 569,574-576,583
+agents/src/inference/eot/base.ts
+  s_948d99d9bf9770::t_6d97836f0ce1ec 16,77,252,267
+agents/etc/agents.api.md
+  s_948d99d9bf9770::t_40c4f78ab1552f 2521,5290
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e8f8336e65fcf06b833b80c5d527178bf1800573",
+  "prompts": {},
+  "sessions": {
+    "s_948d99d9bf9770": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13539-ee92-7c42-9eec-a77c81012b50",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
