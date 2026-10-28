@@ -4,6 +4,7 @@
 import type { Mutex } from '@livekit/mutex';
 import { AgentSession as pb } from '@livekit/protocol';
 import { ByteStreamReader, LocalParticipant, type Room } from '@livekit/rtc-node';
+import type { Throws } from '@livekit/throws-transformer/throws';
 import * as net from 'node:net';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { LLM, LLMStream } from '../llm/llm.js';
@@ -907,14 +908,14 @@ describe('TCP send failure', () => {
     );
     await transport.start();
     const peer = await connected.await;
-    cleanup.push(async () => {
+    cleanup.push(async (): Promise<Throws<void, Error>> => {
       await transport.close();
       peer.destroy();
       await new Promise<void>((resolve) => server.close(() => resolve()));
     });
     return { transport, peer, socket: (transport as unknown as { socket: net.Socket }).socket };
   }
-  it('rejects writes after peer disconnect', async () => {
+  it('rejects writes after peer disconnect', async (): Promise<Throws<void, Error>> => {
     const { transport, peer } = await connection();
     const reader = (async () => {
       for await (const _msg of transport) {
@@ -938,7 +939,9 @@ describe('TCP send failure', () => {
     await expect(transport.sendMessage(new pb.AgentSessionMessage())).rejects.toThrow();
   });
 
-  it('keeps accepted TCP responses writable after intake aborts', async () => {
+  it('keeps accepted TCP responses writable after intake aborts', async (): Promise<
+    Throws<void, Error>
+  > => {
     const { transport, peer, socket } = await connection();
     const controller = new AbortController();
     const next = transport[Symbol.asyncIterator](controller.signal).next();
@@ -952,7 +955,9 @@ describe('TCP send failure', () => {
     expect((await received.await).subarray(4)).toEqual(Buffer.from(msg.toBinary()));
     expect(socket.destroyed).toBe(false);
   });
-  it('rejects a backpressured valid-size frame when a real peer resets', async () => {
+  it('rejects a backpressured valid-size frame when a real peer resets', async (): Promise<
+    Throws<void, Error>
+  > => {
     const { transport, peer, socket } = await connection();
     socket.on('error', () => {});
     const msg = request('x'.repeat(512 * 1024), {
