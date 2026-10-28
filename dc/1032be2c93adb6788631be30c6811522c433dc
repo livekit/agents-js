@@ -1,0 +1,21 @@
+agents/src/voice/testing/run_result.ts
+  s_de5d34fcc7db11::t_2326c6fac643e6 275-279
+agents/src/voice/agent_activity.ts
+  s_de5d34fcc7db11::t_2326c6fac643e6 3638-3642
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "dc1032be2c93adb6788631be30c6811522c433dc",
+  "prompts": {},
+  "sessions": {
+    "s_de5d34fcc7db11": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1461f-331c-7182-920c-a8752fbaf7b8",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
