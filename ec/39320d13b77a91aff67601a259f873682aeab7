@@ -1,0 +1,34 @@
+agents/src/voice/interrupted_reply_cleanup.test.ts
+  s_a1090670582754::t_be9e8328b52b8c 49,92-95,103-105,108-109,129,136-144,193-195
+  s_a1090670582754::t_f3cdb2f117efcd 5,179-181,190-192
+  s_a1090670582754::t_8e81cdab79d834 183-189
+  s_a1090670582754::t_db9d248aa5bd14 201-217
+  s_a1090670582754::t_f3fbd777e8e231 200
+agents/src/tts/fallback_adapter_lifecycle.test.ts
+  s_a1090670582754::t_db9d248aa5bd14 35-36,61-62,286-288
+  s_a1090670582754::t_0c6b179a5b84d4 5,8,14,124-138,244,254-268,270-285,289,291
+  s_a1090670582754::t_98329e026c4050 27-30,52-56,74-77,188-213,215-238
+  s_a1090670582754::t_d9d4b2b12bd7eb 1-4,6-7,9-13,15-26,31-34,37-51,57-60,63-73,78-123,139-187,214,239-243,245-253,269,290,292-298
+agents/src/tts/fallback_adapter.ts
+  s_a1090670582754::t_5443dbcf6ae88b 712-713
+  s_a1090670582754::t_6a3eb8755a2f12 413,420-421,429,453-454,477-478,516,538,609,641-642,745,787,809
+  s_a1090670582754::t_797937839762d3 443,452,539,543,585,590-591,597,604,629,640,759-764,813,822
+.changeset/quiet-fallback-turns.md
+  s_a1090670582754::t_3647b83abddf5a 1-5
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ec39320d13b77a91aff67601a259f873682aeab7",
+  "prompts": {},
+  "sessions": {
+    "s_a1090670582754": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a17f9a-e091-7f20-995d-a0d596a40d46",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
