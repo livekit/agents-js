@@ -51,7 +51,7 @@
     "@bufbuild/protobuf": "^2.14.1",
     "@livekit/av": "^10.0.0",
     "@rimelabs/api": "0.0.1",
-    "@rimelabs/sdk": "0.1.0-alpha.24",
+    "@rimelabs/sdk": "0.1.0-alpha.25",
     "ws": "catalog:"
   },
   "peerDependencies": {

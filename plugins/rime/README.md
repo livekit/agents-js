@@ -49,6 +49,10 @@ For provider settings, call
 `await model.updateSession({ voice, truncation, responseMetadata, toolFillers })`.
 Omitted fields keep their values. `model.sessionInfo` returns confirmed settings;
 `await model.getHistory()` reads provider history without replacing local history.
+On a direct Prism session, `await session.generateReply('Check in', {
+  metadata: { step: '3' },
+})` labels one requested reply. These labels replace matching session labels.
+Replies that Prism starts from caller speech use session labels.
 
 LiveKit executes tools. The plugin submits each result once and requests a continuation.
 To add filler speech, use the registered tool name:
@@ -84,6 +88,7 @@ These limits apply:
   Queues are bounded; overflow closes the session.
 
 The realtime session emits SDK payloads as `item_truncated` and `response_ended`.
+`response_ended.usage` reports token counts when Prism provides them.
 Available `keptText` updates the plugin's history while the server item ID still
 matches. An empty string means no words remain; `null` means unavailable and leaves
 known text unchanged. Early acknowledgments may have no retained text, with no later
@@ -96,6 +101,14 @@ truncation policy. A missing or null summary means no exclusions were reported o
 information was unavailable. Diagnostics include discarded replies and can arrive
 before `generateReply()` returns a requested response.
 
+`generation.instructionItemId` names a saved instruction from an explicit
+reply. After that reply ends, call `await model.deleteInstructionItem(id)` to
+remove it from later Prism history. The method accepts only IDs observed in
+this session while they remain among the last 128 saved instruction IDs that
+the adapter observed.
+It does not change local LiveKit history. An idle close produces
+`PrismIdleTimeoutError` in the session error event, with `idleTimeoutS` in seconds.
+
 ### Configuration and compatibility
 
 Constructor options include turn detection, history truncation, request IDs, response
@@ -106,7 +119,7 @@ Both local protocol tests and standard-session tests passed with the repository 
 at `f03a68ef` and published `@livekit/agents@1.9.4`, using Node.js 24.18.0. Earlier
 versions were not tested. The peer dependency remains the repository's release version.
 
-The plugin pins `@rimelabs/sdk` to `0.1.0-alpha.24` from public npm. If your machine
+The plugin pins `@rimelabs/sdk` to `0.1.0-alpha.25` from public npm. If your machine
 routes `@rimelabs` to GitHub Packages, install with
 `pnpm install --@rimelabs:registry=https://registry.npmjs.org`.
 

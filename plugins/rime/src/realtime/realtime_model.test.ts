@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  PrismIdleTimeoutError,
   type PrismItemTruncatedEvent,
   type PrismResponseEndedEvent,
   RealtimeModel,
@@ -51,6 +52,56 @@ async function request(peer: PrismPeer, count = 1) {
 }
 
 describe('Prism SDK adapter', () => {
+  it('labels one reply and deletes only its saved instruction', async () => {
+    const { peer, model, session } = await setup();
+    const labels = { call: 'this-reply', step: '2' };
+    const pending = session.generateReply('Check in', { metadata: labels });
+    labels.step = 'changed';
+    const createdRequest = await request(peer);
+    expect(createdRequest.response?.metadata).toMatchObject({
+      prism_cause: 'proactive',
+      call: 'this-reply',
+      step: '2',
+    });
+    createdRequest.response!.metadata!.prism_instruction_item_id = 'saved-instruction';
+    peer.history.push({
+      id: 'saved-instruction',
+      type: 'message',
+      role: 'user',
+      text: 'Check in',
+    });
+    peer.accepted(createdRequest);
+    const generation = await pending;
+    expect(generation.instructionItemId).toBe('saved-instruction');
+    await expect(model.deleteInstructionItem(generation.instructionItemId!)).rejects.toThrow(
+      'before its reply ends',
+    );
+    peer.message();
+    peer.text();
+    peer.audio();
+    const ended = vi.fn();
+    session.on('response_ended', ended);
+    peer.ended();
+    await vi.waitFor(() => expect(ended).toHaveBeenCalledOnce());
+    await model.deleteInstructionItem(generation.instructionItemId!);
+    expect(peer.requests.at(-1)).toMatchObject({
+      type: 'conversation.item.delete',
+      item_id: 'saved-instruction',
+    });
+    expect(peer.history.some((item) => item.id === 'saved-instruction')).toBe(false);
+    await expect(model.deleteInstructionItem('saved-instruction')).rejects.toThrow(
+      'Unknown saved Prism instruction item',
+    );
+  });
+
+  it('reports the Prism idle timeout and its duration', async () => {
+    const { peer, errors } = await setup();
+    peer.emit('session.idle_timeout', { reason: 'idle_timeout', idle_timeout_s: 300 });
+    await vi.waitFor(() => expect(errors).toHaveLength(1));
+    expect(errors[0]?.error).toBeInstanceOf(PrismIdleTimeoutError);
+    expect((errors[0]?.error as PrismIdleTimeoutError).idleTimeoutS).toBe(300);
+  });
+
   it('preserves deleted assistant history when closing the session', async () => {
     const { peer, session } = await setup();
     const pending = session.generateReply();
