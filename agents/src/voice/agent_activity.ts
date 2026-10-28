@@ -3635,6 +3635,11 @@ export class AgentActivity implements RecognitionHooks {
     );
   }
 
+  /**
+   * Await transcription setup until speech is interrupted or the signal aborts.
+   * On cancellation, return null and cancel any eventual output stream without
+   * waiting for the hook. Otherwise, transfer stream ownership to the caller.
+   */
   private async resolveTranscriptionNode(
     transcription: ReturnType<Agent['transcriptionNode']>,
     speechHandle: SpeechHandle,

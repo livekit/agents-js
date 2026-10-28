@@ -272,6 +272,11 @@ export class RunResult<T = unknown> {
     return this.cancellation;
   }
 
+  /**
+   * Reject this run and cancel its owned speech tasks.
+   * Keep session run ownership until those tasks settle, without a timeout.
+   * Session-owned transition tasks are unwatched but are not cancelled.
+   */
   private async cancel(): Promise<void> {
     this._reject(new DOMException('Remote session run cancelled', 'AbortError'));
     const speeches: SpeechHandle[] = [];
