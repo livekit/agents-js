@@ -94,6 +94,12 @@ export interface EndOfTurnInfo {
    * caller drives its own `generateReply` (e.g. leaving a voicemail).
    */
   skipReply?: boolean;
+  /**
+   * Set by the activity when it skips the turn for having fewer than `minWords` words.
+   * Recognition then drops `newTranscript` instead of keeping it for the next trigger, so
+   * skipped backchannels can't add up to `minWords` or prefix the next committed turn.
+   */
+  dropTranscript?: boolean;
   /** The turn's speech overlapped agent speech and was classified a backchannel. */
   backchannelOverAgent?: boolean;
   /**
@@ -1968,9 +1974,12 @@ export class AudioRecognition {
             this.turnDetectorFlushed = true;
           }
           this.resetTranscriptionTimeout();
-        } else if (eouWaitSpan.isRecording()) {
-          // the decision is deferred (below min words, realtime backchannel): keep waiting
-          this.eouWaitNotCommitted += 1;
+        } else {
+          if (endOfTurn.dropTranscript) this.dropSkippedTranscript(endOfTurn.newTranscript);
+          if (eouWaitSpan.isRecording()) {
+            // the decision is deferred (below min words, realtime backchannel): keep waiting
+            this.eouWaitNotCommitted += 1;
+          }
         }
 
         this.turnBackchannelOverAgent = false;
@@ -2430,6 +2439,26 @@ export class AudioRecognition {
         if (idx >= 0) this.subscriberWriters.splice(idx, 1);
       });
     return transform.readable;
+  }
+
+  /**
+   * Drops a transcript the activity skipped (see `EndOfTurnInfo.dropTranscript`). Only the
+   * evaluated text is removed: finals that arrived while `onEndOfTurn` ran start a new
+   * utterance and stay.
+   */
+  private dropSkippedTranscript(skipped: string) {
+    const rest = this.audioTranscript.slice(skipped.length);
+    if (!skipped || !this.audioTranscript.startsWith(skipped) || /^\S/.test(rest)) return;
+    this.audioTranscript = rest.trimStart();
+    if (this.audioPreflightTranscript.startsWith(skipped)) {
+      this.audioPreflightTranscript = this.audioPreflightTranscript
+        .slice(skipped.length)
+        .trimStart();
+    }
+    if (!this.audioTranscript) {
+      this.finalTranscriptConfidence = [];
+      this.lastFinalTranscriptTime = 0;
+    }
   }
 
   clearUserTurn() {
