@@ -65,6 +65,23 @@ export function isFlushSentinel(value: unknown): value is FlushSentinel {
 }
 
 /**
+ * Marks the start of the user turn, `elapsed` ms before the end of the frames queued
+ * before it. Carried on the audio channel so it stays in order with the frames.
+ */
+export interface StartOfTurnSentinel {
+  readonly kind: 'start_of_turn';
+  elapsed: number;
+}
+
+export function isStartOfTurnSentinel(value: unknown): value is StartOfTurnSentinel {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    (value as StartOfTurnSentinel).kind === 'start_of_turn'
+  );
+}
+
+/**
  * Transport adapter for `BaseStreamingTurnDetectorStream` — owns the I/O (WebSocket
  * session, in-process predict, etc.). The stream calls these methods
  * directly; transports report predictions back via
@@ -75,6 +92,7 @@ export interface StreamingTurnDetectionTransport {
   run(): Promise<void>;
   runInference(requestId: string): void;
   pushFrame(frame: AudioFrame): Promise<void>;
+  onStartOfTurn(elapsed: number): void;
   flush(sentinel: FlushSentinel): Promise<void>;
   detach(): void;
 }
@@ -177,7 +195,8 @@ export class BaseStreamingTurnDetectorStream {
   private _audioInputSampleRate: number | undefined;
   private _audioInputNumChannels: number | undefined;
   private _audioResampler: AudioResampler | undefined;
-  private _audioChannel: StreamChannel<AudioFrame | FlushSentinel> = createStreamChannel();
+  private _audioChannel: StreamChannel<AudioFrame | FlushSentinel | StartOfTurnSentinel> =
+    createStreamChannel();
   private _degraded = false;
 
   /** Id of the in-flight inference request, or `undefined` when idle. */
@@ -322,6 +341,18 @@ export class BaseStreamingTurnDetectorStream {
     for (const resampled of this._resampleAudioFrame(frame)) {
       void this._audioChannel.write(resampled);
     }
+  }
+
+  /** The user turn started at `startedAt` (ms since epoch); it lasts until the next flush. */
+  onStartOfTurn(startedAt: number): void {
+    if (this._degraded || this._audioChannel.closed) {
+      return;
+    }
+    // measured now, while the frames queued so far end at the present; the transport may
+    // drain them much later, e.g. after a cloud reconnect backlog
+    const elapsed = Math.max(0, Date.now() - startedAt);
+    const sentinel: StartOfTurnSentinel = { kind: 'start_of_turn', elapsed };
+    void this._audioChannel.write(sentinel);
   }
 
   endInput(): void {
@@ -486,6 +517,8 @@ export class BaseStreamingTurnDetectorStream {
         if (done) return;
         if (isFlushSentinel(value)) {
           await this._transport.flush(value);
+        } else if (isStartOfTurnSentinel(value)) {
+          this._transport.onStartOfTurn(value.elapsed);
         } else {
           await this._transport.pushFrame(value);
         }

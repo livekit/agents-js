@@ -2512,6 +2512,8 @@ class CloudTransport implements StreamingTurnDetectionTransport {
     get numRetries(): number;
     // (undocumented)
     protected _numRetries: number;
+    // (undocumented)
+    onStartOfTurn(_elapsed: number): void;
     // Warning: (ae-forgotten-export) The symbol "BaseStreamingTurnDetectorOptions" needs to be exported by the entry point index.d.ts
     //
     // (undocumented)
@@ -5287,9 +5289,11 @@ class LocalTransport implements StreamingTurnDetectionTransport {
     // (undocumented)
     protected _logger: Logger;
     // (undocumented)
+    onStartOfTurn(elapsed: number): void;
+    // (undocumented)
     protected _opts: BaseStreamingTurnDetectorOptions;
     // (undocumented)
-    protected _predict(requestId: string, pcmSnapshot: Int16Array): Promise<void>;
+    protected _predict(requestId: string, pcmSnapshot: Int16Array, turnSamples: number): Promise<void>;
     // (undocumented)
     pushFrame(frame: AudioFrame): Promise<void>;
     // (undocumented)
@@ -5300,6 +5304,8 @@ class LocalTransport implements StreamingTurnDetectionTransport {
     protected _streamRef: WeakRef<BaseStreamingTurnDetectorStream> | undefined;
     // (undocumented)
     protected _tasks: Set<Promise<void>>;
+    // (undocumented)
+    protected _turnSamples: number;
     // (undocumented)
     protected _warnedNoExecutor: boolean;
 }
