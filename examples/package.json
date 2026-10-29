@@ -24,6 +24,7 @@
   },
   "dependencies": {
     "@livekit/agents": "workspace:*",
+    "@livekit/agents-plugin-addisai": "workspace:*",
     "@livekit/agents-plugin-anam": "workspace:*",
     "@livekit/agents-plugin-assemblyai": "workspace:*",
     "@livekit/agents-plugin-baseten": "workspace:*",
