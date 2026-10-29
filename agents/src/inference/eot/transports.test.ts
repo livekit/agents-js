@@ -14,10 +14,16 @@
  * - All outbound messages are FIFO-ordered on the wire, even when `runInference`
  *   hooks fire synchronously between two awaited audio frames.
  */
-import { AgentInference } from '@livekit/protocol';
+import { AgentInference, AgentSession } from '@livekit/protocol';
 import { AudioFrame } from '@livekit/rtc-node';
 import { describe, expect, it } from 'vitest';
 import { APIConnectionError } from '../../_exceptions.js';
+import {
+  ChatContext,
+  ChatMessage,
+  FunctionCall,
+  FunctionCallOutput,
+} from '../../llm/chat_context.js';
 import { DEFAULT_API_CONNECT_OPTIONS } from '../../types.js';
 import type { Task } from '../../utils.js';
 import { BaseStreamingTurnDetector, type BaseStreamingTurnDetectorOptions } from './base.js';
@@ -249,10 +255,14 @@ describe('CloudStreamSendOrdering', () => {
     const { stream, fakeWs, transport } = makeStream({ connectScript: [null] });
     try {
       await waitUntilConnected(transport);
-      stream.predict();
+      const chatCtx = ChatContext.empty();
+      chatCtx.addMessage({ role: 'assistant', content: 'First question' });
+      stream.predict(chatCtx);
       const firstId = (stream as unknown as { _requestId?: string })._requestId;
-      stream.predict();
+      chatCtx.addMessage({ role: 'assistant', content: 'Second question' });
+      stream.predict(chatCtx);
       const secondId = (stream as unknown as { _requestId?: string })._requestId;
+      chatCtx.items.length = 0;
       await drainSendQueue(transport);
 
       const startIds: (string | undefined)[] = [];
@@ -262,6 +272,101 @@ describe('CloudStreamSendOrdering', () => {
         }
       }
       expect(startIds).toEqual([firstId, secondId]);
+      expect(fakeWs.sent.map((m) => m.message.case)).toEqual([
+        'sessionCreate',
+        'eotInputChatContext',
+        'inferenceStart',
+        'eotInputChatContext',
+        'inferenceStart',
+      ]);
+      const contexts = fakeWs.sent.flatMap((m) =>
+        m.message.case === 'eotInputChatContext' ? [m.message.value] : [],
+      );
+      expect(contexts.map((ctx) => ctx.messages[0]?.content[0]?.payload)).toEqual([
+        { case: 'text', value: 'First question' },
+        { case: 'text', value: 'Second question' },
+      ]);
+    } finally {
+      await stream.aclose();
+    }
+  });
+});
+
+describe('CloudStreamChatContext', () => {
+  it('sends only the last assistant text before inference', async () => {
+    const chatCtx = ChatContext.empty();
+    chatCtx.addMessage({ role: 'system', content: 'System instructions' });
+    chatCtx.addMessage({ role: 'assistant', content: 'Earlier question' });
+    chatCtx.addMessage({ role: 'user', content: 'Earlier answer' });
+    chatCtx.addMessage({
+      role: 'assistant',
+      content: ['Which city?', "<expr value='curious'/>どちらですか？"],
+    });
+    chatCtx.items.push(
+      new FunctionCall({ callId: 'call', name: 'lookup', args: '{}' }),
+      new FunctionCallOutput({
+        callId: 'call',
+        name: 'lookup',
+        output: 'Tool result',
+        isError: false,
+      }),
+    );
+    chatCtx.addMessage({ role: 'user', content: 'Current answer' });
+    const originalItems = [...chatCtx.items];
+
+    const { stream, fakeWs, transport } = makeStream({ connectScript: [null] });
+    try {
+      await waitUntilConnected(transport);
+      stream.predict(chatCtx);
+      await drainSendQueue(transport);
+
+      expect(fakeWs.sent.map((m) => m.message.case)).toEqual([
+        'sessionCreate',
+        'eotInputChatContext',
+        'inferenceStart',
+      ]);
+      const context = fakeWs.sent[1]!.message;
+      if (context.case !== 'eotInputChatContext') throw new Error('expected chat context');
+      expect(context.value.messages).toHaveLength(1);
+      expect(context.value.messages[0]?.role).toBe(AgentSession.ChatRole.ASSISTANT);
+      expect(context.value.messages[0]?.content.map((part) => part.payload)).toEqual([
+        { case: 'text', value: 'Which city?\nどちらですか？' },
+      ]);
+      expect(chatCtx.items).toEqual(originalItems);
+    } finally {
+      await stream.aclose();
+    }
+  });
+
+  it.each([
+    { name: 'omitted', chatCtx: undefined },
+    { name: 'empty', chatCtx: ChatContext.empty() },
+    {
+      name: 'no assistant',
+      chatCtx: new ChatContext([new ChatMessage({ role: 'user', content: 'Hello' })]),
+    },
+    {
+      name: 'empty last assistant',
+      chatCtx: new ChatContext([
+        new ChatMessage({ role: 'assistant', content: 'Earlier question' }),
+        new ChatMessage({ role: 'assistant', content: [] }),
+      ]),
+    },
+  ])('clears prior assistant text when context is $name', async ({ chatCtx }) => {
+    const { stream, fakeWs, transport } = makeStream({ connectScript: [null] });
+    try {
+      await waitUntilConnected(transport);
+      stream.predict(
+        new ChatContext([new ChatMessage({ role: 'assistant', content: 'Old question' })]),
+      );
+      stream.predict(chatCtx);
+      await drainSendQueue(transport);
+
+      const context = fakeWs.sent.at(-2)!.message;
+      expect(context.case).toBe('eotInputChatContext');
+      if (context.case !== 'eotInputChatContext') throw new Error('expected chat context');
+      expect(context.value.messages).toEqual([]);
+      expect(fakeWs.sent.at(-1)?.message.case).toBe('inferenceStart');
     } finally {
       await stream.aclose();
     }

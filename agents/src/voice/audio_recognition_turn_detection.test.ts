@@ -566,18 +566,21 @@ describe('TestBackchannelOpportunityEmit', () => {
 
 describe('TestPredictionFutureLifecycle', () => {
   it('silence tick starts a request once', async () => {
-    const { internals } = makeRecognition();
+    const { internals, hooks } = makeRecognition();
     const stream = makeAudioStream();
     internals.turnDetectorStream = stream;
     internals.turnDetector = makeAudioDetector(stream);
     internals.speaking = true;
+    const chatCtx = ChatContext.empty();
+    chatCtx.addMessage({ role: 'assistant', content: 'How can I help?' });
+    hooks.retrieveChatCtx = () => chatCtx;
 
     const vad = runScriptedVad(internals);
     try {
       await vad.feed(inferenceDone(0, 300));
       await vad.feed(inferenceDone(0, 400));
 
-      expect(predictMock(stream).mock.calls.length).toBe(1);
+      expect(predictMock(stream)).toHaveBeenCalledExactlyOnceWith(chatCtx);
       expect(internals.turnDetectorPredictionFut).toBeDefined();
     } finally {
       await vad.stop();

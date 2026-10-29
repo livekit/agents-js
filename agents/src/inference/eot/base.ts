@@ -13,6 +13,7 @@ import { AudioResampler, AudioResamplerQuality } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { EventEmitter } from 'node:events';
 import type { LanguageCode } from '../../language.js';
+import type { ChatContext } from '../../llm/chat_context.js';
 import { log } from '../../log.js';
 import type { EOTInferenceMetrics } from '../../metrics/base.js';
 import { type StreamChannel, createStreamChannel } from '../../stream/stream_channel.js';
@@ -73,7 +74,7 @@ export function isFlushSentinel(value: unknown): value is FlushSentinel {
 export interface StreamingTurnDetectionTransport {
   attach(stream: BaseStreamingTurnDetectorStream): void;
   run(): Promise<void>;
-  runInference(requestId: string): void;
+  runInference(requestId: string, chatCtx?: ChatContext): void;
   pushFrame(frame: AudioFrame): Promise<void>;
   flush(sentinel: FlushSentinel): Promise<void>;
   detach(): void;
@@ -248,7 +249,7 @@ export class BaseStreamingTurnDetectorStream {
 
   /** Start a new inference request and return its future, superseding any
    * previous request. */
-  predict(): Future<TurnDetectionEvent> {
+  predict(chatCtx?: ChatContext): Future<TurnDetectionEvent> {
     if (this._degraded || this._audioChannel.closed) {
       const fut = new Future<TurnDetectionEvent>();
       fut.resolve(BaseStreamingTurnDetectorStream._defaultEvent(1.0));
@@ -263,7 +264,7 @@ export class BaseStreamingTurnDetectorStream {
     // defaults to 1.0 inline), which clears `_requestFut` via
     // `_resolvePrediction`. Hold a local reference so we still return the
     // resolved future rather than `undefined`.
-    this._transport.runInference(this._requestId);
+    this._transport.runInference(this._requestId, chatCtx);
     return fut;
   }
 

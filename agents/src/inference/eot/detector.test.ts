@@ -24,6 +24,7 @@ import { AudioFrame } from '@livekit/rtc-node';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { APIConnectionError, APIError } from '../../_exceptions.js';
 import type { InferenceExecutor } from '../../ipc/inference_executor.js';
+import { ChatContext } from '../../llm/chat_context.js';
 import { log } from '../../log.js';
 import { DEFAULT_API_CONNECT_OPTIONS } from '../../types.js';
 import type { Task } from '../../utils.js';
@@ -856,7 +857,7 @@ describe('LocalModelExecutor', () => {
   }
 
   it.each([undefined, false])(
-    'routes local predict through the executor (localFallback=%s)',
+    'keeps local inference audio-only (localFallback=%s)',
     async (localFallback) => {
       const doInference = vi.fn(async (method: string, data: unknown) => {
         expect(method).toBe(EOT_INFERENCE_METHOD);
@@ -868,10 +869,12 @@ describe('LocalModelExecutor', () => {
       const detector = new TurnDetector({ version: 'v1-mini', executor, localFallback });
       const stream = detector.stream();
       try {
+        const chatCtx = ChatContext.empty();
+        chatCtx.addMessage({ role: 'assistant', content: 'How can I help?' });
         stream.pushAudio(pcmFrame());
-        const ev = await stream.predict().await;
+        const ev = await stream.predict(chatCtx).await;
         expect(ev.endOfTurnProbability).toBe(0.7);
-        expect(doInference).toHaveBeenCalledWith(EOT_INFERENCE_METHOD, expect.anything());
+        expect(doInference).toHaveBeenCalledWith(EOT_INFERENCE_METHOD, { pcm: expect.any(String) });
         if (localFallback === false) {
           expect(warnSpy).toHaveBeenCalledWith(
             expect.stringContaining('localFallback=false has no effect'),

@@ -2526,7 +2526,7 @@ class CloudTransport implements StreamingTurnDetectionTransport {
     run(): Promise<void>;
     protected _runAbort: AbortController | undefined;
     // (undocumented)
-    runInference(requestId: string): void;
+    runInference(requestId: string, chatCtx?: ChatContext): void;
     // (undocumented)
     protected _runOnce(): Promise<void>;
     // Warning: (ae-forgotten-export) The symbol "ClientMsg" needs to be exported by the entry point index.d.ts
@@ -5295,7 +5295,7 @@ class LocalTransport implements StreamingTurnDetectionTransport {
     // (undocumented)
     run(): Promise<void>;
     // (undocumented)
-    runInference(requestId: string): void;
+    runInference(requestId: string, _chatCtx?: ChatContext): void;
     // (undocumented)
     protected _streamRef: WeakRef<BaseStreamingTurnDetectorStream> | undefined;
     // (undocumented)
