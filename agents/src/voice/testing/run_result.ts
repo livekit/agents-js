@@ -1052,7 +1052,13 @@ export interface MockToolsOptions {
 /** @internal */
 export let activeMockTools: MockToolsMap | undefined;
 
-const sessionMockTools = new WeakMap<AgentSession, MockToolsMap>();
+interface SessionMockTools {
+  agent: AgentConstructor;
+  mocks: Record<string, MockToolFn>;
+}
+
+// Each registration is kept separately so scopes can be disposed in any order.
+const sessionMockTools = new WeakMap<AgentSession, SessionMockTools[]>();
 
 /** @internal */
 export function getMockTool(
@@ -1060,10 +1066,11 @@ export function getMockTool(
   toolName: string,
   session?: AgentSession,
 ): MockToolFn | undefined {
-  const scopedMocks = session ? sessionMockTools.get(session) : undefined;
-  if (scopedMocks) {
-    for (const [agentConstructor, mocks] of scopedMocks) {
-      if (agent.constructor === agentConstructor) return mocks[toolName];
+  const scoped = session ? sessionMockTools.get(session) : undefined;
+  for (let i = (scoped?.length ?? 0) - 1; i >= 0; i--) {
+    const { agent: agentConstructor, mocks } = scoped![i]!;
+    if (agent.constructor === agentConstructor && Object.hasOwn(mocks, toolName)) {
+      return mocks[toolName];
     }
   }
   if (!activeMockTools) return undefined;
@@ -1108,19 +1115,17 @@ export function withMockTools(
   mocks: Record<string, MockToolFn>,
   options: MockToolsOptions = {},
 ): Disposable {
-  if (options.session) {
-    const previous = sessionMockTools.get(options.session);
-    const updated: MockToolsMap = new Map(previous ?? []);
-    updated.set(agent, mocks);
-    sessionMockTools.set(options.session, updated);
+  const { session } = options;
+  if (session) {
+    const registration: SessionMockTools = { agent, mocks };
+    const registrations = sessionMockTools.get(session) ?? [];
+    registrations.push(registration);
+    sessionMockTools.set(session, registrations);
 
     return {
       [Symbol.dispose]() {
-        if (previous) {
-          sessionMockTools.set(options.session!, previous);
-        } else {
-          sessionMockTools.delete(options.session!);
-        }
+        const index = registrations.indexOf(registration);
+        if (index !== -1) registrations.splice(index, 1);
       },
     };
   }

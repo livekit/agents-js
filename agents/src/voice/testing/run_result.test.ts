@@ -16,7 +16,7 @@ import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../../types
 import { Agent } from '../agent.js';
 import { performToolExecutions } from '../generation.js';
 import { SpeechHandle } from '../speech_handle.js';
-import { RunResult, activeMockTools, withMockTools } from './run_result.js';
+import { RunResult, activeMockTools, getMockTool, withMockTools } from './run_result.js';
 
 class AgentA extends Agent {
   constructor() {
@@ -132,6 +132,43 @@ describe('withMockTools', () => {
       }
       expect(activeMockTools?.get(AgentA)?.tool1).toBe(outer);
     }
+  });
+
+  it('scopes session mocks to their session and falls back to global mocks', () => {
+    const agent = new AgentA();
+    const sessionA = {} as never;
+    const sessionB = {} as never;
+    const scoped = () => 'scoped';
+    const global = () => 'global';
+
+    using _global = withMockTools(AgentA, { tool1: global, tool2: global });
+    {
+      using _scoped = withMockTools(AgentA, { tool1: scoped }, { session: sessionA });
+      expect(getMockTool(agent, 'tool1', sessionA)).toBe(scoped);
+      expect(getMockTool(agent, 'tool2', sessionA)).toBe(global);
+      expect(getMockTool(agent, 'tool1', sessionB)).toBe(global);
+      expect(getMockTool(agent, 'tool1')).toBe(global);
+    }
+    expect(getMockTool(agent, 'tool1', sessionA)).toBe(global);
+  });
+
+  it('keeps overlapping session mocks when disposed out of order', () => {
+    const agent = new AgentA();
+    const session = {} as never;
+    const first = () => 'first';
+    const second = () => 'second';
+
+    const scopeA = withMockTools(AgentA, { tool1: first, tool2: first }, { session });
+    const scopeB = withMockTools(AgentA, { tool1: second }, { session });
+    expect(getMockTool(agent, 'tool1', session)).toBe(second);
+    expect(getMockTool(agent, 'tool2', session)).toBe(first);
+
+    scopeA[Symbol.dispose]();
+    expect(getMockTool(agent, 'tool1', session)).toBe(second);
+    expect(getMockTool(agent, 'tool2', session)).toBeUndefined();
+
+    scopeB[Symbol.dispose]();
+    expect(getMockTool(agent, 'tool1', session)).toBeUndefined();
   });
 
   it('exposes the mock for invocation within the block', async () => {
