@@ -1,9 +1,14 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base';
+import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { APIConnectionError } from '../_exceptions.js';
+import { type JobContext, runWithJobContext } from '../job.js';
 import { initializeLogger } from '../log.js';
 import type { LLMMetrics } from '../metrics/base.js';
+import { REDACTED_EXCEPTION_MESSAGE, setTracerProvider, traceTypes } from '../telemetry/index.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import { Future, Task, delay } from '../utils.js';
 import { ChatContext, FunctionCall } from './chat_context.js';
@@ -70,6 +75,25 @@ class PrewarmLLM extends MockLLM {
   }
 }
 
+class FailingLLMStream extends LLMStream {
+  protected async run(): Promise<void> {
+    throw new APIConnectionError({ message: 'private failure details' });
+  }
+}
+
+class FailingLLM extends LLM {
+  label(): string {
+    return 'failing-llm';
+  }
+
+  chat({ chatCtx }: { chatCtx: ChatContext }): LLMStream {
+    return new FailingLLMStream(this, {
+      chatCtx,
+      connOptions: { maxRetry: 1, retryIntervalMs: 0, timeoutMs: 1000 },
+    });
+  }
+}
+
 const waitForTasks = () => new Promise<void>((resolve) => setImmediate(resolve));
 
 async function collectMetrics(llm: MockLLM): Promise<LLMMetrics> {
@@ -103,6 +127,43 @@ describe('LLMStream metrics', () => {
 
     expect(metrics.cacheCreationTokens).toBe(42);
   });
+
+  it.each([false, true])(
+    'records each failed provider attempt once when redacted=%s',
+    async (redacted) => {
+      const exporter = new InMemorySpanExporter();
+      const provider = new NodeTracerProvider({
+        spanProcessors: [new SimpleSpanProcessor(exporter)],
+      });
+      setTracerProvider(provider);
+      const llm = new FailingLLM();
+      llm.on('error', () => {});
+      const metrics = new Promise<void>((resolve) =>
+        llm.once('metrics_collected', () => resolve()),
+      );
+      const context = { _redactionEnabled: redacted } as unknown as JobContext;
+
+      try {
+        await runWithJobContext(context, async () => {
+          await llm.chat({ chatCtx: ChatContext.empty() }).collect();
+          await metrics;
+        });
+
+        const attempts = exporter
+          .getFinishedSpans()
+          .filter((span) => span.name === 'llm_request_run');
+        expect(attempts).toHaveLength(2);
+        const expected = redacted ? REDACTED_EXCEPTION_MESSAGE : 'private failure details';
+        for (const attempt of attempts) {
+          const events = attempt.events.filter((event) => event.name === 'exception');
+          expect(events).toHaveLength(1);
+          expect(events[0]!.attributes?.[traceTypes.ATTR_EXCEPTION_MESSAGE]).toBe(expected);
+        }
+      } finally {
+        await provider.shutdown();
+      }
+    },
+  );
 });
 
 describe('LLM prewarm lifecycle', () => {

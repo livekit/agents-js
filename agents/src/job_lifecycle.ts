@@ -143,20 +143,10 @@ export async function runShutdownCallbacks(
 ): Promise<void> {
   const results = await Promise.allSettled(
     callbacks.map((callback) =>
-      tracer.startActiveSpan(
-        async (span) => {
-          try {
-            await callback();
-          } catch (error) {
-            recordException(span, error instanceof Error ? error : new Error(String(error)));
-            throw error;
-          }
-        },
-        {
-          name: 'shutdown_callback',
-          attributes: { [traceTypes.ATTR_CALLBACK_NAME]: callbackName(callback) },
-        },
-      ),
+      tracer.startActiveSpan(() => callback(), {
+        name: 'shutdown_callback',
+        attributes: { [traceTypes.ATTR_CALLBACK_NAME]: callbackName(callback) },
+      }),
     ),
   );
   for (const result of results) {
