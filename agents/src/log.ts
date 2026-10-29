@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import type { DestinationStream, Logger } from 'pino';
 import { multistream, pino } from 'pino';
 import { build as pinoPretty } from 'pino-pretty';
-import { type LoggerOptions, log, loggerOptions, setLoggerState } from './log_core.js';
+import { type LoggerOptions, log, loggerOptions, setLoggerState, tryLog } from './log_core.js';
 import { type PinoLogObject, emitToOtel } from './telemetry/pino_otel_transport.js';
 
 const OTEL_ENABLED_KEY = Symbol.for('@livekit/agents:otelEnabled');
@@ -20,7 +20,7 @@ const globals = globalThis as typeof globalThis & GlobalState;
 // LiveKit Cloud injects this into deployed agents. Child processes inherit it.
 const deployedRegion = process.env.LIVEKIT_REGION_NAME || undefined;
 
-export { log, loggerOptions, type LoggerOptions };
+export { log, loggerOptions, tryLog, type LoggerOptions };
 
 const CALLSITE_PATTERN = /^\s*at (?:(.*?) \()?(.+?):(\d+):\d+\)?$/;
 const PINO_FRAME_PATTERN =

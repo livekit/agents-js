@@ -34,6 +34,12 @@ export const log = (): Logger => {
   return logger;
 };
 
+/**
+ * Like {@link log}, but returns undefined before initializeLogger() has run.
+ * For best-effort logging from code that may run outside a worker.
+ */
+export const tryLog = (): Logger | undefined => globals[LOGGER_KEY];
+
 /** @internal */
 export const setLoggerState = (logger: Logger, options: LoggerOptions): void => {
   globals[LOGGER_OPTIONS_KEY] = options;
