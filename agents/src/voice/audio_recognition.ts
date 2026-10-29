@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { Mutex } from '@livekit/mutex';
 import type { AudioFrame, ParticipantKind } from '@livekit/rtc-node';
-import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import {
   type Context,
   ROOT_CONTEXT,
@@ -41,7 +40,7 @@ import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
 import { traceTypes, tracer } from '../telemetry/index.js';
 import { splitWords } from '../tokenize/basic/word.js';
 import type { Future } from '../utils.js';
-import { Task, cancelAndWait, delay, readStream, toError, waitForAbort } from '../utils.js';
+import { Task, cancelAndWait, delay, readStream, toError } from '../utils.js';
 import { type VAD, type VADEvent, VADEventType, type VADStream } from '../vad.js';
 import type { TurnDetectionMode } from './agent_session.js';
 import {
@@ -2274,12 +2273,10 @@ export class AudioRecognition {
 
     while (!signal.aborted) {
       const stream = interruptionDetection.createStream();
-      const eventReader = stream.stream().getReader();
 
       const cleanup = async () => {
         try {
           signal.removeEventListener('abort', onAbort);
-          eventReader.releaseLock();
           await stream.close();
         } catch (e) {
           this.logger.debug('createInterruptionTask: error during cleanup:', e);
@@ -2302,31 +2299,12 @@ export class AudioRecognition {
         }
 
         forwardTask = (async () => {
-          const inputReader = this.interruptionStreamChannel!.stream().getReader();
-          const abortPromise = waitForAbort(signal);
-
-          try {
-            while (!signal.aborted) {
-              const res = await ThrowsPromise.race([inputReader.read(), abortPromise]);
-              if (!res) break;
-
-              const { value, done } = res;
-              if (done) break;
-
-              await stream.pushFrame(value);
-            }
-          } finally {
-            inputReader.releaseLock();
+          for await (const value of readStream(this.interruptionStreamChannel!.stream(), signal)) {
+            await stream.pushFrame(value);
           }
         })();
 
-        const abortPromise = waitForAbort(signal);
-
-        while (!signal.aborted) {
-          const res = await ThrowsPromise.race([eventReader.read(), abortPromise]);
-          if (!res) break;
-          const { done, value: ev } = res;
-          if (done) break;
+        for await (const ev of readStream(stream.stream(), signal)) {
           // A healthy stream delivering events recovers the failover budget, so a later transient
           // failure isn't charged against earlier ones.
           numRetries = 0;
