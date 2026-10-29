@@ -1630,6 +1630,13 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.emit('error', event);
   }
 
+  /**
+   * Makes `session` the active session and brings it up to date.
+   *
+   * When resuming a handle after a contextUpdate, the current instructions and tools are sent
+   * first, because the handle restores the ones the session was created with. The local chat
+   * context is then replayed.
+   */
   private async onSessionOpened(session: types.Session): Promise<void> {
     const unlock = await this.sessionLock.lock();
     try {
@@ -1640,9 +1647,11 @@ export class RealtimeSession extends llm.RealtimeSession {
         // session had when it was created. a handle may also predate the last
         // contextUpdate, so the current ones are sent again rather than trusting it
         session.sendContextUpdate({
-          systemInstruction: this.options.instructions
-            ? { parts: [{ text: this.options.instructions }] }
-            : undefined,
+          // an empty string is a real value here: it clears the instructions
+          systemInstruction:
+            this.options.instructions !== undefined
+              ? { parts: [{ text: this.options.instructions }] }
+              : undefined,
           tools: { tools: this.toolsConfig(this._tools) },
         });
       }
@@ -1662,6 +1671,12 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
   }
 
+  /**
+   * Converts `toolCtx` (plus any configured `geminiTools`) to Gemini tool declarations.
+   *
+   * Returns an empty list when there is nothing to declare, so a contextUpdate can clear the
+   * session's tools. Throws if a tool schema is one Gemini rejects.
+   */
   private toolsConfig(toolCtx: llm.ToolContext): types.Tool[] {
     const [tools] = toToolsConfig({
       toolCtx,

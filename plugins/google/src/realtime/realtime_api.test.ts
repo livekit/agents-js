@@ -794,10 +794,19 @@ describe('Google Realtime 3.8 defaults, labels, and contextUpdate', () => {
     expect(sent.systemInstruction.parts[0]!.text).toBe('Be brief.');
     expect(sent.tools.tools[0]!.functionDeclarations![0]!.name).toBe('getWeather');
 
+    // cleared instructions are re-sent as an empty instruction, not dropped
+    session.options.instructions = '';
+    await session.onSessionOpened({ sendContextUpdate, sendClientContent });
+    expect(sendContextUpdate).toHaveBeenCalledTimes(2);
+    const cleared = sendContextUpdate.mock.calls[1]![0] as {
+      systemInstruction?: { parts: { text: string }[] };
+    };
+    expect(cleared.systemInstruction?.parts[0]!.text).toBe('');
+
     // a fresh connection (no handle) carries them in the setup message instead
     session.sessionResumptionHandle = undefined;
     await session.onSessionOpened({ sendContextUpdate, sendClientContent });
-    expect(sendContextUpdate).toHaveBeenCalledTimes(1);
+    expect(sendContextUpdate).toHaveBeenCalledTimes(2);
   });
 });
 
