@@ -7,9 +7,10 @@
 import { AgentSession as AgentSession_2 } from '@livekit/protocol';
 import { AudioFrame } from '@livekit/rtc-node';
 import { AudioResampler } from '@livekit/rtc-node';
-import type { Context } from '@opentelemetry/api';
+import { Context } from '@opentelemetry/api';
 import { EventEmitter } from 'events';
 import { EventEmitter as EventEmitter_2 } from 'node:events';
+import type { EventMap } from '@livekit/typed-emitter';
 import { FrameProcessor } from '@livekit/rtc-node';
 import { JsonObject } from '@bufbuild/protobuf';
 import type { JSONSchema7 } from 'json-schema';
@@ -22,7 +23,7 @@ import { ReadableStream as ReadableStream_2 } from 'node:stream/web';
 import type { ReadableStreamDefaultReader as ReadableStreamDefaultReader_2 } from 'node:stream/web';
 import { RemoteParticipant } from '@livekit/rtc-node';
 import { Room } from '@livekit/rtc-node';
-import type { Span } from '@opentelemetry/api';
+import { Span } from '@opentelemetry/api';
 import type { TextStreamInfo } from '@livekit/rtc-node';
 import { Throws } from '@livekit/throws-transformer/throws';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
@@ -83,6 +84,7 @@ export class LLM extends llm.LLM {
         frequencyPenalty?: number;
         randomSeed?: number;
         toolChoice?: llm.ToolChoice;
+        store?: boolean;
     }): void;
 }
 
@@ -104,6 +106,7 @@ export interface LLMOptions {
     presencePenalty?: number;
     // (undocumented)
     randomSeed?: number;
+    store?: boolean;
     // (undocumented)
     temperature?: number;
     // (undocumented)
@@ -251,7 +254,7 @@ export interface TTSOptions {
 
 // Warnings were encountered during analysis:
 //
-// src/llm.ts:192:7 - (ae-forgotten-export) The symbol "LLMOpts" needs to be exported by the entry point index.d.ts
+// src/llm.ts:199:7 - (ae-forgotten-export) The symbol "LLMOpts" needs to be exported by the entry point index.d.ts
 
 // (No @packageDocumentation comment for this package)
 
