@@ -212,9 +212,13 @@ export abstract class STT extends (EventEmitter as new () => TypedEmitter<STTCal
   }
 
   /** Receives an audio buffer and returns transcription in the form of a {@link SpeechEvent} */
-  async recognize(frame: AudioBuffer, abortSignal?: AbortSignal): Promise<SpeechEvent> {
+  async recognize(
+    frame: AudioBuffer,
+    abortSignal?: AbortSignal,
+    options?: { language?: string },
+  ): Promise<SpeechEvent> {
     const startTime = process.hrtime.bigint();
-    const event = await this._recognize(frame, abortSignal);
+    const event = await this._recognize(frame, abortSignal, options);
     event.createdAt ??= Date.now();
     const durationMs = Number((process.hrtime.bigint() - startTime) / BigInt(1000000));
     this.emit('metrics_collected', {
@@ -236,6 +240,7 @@ export abstract class STT extends (EventEmitter as new () => TypedEmitter<STTCal
   protected abstract _recognize(
     frame: AudioBuffer,
     abortSignal?: AbortSignal,
+    options?: { language?: string },
   ): Promise<SpeechEvent>;
 
   /**
@@ -285,7 +290,7 @@ export abstract class STT extends (EventEmitter as new () => TypedEmitter<STTCal
    *
    * @param options - Optional configuration including connection options
    */
-  abstract stream(options?: { connOptions?: APIConnectOptions }): SpeechStream;
+  abstract stream(options?: { connOptions?: APIConnectOptions; language?: string }): SpeechStream;
 
   /**
    * Open the provider connection ahead of the first recognition. Best effort and non-blocking.

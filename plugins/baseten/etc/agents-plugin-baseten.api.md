@@ -9,6 +9,7 @@ import { AgentSession as AgentSession_2 } from '@livekit/protocol';
 import { AudioFrame } from '@livekit/rtc-node';
 import { AudioResampler } from '@livekit/rtc-node';
 import { Context } from '@opentelemetry/api';
+import { default as default_2 } from 'ws';
 import { EventEmitter } from 'events';
 import { EventEmitter as EventEmitter_2 } from 'node:events';
 import type { EventMap } from '@livekit/typed-emitter';
@@ -22,6 +23,7 @@ import { Participant } from '@livekit/rtc-node';
 import { ParticipantKind } from '@livekit/rtc-node';
 import { ReadableStream as ReadableStream_2 } from 'node:stream/web';
 import type { ReadableStreamDefaultReader as ReadableStreamDefaultReader_2 } from 'node:stream/web';
+import type { Reasoning as Reasoning_2 } from 'openai/resources/shared.js';
 import { RemoteParticipant } from '@livekit/rtc-node';
 import { Room } from '@livekit/rtc-node';
 import { Span } from '@opentelemetry/api';
@@ -69,20 +71,30 @@ export interface BasetenLLMOptions {
 // @public
 export interface BasetenSttOptions {
     // (undocumented)
-    apiKey: string;
+    apiKey?: string;
     // (undocumented)
     audioLanguage?: string;
+    // (undocumented)
+    chainId?: string;
     // (undocumented)
     enablePartialTranscripts?: boolean;
     // (undocumented)
     encoding?: string;
     // (undocumented)
     environment?: string;
+    // (undocumented)
+    finalTranscriptMaxDurationS?: number;
+    languageOptions?: string[];
+    model?: STTModel;
     modelEndpoint?: string;
-    // @deprecated (undocumented)
+    // (undocumented)
     modelId?: string;
     // (undocumented)
+    partialTranscriptIntervalS?: number;
+    // (undocumented)
     sampleRate?: number;
+    // (undocumented)
+    showWordTimestamps?: boolean;
     // (undocumented)
     vadMinSilenceDurationMs?: number;
     // (undocumented)
@@ -96,17 +108,44 @@ export interface BasetenSttOptions {
 // @public
 export interface BasetenTTSOptions {
     // (undocumented)
-    apiKey: string;
+    apiKey?: string;
     // (undocumented)
-    language?: string;
+    bufferSize?: number;
+    // (undocumented)
+    chainId?: string;
+    // (undocumented)
+    extraConfig?: Record<string, unknown>;
+    // (undocumented)
+    initialCodecChunkFrames?: number | null;
+    // (undocumented)
+    instructions?: string | null;
+    // (undocumented)
+    language?: string | null;
+    // (undocumented)
+    maxNewTokens?: number | null;
     // (undocumented)
     maxTokens?: number;
+    model?: TTSModel;
     // (undocumented)
-    modelEndpoint: string;
+    modelEndpoint?: string;
+    // (undocumented)
+    modelId?: string;
+    // (undocumented)
+    refAudio?: string | null;
+    // (undocumented)
+    refText?: string | null;
+    // (undocumented)
+    speed?: number;
+    // (undocumented)
+    taskType?: string;
     // (undocumented)
     temperature?: number;
     // (undocumented)
     voice?: string;
+    // (undocumented)
+    wordTimestamps?: boolean;
+    // (undocumented)
+    xVectorOnlyMode?: boolean | null;
 }
 
 // Warning: (ae-forgotten-export) The symbol "tts_2" needs to be exported by the entry point index.d.ts
@@ -121,6 +160,20 @@ export class ChunkedStream extends tts_2.ChunkedStream {
     protected run(): Promise<void>;
 }
 
+// Warning: (ae-missing-release-tag) "listVoices" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export function listVoices(input: ListVoicesOptions): Promise<Record<string, unknown>>;
+
+// Warning: (ae-missing-release-tag) "ListVoicesOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export interface ListVoicesOptions {
+    apiKey?: string;
+    modelEndpoint: string;
+    timeoutMs?: number;
+}
+
 // Warning: (ae-forgotten-export) The symbol "OpenAILLM" needs to be exported by the entry point index.d.ts
 // Warning: (ae-missing-release-tag) "LLM" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -131,6 +184,24 @@ export class LLM extends OpenAILLM {
     label(): string;
 }
 
+// Warning: (ae-missing-release-tag) "registerVoice" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export function registerVoice(input: RegisterVoiceOptions): Promise<Record<string, unknown>>;
+
+// Warning: (ae-missing-release-tag) "RegisterVoiceOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export interface RegisterVoiceOptions {
+    apiKey?: string;
+    consent?: string;
+    modelEndpoint: string;
+    name: string;
+    refAudioPath: string;
+    refText?: string;
+    timeoutMs?: number;
+}
+
 // Warning: (ae-forgotten-export) The symbol "stt_2" needs to be exported by the entry point index.d.ts
 // Warning: (ae-missing-release-tag) "STT" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -139,19 +210,29 @@ export class STT extends stt_2.STT {
     constructor(opts?: Partial<BasetenSttOptions>);
     // (undocumented)
     label: string;
+    // (undocumented)
+    get model(): string;
+    // (undocumented)
+    get provider(): string;
     // Warning: (ae-forgotten-export) The symbol "AudioBuffer_2" needs to be exported by the entry point index.d.ts
     //
     // (undocumented)
-    _recognize(_: AudioBuffer_2): Promise<stt_2.SpeechEvent>;
-    // Warning: (ae-forgotten-export) The symbol "SpeechStream_3" needs to be exported by the entry point index.d.ts
-    //
+    _recognize(frame: AudioBuffer_2, abortSignal?: AbortSignal, options?: {
+        language?: string;
+    }): Promise<stt_2.SpeechEvent>;
     // (undocumented)
     stream(options?: {
         connOptions?: APIConnectOptions;
-    }): SpeechStream_3;
+        language?: string;
+    }): stt_2.SpeechStream;
     // (undocumented)
     updateOptions(opts: Partial<BasetenSttOptions>): void;
 }
+
+// Warning: (ae-missing-release-tag) "STTModel" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export type STTModel = 'whisper' | 'qwen3-asr';
 
 // Warning: (ae-missing-release-tag) "TTS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -163,12 +244,23 @@ export class TTS extends tts_2.TTS {
     // (undocumented)
     label: string;
     // (undocumented)
-    stream(): tts_2.SynthesizeStream;
+    get model(): string;
+    // (undocumented)
+    get provider(): string;
+    // (undocumented)
+    stream(options?: {
+        connOptions?: APIConnectOptions;
+    }): tts_2.SynthesizeStream;
     // Warning: (ae-unresolved-link) The @link reference could not be resolved: No member was found with name "stop"
-    synthesize(text: string, connOptions?: APIConnectOptions, abortSignal?: AbortSignal): ChunkedStream;
+    synthesize(text: string, connOptions?: APIConnectOptions, abortSignal?: AbortSignal): tts_2.ChunkedStream;
     // (undocumented)
     updateOptions(opts: Partial<Omit<BasetenTTSOptions, 'apiKey' | 'modelEndpoint'>>): void;
 }
+
+// Warning: (ae-missing-release-tag) "TTSModel" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export type TTSModel = 'orpheus' | 'qwen3-tts';
 
 // (No @packageDocumentation comment for this package)
 

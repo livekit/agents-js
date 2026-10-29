@@ -16,6 +16,7 @@ import {
 } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { WebSocket } from 'ws';
+import { Qwen3Backend } from './qwen3_stt.js';
 import type { BasetenSttOptions } from './types.js';
 
 const defaultSTTOptions: Partial<BasetenSttOptions> = {
@@ -23,6 +24,8 @@ const defaultSTTOptions: Partial<BasetenSttOptions> = {
   encoding: 'pcm_s16le',
   sampleRate: 16000,
   enablePartialTranscripts: true,
+  partialTranscriptIntervalS: 1,
+  finalTranscriptMaxDurationS: 30,
   audioLanguage: 'en',
   vadThreshold: 0.5,
   vadMinSilenceDurationMs: 300,
@@ -31,26 +34,61 @@ const defaultSTTOptions: Partial<BasetenSttOptions> = {
 
 export class STT extends stt.STT {
   #opts: BasetenSttOptions;
+  #qwen3?: Qwen3Backend;
+  #streams = new Set<SpeechStream>();
   #logger = log();
   label = 'baseten.STT';
 
   constructor(opts: Partial<BasetenSttOptions> = {}) {
+    const model = opts.model ?? 'whisper';
+    const showWordTimestamps = opts.showWordTimestamps ?? model === 'whisper';
     super({
       streaming: true,
       interimResults: opts.enablePartialTranscripts ?? defaultSTTOptions.enablePartialTranscripts!,
-      alignedTranscript: 'word',
+      alignedTranscript: showWordTimestamps ? 'word' : false,
     });
 
+    if (model === 'qwen3-asr') {
+      this.#opts = { ...opts, model };
+      this.#qwen3 = new Qwen3Backend({
+        apiKey: opts.apiKey,
+        modelEndpoint: opts.modelEndpoint,
+        modelId: opts.modelId,
+        chainId: opts.chainId,
+        language: opts.audioLanguage ?? 'auto',
+        interimResults: opts.enablePartialTranscripts ?? true,
+        partialTranscriptIntervalS: opts.partialTranscriptIntervalS ?? 0.5,
+        finalTranscriptMaxDurationS: opts.finalTranscriptMaxDurationS ?? 30,
+        vadThreshold: opts.vadThreshold ?? 0.5,
+        vadMinSilenceDurationMs: opts.vadMinSilenceDurationMs ?? 500,
+        vadSpeechPadMs: opts.vadSpeechPadMs ?? 100,
+        wordTimestamps: showWordTimestamps,
+      });
+      return;
+    }
+
     const apiKey = opts.apiKey ?? process.env.BASETEN_API_KEY;
-    const modelEndpoint = opts.modelEndpoint ?? process.env.BASETEN_MODEL_ENDPOINT;
-    const modelId = opts.modelId ?? process.env.BASETEN_STT_MODEL_ID;
+    const modelId = opts.modelId;
+    const environment = opts.environment ?? defaultSTTOptions.environment!;
+    const modelEndpoint =
+      opts.modelEndpoint ??
+      (modelId
+        ? `wss://model-${modelId}.api.baseten.co/environments/${environment}/websocket`
+        : undefined) ??
+      (opts.chainId
+        ? `wss://chain-${opts.chainId}.api.baseten.co/environments/${environment}/websocket`
+        : undefined) ??
+      (process.env.BASETEN_STT_MODEL_ID
+        ? `wss://model-${process.env.BASETEN_STT_MODEL_ID}.api.baseten.co/environments/${environment}/websocket`
+        : undefined) ??
+      process.env.BASETEN_MODEL_ENDPOINT;
 
     if (!apiKey) {
       throw new Error(
         'Baseten API key is required, either pass it as `apiKey` or set $BASETEN_API_KEY',
       );
     }
-    if (!modelEndpoint && !modelId) {
+    if (!modelEndpoint) {
       throw new Error(
         'Baseten model endpoint is required, either pass it as `modelEndpoint` or set $BASETEN_MODEL_ENDPOINT',
       );
@@ -61,29 +99,83 @@ export class STT extends stt.STT {
       ...opts,
       apiKey,
       modelEndpoint,
-      modelId,
+      modelId: undefined,
+      model,
       audioLanguage: normalizeLanguage((opts.audioLanguage ?? defaultSTTOptions.audioLanguage)!),
+      languageOptions: opts.languageOptions?.map((language) => normalizeLanguage(language)) ?? [],
+      showWordTimestamps,
     } as BasetenSttOptions;
   }
 
   // eslint-disable-next-line
-  async _recognize(_: AudioBuffer): Promise<stt.SpeechEvent> {
+  async _recognize(
+    frame: AudioBuffer,
+    abortSignal?: AbortSignal,
+    options?: { language?: string },
+  ): Promise<stt.SpeechEvent> {
+    if (this.#qwen3) {
+      return this.#qwen3.recognizeViaStream(this, frame, {
+        abortSignal,
+        language: options?.language,
+      });
+    }
     throw new Error('Recognize is not supported on Baseten STT');
   }
 
   updateOptions(opts: Partial<BasetenSttOptions>) {
-    this.#opts = {
-      ...this.#opts,
+    if (this.#qwen3) {
+      this.#qwen3.updateOptions({
+        language: opts.audioLanguage,
+        vadThreshold: opts.vadThreshold,
+        vadMinSilenceDurationMs: opts.vadMinSilenceDurationMs,
+        vadSpeechPadMs: opts.vadSpeechPadMs,
+        partialTranscriptIntervalS: opts.partialTranscriptIntervalS,
+      });
+      for (const name of ['languageOptions'] as const) {
+        if (opts[name] !== undefined) {
+          this.#logger.warn(
+            { model: this.model, option: name },
+            'option does not apply and was ignored',
+          );
+        }
+      }
+      return;
+    }
+    const next = {
       ...opts,
       audioLanguage:
         opts.audioLanguage !== undefined
           ? normalizeLanguage(opts.audioLanguage)
           : this.#opts.audioLanguage,
+      languageOptions:
+        opts.languageOptions !== undefined
+          ? opts.languageOptions.map((language) => normalizeLanguage(language))
+          : this.#opts.languageOptions,
     };
+    Object.assign(this.#opts, next);
+    for (const stream of this.#streams) stream.updateOptions(next);
   }
 
-  stream(options: { connOptions?: APIConnectOptions } = {}): SpeechStream {
-    return new SpeechStream(this, this.#opts, options.connOptions);
+  get model(): string {
+    return this.#opts.model ?? 'whisper';
+  }
+
+  get provider(): string {
+    return 'Baseten';
+  }
+
+  stream(options?: { connOptions?: APIConnectOptions; language?: string }): stt.SpeechStream {
+    if (this.#qwen3) {
+      return this.#qwen3.makeStream(this, {
+        connOptions: options?.connOptions,
+        language: options?.language,
+      });
+    }
+    const stream = new SpeechStream(this, this.#opts, options?.connOptions, () => {
+      this.#streams.delete(stream);
+    });
+    this.#streams.add(stream);
+    return stream;
   }
 }
 
@@ -92,12 +184,33 @@ export class SpeechStream extends stt.SpeechStream {
   #logger = log();
   #speaking = false;
   #requestId = '';
+  #ws?: WebSocket;
+  #reconnectRequested = false;
+  #onClose: () => void;
   label = 'baseten.SpeechStream';
 
-  constructor(stt: STT, opts: BasetenSttOptions, connOptions?: APIConnectOptions) {
+  constructor(
+    stt: STT,
+    opts: BasetenSttOptions,
+    connOptions: APIConnectOptions | undefined,
+    onClose: () => void,
+  ) {
     super(stt, opts.sampleRate, connOptions);
     this.#opts = opts;
+    this.#onClose = onClose;
     this.closed = false;
+  }
+
+  updateOptions(opts: Partial<BasetenSttOptions>): void {
+    Object.assign(this.#opts, opts);
+    this.#reconnectRequested = true;
+    if (!this.input.closed) this.input.put(SpeechStream.FLUSH_SENTINEL);
+    this.#ws?.close();
+  }
+
+  override close(): void {
+    this.#onClose();
+    super.close();
   }
 
   private getWsUrl(): string {
@@ -119,11 +232,13 @@ export class SpeechStream extends stt.SpeechStream {
       };
 
       const ws = new WebSocket(url, { headers });
+      this.#ws = ws;
 
       try {
         await waitForWebSocketOpen(ws, 'Baseten');
 
         await this.#runWS(ws);
+        this.#reconnectRequested = false;
       } catch (e) {
         if (!this.closed && !this.input.closed) {
           if ((e instanceof APIError && !e.retryable) || retries >= maxRetry) {
@@ -143,6 +258,7 @@ export class SpeechStream extends stt.SpeechStream {
           );
         }
       }
+      this.#ws = undefined;
     }
 
     this.closed = true;
@@ -153,21 +269,25 @@ export class SpeechStream extends stt.SpeechStream {
     const attemptController = new AbortController();
     const attemptSignal = AbortSignal.any([this.abortSignal, attemptController.signal]);
 
-    // Send initial metadata
-    // Note: Baseten server expects 'vad_params' and 'streaming_whisper_params' field names
-    // (not 'streaming_vad_config', 'streaming_params', 'whisper_params' as in older versions)
     const metadata = {
-      vad_params: {
+      whisper_params: {
+        audio_language: this.#opts.audioLanguage ?? 'en',
+        show_word_timestamps: this.#opts.showWordTimestamps ?? true,
+        ...(this.#opts.languageOptions?.length
+          ? { language_options: this.#opts.languageOptions }
+          : {}),
+      },
+      streaming_params: {
+        encoding: this.#opts.encoding ?? 'pcm_s16le',
+        sample_rate: this.#opts.sampleRate ?? 16000,
+        enable_partial_transcripts: this.#opts.enablePartialTranscripts ?? true,
+        partial_transcript_interval_s: this.#opts.partialTranscriptIntervalS ?? 1,
+        final_transcript_max_duration_s: this.#opts.finalTranscriptMaxDurationS ?? 30,
+      },
+      streaming_vad_config: {
         threshold: this.#opts.vadThreshold,
         min_silence_duration_ms: this.#opts.vadMinSilenceDurationMs,
         speech_pad_ms: this.#opts.vadSpeechPadMs,
-      },
-      streaming_whisper_params: {
-        encoding: this.#opts.encoding ?? 'pcm_s16le',
-        sample_rate: this.#opts.sampleRate ?? 16000,
-        enable_partial_transcripts: false,
-        audio_language: this.#opts.audioLanguage ?? 'en',
-        show_word_timestamps: true,
       },
     };
 
@@ -186,6 +306,8 @@ export class SpeechStream extends stt.SpeechStream {
           }
 
           const data = result.value;
+
+          if (this.#reconnectRequested && data === SpeechStream.FLUSH_SENTINEL) return;
 
           let frames: AudioFrame[];
           if (data === SpeechStream.FLUSH_SENTINEL) {
@@ -236,7 +358,12 @@ export class SpeechStream extends stt.SpeechStream {
             const msg = JSON.parse(jsonString);
             const isFinal = msg.is_final ?? true;
             const segments = msg.segments ?? [];
-            const transcript = msg.transcript ?? '';
+            const transcript =
+              msg.transcript ??
+              segments
+                .map((segment: { text?: string }) => segment.text ?? '')
+                .join(' ')
+                .trim();
             const confidence = msg.confidence ?? 0.0;
             const languageCode = normalizeLanguage(msg.language_code ?? this.#opts.audioLanguage);
 
@@ -327,7 +454,7 @@ export class SpeechStream extends stt.SpeechStream {
         });
 
         ws.on('close', (code) => {
-          if (closing || attemptSignal.aborted) resolve();
+          if (closing || attemptSignal.aborted || this.#reconnectRequested) resolve();
           else {
             reject(
               new APIConnectionError({

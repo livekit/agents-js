@@ -267,6 +267,20 @@ export abstract class TTS extends (EventEmitter as new () => TypedEmitter<TTSCal
   ): ChunkedStream;
 
   /**
+   * Implement one-shot synthesis through a provider's streaming API.
+   *
+   * The outer chunked stream owns retries, so each inner streaming attempt is
+   * configured with no retries. Timed transcripts are forwarded unchanged.
+   */
+  protected synthesizeWithStream(
+    text: string,
+    connOptions: APIConnectOptions = DEFAULT_API_CONNECT_OPTIONS,
+    abortSignal?: AbortSignal,
+  ): ChunkedStream {
+    return new ChunkedStreamFromStream(text, this, connOptions, abortSignal);
+  }
+
+  /**
    * Returns a {@link SynthesizeStream} that can be used to push text and receive audio data
    *
    * @param options - Optional configuration including connection options
@@ -393,7 +407,8 @@ export abstract class SynthesizeStream
     const runMainTask = async () => {
       try {
         await this.mainTask();
-      } catch {
+      } catch (error) {
+        this.#error = toError(error);
         // already surfaced via emitError; swallow to avoid unhandled rejection.
       } finally {
         this.queue.close();
@@ -1057,5 +1072,39 @@ export abstract class ChunkedStream implements AsyncIterableIterator<Synthesized
 
   [Symbol.asyncIterator](): ChunkedStream {
     return this;
+  }
+}
+
+class ChunkedStreamFromStream extends ChunkedStream {
+  #tts: TTS;
+  #connOptions: APIConnectOptions;
+  label = 'tts.ChunkedStreamFromStream';
+
+  constructor(text: string, tts: TTS, connOptions: APIConnectOptions, abortSignal?: AbortSignal) {
+    super(text, tts, connOptions, abortSignal);
+    this.#tts = tts;
+    this.#connOptions = connOptions;
+  }
+
+  protected async run(): Promise<void> {
+    const stream = this.#tts.stream({
+      connOptions: { ...this.#connOptions, maxRetry: 0 },
+    });
+    const onAbort = () => stream.close();
+    this.abortSignal.addEventListener('abort', onAbort, { once: true });
+
+    try {
+      stream.pushText(this.inputText);
+      stream.endInput();
+      for await (const event of stream) {
+        if (event === SynthesizeStream.END_OF_STREAM) continue;
+        this.queue.put(event);
+      }
+      if (stream.error) throw stream.error;
+    } finally {
+      this.abortSignal.removeEventListener('abort', onAbort);
+      stream.close();
+      if (!this.queue.closed) this.queue.close();
+    }
   }
 }

@@ -3733,9 +3733,13 @@ class FallbackAdapter_2 extends STT {
     // (undocumented)
     _pushConversationItem(ev: ConversationItemAddedEvent): void;
     // (undocumented)
-    recognize(frame: Parameters<STT['recognize']>[0], abortSignal?: AbortSignal): Promise<SpeechEvent>;
+    recognize(frame: Parameters<STT['recognize']>[0], abortSignal?: AbortSignal, options?: {
+        language?: string;
+    }): Promise<SpeechEvent>;
     // (undocumented)
-    protected _recognize(frame: Parameters<STT['recognize']>[0], abortSignal?: AbortSignal): Promise<SpeechEvent>;
+    protected _recognize(frame: Parameters<STT['recognize']>[0], abortSignal?: AbortSignal, options?: {
+        language?: string;
+    }): Promise<SpeechEvent>;
     // (undocumented)
     readonly retryIntervalMs: number;
     // @internal
@@ -3748,6 +3752,7 @@ class FallbackAdapter_2 extends STT {
     // (undocumented)
     stream(options?: {
         connOptions?: APIConnectOptions;
+        language?: string;
     }): SpeechStream;
     // (undocumented)
     readonly sttInstances: STT[];
@@ -7697,10 +7702,13 @@ class StreamAdapter extends STT {
     // (undocumented)
     _pushConversationItem(ev: ConversationItemAddedEvent): void;
     // (undocumented)
-    _recognize(frame: AudioFrame, abortSignal?: AbortSignal): Promise<SpeechEvent>;
+    _recognize(frame: AudioFrame, abortSignal?: AbortSignal, options?: {
+        language?: string;
+    }): Promise<SpeechEvent>;
     // (undocumented)
     stream(options?: {
         connOptions?: APIConnectOptions;
+        language?: string;
     }): StreamAdapterWrapper;
     // (undocumented)
     _updateSessionKeyterms(keyterms: string[]): void;
@@ -7735,7 +7743,7 @@ class StreamAdapter_2 extends TTS {
 
 // @public (undocumented)
 class StreamAdapterWrapper extends SpeechStream {
-    constructor(stt: STT, vad: VAD, connOptions?: APIConnectOptions);
+    constructor(stt: STT, vad: VAD, connOptions?: APIConnectOptions, language?: string);
     // (undocumented)
     close(): void;
     // (undocumented)
@@ -7811,12 +7819,17 @@ abstract class STT extends STT_base {
     // @internal
     _pushConversationItem(_ev: ConversationItemAddedEvent): void;
     // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "SpeechEvent"
-    recognize(frame: AudioBuffer_2, abortSignal?: AbortSignal): Promise<SpeechEvent>;
+    recognize(frame: AudioBuffer_2, abortSignal?: AbortSignal, options?: {
+        language?: string;
+    }): Promise<SpeechEvent>;
     // (undocumented)
-    protected abstract _recognize(frame: AudioBuffer_2, abortSignal?: AbortSignal): Promise<SpeechEvent>;
+    protected abstract _recognize(frame: AudioBuffer_2, abortSignal?: AbortSignal, options?: {
+        language?: string;
+    }): Promise<SpeechEvent>;
     // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "SpeechStream"
     abstract stream(options?: {
         connOptions?: APIConnectOptions;
+        language?: string;
     }): SpeechStream;
     // (undocumented)
     protected updateCapabilities(caps: Partial<STTCapabilities>): void;
@@ -8890,6 +8903,7 @@ abstract class TTS extends TTS_base {
     }): SynthesizeStream;
     // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "ChunkedStream"
     abstract synthesize(text: string, connOptions?: APIConnectOptions, abortSignal?: AbortSignal): ChunkedStream;
+    protected synthesizeWithStream(text: string, connOptions?: APIConnectOptions, abortSignal?: AbortSignal): ChunkedStream;
     // @internal
     get _wrappedTts(): readonly TTS[];
 }
@@ -9886,7 +9900,7 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 // src/llm/tool_context.ts:756:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "ToolFlag" has more than one declaration; you need to add a TSDoc member reference selector
 // src/metrics/base.ts:226:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsInputTokenDetails" needs to be exported by the entry point index.d.ts
 // src/metrics/base.ts:230:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsOutputTokenDetails" needs to be exported by the entry point index.d.ts
-// src/stt/stt.ts:378:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "STT"
+// src/stt/stt.ts:383:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "STT"
 // src/utils.ts:468:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "cancelled"
 // src/voice/agent_session.ts:411:3 - (ae-unresolved-link) The @link reference could not be resolved: This type of declaration is not supported yet by the resolver
 // src/voice/agent_session.ts:1091:5 - (ae-forgotten-export) The symbol "RecordingOptions" needs to be exported by the entry point index.d.ts
