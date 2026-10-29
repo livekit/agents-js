@@ -77,6 +77,7 @@ export class RunResult<T = unknown> {
   private outputRetryInstructions: string;
   private outputRetryError?: unknown;
   private session?: AgentSession;
+  private cancellation?: Promise<void>;
   private finalOutputValue?: T;
   private hasFinalOutput = false;
 
@@ -172,6 +173,7 @@ export class RunResult<T = unknown> {
    * Records an agent handoff event.
    */
   _agentHandoff(params: { item: AgentHandoffItem; oldAgent?: Agent; newAgent: Agent }): void {
+    if (this.done()) return;
     const event: AgentHandoffEvent = {
       type: 'agent_handoff',
       item: params.item,
@@ -212,7 +214,7 @@ export class RunResult<T = unknown> {
    * Watch a speech handle or task for completion.
    */
   _watchHandle(handle: SpeechHandle | Task<void>): void {
-    if (this.handles.has(handle)) return;
+    if (this.done() || this.handles.has(handle)) return;
 
     this.handles.add(handle);
 
@@ -249,6 +251,55 @@ export class RunResult<T = unknown> {
   /** @internal */
   _watchedHandleCount(): number {
     return this.handles.size;
+  }
+
+  /** @internal A rejected run remains active until its speech cleanup settles. */
+  _isActive(): boolean {
+    return !this.done() || (this.cancellation !== undefined && this.session !== undefined);
+  }
+
+  /** @internal Stop a remote run and join its interrupted speech cleanup. */
+  _cancel(): Promise<void> {
+    if (!this.cancellation) {
+      const cancellation = new Future<void>();
+      // Abort callbacks can re-enter the run before cancel() returns.
+      this.cancellation = cancellation.await;
+      void this.cancel().then(
+        () => cancellation.resolve(),
+        (error: Error) => cancellation.reject(error),
+      );
+    }
+    return this.cancellation;
+  }
+
+  /**
+   * Reject this run and cancel its owned speech tasks.
+   * Keep session run ownership until those tasks settle, without a timeout.
+   * Session-owned transition tasks are unwatched but are not cancelled.
+   */
+  private async cancel(): Promise<void> {
+    this._reject(new DOMException('Remote session run cancelled', 'AbortError'));
+    const speeches: SpeechHandle[] = [];
+    for (const handle of this.handles) {
+      this._unwatchHandle(handle);
+      if (isSpeechHandle(handle)) {
+        handle.interrupt(true);
+        for (const task of handle._tasks) task.cancel();
+        speeches.push(handle);
+      }
+      // Non-speech tasks (such as activity transitions) belong to the session.
+      // The run observes them but does not own their lifetime.
+    }
+    try {
+      // The playout watchdog can mark a handle done while its reply still runs.
+      // Keep the session busy until the actual speech tasks finish cleanup.
+      await Promise.allSettled(
+        speeches.flatMap((handle) => handle._tasks.map((task) => task.result)),
+      );
+    } finally {
+      if (this.session?._globalRunState === this) this.session._globalRunState = undefined;
+      this.session = undefined;
+    }
   }
 
   /** @internal – Reject the run with an error (e.g. when deferred generateReply fails). */
