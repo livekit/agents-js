@@ -956,8 +956,6 @@ export function performTTSInference(
       ttsStream = await node(ttsInput, modelSettings);
       if (ttsStream === null) {
         timedTextsFut.resolve(null);
-        await outputWriter.close();
-        await timedTextsWriter.close();
         return;
       }
 
@@ -1019,10 +1017,13 @@ export function performTTSInference(
       if (!timedTextsFut.done) {
         timedTextsFut.resolve(null);
       }
-      ttsStreamReader?.releaseLock();
-      await ttsStream?.cancel();
-      await outputWriter.close();
-      await timedTextsWriter.close();
+      try {
+        ttsStreamReader?.releaseLock();
+        await ttsStream?.cancel();
+      } finally {
+        // Canceled outputs can reject close(); preserve the inference error.
+        await Promise.allSettled([outputWriter.close(), timedTextsWriter.close()]);
+      }
     }
   };
 

@@ -16,6 +16,7 @@ import { VAD, VADStream } from '../vad.js';
 import { Agent, AgentTask, _setActivityTaskInfo } from './agent.js';
 import { AgentActivity, agentActivityStorage } from './agent_activity.js';
 import { AgentSession } from './agent_session.js';
+import { performTTSInference } from './generation.js';
 import { FakeLLM } from './testing/fake_llm.js';
 import { defaultEndpointingOptions } from './turn_config/endpointing.js';
 import { defaultInterruptionOptions } from './turn_config/interruption.js';
@@ -564,6 +565,48 @@ describe('Agent', () => {
       expect(stt.listenerCount('metrics_collected')).toBe(baseline);
       expect(stt.closeCount).toBe(0);
     });
+
+    it.each([false, true])(
+      'closes TTS inference outputs after provider failure (audio canceled: %s)',
+      async (cancelAudio) => {
+        const tts = new NonStreamingTTS('failure');
+        const agent = new Agent({ instructions: 'test', llm: new FakeLLM(), tts });
+        const session = new AgentSession({
+          vad: null,
+          turnHandling: { turnDetection: null },
+          connOptions: { ttsConnOptions: { maxRetry: 0, timeoutMs: 1_000 } },
+        });
+        await session.start({ agent });
+        const input = new ReadableStream<string>({
+          start(controller) {
+            controller.enqueue('Hello world, this is a complete sentence.');
+            controller.close();
+          },
+        });
+        const [task, data] = performTTSInference(
+          (text, settings) => Agent.default.ttsNode(agent, text, settings),
+          input,
+          {},
+          new AbortController(),
+        );
+        const audioReader = data.audioStream.getReader();
+        const timedTextStream = await data.timedTextsFut.await;
+        const timedTextReader = timedTextStream?.getReader();
+
+        try {
+          expect(timedTextReader).toBeDefined();
+          if (cancelAudio) await audioReader.cancel();
+
+          await expect(task.result).rejects.toThrow('probe failure');
+          expect(data.error).toBeInstanceOf(APIConnectionError);
+          await expect(task.result).rejects.toBe(data.error);
+          await withTimeout(Promise.all([audioReader.closed, timedTextReader!.closed]), 1_000);
+        } finally {
+          await Promise.allSettled([audioReader.cancel(), timedTextReader?.cancel()]);
+          await withTimeout(session.close(), 1_000);
+        }
+      },
+    );
 
     it.each(['success', 'failure', 'blocked'] as const)(
       'closes the TTS adapter after %s',
