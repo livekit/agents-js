@@ -386,14 +386,14 @@ export class RealtimeSession extends OpenAIRealtimeSession {
   protected override isFatalError(error: unknown): boolean {
     if (error !== null && typeof error === 'object') {
       const { code, type } = error as { code?: unknown; type?: unknown };
-      const errorCode = typeof code === 'string' && code.length > 0 ? code : type;
+      const fatal = new Set([
+        'unsupported_transcription_model',
+        'unsupported_audio_transport',
+        'unsupported_audio_format',
+      ]);
       if (
-        typeof errorCode === 'string' &&
-        [
-          'unsupported_transcription_model',
-          'unsupported_audio_transport',
-          'unsupported_audio_format',
-        ].includes(errorCode)
+        (typeof code === 'string' && fatal.has(code)) ||
+        (typeof type === 'string' && fatal.has(type))
       ) {
         return true;
       }

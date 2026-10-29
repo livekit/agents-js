@@ -85,6 +85,7 @@ export class DiscardedGeneration {
 // These server-side errors cannot be fixed by reconnecting; retrying only loops forever.
 const FATAL_ERROR_CODES = new Set([
   'insufficient_quota',
+  'credit_balance_exhausted',
   'invalid_api_key',
   'account_deactivated',
   'billing_hard_limit_reached',
@@ -94,8 +95,10 @@ const FATAL_ERROR_CODES = new Set([
 export function isFatalError(error: unknown): boolean {
   if (error === null || typeof error !== 'object') return false;
   const { code, type } = error as { code?: unknown; type?: unknown };
-  const errorCode = typeof code === 'string' && code.length > 0 ? code : type;
-  return typeof errorCode === 'string' && FATAL_ERROR_CODES.has(errorCode);
+  return (
+    (typeof code === 'string' && FATAL_ERROR_CODES.has(code)) ||
+    (typeof type === 'string' && FATAL_ERROR_CODES.has(type))
+  );
 }
 
 class CreateResponseHandle {
