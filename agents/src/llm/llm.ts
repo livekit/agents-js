@@ -11,6 +11,7 @@ import { genAI, inputDelta, recordException, traceTypes, tracer } from '../telem
 import { type APIConnectOptions, intervalForRetry } from '../types.js';
 import { AsyncIterableQueue, Task, delay, startSoon, toError } from '../utils.js';
 import { type ChatContext, type ChatRole, type FunctionCall } from './chat_context.js';
+import { replay, replayUrl } from './replay.js';
 import {
   type ToolChoice,
   type ToolContext,
@@ -304,6 +305,30 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
     this.#llmRequestSpan = span;
     span.setAttribute(traceTypes.ATTR_GEN_AI_REQUEST_MODEL, this.#llm.model);
     this.recordGenAIRequest(span);
+
+    // a delegating stream (fallback) is replayed through the provider streams it wraps
+    const url = replayUrl();
+    if (this.genAIOperationName !== undefined && url) {
+      try {
+        const chunks = await replay(url, {
+          model: this.#llm.model,
+          provider: this.#llm.provider,
+          chatCtx: this.#chatCtx,
+          toolCtx: this.#toolCtx,
+          // a closed stream abandons its request instead of leaving it open on the server
+          signal: AbortSignal.any([
+            this.abortController.signal,
+            AbortSignal.timeout(this._connOptions.timeoutMs),
+          ]),
+        });
+        for (const chunk of chunks) this.queue.put(chunk);
+      } catch (error) {
+        if (this.abortController.signal.aborted) return;
+        this.emitError({ error: toError(error), recoverable: false });
+        throw error;
+      }
+      return;
+    }
 
     for (let i = 0; i < this._connOptions.maxRetry + 1; i++) {
       try {
