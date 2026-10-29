@@ -10,6 +10,7 @@ import type { AgentActivity } from '../agent_activity.js';
 import {
   commit,
   commitTurn,
+  confirmHuman,
   dtmfCalls,
   dtmfExecuted,
   endOfTurn,
@@ -20,6 +21,7 @@ import {
 } from './amd_test_utils.js';
 import { DEFAULT_IVR_INSTRUCTIONS, DEFAULT_SCREENING_INSTRUCTIONS } from './detector.js';
 import { AMDCategory, AMDLifecycle, AMDReason } from './events.js';
+import { LIKELY_HUMAN_STAGES } from './fsm.js';
 
 function noPendingSpeech(activity: AgentActivity): boolean {
   const queue = (activity as unknown as { speechQueue: { size(): number } }).speechQueue;
@@ -105,6 +107,11 @@ describe('AMD stage corrections', () => {
         expect(request.recommended_next_categories).toContain(AMDCategory.HUMAN);
         classifier.prediction(currentTurn + 1, AMDCategory.HUMAN);
         expect(await human.shouldReply(new ChatContext())).toBe(true);
+        if (LIKELY_HUMAN_STAGES.has(corrected)) {
+          expect(amd.turns.get(currentTurn + 1)!.prediction!.category).toBe(AMDCategory.UNCERTAIN);
+          const confirmed = await confirmHuman(detector, classifier);
+          expect(await confirmed.shouldReply(new ChatContext())).toBe(true);
+        }
         expect((await detector.execute()).category).toBe(AMDCategory.HUMAN);
       },
     );

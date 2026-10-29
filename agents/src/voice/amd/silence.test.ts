@@ -41,7 +41,7 @@ import {
   speechEnded,
   speechStarted,
 } from './amd_test_utils.js';
-import { AMD, DEFAULT_SCREENING_INSTRUCTIONS } from './detector.js';
+import { AMD, DEFAULT_SCREENING_INSTRUCTIONS, LATE_AMD_FINAL_WAIT } from './detector.js';
 import {
   AMDCategory,
   type AMDCompletedEvent,
@@ -745,6 +745,7 @@ describe('AMD machine silence', () => {
     const stream = pushAudio(detector, stt);
     speechEnded(detector, 0);
     commitTurn(detector, endOfTurn(''));
+    await sleep(LATE_AMD_FINAL_WAIT + 10); // no AMD final arrives for the empty turn
     expect(events.map((e) => [e.turnId, e.reason])).toEqual([[1, AMDReason.REUSED]]);
     expect(prediction(detector, 1).reason).toBe(AMDReason.REUSED);
 
@@ -1177,6 +1178,20 @@ describe('AMD machine silence', () => {
       expect(speeches).toHaveLength(1);
       const held = speeches[0]!;
 
+      if (category === AMDCategory.HUMAN) {
+        // a first human after screening is likely human, counted as uncertain: its reply carries no
+        // AMD instructions, so the hook's edit is the model's last input
+        (model as unknown as { responseMap: Map<string, Record<string, unknown>> }).responseMap.set(
+          'Customer hook edit',
+          {
+            input: 'Customer hook edit',
+            type: 'llm',
+            content: 'Please call me back.',
+            ttft: 0,
+            duration: 0,
+          },
+        );
+      }
       speechStarted(detector);
       speechEnded(detector, 1_500);
       await commit(detector, session, classifier, { reply: true });

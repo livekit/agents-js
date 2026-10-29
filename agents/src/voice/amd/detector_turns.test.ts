@@ -22,6 +22,7 @@ import {
   RecordingLLM,
   commit,
   commitTurn,
+  confirmHuman,
   endOfTurn,
   eventually,
   internals,
@@ -47,6 +48,7 @@ import {
   AMDReason,
   createAMDPredictionEvent,
 } from './events.js';
+import { LIKELY_HUMAN_STAGES } from './fsm.js';
 
 function messages(chatCtx: ChatContext): ChatMessage[] {
   return chatCtx.items.filter((item): item is ChatMessage => item instanceof ChatMessage);
@@ -382,7 +384,8 @@ describe('AMD detector turns', () => {
   it.each([
     [AMDCategory.MACHINE_SCREENING, DEFAULT_SCREENING_INSTRUCTIONS],
     [AMDCategory.MACHINE_VM, DEFAULT_VOICEMAIL_INSTRUCTIONS],
-    [AMDCategory.HUMAN, DEFAULT_HUMAN_INSTRUCTIONS],
+    // a first human after screening is likely human, counted as uncertain, with no stage instructions
+    [AMDCategory.HUMAN, undefined],
   ])(
     'turn hooks keep their turn while an older hook is blocked (%s)',
     async (category, instructions) => {
@@ -400,10 +403,6 @@ describe('AMD detector turns', () => {
         expect((await classifier.request()).currentTurn.extra.turn_id).toBe(2);
         classifier.prediction(2, category);
         await eventually(() => internals(detector).turns.get(2)!.prediction !== null);
-        if (category === AMDCategory.HUMAN) {
-          await waitFor(detector.execute());
-          expect(session.amd).toBeNull();
-        }
         expect(agent.hooks).toHaveLength(1);
         expect(model.calls.empty).toBe(true);
       } finally {
@@ -413,7 +412,11 @@ describe('AMD detector turns', () => {
       await waitFor(activity._userTurnCompletedTask!.result);
       const call = await model.calls.get();
       const msgs = messages(call.chatCtx);
-      expect(msgs[msgs.length - 1]!.textContent).toBe(instructions);
+      if (instructions === undefined) {
+        expect(msgs.some((m) => m.id.startsWith(internals(detector).controlPrefix))).toBe(false);
+      } else {
+        expect(msgs[msgs.length - 1]!.textContent).toBe(instructions);
+      }
       expect(msgs.some((m) => m.textContent === 'Can you hear me?')).toBe(true);
       expect(agent.hooks).toHaveLength(2);
       if (category === AMDCategory.MACHINE_VM) {
@@ -712,6 +715,9 @@ describe('AMD detector turns', () => {
       }
       await commit(detector, session, classifier);
       classifier.prediction(internals(detector)._turnId, last);
+      if (menu && last === AMDCategory.HUMAN) {
+        await confirmHuman(detector, classifier);
+      }
 
       const result = await waitFor(detector.execute());
       expect(result.reason).toBe(AMDReason.FINISHED);
@@ -817,6 +823,34 @@ describe('AMD detector turns', () => {
       classifier.prediction(1, category);
       await model.calls.get();
       await eventually(() => session.agentState === 'speaking');
+      const held = LIKELY_HUMAN_STAGES.has(category);
+      if (held) {
+        // the first human after a menu or screener is likely human, counted as uncertain; its reply
+        // is the machine-stage speech that the confirming turn interrupts
+        // the held turn's reply carries no AMD instructions: the hook's edit is last
+        (model as unknown as { responseMap: Map<string, Record<string, unknown>> }).responseMap.set(
+          'Customer hook edit',
+          {
+            input: 'Customer hook edit',
+            type: 'llm',
+            content: 'Hi, this is Alex.',
+            ttft: 0,
+            duration: 0,
+          },
+        );
+        const firstSpeech = activity.currentSpeech;
+        void activity.onEndOfTurn(endOfTurn('Hello?'));
+        await classifier.request();
+        classifier.prediction(2, AMDCategory.HUMAN);
+        await model.calls.get();
+        await eventually(
+          () =>
+            activity.currentSpeech !== undefined &&
+            activity.currentSpeech !== firstSpeech &&
+            session.agentState === 'speaking',
+        );
+        expect(detector.lifecycle).toBe(AMDLifecycle.ACTIVE);
+      }
       const machineSpeech = activity.currentSpeech;
       expect(machineSpeech !== undefined && !machineSpeech.done()).toBe(true);
       setAudioDuration(activity, 50);
@@ -828,7 +862,7 @@ describe('AMD detector turns', () => {
       void activity.onEndOfTurn(endOfTurn('Can you hear me?'));
       await classifier.request();
       await waitFor(agent.hookStarted.wait());
-      classifier.prediction(2, AMDCategory.HUMAN);
+      classifier.prediction(held ? 3 : 2, AMDCategory.HUMAN);
       if (hookFinishesAfterCleanup) {
         await waitFor(detector.execute());
         expect(session.amd).toBeNull();
@@ -847,7 +881,7 @@ describe('AMD detector turns', () => {
       expect(msgs.some((m) => m.textContent === prompt)).toBe(true);
       expect(msgs.some((m) => m.textContent === 'Can you hear me?')).toBe(true);
       expect(machineSpeech!.interrupted).toBe(true);
-      expect(agent.hooks).toHaveLength(2);
+      expect(agent.hooks).toHaveLength(held ? 3 : 2);
       const result = await waitFor(detector.execute());
       expect(result.category).toBe(AMDCategory.HUMAN);
       expect(result.voicemailMessagePlayed).toBe(false);
@@ -859,7 +893,7 @@ describe('AMD detector turns', () => {
       expect(normal.chatCtx.items.some((m) => m.id.startsWith(controlPrefix(detector)))).toBe(
         false,
       );
-      expect(internals(detector)._turnId).toBe(2);
+      expect(internals(detector)._turnId).toBe(held ? 3 : 2);
     },
   );
 

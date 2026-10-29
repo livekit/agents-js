@@ -7,6 +7,7 @@ import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { asLanguageCode } from '../../language.js';
 import { SpeechEventType } from '../../stt/stt.js';
 import { DEFAULT_API_CONNECT_OPTIONS } from '../../types.js';
+import { delay } from '../../utils.js';
 import { DrainingSTT, type DrainingStream, audioFrame, eventually } from './amd_test_utils.js';
 import { AMDTranscript } from './chat_context.js';
 import { AMDTranscriber } from './stt.js';
@@ -82,6 +83,66 @@ describe('AMDTranscriber', () => {
     // the late words belong to the next turn
     await amdHeard(amd, stream, 'Leave your name and number.');
     expect(amd.endTurn('').amd).toBe('Leave your name and number.');
+  });
+
+  it('a final within the wait belongs to the turn just ended', async () => {
+    const [amd, stream] = transcriber();
+    const ended = amd.endTurn('Sam Lee speaking.', { lateWait: 300 });
+    expect(ended).toEqual(new AMDTranscript('Sam Lee speaking.', ''));
+    const late = amd.lateFinal;
+    expect(late).toBeDefined();
+    const waiting = late!.wait();
+    await delay(100);
+    stream.sendFinal('Sam Lee speaking.');
+    expect(await waiting).toBe('Sam Lee speaking.');
+    // the next turn starts clean
+    await amdHeard(amd, stream, 'Yes, that works.');
+    expect(amd.endTurn('Yes, that works.').amd).toBe('Yes, that works.');
+  });
+
+  it('a final after the wait belongs to the next turn', async () => {
+    const [amd, stream] = transcriber();
+    amd.endTurn('Sam Lee speaking.', { lateWait: 300 });
+    const late = amd.lateFinal;
+    expect(late).toBeDefined();
+    expect(await late!.wait()).toBeUndefined();
+    await amdHeard(amd, stream, 'Sam Lee speaking.');
+    expect(amd.endTurn('Yes.').amd).toBe('Sam Lee speaking.');
+  });
+
+  it('a final before the wait starts still belongs to the turn', async () => {
+    const [amd, stream] = transcriber();
+    amd.endTurn('Sam Lee speaking.', { lateWait: 300 });
+    const late = amd.lateFinal;
+    expect(late).toBeDefined();
+    stream.sendFinal('Sam Lee speaking.');
+    await eventually(() => amd.lateFinal === undefined, 1_000);
+    expect(await late!.wait()).toBe('Sam Lee speaking.');
+    expect(amd.endTurn('').amd).toBe('');
+  });
+
+  it('without session stt a final after the wait belongs to the next turn', async () => {
+    const model = new DrainingSTT();
+    const amd = new AMDTranscriber(model, CONN_OPTIONS, { sessionStt: false });
+    try {
+      amd.pushAudio(audioFrame());
+      amd.endTurn('Sam Lee speaking.', { lateWait: 300 });
+      const late = amd.lateFinal;
+      expect(late).toBeDefined();
+      expect(await late!.wait()).toBeUndefined();
+      await amdHeard(amd, model.streams[0]!, 'Sam Lee speaking.');
+      expect(amd.endTurn('').amd).toBe('Sam Lee speaking.');
+    } finally {
+      await amd.aclose();
+      await model.close();
+    }
+  });
+
+  it('a turn with its amd final needs no wait', async () => {
+    const [amd, stream] = transcriber();
+    await amdHeard(amd, stream, 'Sam Lee speaking.');
+    amd.endTurn('Sam Lee speaking.', { lateWait: 300 });
+    expect(amd.lateFinal).toBeUndefined();
   });
 
   it('the classifier sees both transcripts only with an amd stt', () => {

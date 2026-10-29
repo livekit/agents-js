@@ -7,6 +7,7 @@ import type { AudioFrame } from '@livekit/rtc-node';
 import { log } from '../../log.js';
 import { type STT, SpeechEventType, type SpeechStream } from '../../stt/stt.js';
 import type { APIConnectOptions } from '../../types.js';
+import { Event } from '../../utils.js';
 import { AMDTranscript, type AMDTranscriptSource } from './chat_context.js';
 
 /** Buffer a turn's session and AMD transcripts. */
@@ -28,6 +29,52 @@ export class AMDTurnTranscriptAccumulator {
   }
 }
 
+/** A committed turn's wait for its AMD final, handed to the turn's task at commit. */
+export class LateAMDFinal {
+  private readonly until: number;
+  private transcript = '';
+  private readonly arrived = new Event();
+  private closed = false;
+
+  /** @param wait - How long the turn waits for its final, in ms. */
+  constructor(wait: number) {
+    this.until = performance.now() + wait;
+  }
+
+  /** Take the final if the turn still waits for it. */
+  deliver(transcript: string): boolean {
+    if (this.closed || performance.now() > this.until) {
+      return false;
+    }
+    this.transcript = transcript;
+    this.arrived.set();
+    return true;
+  }
+
+  /** The AMD final once it arrives, or `undefined` when the wait passes without it. */
+  async wait(signal?: AbortSignal): Promise<string | undefined> {
+    if (signal?.aborted) {
+      return undefined;
+    }
+    let release!: () => void;
+    const passed = new Promise<void>((resolve) => (release = resolve));
+    const timer = setTimeout(release, Math.max(0, this.until - performance.now()));
+    signal?.addEventListener('abort', release);
+    try {
+      await Promise.race([this.arrived.wait(), passed]);
+    } finally {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', release);
+    }
+    // a cancelled task stops here, as Python's CancelledError does
+    if (signal?.aborted) {
+      return undefined;
+    }
+    this.closed = true;
+    return this.transcript || undefined;
+  }
+}
+
 /**
  * Collect each turn's session transcript and, with an AMD STT, its own transcript too.
  *
@@ -39,6 +86,11 @@ export class AMDTranscriber {
   private sessionEnabled: boolean;
   private amdEnabled: boolean;
   private current = new AMDTurnTranscriptAccumulator();
+  /**
+   * The turn just ended before its AMD final arrived: the AMD STT finalizes a sentence
+   * a little after the session commits it, so a final within the wait belongs to it.
+   */
+  private late: LateAMDFinal | undefined;
   private stream: SpeechStream | undefined;
   private readTask: Promise<void> | undefined;
   private logger = log();
@@ -78,7 +130,12 @@ export class AMDTranscriber {
       for await (const event of stream) {
         const text = event.alternatives?.[0]?.text;
         if (event.type === SpeechEventType.FINAL_TRANSCRIPT && text !== undefined) {
-          this.pushTranscript(text.trim(), { source: 'amd' });
+          const transcript = text.trim();
+          const late = this.late;
+          this.late = undefined;
+          if (late === undefined || !late.deliver(transcript)) {
+            this.pushTranscript(transcript, { source: 'amd' });
+          }
         }
       }
       if (stream.terminalError !== undefined) {
@@ -101,14 +158,33 @@ export class AMDTranscriber {
     this.current.add(source, transcript, { replace });
   }
 
-  endTurn(sessionTranscript: string): AMDTranscript {
+  /**
+   * End the turn. Within `lateWait` ms, the next AMD final still belongs to it when it
+   * has no AMD text yet.
+   */
+  endTurn(sessionTranscript: string, { lateWait = 0 }: { lateWait?: number } = {}): AMDTranscript {
     this.pushTranscript(sessionTranscript, { replace: true, source: 'session' });
     const turn = this.current;
     this.current = new AMDTurnTranscriptAccumulator();
+    // without session STT the turn has no text until its AMD final arrives
+    const late =
+      lateWait > 0 &&
+      this.amdSttActive &&
+      !turn.get('amd') &&
+      (Boolean(turn.get('session')) || !this.sessionEnabled);
+    this.late = late ? new LateAMDFinal(lateWait) : undefined;
     return new AMDTranscript(
       this.sessionEnabled ? turn.get('session') : null,
       this.amdEnabled ? turn.get('amd') : null,
     );
+  }
+
+  /**
+   * The wait of the turn just ended for its AMD final; `undefined` when it needs no wait.
+   * Read it at commit: the next final or turn replaces it.
+   */
+  get lateFinal(): LateAMDFinal | undefined {
+    return this.late;
   }
 
   closeStream(): void {

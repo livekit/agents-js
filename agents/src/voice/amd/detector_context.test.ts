@@ -16,7 +16,7 @@ import type { ToolChoice, ToolContextLike } from '../../llm/tool_context.js';
 import { log } from '../../log.js';
 import { FakeSTT } from '../../stt/testing/fake_stt.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../../types.js';
-import { Future, Task } from '../../utils.js';
+import { Future, Task, delay } from '../../utils.js';
 import type { AgentActivity } from '../agent_activity.js';
 import { SpeechHandle } from '../speech_handle.js';
 import type { TurnHooks } from '../turn_hooks.js';
@@ -25,6 +25,7 @@ import {
   DrainingSTT,
   commit,
   commitTurn,
+  confirmHuman,
   dtmfCalls,
   dtmfExecuted,
   endOfTurn,
@@ -38,13 +39,17 @@ import {
   waitFor,
 } from './amd_test_utils.js';
 import type { AMDRequest } from './chat_context.js';
-import { DEFAULT_HUMAN_INSTRUCTIONS, DEFAULT_VOICEMAIL_INSTRUCTIONS } from './detector.js';
+import {
+  DEFAULT_HUMAN_INSTRUCTIONS,
+  DEFAULT_VOICEMAIL_INSTRUCTIONS,
+  LATE_AMD_FINAL_WAIT,
+} from './detector.js';
 import type { AMD } from './detector.js';
 import { AMDCategory, AMDLifecycle, type AMDMenuObservedEvent, AMDReason } from './events.js';
 import type { AMDPredictionEvent } from './events.js';
-import { RECOMMENDED } from './fsm.js';
+import { LIKELY_HUMAN_STAGES, RECOMMENDED } from './fsm.js';
 import type * as FsmModule from './fsm.js';
-import { CLASSIFY_PROMPT } from './inference.js';
+import { CLASSIFY_PROMPT, LIKELY_HUMAN } from './inference.js';
 import type * as InferenceModule from './inference.js';
 
 type AnyFn = (...args: never[]) => unknown;
@@ -329,6 +334,7 @@ describe('AMD detector context, inference, and wait', () => {
     const amd = internals(detector);
     const stream = pushAudio(detector, stt);
     commitTurn(detector, endOfTurn(''));
+    await delay(LATE_AMD_FINAL_WAIT + 10); // after the wait, a final is the next turn's
     expect(amd.turns.get(1)!.prediction!.transcript).toBe('');
     stream.sendFinal('Please state your name.');
     await eventually(
@@ -357,6 +363,73 @@ describe('AMD detector context, inference, and wait', () => {
     expect(second.earlierTurns).toEqual([first.currentTurn]);
   });
 
+  it('without session STT a turn is classified when its final arrives', async () => {
+    const stt = new DrainingSTT();
+    const { detector, classifier } = await running({ stt });
+    const amd = internals(detector);
+    const stream = pushAudio(detector, stt);
+    commitTurn(detector, endOfTurn(''));
+    await delay(100);
+    expect(amd.turns.get(1)!.prediction).toBeNull();
+    stream.sendFinal('Please state your name.');
+    const request = await classifier.request();
+    expect(request.currentTurn.extra.turn_id).toBe(1);
+    expect(request.currentTurn.textContent).toBe('Please state your name.');
+    classifier.prediction(1, AMDCategory.MACHINE_SCREENING);
+    await eventually(() => amd.turns.get(1)!.prediction !== null);
+    expect(amd.turns.get(1)!.prediction!.transcript).toBe('Please state your name.');
+  });
+
+  it.each([false, true])(
+    'a final before the classifier waits still belongs to the turn (session STT %s)',
+    async (sessionStt) => {
+      const stt = new DrainingSTT();
+      const { detector, classifier } = await running({
+        stt,
+        sessionOptions: sessionStt ? { stt: new FakeSTT() } : undefined,
+      });
+      const stream = pushAudio(detector, stt);
+      commitTurn(detector, endOfTurn(sessionStt ? 'Hello.' : ''));
+      stream.sendFinal('Please state your name.'); // before the task starts
+      const request = await classifier.request();
+      expect(request.currentTurn.extra.turn_id).toBe(1);
+      expect(internals(detector).turns.get(1)!.transcript.amd).toBe('Please state your name.');
+    },
+  );
+
+  it('a reused prediction is kept when the turn final arrives', async () => {
+    // without session STT, turn 2 waits for its final while turn 1 is still classified
+    const stt = new DrainingSTT();
+    const { detector, classifier } = await running({ stt });
+    const amd = internals(detector);
+    const events: AMDPredictionEvent[] = [];
+    detector.on('amd_prediction', (event) => events.push(event));
+    const stream = pushAudio(detector, stt);
+    commitTurn(detector, endOfTurn(''));
+    stream.sendFinal('Please state your name.');
+    await classifier.request();
+    commitTurn(detector, endOfTurn(''));
+    classifier.prediction(1, AMDCategory.MACHINE_SCREENING);
+    await eventually(() => amd.turns.get(2)!.prediction !== null);
+    expect(amd.turns.get(2)!.prediction!.reason).toBe(AMDReason.REUSED);
+
+    stream.sendFinal('Why are you calling?');
+    await eventually(() => amd.turns.get(2)!.transcript.amd === 'Why are you calling?');
+    await delay(10);
+    expect(classifier.requests.empty).toBe(true);
+    expect(events.map((event) => event.turnId)).toEqual([1, 2]);
+
+    // the next request covers the late text
+    commitTurn(detector, endOfTurn(''));
+    stream.sendFinal('Hello?');
+    const request = await classifier.request();
+    expect(request.currentTurn.extra.turn_id).toBe(3);
+    expect(request.earlierTurns.map((turn) => turn.textContent)).toEqual([
+      'Please state your name.',
+      'Why are you calling?',
+    ]);
+  });
+
   it('late final after many empty turns is committed at the next EOT', async () => {
     const stt = new DrainingSTT();
     const { detector, session, classifier } = await running({ stt });
@@ -367,6 +440,7 @@ describe('AMD detector context, inference, and wait', () => {
     for (let i = 0; i < 20; i++) {
       commitTurn(detector, endOfTurn(''));
     }
+    await delay(LATE_AMD_FINAL_WAIT + 10); // after the wait, a final is the next turn's
     expect(amd._turnId).toBe(21);
     for (let turnId = 1; turnId <= 21; turnId++) {
       expect(amd.turns.get(turnId)!.prediction).not.toBeNull();
@@ -386,6 +460,92 @@ describe('AMD detector context, inference, and wait', () => {
     expect(request.earlierTurns).toEqual([]);
     classifier.prediction(22, AMDCategory.HUMAN);
     expect((await detector.execute()).category).toBe(AMDCategory.HUMAN);
+  });
+
+  it.each([...LIKELY_HUMAN_STAGES].sort())(
+    'a first human after a menu or screener waits for the next turn (%s)',
+    async (stage) => {
+      const { detector, session, classifier } = await running();
+      const amd = internals(detector);
+      await commit(detector, session, classifier);
+      classifier.prediction(1, stage);
+      await eventually(() => amd.turns.get(1)!.prediction !== null);
+      let hooks = (await commit(detector, session, classifier))!;
+      classifier.prediction(2, AMDCategory.HUMAN);
+      let context = new ChatContext();
+      expect(await hooks.shouldReply(context)).toBe(true);
+      expect(context.items).toHaveLength(0); // no stage instructions while it may be a person
+      const held = amd.turns.get(2)!.prediction!;
+      expect(held.category).toBe(AMDCategory.UNCERTAIN);
+      expect(held.stage).toBe(stage);
+      expect(detector.lifecycle).toBe(AMDLifecycle.ACTIVE);
+
+      hooks = commitTurn(detector, endOfTurn('Hello, who is this?'));
+      const request = await classifier.request();
+      // the model is told the held turn is likely a person
+      expect(request.previous_prediction!.category).toBe(LIKELY_HUMAN);
+      expect(request.stage).toBe(stage);
+      classifier.prediction(3, AMDCategory.HUMAN);
+      context = new ChatContext();
+      expect(await hooks.shouldReply(context)).toBe(true);
+      expect((context.items[context.items.length - 1] as ChatMessage).textContent).toBe(
+        DEFAULT_HUMAN_INSTRUCTIONS,
+      );
+      const result = await detector.execute();
+      expect(result.category).toBe(AMDCategory.HUMAN);
+      expect(result.lastPrediction!.turnId).toBe(3);
+    },
+  );
+
+  it('a held human followed by a voicemail greeting is voicemail', async () => {
+    const { detector, session, classifier } = await running();
+    const amd = internals(detector);
+    const categories = [AMDCategory.MACHINE_IVR, AMDCategory.WAIT, AMDCategory.HUMAN];
+    for (const [index, category] of categories.entries()) {
+      const turnId = index + 1;
+      await commit(detector, session, classifier);
+      classifier.prediction(turnId, category);
+      await eventually(() => amd.turns.get(turnId)!.prediction !== null);
+    }
+    const hooks = (await commit(detector, session, classifier))!;
+    classifier.prediction(4, AMDCategory.MACHINE_VM);
+    const context = new ChatContext();
+    expect(await hooks.shouldReply(context)).toBe(true);
+    expect((context.items[context.items.length - 1] as ChatMessage).textContent).toBe(
+      DEFAULT_VOICEMAIL_INSTRUCTIONS,
+    );
+    expect(amd._state).toBe(AMDCategory.MACHINE_VM);
+    expect(detector.lifecycle).toBe(AMDLifecycle.ACTIVE);
+    // a person after the voicemail stage is not held
+    await commit(detector, session, classifier);
+    classifier.prediction(5, AMDCategory.HUMAN);
+    expect((await detector.execute()).category).toBe(AMDCategory.HUMAN);
+  });
+
+  it('a human at call start completes at once', async () => {
+    const { detector, session, classifier } = await running();
+    await commit(detector, session, classifier);
+    classifier.prediction(1, AMDCategory.HUMAN);
+    expect((await detector.execute()).category).toBe(AMDCategory.HUMAN);
+  });
+
+  it('the classifier waits briefly for a late AMD final', async () => {
+    const stt = new DrainingSTT();
+    const { detector, classifier } = await running({
+      stt,
+      sessionOptions: { stt: new FakeSTT() },
+    });
+    const stream = pushAudio(detector, stt);
+    commitTurn(detector, endOfTurn('Sam Lee speaking.'));
+    await delay(100);
+    expect(classifier.requests.empty).toBe(true);
+    stream.sendFinal('Sam Lee speaking.');
+    const request = await classifier.request();
+    expect(JSON.parse(request.currentTurn.textContent!)).toEqual({
+      transcript_1: 'Sam Lee speaking.',
+      transcript_2: 'Sam Lee speaking.',
+    });
+    expect(internals(detector).turns.get(1)!.transcript.amd).toBe('Sam Lee speaking.');
   });
 
   it('superseded inference keeps the classification context', async () => {
@@ -650,6 +810,7 @@ describe('AMD detector context, inference, and wait', () => {
     expect(menus).toEqual([]);
     await commit(detector, session, classifier);
     classifier.prediction(2, AMDCategory.HUMAN);
+    await confirmHuman(detector, classifier);
     const result = await waitFor(detector.execute());
     expect(result.category).toBe(AMDCategory.HUMAN);
     expect(result.reason).toBe(AMDReason.FINISHED);
@@ -683,6 +844,7 @@ describe('AMD detector context, inference, and wait', () => {
     // Python: `menu_response.cancelled()`; JS cancels the provider stream instead
     expect(streamCancelled(menuStream)).toBe(true);
     classifier.prediction(2, AMDCategory.HUMAN);
+    await confirmHuman(detector, classifier);
     expect((await detector.execute()).category).toBe(AMDCategory.HUMAN);
   });
 
@@ -701,6 +863,7 @@ describe('AMD detector context, inference, and wait', () => {
     await sleep(10);
     expect(extractMenu).not.toHaveBeenCalled();
     classifier.prediction(2, AMDCategory.HUMAN);
+    await confirmHuman(detector, classifier);
     expect((await waitFor(detector.execute())).category).toBe(AMDCategory.HUMAN);
   });
 
@@ -1139,6 +1302,11 @@ describe('AMD detector context, inference, and wait', () => {
           }
         }
       }
+      // the first human after screening is likely human, counted as uncertain, with no stage instructions
+      expect(ctx.items).toHaveLength(0);
+      const hooks = await confirmHuman(detector, classifier);
+      ctx = new ChatContext();
+      expect(await hooks.shouldReply(ctx)).toBe(true);
       expect((ctx.items[ctx.items.length - 1] as ChatMessage).textContent).toBe(
         DEFAULT_HUMAN_INSTRUCTIONS,
       );
@@ -1233,6 +1401,7 @@ describe('AMD detector context, inference, and wait', () => {
       hooks = (await commit(detector, session, classifier))!;
       classifier.prediction(amd._turnId, AMDCategory.HUMAN);
       expect(await hooks.shouldReply(new ChatContext())).toBe(true);
+      await confirmHuman(detector, classifier);
       expect((await detector.execute()).category).toBe(AMDCategory.HUMAN);
     },
   );

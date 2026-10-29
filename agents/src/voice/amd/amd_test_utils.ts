@@ -42,7 +42,7 @@ import {
   DEFAULT_SCREENING_INSTRUCTIONS,
   DEFAULT_VOICEMAIL_INSTRUCTIONS,
 } from './detector.js';
-import { type AMDCategory, AMDLifecycle, type AMDPredictionEvent } from './events.js';
+import { AMDCategory, AMDLifecycle, type AMDPredictionEvent } from './events.js';
 import { CLASSIFY_PROMPT } from './inference.js';
 
 initializeLogger({ pretty: false, level: 'silent' });
@@ -240,6 +240,19 @@ export class RecordingLLM extends FakeLLM {
       toolCtx: options.toolCtx,
       toolChoice: options.toolChoice,
     });
+    // Python's FakeLLM also answers a trailing system message, such as a hook's edit;
+    // the JS FakeLLM reads only a trailing user message
+    const last = options.chatCtx.items[options.chatCtx.items.length - 1];
+    if (
+      last instanceof ChatMessage &&
+      last.role === 'system' &&
+      last.textContent &&
+      this.lookup(last.textContent) !== undefined
+    ) {
+      const chatCtx = options.chatCtx.copy();
+      chatCtx.addMessage({ role: 'user', content: last.textContent });
+      return super.chat({ ...options, chatCtx });
+    }
     return super.chat(options);
   }
 }
@@ -256,14 +269,20 @@ export class CustomerAgent extends Agent {
     this.stop = stop;
   }
 
-  override async onUserTurnCompleted(turnCtx: ChatContext, _newMessage: ChatMessage) {
+  override async onUserTurnCompleted(turnCtx: ChatContext, newMessage: ChatMessage) {
     this.hooks.push(turnCtx.copy());
     this.hookStarted.set();
     await this.hookRelease.wait();
     if (this.stop) {
       throw new StopResponse();
     }
-    turnCtx.addMessage({ role: 'system', content: 'Customer hook edit' });
+    turnCtx.addMessage({
+      role: 'system',
+      content: 'Customer hook edit',
+      // Python's float clock orders the edit after the turn's message; a millisecond tie would
+      // put the inserted message last
+      createdAt: Math.max(Date.now(), newMessage.createdAt + 0.001),
+    });
   }
 }
 
@@ -666,5 +685,19 @@ export async function commit(
   }
   const request = await classifier.request();
   expect(request.currentTurn.extra.turn_id).toBe(internals(detector)._turnId);
+  return hooks;
+}
+
+/** Commit and classify the turn that confirms a human after a menu or screener. */
+export async function confirmHuman(
+  detector: AMD,
+  classifier: ClassifierLLM,
+  text = 'Hello, who is this?',
+): Promise<TurnHooks> {
+  const held = internals(detector)._turnId;
+  await eventually(() => internals(detector).turns.get(held)!.prediction !== null);
+  const hooks = commitTurn(detector, endOfTurn(text));
+  const request = await classifier.request();
+  classifier.prediction(request.currentTurn.extra.turn_id as number, AMDCategory.HUMAN);
   return hooks;
 }

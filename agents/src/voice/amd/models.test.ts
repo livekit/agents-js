@@ -330,6 +330,9 @@ describe('AMD model selection', () => {
         });
         const { detector, session, classifier } = await running({
           agent,
+          // a first human after screening is held; Python's virtual clock then runs the idle
+          // timeout to completion, so a short one keeps the same path in real time
+          idleTimeout: 500,
           sessionOptions: {
             turnHandling: { turnDetection: 'manual', interruption: { enabled: sessionEnabled } },
           },

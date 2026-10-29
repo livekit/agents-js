@@ -39,7 +39,13 @@ import {
 } from '../events.js';
 import type { SpeechHandle } from '../speech_handle.js';
 import type { TurnHooks } from '../turn_hooks.js';
-import { AMDChatContext, type AMDRequest, type Turn } from './chat_context.js';
+import {
+  AMDChatContext,
+  type AMDRequest,
+  AMDTranscript,
+  type Turn,
+  updateTranscript,
+} from './chat_context.js';
 import {
   type AMDCallbacks,
   AMDCategory,
@@ -52,7 +58,7 @@ import {
 } from './events.js';
 import * as fsm from './fsm.js';
 import * as amdInference from './inference.js';
-import { AMDTranscriber } from './stt.js';
+import { AMDTranscriber, type LateAMDFinal } from './stt.js';
 
 /** Allow transient delays before abandoning detection. */
 const DEFAULT_MAX_INFERENCE_TIMEOUTS = 3;
@@ -61,6 +67,11 @@ const MACHINE_SILENCE_THRESHOLD = 1_500;
 /** Stop optional menu work before it becomes stale. */
 const MENU_TIMEOUT = 5_000;
 const TRACK_PUBLICATION_TIMEOUT = 5_000;
+/**
+ * The AMD STT finalizes a sentence a little after the session commits it (about 0.1 to 0.2 s
+ * for cartesia/ink-whisper). Classify the turn once that final arrives, or after this wait.
+ */
+export const LATE_AMD_FINAL_WAIT = 300;
 const MACHINE_CATEGORIES: ReadonlySet<AMDCategory> = new Set([
   AMDCategory.MACHINE_SCREENING,
   AMDCategory.MACHINE_VM,
@@ -276,6 +287,8 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
   private completionReason = AMDReason.CANCELLED;
   private previousStage: AMDCategory | undefined;
   private hadMachineStage = false;
+  /** a likely human prediction, counted as uncertain */
+  private likelyHuman = false;
   /** @internal */
   _state = AMDCategory.UNCERTAIN;
   /** latest prediction, may be wait */
@@ -679,7 +692,7 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
       item.textContent &&
       item.createdAt >= this.startedAt!
     ) {
-      this.chatCtx.addAgentReply(item.createdAt);
+      this.chatCtx.addAgentReply(item.createdAt, item.textContent, { words: this.likelyHuman });
     }
   };
 
@@ -722,7 +735,10 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     this._heldReply?._cancel();
     this._heldTurnId = undefined;
     this._heldReply = undefined;
-    const turnTranscript = this.resources.stt.endTurn(transcript);
+    const turnTranscript = this.resources.stt.endTurn(transcript, {
+      lateWait: LATE_AMD_FINAL_WAIT,
+    });
+    const lateFinal = this.resources.stt.lateFinal;
     const now = performance.now();
     const speaking = this.session.userState === 'speaking';
     if (!speaking && !this.speechSinceCommit) {
@@ -748,44 +764,87 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     this.turns.set(turn.turnId, turn);
     this.voicemailTurnId = undefined;
     if (turnTranscript.transcript) {
-      this.chatCtx.addTranscript(turn);
-      this.cancelClassification();
-      this.pendingTurn = turn;
-      this.inferenceDeadline = now + this.options.inferenceTimeout;
-      const request = this.chatCtx.createRequest(turn, {
-        stage: this._state,
-        recommended: fsm.recommendedNext(this._state),
-        previousPrediction: this.latest,
-      });
-      if (this.menuTask !== undefined) {
-        this.menuTask.cancel();
-        this.menuTask = undefined;
-      }
-      this.classifierTask = this.spawn(
-        (signal) => this.classify(turn, request, signal),
-        'AMD.classify',
+      this.startClassification(turn, lateFinal);
+      this.addRealtimeTranscript(turn);
+    } else if (lateFinal !== undefined) {
+      // no text yet, without session STT: classify once the AMD final arrives
+      this.spawn(
+        (signal) => this.classifyWhenHeard(turn, lateFinal, signal),
+        'AMD.classifyWhenHeard',
       );
     } else if (this.pendingTurn === undefined) {
       this.recordPrediction(turn, AMDReason.REUSED);
     }
     this.predictionChanged.set();
     this._updateIdle();
+    return new AMDTurnHooks(this, turn.turnId);
+  }
+
+  private startClassification(turn: Turn, lateFinal?: LateAMDFinal): void {
+    this.chatCtx.addTranscript(turn);
+    this.cancelClassification();
+    this.pendingTurn = turn;
+    this.inferenceDeadline = performance.now() + this.options.inferenceTimeout;
+    const request = this.chatCtx.createRequest(turn, {
+      stage: this._state,
+      recommended: fsm.recommendedNext(this._state),
+      previousPrediction: this.latest,
+      likelyHuman: this.likelyHuman,
+    });
+    if (this.menuTask !== undefined) {
+      this.menuTask.cancel();
+      this.menuTask = undefined;
+    }
+    this.classifierTask = this.spawn(
+      (signal) => this.classify(turn, request, lateFinal, signal),
+      'AMD.classify',
+    );
+  }
+
+  private async classifyWhenHeard(
+    turn: Turn,
+    lateFinal: LateAMDFinal,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const late = await lateFinal.wait(signal);
+    if (signal.aborted || this.lifecycle !== AMDLifecycle.ACTIVE) {
+      return;
+    }
+    if (late !== undefined) {
+      turn.transcript = new AMDTranscript(turn.transcript.session, late);
+      if (turn.prediction === null) {
+        this.startClassification(turn);
+      } else {
+        // a pending result was reused for this turn; a prediction is never revised,
+        // so the next turn's request covers this text
+        this.chatCtx.addTranscript(turn);
+      }
+      this.addRealtimeTranscript(turn);
+    } else if (turn.prediction === null && this.pendingTurn === undefined) {
+      this.recordPrediction(turn, AMDReason.REUSED);
+    }
+    this.predictionChanged.set();
+    this._updateIdle();
+  }
+
+  /** A realtime model without user transcription gets the user turn from AMD. */
+  private addRealtimeTranscript(turn: Turn): void {
+    const activity = this.session._activity;
     if (
       activity !== undefined &&
       activity.llm instanceof RealtimeModel &&
       !activity.llm.capabilities.userTranscription &&
       activity.stt === undefined &&
-      turnTranscript.transcript
+      turn.transcript.transcript
     ) {
       const message = ChatMessage.create({
         role: 'user',
-        content: [turnTranscript.transcript],
+        content: [turn.transcript.transcript],
         transcriptConfidence: 0,
       });
       activity.agent._chatCtx.insert(message);
       this.session._conversationItemAdded(message);
     }
-    return new AMDTurnHooks(this, turn.turnId);
   }
 
   private onAgentStateChanged = (_event: AgentStateChangedEvent): void => {
@@ -902,7 +961,21 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     }
   }
 
-  private async classify(turn: Turn, request: AMDRequest, signal: AbortSignal): Promise<void> {
+  private async classify(
+    turn: Turn,
+    request: AMDRequest,
+    lateFinal: LateAMDFinal | undefined,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const late = lateFinal !== undefined ? await lateFinal.wait(signal) : undefined;
+    if (signal.aborted) {
+      return;
+    }
+    if (late !== undefined) {
+      turn.transcript = new AMDTranscript(turn.transcript.session, late);
+      updateTranscript(this.chatCtx, turn);
+      updateTranscript(request.chatCtx, turn);
+    }
     const started = performance.now();
     let response: amdInference.AMDResponse | undefined;
     try {
@@ -938,7 +1011,17 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
       return;
     }
 
-    const category = response.category;
+    let category = response.category;
+    if (
+      category === AMDCategory.HUMAN &&
+      fsm.LIKELY_HUMAN_STAGES.has(this._state) &&
+      !this.likelyHuman
+    ) {
+      this.likelyHuman = true;
+      category = AMDCategory.UNCERTAIN;
+    } else if (category !== AMDCategory.UNCERTAIN) {
+      this.likelyHuman = false;
+    }
     const result = fsm.transition(this._state, category);
     const stateChanged = result.nextState !== this._state;
     if (stateChanged) {
@@ -1086,6 +1169,10 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     }
     if (this.turns.get(turnId)!.prediction === null) {
       return { allow: false };
+    }
+    if (this.likelyHuman) {
+      // possibly a person: reply without the stage's instructions
+      return { allow: true };
     }
     if (category === AMDCategory.MACHINE_VM) {
       if (

@@ -51,6 +51,14 @@ export const RECOMMENDED: ReadonlyMap<AMDCategory, ReadonlySet<AMDCategory>> = n
   [AMDCategory.MACHINE_UNAVAILABLE, new Set()],
 ]);
 
+// After a menu or a screener, the next speaker can be a person or a voicemail greeting,
+// and a short greeting fits both. In these stages a first human prediction is likely
+// human: it counts as uncertain, and the next turn decides.
+export const LIKELY_HUMAN_STAGES: ReadonlySet<AMDCategory> = new Set([
+  AMDCategory.MACHINE_SCREENING,
+  AMDCategory.MACHINE_IVR,
+]);
+
 export enum Effect {
   EXTRACT_MENU = 'extract_menu',
   COMPLETE = 'complete',

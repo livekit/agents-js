@@ -54,6 +54,16 @@ export interface Turn {
   inferenceDuration: number | null;
 }
 
+/** Replace a turn's transcript message, as when its AMD final arrives late. */
+export function updateTranscript(chatCtx: ChatContext, turn: Turn): void {
+  for (const item of chatCtx.items) {
+    if (item.type === 'message' && item.extra.turn_id === turn.turnId) {
+      item.content = [turn.transcript.forClassifier()];
+      return;
+    }
+  }
+}
+
 /** Conversation snapshot and constraints for one classification. */
 export interface AMDRequest {
   readonly stage: AMDCategory;
@@ -62,6 +72,8 @@ export interface AMDRequest {
   readonly chatCtx: ChatContext;
   /** User speech in this turn, in milliseconds. */
   readonly speechDuration: number;
+  /** The previous prediction is likely human, counted as uncertain. */
+  readonly likelyHuman?: boolean;
 }
 
 /** A thin wrapper to track only user transcript and DTMF events. */
@@ -75,14 +87,22 @@ export class AMDChatContext extends ChatContext {
   }
 
   /**
-   * Mark that the agent spoke, never its words, at the time its speech started.
+   * Mark that the agent spoke, at the time its speech started.
    *
    * The session adds a reply when its speech ends, so a participant turn committed
    * during that speech can arrive first. Inserting by start time keeps speaking order.
+   * With `words`, keep what it said: after a likely human turn, a reply to the agent
+   * shows a person. The prompt still says the words are hidden; rewording it moved
+   * machine goodbyes between categories.
    */
-  addAgentReply(startedAt: number): void {
+  addAgentReply(
+    startedAt: number,
+    text: string,
+    { words = false }: { words?: boolean } = {},
+  ): void {
+    const content = words ? text : AGENT_REPLY;
     this.insert(
-      ChatMessage.create({ role: 'assistant', content: [AGENT_REPLY], createdAt: startedAt }),
+      ChatMessage.create({ role: 'assistant', content: [content], createdAt: startedAt }),
     );
   }
 
@@ -104,10 +124,12 @@ export class AMDChatContext extends ChatContext {
       stage,
       recommended,
       previousPrediction,
+      likelyHuman = false,
     }: {
       stage: AMDCategory;
       recommended: AMDCategory[];
       previousPrediction: AMDPredictionEvent | null;
+      likelyHuman?: boolean;
     },
   ): AMDRequest {
     return {
@@ -117,6 +139,7 @@ export class AMDChatContext extends ChatContext {
       // Python's truncate keeps a context within the limit as is, leading DTMF calls included
       chatCtx: (this.items.length > HISTORY_LIMIT ? this.truncate(HISTORY_LIMIT) : this).copy(),
       speechDuration: turn.speechDuration,
+      likelyHuman,
     };
   }
 }

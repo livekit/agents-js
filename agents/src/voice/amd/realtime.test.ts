@@ -671,6 +671,8 @@ describe('AMD with realtime models', () => {
     const { session, classifier, rt } = await running();
     for (const [category, instructions] of [
       [AMDCategory.MACHINE_SCREENING, DEFAULT_SCREENING_INSTRUCTIONS],
+      // a first human after screening is likely human, counted as uncertain, with no stage instructions
+      [AMDCategory.HUMAN, undefined],
       [AMDCategory.HUMAN, DEFAULT_HUMAN_INSTRUCTIONS],
     ] as const) {
       const { handle } = await reply(session, classifier, rt, category);
@@ -682,7 +684,7 @@ describe('AMD with realtime models', () => {
     expect(session.amd).toBeNull();
     expect(session._turnHooks).toBeUndefined();
     const handle = session.generateReply();
-    await eventually(() => rt.generateReplyCalls === 3);
+    await eventually(() => rt.generateReplyCalls === 4);
     expect(rt.replyInstructions[rt.replyInstructions.length - 1]).toBeUndefined();
     respond(rt);
     await done(handle);
@@ -1024,6 +1026,13 @@ describe('AMD with realtime models', () => {
       expect(outputs[0]!.replyRequired).toBe(publishFails);
       expect(session.agentState).toBe('listening');
 
+      const { handle: held } = await reply(session, classifier, rt, AMDCategory.HUMAN);
+      // a first human after a menu is likely human, counted as uncertain and keeps the keypad
+      expect(Object.keys(rt.replyTools[rt.replyTools.length - 1]!.functionTools)).toEqual([
+        'send_dtmf_events',
+      ]);
+      respond(rt);
+      await done(held);
       const { handle: human } = await reply(session, classifier, rt, AMDCategory.HUMAN);
       expect(rt.replyTools[rt.replyTools.length - 1]).toBeUndefined();
       respond(rt);

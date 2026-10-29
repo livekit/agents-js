@@ -137,8 +137,16 @@ not empty the turn. Without session STT, AMD uses its own STT alone. Interim res
 are ignored. The Agent's transcript, history, hooks, and EOT stay unchanged, and
 events and the Agent use the session transcript when it is not empty.
 
-At EOT, AMD commits each source's available transcript immediately, even if it is
-empty. Finals received after EOT accumulate for the next turn. The AMD STT
+At EOT, AMD commits each source's available transcript, even if it is empty.
+AMD's STT finalizes a sentence about 0.1 to 0.2 seconds after the session commits it.
+So a turn waits up to 300 ms for its AMD final when the AMD STT is active, the turn
+has no AMD text, and the turn has session text or there is no session STT. The first
+AMD final within the wait belongs to the turn. Later finals accumulate for the next
+turn. A turn with text starts its request at once, and the request waits for the AMD
+final before the model call; `inferenceTimeout` includes this wait. A turn without
+text starts its request when its AMD final arrives. If a pending request already gave
+that turn a reused prediction, AMD keeps it, and the next request covers the late text.
+The AMD STT
 must support streaming. It uses a single stream without flushing at EOT,
 matching session STT. AMD receives the unsuppressed participant audio during AEC
 warmup, while session STT receives silence. `AgentSession` disables AEC warmup by
@@ -215,15 +223,25 @@ history. The DTMF tool is available only to IVR replies and their tool follow-up
 
 ## Stage behavior
 
-| Prediction            | Reply behavior                                                                                          | AMD lifecycle                                    |
-| --------------------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
-| `uncertain`           | Before a machine stage, permit normal reply handling. In a machine stage, keep that stage's reply rule. | Keep the current stage.                          |
-| `wait`                | Skip the reply to an advertisement, promotion, or request to keep waiting.                              | Keep the current stage and pause the idle timer. |
-| `machine-screening`   | Answer the screener's latest question briefly.                                                          | Continue listening for the next turn.            |
-| `machine-vm`          | Deliver one complete, uninterrupted message.                                                            | Keep listening during and after playback.        |
-| `machine-ivr`         | Use the actual prompt to choose DTMF or a spoken response.                                              | Continue listening for the next turn.            |
-| `human`               | After a machine stage, supply temporary human instructions. Otherwise use normal Agent instructions.    | Complete AMD.                                    |
-| `machine-unavailable` | Cancel held replies; do not generate a machine reply.                                                   | Complete AMD.                                    |
+| Prediction            | Reply behavior                                                                                          | AMD lifecycle                                                           |
+| --------------------- | ------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| `uncertain`           | Before a machine stage, permit normal reply handling. In a machine stage, keep that stage's reply rule. | Keep the current stage.                                                 |
+| `wait`                | Skip the reply to an advertisement, promotion, or request to keep waiting.                              | Keep the current stage and pause the idle timer.                        |
+| `machine-screening`   | Answer the screener's latest question briefly.                                                          | Continue listening for the next turn.                                   |
+| `machine-vm`          | Deliver one complete, uninterrupted message.                                                            | Keep listening during and after playback.                               |
+| `machine-ivr`         | Use the actual prompt to choose DTMF or a spoken response.                                              | Continue listening for the next turn.                                   |
+| `human`               | After a machine stage, supply temporary human instructions. Otherwise use normal Agent instructions.    | Complete AMD. In screening or IVR, the first one counts as `uncertain`. |
+| `machine-unavailable` | Cancel held replies; do not generate a machine reply.                                                   | Complete AMD.                                                           |
+
+After a menu or a screener, a short greeting can come from a person or a voicemail
+greeting. So in `machine-screening` and `machine-ivr`, the first `human` prediction
+counts as `uncertain`: the event category is `uncertain`, the stage stays, and the
+uncertain count increments. The agent still replies, without stage instructions.
+The next request labels the previous prediction `uncertain (likely human)`, and the
+classifier history keeps the agent's words instead of `(the agent spoke)`. The next
+`human` prediction completes AMD. Only a valid prediction other than `uncertain`
+clears this mark. The cost is one turn of delay before AMD reports a person. In
+`machine-vm`, the first `human` prediction completes AMD.
 
 `uncertain` and `wait` are per-turn predictions, not stages. Each
 `amd_prediction` event carries both the `category` predicted for the turn and the
@@ -270,9 +288,10 @@ human prediction, so it does not classify later advertisements after that handof
 
 Stage instructions are temporary. They do not enter the Agent's saved history.
 Use `screeningInstructions`, `voicemailInstructions`, `ivrInstructions`, and
-`humanInstructions` to customize them. `humanInstructions` applies to the first
-human turn after a machine stage. It is skipped if no machine stage preceded the
-human, including when earlier predictions were only `uncertain`.
+`humanInstructions` to customize them. `humanInstructions` applies to the reply to
+the turn whose `human` prediction completes AMD after a machine stage. It is skipped
+if no machine stage preceded the human, including when earlier predictions were only
+`uncertain`.
 The customer hook runs before AMD adds its instructions.
 `StopResponse` and interruption remain `AgentSession` responsibilities.
 

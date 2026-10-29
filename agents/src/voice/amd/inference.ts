@@ -98,6 +98,9 @@ Use at most 20 options. Do not invent keys, spoken choices, or a menu tree.
 `;
 
 // Keep both schemas identical to pydantic's `model_json_schema()` for the Python models.
+/** The previous prediction's category when it is likely human, counted as uncertain. */
+export const LIKELY_HUMAN = 'uncertain (likely human)';
+
 const AMD_RESPONSE_SCHEMA = {
   $defs: {
     AMDCategory: {
@@ -252,7 +255,11 @@ export async function classify(
       stage: request.stage,
       previous_prediction:
         previous !== null
-          ? { category: previous.category, reason: previous.reason, turn_id: previous.turnId }
+          ? {
+              category: request.likelyHuman ? LIKELY_HUMAN : previous.category,
+              reason: previous.reason,
+              turn_id: previous.turnId,
+            }
           : null,
       recommended_next_categories: request.recommendedNextCategories,
       // seconds, as in Python
