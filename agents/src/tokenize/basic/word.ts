@@ -5,9 +5,18 @@ import { isPunctuation } from '../tokenizer.js';
 
 /**
  * Split the text into words.
+ *
+ * With `splitCharacter`, each Chinese, Japanese or Thai character is a word, since those
+ * scripts are written without spaces.
  */
-export const splitWords = (text: string, ignorePunctuation = true): [string, number, number][] => {
-  const re = /\S+/g;
+export const splitWords = (
+  text: string,
+  ignorePunctuation = true,
+  splitCharacter = false,
+): [string, number, number][] => {
+  const re = splitCharacter
+    ? /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\u0e00-\u0e7f]|[^\s\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\u0e00-\u0e7f]+/g
+    : /\S+/g;
   const words: [string, number, number][] = [];
 
   let arr;
