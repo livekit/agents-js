@@ -7,7 +7,7 @@ import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { type WebSocket, WebSocketServer } from 'ws';
 import { isDialogueModel } from './models.js';
-import { TTS } from './tts.js';
+import { SynthesizeStream, TTS } from './tts.js';
 
 async function startWebSocketServer() {
   const wss = new WebSocketServer({ host: '127.0.0.1', port: 0 });
@@ -668,4 +668,170 @@ describe('ElevenLabs text-to-dialogue', () => {
       await closeWebSocketServer(wss);
     }
   }, 15_000);
+});
+
+describe('ElevenLabs TTS connection retirement', () => {
+  async function startServer(
+    onMessage?: (ws: WebSocket, message: Record<string, unknown>) => void,
+  ) {
+    const { wss, baseURL } = await startWebSocketServer();
+    const sockets: WebSocket[] = [];
+    const closed: boolean[] = [];
+    wss.on('connection', (ws) => {
+      const index = sockets.push(ws) - 1;
+      ws.on('close', () => {
+        closed[index] = true;
+      });
+      ws.on('message', (raw) => onMessage?.(ws, JSON.parse(raw.toString())));
+    });
+    return { wss, baseURL, sockets, closed };
+  }
+
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 100));
+
+  it('closes an idle retired connection', async () => {
+    const { wss, baseURL, sockets, closed } = await startServer();
+    const elevenlabs = new TTS({ apiKey: 'test-key', baseURL });
+
+    try {
+      await elevenlabs.currentConnection();
+      await waitUntil(() => sockets.length === 1);
+      elevenlabs.retireConnection();
+      await waitUntil(() => closed[0] === true);
+    } finally {
+      await elevenlabs.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('dials a new connection after the cached one is retired', async () => {
+    const { wss, baseURL, sockets } = await startServer();
+    const elevenlabs = new TTS({ apiKey: 'test-key', baseURL });
+
+    try {
+      const first = await elevenlabs.currentConnection();
+      elevenlabs.retireConnection();
+      const second = await elevenlabs.currentConnection();
+      expect(second).not.toBe(first);
+      await waitUntil(() => sockets.length === 2);
+    } finally {
+      await elevenlabs.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('closes the previous connection when options change', async () => {
+    const { wss, baseURL, sockets, closed } = await startServer();
+    const elevenlabs = new TTS({ apiKey: 'test-key', baseURL });
+
+    try {
+      await elevenlabs.currentConnection();
+      await waitUntil(() => sockets.length === 1);
+      elevenlabs.updateOptions({ voiceId: 'another-voice' });
+      await waitUntil(() => closed[0] === true);
+    } finally {
+      await elevenlabs.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('closes a retired connection once the stream with a stalled context finishes', async () => {
+    const { wss, baseURL, sockets, closed } = await startServer();
+    const elevenlabs = new TTS({ apiKey: 'test-key', baseURL });
+    elevenlabs.on('error', () => {});
+    const messages: Record<string, unknown>[] = [];
+    wss.on('connection', (ws) => {
+      ws.on('message', (raw) => messages.push(JSON.parse(raw.toString())));
+    });
+    const stream = elevenlabs.stream({
+      connOptions: { maxRetry: 0, retryIntervalMs: 0, timeoutMs: 400 },
+    });
+    const output = (async () => {
+      for await (const _event of stream) {
+        // The server never answers.
+      }
+    })();
+
+    try {
+      stream.pushText('hello world.');
+      stream.endInput();
+      await waitUntil(() => messages.length >= 3);
+      elevenlabs.retireConnection();
+      await settle();
+      expect(closed[0]).toBeUndefined();
+
+      await waitFor(output, 3000);
+      await waitUntil(() => closed[0] === true);
+      expect(sockets).toHaveLength(1);
+    } finally {
+      stream.close();
+      await elevenlabs.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('still serves a stream that registered before the retire', async () => {
+    const audio = Buffer.alloc(4410).toString('base64');
+    const { wss, baseURL, sockets, closed } = await startServer((ws, message) => {
+      if (message.close_context) {
+        ws.send(JSON.stringify({ contextId: message.context_id, audio }));
+        ws.send(JSON.stringify({ contextId: message.context_id, isFinal: true }));
+      }
+    });
+    const elevenlabs = new TTS({ apiKey: 'test-key', baseURL });
+    const stream = elevenlabs.stream({
+      connOptions: { maxRetry: 0, retryIntervalMs: 0, timeoutMs: 1000 },
+    });
+    let frames = 0;
+    const output = (async () => {
+      for await (const event of stream) {
+        if (event !== SynthesizeStream.END_OF_STREAM) frames += 1;
+      }
+    })();
+
+    try {
+      stream.pushText('hello world.');
+      await waitUntil(() => sockets.length === 1);
+      await settle();
+      elevenlabs.retireConnection();
+      expect(closed[0]).toBeUndefined();
+
+      stream.endInput();
+      await waitFor(output);
+      expect(frames).toBeGreaterThan(0);
+      await waitUntil(() => closed[0] === true);
+    } finally {
+      stream.close();
+      await elevenlabs.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('closes a retired connection when its only stream ends without sending', async () => {
+    const { wss, baseURL, sockets, closed } = await startServer();
+    const elevenlabs = new TTS({ apiKey: 'test-key', baseURL });
+    const stream = elevenlabs.stream({
+      connOptions: { maxRetry: 0, retryIntervalMs: 0, timeoutMs: 1000 },
+    });
+    const output = (async () => {
+      for await (const _event of stream) {
+        // Nothing is synthesized.
+      }
+    })();
+
+    try {
+      await waitUntil(() => sockets.length === 1);
+      await settle();
+      elevenlabs.retireConnection();
+      await settle();
+      expect(closed[0]).toBeUndefined();
+
+      stream.close();
+      await waitFor(output);
+      await waitUntil(() => closed[0] === true);
+    } finally {
+      await elevenlabs.close();
+      await closeWebSocketServer(wss);
+    }
+  });
 });
