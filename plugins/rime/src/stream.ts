@@ -239,6 +239,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
                         phonemizeBetweenBrackets: this.opts.phonemizeBetweenBrackets,
                       }
                     : undefined,
+                customLexicon: this.opts.modelId === 'coda' ? this.opts.customLexicon : undefined,
               });
               await conn.sendV1(
                 contextId,
