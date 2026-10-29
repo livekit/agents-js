@@ -215,10 +215,7 @@ describe.sequential('event loop monitor', () => {
     monitor.start();
 
     blockLoopWithGarbage(200);
-    // Reports are held for an extra heartbeat so delayed GC entries can be included.
-    for (let attempt = 0; codeReports(reports).length === 0 && attempt < 20; attempt++) {
-      await new Promise((resolve) => setTimeout(resolve, TICK));
-    }
+    await settle();
     // the longest stall is the block above; a loaded host can add shorter ones around it
     const report = codeReports(reports).sort((a, b) => b.duration - a.duration)[0];
     expect(report).toBeDefined();
