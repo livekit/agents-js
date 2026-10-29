@@ -370,12 +370,17 @@ class ResponsesHttpLLMStream extends llm.LLMStream {
     event: OpenAI.Responses.ResponseCompletedEvent,
   ): llm.ChatChunk | undefined {
     if (event.response.usage) {
+      const inputTokenDetails = event.response.usage.input_tokens_details as {
+        cached_tokens: number;
+        cache_write_tokens?: number;
+      };
       return {
         id: this.responseId,
         usage: {
           completionTokens: event.response.usage.output_tokens,
           promptTokens: event.response.usage.input_tokens,
-          promptCachedTokens: event.response.usage.input_tokens_details.cached_tokens,
+          promptCachedTokens: inputTokenDetails.cached_tokens,
+          cacheCreationTokens: inputTokenDetails.cache_write_tokens ?? 0,
           totalTokens: event.response.usage.total_tokens,
           serviceTier: event.response.service_tier ?? undefined,
         },

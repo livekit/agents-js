@@ -535,12 +535,19 @@ export class LLMStream extends llm.LLMStream {
 
         if (chunk.usage) {
           const usage = chunk.usage;
+          const promptTokenDetails = usage.prompt_tokens_details as
+            | (NonNullable<typeof usage.prompt_tokens_details> & {
+                cache_write_tokens?: number;
+              })
+            | null
+            | undefined;
           this.queue.put({
             id: chunk.id,
             usage: {
               completionTokens: usage.completion_tokens || 0,
               promptTokens: usage.prompt_tokens || 0,
-              promptCachedTokens: usage.prompt_tokens_details?.cached_tokens || 0,
+              promptCachedTokens: promptTokenDetails?.cached_tokens || 0,
+              cacheCreationTokens: promptTokenDetails?.cache_write_tokens || 0,
               reasoningTokens: usage.completion_tokens_details?.reasoning_tokens || 0,
               totalTokens: usage.total_tokens || 0,
             },
