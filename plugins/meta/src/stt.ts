@@ -9,6 +9,7 @@ import {
   APITimeoutError,
   type AudioBuffer,
   DEFAULT_API_CONNECT_OPTIONS,
+  WebSocketMonitor,
   normalizeLanguage,
   stt,
   waitUntilAborted,
@@ -26,7 +27,6 @@ const SAMPLE_WIDTH_BYTES = 2;
 const CHUNK_DURATION_MS = 80;
 const CHUNK_BYTES = (SAMPLE_RATE * CHANNELS * SAMPLE_WIDTH_BYTES * CHUNK_DURATION_MS) / 1000;
 const MAX_MESSAGE_BYTES = 1024 * 1024;
-const WS_HEARTBEAT_MS = 30_000;
 export const MAX_COMPLETED_TURNS = 128;
 
 const SUPPORTED_LANGUAGES = [
@@ -348,31 +348,6 @@ function send(ws: WebSocket, data: string | Buffer): Promise<void> {
   });
 }
 
-function startWebSocketHeartbeat(ws: WebSocket): void {
-  let pongTimeout: NodeJS.Timeout | undefined;
-  const onPong = () => {
-    if (pongTimeout) clearTimeout(pongTimeout);
-    pongTimeout = undefined;
-  };
-  const heartbeat = setInterval(() => {
-    if (ws.readyState !== WebSocket.OPEN) return;
-    pongTimeout = setTimeout(() => ws.terminate(), WS_HEARTBEAT_MS / 2);
-    pongTimeout.unref();
-    try {
-      ws.ping();
-    } catch {
-      ws.terminate();
-    }
-  }, WS_HEARTBEAT_MS);
-  heartbeat.unref();
-  ws.on('pong', onPong);
-  ws.once('close', () => {
-    clearInterval(heartbeat);
-    if (pongTimeout) clearTimeout(pongTimeout);
-    ws.off('pong', onPong);
-  });
-}
-
 /** Streaming speech recognition with Meta Muse Voice Transcribe. */
 export class STT extends stt.STT {
   readonly #opts: ResolvedSTTOptions;
@@ -484,6 +459,7 @@ export class STT extends stt.STT {
 export class SpeechStream extends stt.SpeechStream {
   readonly #opts: ResolvedSTTOptions;
   readonly #timeoutMs: number;
+  readonly #livenessTimeoutMs: number;
   readonly #logger = log();
   readonly #turns = new Map<string, TurnState>();
   readonly #completedTurnIds = new Set<string>();
@@ -503,6 +479,8 @@ export class SpeechStream extends stt.SpeechStream {
     super(sttInstance, SAMPLE_RATE, connOptions);
     this.#opts = opts;
     this.#timeoutMs = connOptions?.timeoutMs ?? DEFAULT_API_CONNECT_OPTIONS.timeoutMs;
+    this.#livenessTimeoutMs =
+      connOptions?.livenessTimeoutMs ?? DEFAULT_API_CONNECT_OPTIONS.livenessTimeoutMs;
     SPEECH_STREAM_TEST_STATES.set(this, () => ({
       audioConsumed: this.#audioConsumed,
       turns: this.#turns,
@@ -589,7 +567,6 @@ export class SpeechStream extends stt.SpeechStream {
       const options = {
         handshakeTimeout: this.#timeoutMs,
         maxPayload: MAX_MESSAGE_BYTES,
-        heartbeat: WS_HEARTBEAT_MS,
       };
       ws = this.#opts.webSocketFactory(this.#opts.url, options);
     } catch (error) {
@@ -649,7 +626,7 @@ export class SpeechStream extends stt.SpeechStream {
         this.#timeoutMs,
         () => new APITimeoutError({ message: 'Meta Muse realtime ASR connection timed out' }),
       );
-      startWebSocketHeartbeat(ws);
+      new WebSocketMonitor(ws, { livenessTimeoutMs: this.#livenessTimeoutMs });
       await send(ws, JSON.stringify(this.#handshake()));
       const event = await withTimeout(
         inbox.next(signal),
@@ -824,6 +801,8 @@ export class SpeechStream extends stt.SpeechStream {
       else if (eventType === 'speechEnd') this.#speechEnd(message);
       else if (eventType === 'speechComplete') this.#speechComplete(message);
       else if (eventType === 'audioProgress') this.#audioProgress(message);
+      else continue;
+      this.markProviderProgress();
     }
   }
 

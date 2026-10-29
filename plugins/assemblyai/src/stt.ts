@@ -9,10 +9,11 @@ import {
   AudioByteStream,
   ChatMessage,
   type ConversationItemAddedEvent,
+  DEFAULT_API_CONNECT_OPTIONS,
   Future,
   Task,
+  WebSocketMonitor,
   createTimedString,
-  delay,
   getBaseLanguage,
   log,
   normalizeLanguage,
@@ -399,11 +400,14 @@ export class SpeechStream extends stt.SpeechStream {
   #configMessagePending = new Future();
   #sessionId: string | null = null;
   #expiresAt: number | null = null;
+  readonly #livenessTimeoutMs: number;
   label = 'assemblyai.SpeechStream';
 
   constructor(stt: STT, opts: STTOptions, connOptions?: APIConnectOptions) {
     super(stt, opts.sampleRate, connOptions);
     this.#opts = opts;
+    this.#livenessTimeoutMs =
+      connOptions?.livenessTimeoutMs ?? DEFAULT_API_CONNECT_OPTIONS.livenessTimeoutMs;
     this.closed = false;
   }
 
@@ -462,35 +466,10 @@ export class SpeechStream extends stt.SpeechStream {
     if (!this.#configMessagePending.done) this.#configMessagePending.resolve();
   }
 
-  // Deepgram-style reconnect loop around a single websocket lifetime.
   protected async run() {
-    const maxRetry = 32;
-    let retries = 0;
-
     while (!this.input.closed && !this.closed) {
-      try {
-        const ws = await this.#connectWS();
-        await this.#runWS(ws);
-        retries = 0;
-      } catch (e) {
-        if (!this.closed && !this.input.closed) {
-          if (retries >= maxRetry) {
-            throw e;
-          }
-
-          const retryDelaySeconds = Math.min(retries * 5, 10);
-          retries++;
-
-          this.#logger.warn(
-            `failed to connect to AssemblyAI, retrying in ${retryDelaySeconds} seconds: ${e} (${retries}/${maxRetry})`,
-          );
-          await delay(retryDelaySeconds * 1000);
-        } else {
-          this.#logger.warn(
-            `AssemblyAI disconnected, connection is closed: ${e} (inputClosed: ${this.input.closed}, isClosed: ${this.closed})`,
-          );
-        }
-      }
+      const ws = await this.#connectWS();
+      await this.#runWS(ws);
     }
 
     this.closed = true;
@@ -591,6 +570,7 @@ export class SpeechStream extends stt.SpeechStream {
   async #runWS(ws: WebSocket) {
     let closing = false;
     const sessionController = new AbortController();
+    new WebSocketMonitor(ws, { livenessTimeoutMs: this.#livenessTimeoutMs });
 
     // gets cancelled also when sendTask is complete
     const wsMonitor = Task.from(async (controller) => {
@@ -664,6 +644,9 @@ export class SpeechStream extends stt.SpeechStream {
           try {
             const json = JSON.parse(msg.toString()) as StreamEventMessage;
             this.#processStreamEvent(json);
+            if (json.type === 'SpeechStarted' || json.type === 'Turn') {
+              this.markProviderProgress();
+            }
             if (this.closed || closing) {
               resolve();
             }

@@ -58,13 +58,28 @@ export interface APIConnectOptions {
   retryIntervalMs: number;
   /** Timeout for connecting to the API in milliseconds. Default: 10000 */
   timeoutMs: number;
+  /**
+   * Maximum time without inbound transport activity before a connection fails.
+   * Incoming data, PING, and PONG frames reset the timer. Default: 6000
+   */
+  livenessTimeoutMs?: number;
 }
 
-export const DEFAULT_API_CONNECT_OPTIONS: APIConnectOptions = {
+export const DEFAULT_API_CONNECT_OPTIONS: APIConnectOptions & { livenessTimeoutMs: number } = {
   maxRetry: 3,
   retryIntervalMs: 2000,
   timeoutMs: 10000,
+  livenessTimeoutMs: 6000,
 };
+
+/** @internal */
+export function _validateAPIConnectOptions(connOptions: APIConnectOptions): void {
+  const livenessTimeoutMs =
+    connOptions.livenessTimeoutMs ?? DEFAULT_API_CONNECT_OPTIONS.livenessTimeoutMs;
+  if (!Number.isFinite(livenessTimeoutMs) || livenessTimeoutMs <= 0) {
+    throw new RangeError('livenessTimeoutMs must be a finite number greater than 0');
+  }
+}
 
 /** Matches agents (Python), whose _interval_for_retry returns 0.1 seconds here. */
 const FIRST_RETRY_INTERVAL_MS = 100;

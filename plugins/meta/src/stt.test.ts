@@ -4,7 +4,7 @@
 import { type APIError, APIStatusError, stt } from '@livekit/agents';
 import { AudioFrame } from '@livekit/rtc-node';
 import { EventEmitter } from 'node:events';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ClientOptions, WebSocket } from 'ws';
 import {
   DEFAULT_MODEL,
@@ -227,6 +227,7 @@ function summaries(events: stt.SpeechEvent[]) {
 const originalModelKey = process.env.MODEL_API_KEY;
 const originalMetaKey = process.env.META_API_KEY;
 afterEach(() => {
+  vi.restoreAllMocks();
   if (originalModelKey === undefined) delete process.env.MODEL_API_KEY;
   else process.env.MODEL_API_KEY = originalModelKey;
   if (originalMetaKey === undefined) delete process.env.META_API_KEY;
@@ -352,7 +353,18 @@ describe('Meta Muse STT', () => {
     });
     expect(factory.calls[0]!.url).toBe(DEFAULT_URL);
     expect(JSON.stringify(factory.calls[0]!.options)).not.toContain('explicit-secret');
-    expect(factory.calls[0]!.options).toHaveProperty('heartbeat', 30_000);
+    expect(factory.calls[0]!.options).not.toHaveProperty('heartbeat');
+  });
+
+  it('marks only recognized stream events as provider progress', async () => {
+    const markProviderProgress = vi.spyOn(
+      stt.SpeechStream.prototype as unknown as { markProviderProgress(): void },
+      'markProviderProgress',
+    );
+    const ws = websocket([{ type: 'unknown' }, { type: 'audioProgress', audioProcessedMs: 1 }]);
+    await collect(new STT({ apiKey: 'test-key', webSocketFactory: new FakeFactory([ws]).create }));
+
+    expect(markProviderProgress).toHaveBeenCalledTimes(1);
   });
 
   it('packetizes PCM16 into paced 80 ms chunks and preserves the tail', async () => {

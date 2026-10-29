@@ -11,7 +11,12 @@ import type { LanguageCode } from '../language.js';
 import { log } from '../log.js';
 import type { STTMetrics } from '../metrics/base.js';
 import { DeferredReadableStream } from '../stream/deferred_stream.js';
-import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS, intervalForRetry } from '../types.js';
+import {
+  type APIConnectOptions,
+  DEFAULT_API_CONNECT_OPTIONS,
+  _validateAPIConnectOptions,
+  intervalForRetry,
+} from '../types.js';
 import type { AudioBuffer } from '../utils.js';
 import { AsyncIterableQueue, delay, startSoon, toError } from '../utils.js';
 import type { ConversationItemAddedEvent } from '../voice/events.js';
@@ -333,6 +338,8 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
   private _connOptions: APIConnectOptions;
   private _startTimeOffset: number = 0;
   private _numRetries: number = 0;
+  /** @internal Propagates provider progress through stream adapters. */
+  _onProviderProgress?: () => void;
 
   protected abortController = new AbortController();
 
@@ -341,6 +348,7 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
     sampleRate?: number,
     connectionOptions: APIConnectOptions = DEFAULT_API_CONNECT_OPTIONS,
   ) {
+    _validateAPIConnectOptions(connectionOptions);
     this.#stt = stt;
     this._connOptions = connectionOptions;
     this.deferredInputStream = new DeferredReadableStream<AudioFrame>();
@@ -377,11 +385,6 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
    */
   private async mainTask(): Promise<void> {
     let lastStartTime = Date.now();
-    // `_numRetries` counts consecutive failures, not failures over the lifetime of the stream:
-    // it is reset below once an attempt outlived the connect timeout (it had connected), and by
-    // monitorMetrics() on every FINAL_TRANSCRIPT. Providers that recycle their socket on a fixed
-    // interval (Gemini Live's 10-minute cap, Cartesia's 3-minute idle timeout) would otherwise
-    // exhaust it and permanently stop recognizing on long sessions.
     while (this._numRetries <= this._connOptions.maxRetry) {
       try {
         // Keep provider-relative transcript timestamps linear across reconnect attempts.
@@ -395,10 +398,6 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
         // in Node's EventEmitter.
         if (this.abortController.signal.aborted) {
           return;
-        }
-
-        if (Date.now() - lastStartTime > this._connOptions.timeoutMs) {
-          this._numRetries = 0;
         }
 
         if (error instanceof APIError) {
@@ -445,6 +444,12 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
     });
   }
 
+  /** Reset recovery retries after a valid provider processing event. */
+  protected markProviderProgress(): void {
+    this._numRetries = 0;
+    this._onProviderProgress?.();
+  }
+
   protected async pumpInput() {
     // TODO(AJS-35): Implement STT with webstreams API
     const inputStream = this.deferredInputStream.stream;
@@ -479,8 +484,8 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
         }
       }
       if (event.type === SpeechEventType.FINAL_TRANSCRIPT) {
-        // reset the retry count after a successful recognition
-        this._numRetries = 0;
+        // Preserve recovery resets for custom providers that emit only transcripts.
+        this.markProviderProgress();
       }
       if (event.type !== SpeechEventType.RECOGNITION_USAGE) continue;
       const metrics: STTMetrics = {

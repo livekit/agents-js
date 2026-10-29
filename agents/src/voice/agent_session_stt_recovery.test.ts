@@ -14,6 +14,7 @@ import {
   runWithJobContextAsync,
 } from '../job.js';
 import { log } from '../log.js';
+import { FallbackAdapter } from '../stt/fallback_adapter.js';
 import { STT, type SpeechEvent, SpeechEventType, SpeechStream } from '../stt/stt.js';
 import type { APIConnectOptions } from '../types.js';
 import { Future } from '../utils.js';
@@ -44,6 +45,14 @@ class ControlledStream extends SpeechStream {
   label = 'controlled-stream';
   started = new Future<void>();
   failure = new Future<void>();
+
+  constructor(
+    stt: STT,
+    sampleRate?: number,
+    readonly connOptions?: APIConnectOptions,
+  ) {
+    super(stt, sampleRate, connOptions);
+  }
 
   emitTranscript() {
     this.queue.put({
@@ -84,6 +93,38 @@ async function waitForStream(stt: ControlledSTT, index: number) {
 afterEach(() => vi.restoreAllMocks());
 
 describe('AgentSession STT recovery', () => {
+  it.each([
+    { sttOnAgent: false, useFallback: false },
+    { sttOnAgent: false, useFallback: true },
+    { sttOnAgent: true, useFallback: false },
+    { sttOnAgent: true, useFallback: true },
+  ])(
+    'passes liveness timeout to STT (sttOnAgent: $sttOnAgent, useFallback: $useFallback)',
+    async ({ sttOnAgent, useFallback }) => {
+      const provider = new ControlledSTT();
+      const model = useFallback ? new FallbackAdapter({ sttInstances: [provider] }) : provider;
+      const session = new AgentSession({
+        ...(sttOnAgent ? {} : { stt: model }),
+        vad: null,
+        connOptions: { sttConnOptions: { livenessTimeoutMs: 3000 } },
+        turnHandling: { turnDetection: 'manual' },
+      });
+      const agent = new Agent({
+        instructions: 'test',
+        ...(sttOnAgent ? { stt: model } : {}),
+      });
+
+      try {
+        await session.start({ agent });
+        const stream = await waitForStream(provider, 0);
+        expect(stream.connOptions?.livenessTimeoutMs).toBe(3000);
+      } finally {
+        await session.close();
+        await model.close();
+      }
+    },
+  );
+
   it('closes on a startup STT failure while room connection is still pending', async () => {
     const room = Object.assign(new EventEmitter(), {
       name: 'test-room',

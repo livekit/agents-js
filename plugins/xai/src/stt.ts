@@ -5,12 +5,13 @@ import type { LanguageCode } from '@livekit/agents';
 import {
   type APIConnectOptions,
   APIConnectionError,
-  APIError,
   APIStatusError,
   type AudioBuffer,
   AudioByteStream,
+  DEFAULT_API_CONNECT_OPTIONS,
   Future,
   Task,
+  WebSocketMonitor,
   createTimedString,
   log,
   mergeFrames,
@@ -182,12 +183,15 @@ export class SpeechStream extends stt.SpeechStream {
   #requestId: string;
   #audioDurationCollector: PeriodicCollector<number>;
   #serverReady = new Future();
+  readonly #livenessTimeoutMs: number;
   label = 'xai.SpeechStream';
 
   constructor(stt: STT, opts: STTOptions, apiKey: string, connOptions?: APIConnectOptions) {
     super(stt, opts.sampleRate, connOptions);
     this.#opts = { ...opts };
     this.#apiKey = apiKey;
+    this.#livenessTimeoutMs =
+      connOptions?.livenessTimeoutMs ?? DEFAULT_API_CONNECT_OPTIONS.livenessTimeoutMs;
     this.closed = false;
     this.#requestId = randomUUID();
     this.#audioDurationCollector = new PeriodicCollector(
@@ -202,8 +206,6 @@ export class SpeechStream extends stt.SpeechStream {
   }
 
   protected async run() {
-    const maxRetry = 32;
-    let retries = 0;
     let ws: WebSocket;
 
     while (!this.input.closed && !this.closed) {
@@ -245,29 +247,7 @@ export class SpeechStream extends stt.SpeechStream {
         });
       }
 
-      try {
-        await this.#runWS(ws);
-      } catch (e) {
-        if (!this.closed && !this.input.closed) {
-          if ((e instanceof APIError && !e.retryable) || retries >= maxRetry) {
-            throw e;
-          }
-
-          const delay = Math.min(retries * 5, 10);
-          retries++;
-
-          this.#logger.warn(
-            { error: e, retryDelayMs: delay * 1000, attempt: retries, maxRetry },
-            'Failed to connect to xAI STT, retrying',
-          );
-          await new Promise((resolve) => setTimeout(resolve, delay * 1000));
-        } else {
-          this.#logger.warn(
-            { error: e, inputClosed: this.input.closed, isClosed: this.closed },
-            'xAI STT disconnected, connection is closed',
-          );
-        }
-      }
+      await this.#runWS(ws);
     }
 
     this.closed = true;
@@ -279,6 +259,7 @@ export class SpeechStream extends stt.SpeechStream {
     let closing = false;
     const attemptController = new AbortController();
     const attemptSignal = AbortSignal.any([this.abortSignal, attemptController.signal]);
+    new WebSocketMonitor(ws, { livenessTimeoutMs: this.#livenessTimeoutMs });
 
     const wsMonitor = Task.from(async (controller) => {
       const closed = new Promise<void>((_, reject) => {
@@ -346,6 +327,11 @@ export class SpeechStream extends stt.SpeechStream {
           try {
             const json = JSON.parse(msg.toString());
             this.#processStreamEvent(json);
+            if (
+              ['transcript.created', 'transcript.partial', 'transcript.done'].includes(json.type)
+            ) {
+              this.markProviderProgress();
+            }
 
             if (this.closed || closing) {
               resolve();

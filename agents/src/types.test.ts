@@ -2,7 +2,22 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_API_CONNECT_OPTIONS, intervalForRetry } from './types.js';
+import {
+  DEFAULT_API_CONNECT_OPTIONS,
+  _validateAPIConnectOptions,
+  intervalForRetry,
+} from './types.js';
+
+describe('_validateAPIConnectOptions', () => {
+  it.each([0, -1, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, Number.NaN])(
+    'rejects invalid liveness timeout %s',
+    (livenessTimeoutMs) => {
+      expect(() =>
+        _validateAPIConnectOptions({ ...DEFAULT_API_CONNECT_OPTIONS, livenessTimeoutMs }),
+      ).toThrow(/livenessTimeoutMs/);
+    },
+  );
+});
 
 describe('intervalForRetry', () => {
   const connOptions = { ...DEFAULT_API_CONNECT_OPTIONS, retryIntervalMs: 300 };

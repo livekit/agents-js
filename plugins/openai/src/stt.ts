@@ -12,6 +12,7 @@ import {
   type VAD,
   VADEventType,
   type VADStream,
+  WebSocketMonitor,
   getBaseLanguage,
   inference,
   mergeFrames,
@@ -692,6 +693,7 @@ export class SpeechStream extends stt.SpeechStream {
   #ws?: WebSocket;
   #connectionController?: AbortController;
   #reconnectRequested = false;
+  readonly #livenessTimeoutMs: number;
 
   constructor(
     stt: STT,
@@ -702,6 +704,8 @@ export class SpeechStream extends stt.SpeechStream {
     super(stt, REALTIME_SAMPLE_RATE, connOptions);
     this.#options = options;
     this.#onClose = onClose;
+    this.#livenessTimeoutMs =
+      connOptions?.livenessTimeoutMs ?? DEFAULT_API_CONNECT_OPTIONS.livenessTimeoutMs;
   }
 
   get languages(): string[] {
@@ -808,6 +812,7 @@ export class SpeechStream extends stt.SpeechStream {
     if (this.abortSignal.aborted) abort();
     try {
       await connected;
+      new WebSocketMonitor(ws, { livenessTimeoutMs: this.#livenessTimeoutMs });
       return ws;
     } finally {
       this.abortSignal.removeEventListener('abort', abort);
@@ -904,6 +909,16 @@ export class SpeechStream extends stt.SpeechStream {
   async #forwardEvents(ws: WebSocket, hasClientVad: boolean, signal: AbortSignal): Promise<void> {
     for await (const data of this.#messages(ws, signal)) {
       const event = parseRealtimeTranscriptionServerEvent(data);
+      const eventType = event.type === 'unknown' ? event.event.type : event.type;
+      if (
+        eventType === 'input_audio_buffer.speech_started' ||
+        eventType === 'input_audio_buffer.speech_stopped' ||
+        eventType === 'input_audio_buffer.committed' ||
+        eventType === 'conversation.item.input_audio_transcription.delta' ||
+        eventType === 'conversation.item.input_audio_transcription.completed'
+      ) {
+        this.markProviderProgress();
+      }
       switch (event.type) {
         case 'input_audio_buffer.speech_started': {
           const itemId = event.item_id ?? '';

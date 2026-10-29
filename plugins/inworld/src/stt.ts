@@ -4,12 +4,13 @@
 import {
   type APIConnectOptions,
   APIConnectionError,
-  APIError,
   APIStatusError,
   type AudioBuffer,
   AudioByteStream,
+  DEFAULT_API_CONNECT_OPTIONS,
   Future,
   Task,
+  WebSocketMonitor,
   createTimedString,
   log,
   mergeFrames,
@@ -240,11 +241,14 @@ export class SpeechStream extends stt.SpeechStream {
   #requestId = shortuuid('stt_');
   #audioDuration = 0;
   #lastAudioReport = 0;
+  readonly #livenessTimeoutMs: number;
   label = 'inworld.SpeechStream';
 
   constructor(sttInstance: STT, opts: STTOptions, connOptions?: APIConnectOptions) {
     super(sttInstance, opts.sampleRate, connOptions);
     this.#opts = opts;
+    this.#livenessTimeoutMs =
+      connOptions?.livenessTimeoutMs ?? DEFAULT_API_CONNECT_OPTIONS.livenessTimeoutMs;
   }
 
   updateOptions(opts: Partial<STTOptions>): void {
@@ -253,40 +257,14 @@ export class SpeechStream extends stt.SpeechStream {
   }
 
   protected async run(): Promise<void> {
-    const maxRetry = 32;
-    let retries = 0;
-
     while (!this.input.closed && !this.closed) {
       const wsUrl = new URL(WS_ENDPOINT, this.#opts.wsURL);
       const ws = new WebSocket(wsUrl.toString(), {
         headers: { Authorization: `Basic ${this.#opts.apiKey}` },
       });
 
-      try {
-        await waitForWebSocketOpen(ws, 'Inworld');
-
-        await this.#runWS(ws);
-        retries = 0;
-      } catch (e) {
-        if (!this.closed && !this.input.closed) {
-          if ((e instanceof APIError && !e.retryable) || retries >= maxRetry) {
-            throw e;
-          }
-
-          const delay = Math.min(retries * 5, 10);
-          retries++;
-          this.#logger.warn(
-            { error: e, retryDelayMs: delay * 1000, attempt: retries, maxRetry },
-            'Failed to connect to Inworld STT, retrying',
-          );
-          await new Promise((resolve) => setTimeout(resolve, delay * 1000));
-        } else {
-          this.#logger.warn(
-            { error: e, inputClosed: this.input.closed, isClosed: this.closed },
-            'Inworld STT disconnected, connection is closed',
-          );
-        }
-      }
+      await waitForWebSocketOpen(ws, 'Inworld');
+      await this.#runWS(ws);
     }
 
     this.closed = true;
@@ -297,6 +275,7 @@ export class SpeechStream extends stt.SpeechStream {
     let closing = false;
     const attemptController = new AbortController();
     const attemptSignal = AbortSignal.any([this.abortSignal, attemptController.signal]);
+    new WebSocketMonitor(ws, { livenessTimeoutMs: this.#livenessTimeoutMs });
 
     ws.send(
       JSON.stringify({
@@ -418,6 +397,10 @@ export class SpeechStream extends stt.SpeechStream {
 
             const result = json.result;
             if (!result) return;
+
+            if (Object.hasOwn(result, 'speechStarted') || Object.hasOwn(result, 'transcription')) {
+              this.markProviderProgress();
+            }
 
             if (result.speechStarted !== undefined) {
               if (!this.#speaking) {

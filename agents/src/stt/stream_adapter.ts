@@ -119,6 +119,7 @@ export class StreamAdapterWrapper extends SpeechStream {
 
             try {
               const event = await this.#stt.recognize(ev.frames, this.abortSignal);
+              this.markProviderProgress();
               if (!event.alternatives?.[0]?.text) {
                 continue;
               }

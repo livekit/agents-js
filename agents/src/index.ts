@@ -36,6 +36,7 @@ export * from './transcription.js';
 export * as tts from './tts/index.js';
 export * from './types.js';
 export * from './utils.js';
+export * from './websocket_monitor.js';
 export * from './vad.js';
 export * from './version.js';
 export * from './voice/index.js';

@@ -7,6 +7,7 @@ import {
   APIStatusError,
   AudioByteStream,
   DEFAULT_API_CONNECT_OPTIONS,
+  WebSocketMonitor,
   asError,
   asLanguageCode,
   calculateAudioDurationSeconds,
@@ -278,11 +279,14 @@ export class SpeechStream extends stt.SpeechStream {
   #speechDuration = 0;
   #closingWs = false;
   #connectTimeout: number;
+  readonly #livenessTimeoutMs: number;
 
   constructor(sttInstance: STT, opts: STTOptions, connOptions?: APIConnectOptions) {
     super(sttInstance, opts.sampleRate, connOptions);
     this.#opts = { ...opts };
     this.#connectTimeout = connOptions?.timeoutMs ?? DEFAULT_API_CONNECT_OPTIONS.timeoutMs;
+    this.#livenessTimeoutMs =
+      connOptions?.livenessTimeoutMs ?? DEFAULT_API_CONNECT_OPTIONS.livenessTimeoutMs;
   }
 
   override get label(): string {
@@ -374,6 +378,7 @@ export class SpeechStream extends stt.SpeechStream {
         ws.once('unexpected-response', onUnexpectedResponse);
         ws.once('error', onError);
       });
+      new WebSocketMonitor(ws, { livenessTimeoutMs: this.#livenessTimeoutMs });
 
       // If one task fails, abort its peer and close the WS so the peer can
       // exit before we re-throw. Otherwise a dangling task would survive
@@ -586,6 +591,10 @@ export class SpeechStream extends stt.SpeechStream {
   #processStreamEvent(data: Exclude<STTEventMessage, { type: 'error' }>) {
     if (data.request_id) {
       this.#requestId = data.request_id;
+    }
+
+    if (data.type !== 'connected') {
+      this.markProviderProgress();
     }
 
     switch (data.type) {

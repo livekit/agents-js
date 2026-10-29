@@ -92,12 +92,12 @@ describe('AssemblyAI STT recovery', () => {
     expect(stream.terminalError).toBeInstanceOf(APIConnectionError);
   });
 
-  it('resumes session transcripts after the plugin exhausts its retries', async () => {
+  it('resumes session transcripts after the framework replaces a failed stream', async () => {
     const { server, baseUrl } = await startServer();
     let connections = 0;
     server.on('connection', (socket) => {
       connections++;
-      if (connections <= 33) {
+      if (connections === 1) {
         socket.close(1011);
       } else {
         socket.once('pong', () => {
