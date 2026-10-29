@@ -521,4 +521,73 @@ describe('Realtime tool output commit', () => {
       });
     }
   });
+  it('does not let the outgoing agent call tools when it replies to a stale handoff', async () => {
+    const model = new FakeRealtimeModel(false);
+    model.activeSession.toolName = 'to_c';
+    const session = new AgentSession({
+      llm: model,
+      vad: null,
+      turnHandling: { turnDetection: null },
+    });
+
+    const toolStarted = new Future<void>();
+    const releaseTool = new Future<void>();
+    const exitStarted = new Future<void>();
+    const releaseExit = new Future<void>();
+    let lookups = 0;
+    class Outgoing extends Agent {
+      async onExit() {
+        exitStarted.resolve();
+        await releaseExit.await; // a slow onExit keeps the activity in its handoff window
+      }
+    }
+    const agent = new Outgoing({
+      instructions: 'test',
+      tools: {
+        to_c: tool({
+          description: 'Transfer the user to C.',
+          execute: async () => {
+            toolStarted.resolve();
+            await releaseTool.await;
+            return handoff({
+              agent: new Agent({ instructions: 'C' }),
+              returns: 'Transfer complete.',
+            });
+          },
+        }),
+        lookup: tool({
+          description: 'Look something up.',
+          execute: async () => {
+            lookups += 1;
+            return 'nothing found';
+          },
+        }),
+      },
+    });
+    const b = new Agent({ instructions: 'B' });
+
+    await session.start({ agent });
+    try {
+      session.generateReply();
+      await toolStarted.await;
+      model.activeSession.toolName = 'lookup'; // later generations call an ordinary tool
+      session.updateAgent(b); // a handoff away from the agent starts while its tool runs
+      await exitStarted.await;
+      releaseTool.resolve(); // the stale handoff to C returns while the agent is handing off
+      await vi.waitFor(() =>
+        expect(model.activeSession.generatedToolChoices.length).toBeGreaterThan(1),
+      );
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      releaseExit.resolve();
+      await vi.waitFor(() => expect(session.currentAgent).toBe(b));
+    } finally {
+      releaseTool.resolve();
+      releaseExit.resolve();
+      await session.close();
+    }
+
+    // the reply to the stale handoff has no tools
+    expect(model.activeSession.generatedToolChoices.slice(1)).toEqual(['none']);
+    expect(lookups).toBe(0);
+  });
 });
