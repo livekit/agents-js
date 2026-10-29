@@ -89,27 +89,26 @@ class RealtimeModel_4 extends OpenAIRealtimeModel {
 // Warning: (ae-missing-release-tag) "RealtimeModelOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-interface RealtimeModelOptions extends Omit<OpenAIRealtimeModelOptions, 'model'> {
-    // (undocumented)
-    apiKey?: string;
-    // (undocumented)
+type RealtimeModelOptions = Omit<NonNullable<OpenAIRealtimeModelOptions>, 'model'> & {
     model?: GrokRealtimeModels | string;
-    // (undocumented)
     voice?: GrokVoices_2 | string;
-}
+    apiKey?: string;
+};
 
 // Warning: (ae-forgotten-export) The symbol "OpenAIRealtimeSession" needs to be exported by the entry point index.d.ts
 // Warning: (ae-missing-release-tag) "RealtimeSession" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
 class RealtimeSession_4 extends OpenAIRealtimeSession {
+    constructor(realtimeModel: RealtimeModel_4);
     // (undocumented)
     close(): Promise<void>;
-    // Warning: (ae-forgotten-export) The symbol "llm_3" needs to be exported by the entry point index.d.ts
+    // (undocumented)
+    protected createChatCtxUpdateEvents(chatCtx: llm_3.ChatContext, addMockAudio?: boolean): Promise<(realtime_2.ConversationItemCreateEvent | realtime_2.ConversationItemDeleteEvent)[]>;
     // Warning: (ae-forgotten-export) The symbol "realtime_2" needs to be exported by the entry point index.d.ts
     //
     // (undocumented)
-    protected createChatCtxUpdateEvents(chatCtx: llm_3.ChatContext, addMockAudio?: boolean): Promise<(realtime_2.ConversationItemCreateEvent | realtime_2.ConversationItemDeleteEvent)[]>;
+    protected createSessionUpdateEvent(): realtime_2.SessionUpdateEvent;
     // (undocumented)
     protected handleConversationItemCreated(event: realtime_2.ConversationItemCreatedEvent): void;
     // (undocumented)
@@ -126,6 +125,10 @@ class RealtimeSession_4 extends OpenAIRealtimeSession {
     interrupt(): Promise<void>;
     // (undocumented)
     protected resetInputTurnState(): void;
+    // Warning: (ae-forgotten-export) The symbol "llm_3" needs to be exported by the entry point index.d.ts
+    say(text: string | ReadableStream_2<string>, options?: {
+        signal?: AbortSignal;
+    }): Promise<llm_3.GenerationCreatedEvent>;
 }
 
 // Warning: (ae-forgotten-export) The symbol "stt_2" needs to be exported by the entry point index.d.ts

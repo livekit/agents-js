@@ -98,7 +98,8 @@ export function isFatalError(error: unknown): boolean {
   return typeof errorCode === 'string' && FATAL_ERROR_CODES.has(errorCode);
 }
 
-class CreateResponseHandle {
+/** Pending `response.created` waiter, keyed by client event id on the session. */
+export class CreateResponseHandle {
   instructions?: string;
   doneFut: Future<llm.GenerationCreatedEvent>;
   timeout?: ReturnType<typeof setTimeout>;
@@ -464,17 +465,20 @@ export class RealtimeSession extends llm.RealtimeSession {
   // Ref: python livekit-plugins/livekit-plugins-openai/livekit/plugins/openai/realtime/realtime_model.py - 795-797 lines
   // per-session copy of options so updateOptions can diff against the session's
   // own state instead of the shared model-level state.
-  private _options: RealtimeOptions;
+  // protected (not private): the xAI plugin subclasses RealtimeSession and needs these
+  protected _options: RealtimeOptions;
   protected currentGeneration?: ResponseGeneration | DiscardedGeneration;
-  private responseCreatedFutures: { [id: string]: CreateResponseHandle } = {};
-  private discardedEventIds = new Set<string>();
+  protected responseCreatedFutures: { [id: string]: CreateResponseHandle } = {};
+  protected discardedEventIds = new Set<string>();
 
   private textModeRecoveryRetries: number = 0;
 
   private itemCreateFutures: { [id: string]: Future } = {};
   private itemDeleteFutures: { [id: string]: Future } = {};
   private chatCtxEventFutures: { [id: string]: Future } = {};
-  private sentChatCtxEvents: { [id: string]: api_proto.ClientEvent } = {};
+  private sentChatCtxEvents: {
+    [id: string]: api_proto.ConversationItemCreateEvent | api_proto.ConversationItemDeleteEvent;
+  } = {};
   private replayItemCreateEventIds: { [id: string]: string[] } = {};
   private replayItemCreateEventItems: { [eventId: string]: string } = {};
 
@@ -1058,10 +1062,13 @@ export class RealtimeSession extends llm.RealtimeSession {
     if (untypedEvent.audio && typeof untypedEvent.audio === 'string') {
       return { ...untypedEvent, audio: '...' };
     }
+    // widened: the GA audio delta name is dispatched by runWs but is not yet in the
+    // api_proto event union, and its base64 payload must be truncated the same way
+    const eventType: string = event.type;
     if (
       untypedEvent.delta &&
       typeof untypedEvent.delta === 'string' &&
-      event.type === 'response.audio.delta'
+      (eventType === 'response.output_audio.delta' || eventType === 'response.audio.delta')
     ) {
       return { ...untypedEvent, delta: '...' };
     }
@@ -1390,7 +1397,10 @@ export class RealtimeSession extends llm.RealtimeSession {
           }
           wsConn.send(JSON.stringify(event));
           if (event.event_id && this.chatCtxEventFutures[event.event_id]) {
-            this.sentChatCtxEvents[event.event_id] = event;
+            // only chat context item create/delete events are tracked by chatCtxEventFutures
+            this.sentChatCtxEvents[event.event_id] = event as
+              | api_proto.ConversationItemCreateEvent
+              | api_proto.ConversationItemDeleteEvent;
           }
         } catch (error) {
           break;
@@ -1410,6 +1420,11 @@ export class RealtimeSession extends llm.RealtimeSession {
     };
 
     wsConn.onmessage = (message: MessageEvent) => {
+      // python raises out of _recv_task on a terminal error, so nothing after it is
+      // dispatched; drop late frames rather than building generations on a session that is
+      // already tearing down
+      if (wsCloseFuture.done) return;
+
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const event: any = JSON.parse(message.data as string);
 
@@ -1500,15 +1515,21 @@ export class RealtimeSession extends llm.RealtimeSession {
             break;
         }
       } catch (error) {
+        // terminal server errors (e.g. insufficient_quota) must break the recv loop so the
+        // main task stops reconnecting; every other handler failure is logged and skipped.
+        // onmessage is an unguarded callback, so route it through the close future rather
+        // than letting it escape as an uncaught exception
         if (isAPIError(error) && !error.retryable) {
-          wsCloseFuture.resolve(error);
+          if (!wsCloseFuture.done) wsCloseFuture.resolve(error);
           wsConn.close();
           return;
         }
+        // loggableEvent, not the raw event: audio deltas carry a large base64 payload that
+        // would otherwise be logged in full for every frame of a failing response
         this.#logger.error(
           {
             error,
-            'lk.pii.event': event,
+            'lk.pii.event': this.loggableEvent(event),
           },
           'Failed to handle OpenAI Realtime API event',
         );
@@ -2166,13 +2187,18 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     const statusDetails = event.response.status_details;
     if (event.response.status === 'failed') {
+      // python only requires status_details to carry an `error`, so don't gate on the
+      // `failed` discriminant: a fatal body under an unexpected type must still be seen
       const errorBody =
-        typeof statusDetails !== 'string' && statusDetails?.type === 'failed'
+        typeof statusDetails !== 'string' && statusDetails && 'error' in statusDetails
           ? statusDetails.error
           : undefined;
       const errorTypeValue = errorBody && 'type' in errorBody ? errorBody.type : undefined;
       const errorType = typeof errorTypeValue === 'string' ? errorTypeValue : 'unknown';
 
+      // failures are largely undocumented by openai, so we assume optimistically
+      // recoverable unless the code is a known-fatal one (quota / auth / billing),
+      // which is thrown so the recv loop breaks and the main task stops reconnecting
       const recoverable = !this.isFatalError(errorBody);
       const error = new APIError(
         `OpenAI Realtime API response failed with error type: ${errorType}`,
@@ -2218,29 +2244,38 @@ export class RealtimeSession extends llm.RealtimeSession {
         this.consumeReplayItemCreate(replayItemId, eventId);
       }
 
+      // a rejected item event gets no deleted/added reply, so fail its future rather than
+      // leave updateChatCtx to stall inside the speech that awaits it
       const future = this.chatCtxEventFutures[eventId];
       if (future) {
         delete this.chatCtxEventFutures[eventId];
         if (!future.done) future.reject(new Error(event.error.message));
+        // a terminal one still has to end the session, whatever it came in reply to
         if (!this.isFatalError(event.error)) return;
+      } else {
+        // a rejected response.create gets no response.created; fail its future now
+        // instead of orphaning it until the 10s timeout (still emitted/thrown below)
+        const handle = this.responseCreatedFutures[eventId];
+        if (handle) {
+          delete this.responseCreatedFutures[eventId];
+          if (handle.timeout) clearTimeout(handle.timeout);
+          if (!handle.doneFut.done) {
+            handle.doneFut.reject(new Error(event.error.message));
+          }
+        }
       }
     }
 
     if (event.error.message.startsWith('Cancellation failed')) {
       return;
     }
-    this.#logger.error({ error: event.error }, 'OpenAI Realtime API returned an error');
 
-    if (eventId) {
-      const handle = this.responseCreatedFutures[eventId];
-      if (handle) {
-        delete this.responseCreatedFutures[eventId];
-        if (handle.timeout) clearTimeout(handle.timeout);
-        if (!handle.doneFut.done) {
-          handle.doneFut.reject(new Error(event.error.message));
-        }
-      }
+    if (event.error.code === 'input_audio_buffer_commit_empty' && this._options.turnDetection) {
+      // the server VAD commits each segment itself, ours lands on an emptied buffer
+      return;
     }
+
+    this.#logger.error({ error: event.error }, 'OpenAI Realtime API returned an error');
 
     const recoverable = !this.isFatalError(event.error);
     const error = new APIError(event.error.message, {
