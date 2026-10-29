@@ -4,7 +4,6 @@
 import type { ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
 import pidusage from 'pidusage';
-import type { Logger } from 'pino';
 import type { RunningJobInfo } from '../job.js';
 import { log, loggerOptions } from '../log.js';
 import { Future } from '../utils.js';
@@ -48,6 +47,7 @@ export abstract class SupervisedProc {
   #shutdownRequestAck = new Future();
   #shuttingDown = new Future();
   #closePromise?: Promise<void>;
+  protected logger = log();
   constructor(opts: ProcOpts) {
     this.#opts = opts;
   }
@@ -68,18 +68,6 @@ export abstract class SupervisedProc {
     return undefined;
   }
 
-  /**
-   * Fields added to every log line this supervisor writes. Subclasses override this to add job
-   * context.
-   */
-  protected loggingFields(): Record<string, unknown> {
-    return {};
-  }
-
-  private get logger(): Logger {
-    return log().child(this.loggingFields());
-  }
-
   async start() {
     if (this.#started) {
       throw new Error('runner already started');
@@ -92,7 +80,7 @@ export abstract class SupervisedProc {
     this.#started = true;
     this.#startedAt = performance.now();
     this.run().catch((error) => {
-      this.logger.child({ error }).warn('supervised process run failed');
+      this.logger.warn({ error }, 'supervised process run failed');
       // Note: we intentionally do NOT kill the child process here. Killing it
       // would race with initialize()'s `once(proc, 'message')`, causing
       // initialize() to hang forever and deadlocking the caller (proc_pool).
@@ -127,29 +115,29 @@ export abstract class SupervisedProc {
       this.memoryBaselineMB ??= memoryMB;
 
       if (this.#opts.memoryLimitMB > 0 && memoryMB > this.#opts.memoryLimitMB) {
-        this.logger
-          .child(this.memoryLoggingFields(memoryMB))
-          .error(`${this.processKind} process exceeded memory limit, killing it`);
+        this.logger.error(
+          this.memoryLoggingFields(memoryMB),
+          `${this.processKind} process exceeded memory limit, killing it`,
+        );
         this.#closing = true;
         this.clearTimers();
         this.proc?.kill('SIGKILL');
       } else if (this.#opts.memoryWarnMB > 0 && memoryMB > this.#opts.memoryWarnMB) {
         if (this.shouldEmitMemoryWarning(memoryMB)) {
           const advisory = this.#opts.memoryLimitMB <= 0;
-          this.logger
-            .child(this.memoryLoggingFields(memoryMB))
-            .warn(
-              `${this.processKind} process memory usage is above the warning threshold${
-                advisory ? ' (advisory only, the process will not be terminated)' : ''
-              }`,
-            );
+          this.logger.warn(
+            this.memoryLoggingFields(memoryMB),
+            `${this.processKind} process memory usage is above the warning threshold${
+              advisory ? ' (advisory only, the process will not be terminated)' : ''
+            }`,
+          );
         }
       }
     };
 
     this.#memoryMonitorInterval = setInterval(() => {
       void checkMemoryUsage().catch((error) => {
-        this.logger.child({ error }).warn('failed to check supervised process memory usage');
+        this.logger.warn({ error }, 'failed to check supervised process memory usage');
       });
     }, MEMORY_MONITOR_INTERVAL);
 
@@ -158,13 +146,13 @@ export abstract class SupervisedProc {
         case 'pongResponse': {
           const delay = Date.now() - msg.value.timestamp;
           if (delay > this.#opts.highPingThreshold) {
-            this.logger.child({ delay }).warn('job executor is unresponsive');
+            this.logger.warn({ delay }, 'job executor is unresponsive');
           }
           this.#pongTimeout?.refresh();
           break;
         }
         case 'exiting': {
-          this.logger.child({ reason: msg.value.reason }).debug('job exiting');
+          this.logger.debug({ reason: msg.value.reason }, 'job exiting');
           break;
         }
         case 'shutdownRequestAck': {
@@ -187,9 +175,10 @@ export abstract class SupervisedProc {
     this.proc!.on('message', listener);
     this.proc!.on('error', (error) => {
       if (this.#closing) return;
-      this.logger
-        .child({ error })
-        .warn('job process exited unexpectedly; this likely means the error above caused a crash');
+      this.logger.warn(
+        { error },
+        'job process exited unexpectedly; this likely means the error above caused a crash',
+      );
       this.clearTimers();
       this.#join.resolve();
     });
@@ -309,7 +298,7 @@ export abstract class SupervisedProc {
       clearTimeout(timer);
 
       if (result === 'timeout') {
-        this.logger.child({ timeout: timeout.ms }).error(timeout.message);
+        this.logger.error({ timeout: timeout.ms }, timeout.message);
         this.proc?.kill('SIGKILL');
         await this.#join.await;
       }

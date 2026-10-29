@@ -24,9 +24,12 @@ export type MistralSTTModels =
   | 'voxtral-mini-2602'
   | 'voxtral-mini-2507';
 
-export type MistralTTSModels = 'voxtral-mini-tts-latest' | 'voxtral-mini-tts-2603';
+export type MistralTTSModels =
+  | 'voxtral-mini-tts-3'
+  | 'voxtral-mini-tts-latest'
+  | 'voxtral-mini-tts-2603';
 
-export type MistralTTSVoices =
+export type MistralTTSVoxtral2Voices =
   | 'gb_jane_confident'
   | 'gb_jane_confused'
   | 'gb_jane_curious'
@@ -57,3 +60,44 @@ export type MistralTTSVoices =
   | 'en_paul_happy'
   | 'en_paul_neutral'
   | 'en_paul_sad';
+
+/** Voices introduced with Voxtral 3. Voxtral 3 also accepts the Voxtral 2 voices. */
+export type MistralTTSVoxtral3Voices =
+  | 'voice_479'
+  | 'voice_3143'
+  | 'voice_481'
+  | 'voice_1788'
+  | 'voice_591'
+  | 'voice_590'
+  | 'voice_3147'
+  | 'voice_3149'
+  | 'voice_1787'
+  | 'voice_1786'
+  | 'voice_3150'
+  | 'voice_447'
+  | 'voice_485'
+  | 'voice_478'
+  | 'voice_483'
+  | 'voice_3141'
+  | 'voice_589'
+  | 'voice_3137'
+  | 'voice_592'
+  | 'voice_3139'
+  | 'voice_3153'
+  | 'voice_3146'
+  | 'voice_482'
+  | 'voice_3133'
+  | 'voice_3135'
+  | 'voice_3136'
+  | 'voice_3145'
+  | 'voice_3134'
+  | 'voice_3154'
+  | 'voice_480'
+  | 'voice_3155'
+  | 'voice_3132'
+  | 'voice_3138'
+  | 'voice_3140'
+  | 'voice_3144'
+  | 'voice_3142';
+
+export type MistralTTSVoices = MistralTTSVoxtral2Voices | MistralTTSVoxtral3Voices;

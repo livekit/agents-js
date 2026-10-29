@@ -2,10 +2,14 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { AudioFrame } from '@livekit/rtc-node';
+import { context as otelContext, trace } from '@opentelemetry/api';
+import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base';
+import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import { getEventListeners } from 'node:events';
 import { ReadableStream } from 'node:stream/web';
 import { describe, expect, it, vi } from 'vitest';
 import { APIConnectionError } from '../_exceptions.js';
+import { setTracerProvider, traceTypes, tracer } from '../telemetry/index.js';
 import type { APIConnectOptions } from '../types.js';
 import { Future } from '../utils.js';
 import { FallbackAdapter } from './fallback_adapter.js';
@@ -161,6 +165,50 @@ describe('TTS fallback lifecycle', () => {
       }
     },
   );
+
+  it('attributes cancelled partial audio to the provider that served it', async () => {
+    const { adapter, secondary, errors } = setup('error');
+    secondary.mode = 'blocked-after-audio';
+    vi.spyOn(secondary, 'model', 'get').mockReturnValue('secondary-model');
+    vi.spyOn(secondary, 'provider', 'get').mockReturnValue('cartesia');
+    const exporter = new InMemorySpanExporter();
+    const provider = new NodeTracerProvider({
+      spanProcessors: [new SimpleSpanProcessor(exporter)],
+    });
+    provider.register();
+    const previous = tracer.getProvider();
+    setTracerProvider(provider);
+    try {
+      await tracer.startActiveSpan(
+        async () => {
+          const stream = adapter.stream();
+          const settled = waitForRun(stream);
+          try {
+            stream.pushText('Hello.');
+            const frame = await stream.next();
+            expect(frame.done).toBe(false);
+            expect(frame.value).not.toBe(SynthesizeStream.END_OF_STREAM);
+            // Recovery can make the primary preferred before this speech is cancelled.
+            adapter.status[0]!.available = true;
+          } finally {
+            stream.close();
+            await settled();
+          }
+        },
+        { name: 'caller' },
+      );
+      const caller = exporter.getFinishedSpans().find((span) => span.name === 'caller');
+      expect(caller?.attributes[traceTypes.ATTR_GEN_AI_RESPONSE_MODEL]).toBe('secondary-model');
+      expect(caller?.attributes[traceTypes.ATTR_GEN_AI_PROVIDER_NAME]).toBe('cartesia');
+      expect(errors).toEqual([]);
+    } finally {
+      await adapter.close();
+      setTracerProvider(previous);
+      await provider.shutdown();
+      trace.disable();
+      otelContext.disable();
+    }
+  });
 
   it.each(['close', 'abort'] as const)('cancels chunked synthesis through %s', async (method) => {
     const { primary, secondary, adapter, errors } = setup('blocked');

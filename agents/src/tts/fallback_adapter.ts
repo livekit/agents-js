@@ -617,7 +617,10 @@ class FallbackSynthesizeStream extends SynthesizeStream {
         continue;
       }
       const tts = this.adapter.getStreamingInstance(i);
-      const resampler = this.adapter.createResamplerForTTS(i);
+      let stream!: SynthesizeStream;
+      let resampler: AudioResampler | null = null;
+      const closeStream = () => stream?.close();
+      this.abortSignal.addEventListener('abort', closeStream, { once: true });
       // why the stream failed, if its provider reported it
       let providerError: Error | undefined;
 
@@ -626,9 +629,9 @@ class FallbackSynthesizeStream extends SynthesizeStream {
       // failed before emitting audio — and never overwrite it when falling
       // back to another TTS (markStarted only takes effect once).
       let captureStartedTime: () => void = () => {};
-      let closeStream: () => void = () => {};
 
       try {
+        resampler = this.adapter.createResamplerForTTS(i);
         this._logger.debug({ tts: originalTts.label }, 'attempting TTS stream');
 
         const connOptions: APIConnectOptions = {
@@ -636,9 +639,7 @@ class FallbackSynthesizeStream extends SynthesizeStream {
           maxRetry: this.adapter.maxRetryPerTTS,
         };
 
-        const stream = tts.stream({ connOptions });
-        closeStream = () => stream.close();
-        this.abortSignal.addEventListener('abort', closeStream, { once: true });
+        stream = tts.stream({ connOptions });
         if (this.abortSignal.aborted) return;
         let bufferIndex = 0;
         let streamOutputCompleted = false;
@@ -742,7 +743,13 @@ class FallbackSynthesizeStream extends SynthesizeStream {
             throw err;
           }),
         ]);
-        if (this.abortSignal.aborted) return;
+        if (this.abortSignal.aborted) {
+          if (this.audioPushed) {
+            this.servedTts = originalTts;
+            recordFallbackServed(originalTts, i, this.ttsRequestSpan, this.callerSpan);
+          }
+          return;
+        }
         if (outputResult.status === 'rejected') {
           stream.close();
           throw outputResult.reason;
@@ -806,11 +813,11 @@ class FallbackSynthesizeStream extends SynthesizeStream {
           throw error;
         }
       } finally {
-        this.abortSignal.removeEventListener('abort', closeStream);
         // the stream may have received text and failed before emitting audio;
         // its started time must still anchor the fallback's ttfb
         captureStartedTime();
-        closeStream();
+        this.abortSignal.removeEventListener('abort', closeStream);
+        stream?.close();
         resampler?.close();
         // a non-streaming instance gets a StreamAdapter for this attempt only
         if (tts !== originalTts) {

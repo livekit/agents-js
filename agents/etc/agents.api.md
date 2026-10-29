@@ -940,6 +940,9 @@ export function asError(maybeError: unknown): Error;
 export function asLanguageCode(language: string): LanguageCode;
 
 // @public (undocumented)
+type AssemblyAIModels = 'assemblyai' | 'assemblyai/assemblyai-tts-1';
+
+// @public (undocumented)
 type AssemblyaiModels = 'assemblyai/universal-streaming' | 'assemblyai/universal-streaming-multilingual' | 'assemblyai/u3-rt-pro' | 'assemblyai/universal-3-5-pro' | 'assemblyai/universal-3-6-pro';
 
 // @public (undocumented)
@@ -958,6 +961,11 @@ interface AssemblyAIOptions {
     speaker_labels?: boolean;
     voice_focus?: 'near-field' | 'far-field';
     voice_focus_threshold?: number;
+}
+
+// @public
+interface AssemblyAIOptions_2 {
+    word_timestamps?: boolean;
 }
 
 // @public
@@ -7685,6 +7693,8 @@ declare namespace stream {
 class StreamAdapter extends STT {
     constructor(stt: STT, vad: VAD);
     // (undocumented)
+    close(): Promise<void>;
+    // (undocumented)
     label: string;
     // (undocumented)
     _pushConversationItem(ev: ConversationItemAddedEvent): void;
@@ -8986,12 +8996,14 @@ declare namespace tts_2 {
         RimeModels,
         XaiTTSModels,
         FishAudioModels,
+        AssemblyAIModels,
         CartesiaOptions_2 as CartesiaOptions,
         DeepgramTTSOptions,
         RimeOptions,
         InworldOptions,
         XaiTTSOptions,
         FishAudioOptions,
+        AssemblyAIOptions_2 as AssemblyAIOptions,
         TTSModels,
         ModelWithVoice,
         TTSOptions,
@@ -9068,7 +9080,7 @@ export type TTSMetrics = {
 };
 
 // @public (undocumented)
-type TTSModels = CartesiaModels_2 | DeepgramTTSModels | RimeModels | InworldModels | XaiTTSModels | FishAudioModels | AnyString;
+type TTSModels = CartesiaModels_2 | DeepgramTTSModels | RimeModels | InworldModels | XaiTTSModels | FishAudioModels | AssemblyAIModels | AnyString;
 
 // @public (undocumented)
 export type TTSModelUsage = {
@@ -9082,7 +9094,7 @@ export type TTSModelUsage = {
 };
 
 // @public (undocumented)
-type TTSOptions<TModel extends TTSModels> = TModel extends CartesiaModels_2 ? CartesiaOptions_2 : TModel extends DeepgramTTSModels ? DeepgramTTSOptions : TModel extends RimeModels ? RimeOptions : TModel extends InworldModels ? InworldOptions : TModel extends XaiTTSModels ? XaiTTSOptions : TModel extends FishAudioModels ? FishAudioOptions : Record<string, unknown>;
+type TTSOptions<TModel extends TTSModels> = TModel extends CartesiaModels_2 ? CartesiaOptions_2 : TModel extends DeepgramTTSModels ? DeepgramTTSOptions : TModel extends RimeModels ? RimeOptions : TModel extends InworldModels ? InworldOptions : TModel extends XaiTTSModels ? XaiTTSOptions : TModel extends FishAudioModels ? FishAudioOptions : TModel extends AssemblyAIModels ? AssemblyAIOptions_2 : Record<string, unknown>;
 
 // Warning: (ae-forgotten-export) The symbol "BaseStreamingTurnDetector" needs to be exported by the entry point index.d.ts
 //
@@ -9870,7 +9882,7 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 //
 // src/_exceptions.ts:90:5 - (ae-forgotten-export) The symbol "APIStatusErrorOptions" needs to be exported by the entry point index.d.ts
 // src/_exceptions.ts:128:5 - (ae-forgotten-export) The symbol "APIErrorOptions" needs to be exported by the entry point index.d.ts
-// src/inference/tts.ts:280:5 - (ae-forgotten-export) The symbol "TTSEncoding" needs to be exported by the entry point index.d.ts
+// src/inference/tts.ts:315:5 - (ae-forgotten-export) The symbol "TTSEncoding" needs to be exported by the entry point index.d.ts
 // src/llm/chat_context.ts:80:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "audio"
 // src/llm/tool_context.ts:709:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "ToolFlag" has more than one declaration; you need to add a TSDoc member reference selector
 // src/llm/tool_context.ts:756:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "ToolFlag" has more than one declaration; you need to add a TSDoc member reference selector
