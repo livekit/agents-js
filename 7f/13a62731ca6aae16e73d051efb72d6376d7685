@@ -1,0 +1,27 @@
+.changeset/close-speech-stream-adapters.md
+  s_bad3441f150473::t_a9eb87c8b2a470 6
+agents/src/voice/generation.ts
+  s_bad3441f150473::t_a9eb87c8b2a470 1020-1026
+agents/src/voice/agent.test.ts
+  s_bad3441f150473::t_53a2b94e540a2e 19,569-602,604-609
+  s_bad3441f150473::t_6f6ea55df3cc2c 603
+  s_bad3441f150473::t_fd1d1f3153f862 610
+agents/src/voice/generation_tts_timeout.test.ts
+  s_bad3441f150473::t_a9eb87c8b2a470 260-282
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7f13a62731ca6aae16e73d051efb72d6376d7685",
+  "prompts": {},
+  "sessions": {
+    "s_bad3441f150473": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a16339-3ea9-77a0-9f23-b58009135491",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
