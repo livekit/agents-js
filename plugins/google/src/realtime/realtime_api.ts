@@ -973,6 +973,7 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     options.signal?.addEventListener('abort', onAbort, { once: true });
 
+    const endedUserActivity = this.inUserActivity;
     if (this.inUserActivity) {
       this.sendClientEvent({
         type: 'realtime_input',
@@ -985,13 +986,17 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     const turns = replyTurns(this.options.model, instructions);
 
-    this.sendClientEvent({
-      type: 'content',
-      value: {
-        turns,
-        turnComplete: true,
-      },
-    });
+    // Ending the user's activity already asks Gemini to reply; a turnComplete
+    // on top starts a second generation that cuts the first one off.
+    if (!endedUserActivity || instructions !== undefined) {
+      this.sendClientEvent({
+        type: 'content',
+        value: {
+          turns,
+          turnComplete: true,
+        },
+      });
+    }
 
     const timeoutHandle = setTimeout(() => {
       if (!fut.done) {
