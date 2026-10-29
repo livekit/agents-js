@@ -133,6 +133,36 @@ describe('Soniox TTS WebSocket authentication', () => {
   });
 });
 
+describe('Soniox TTS client reference ID', () => {
+  it.each([undefined, 'session-123'])(
+    'sends client reference ID %s in config',
+    async (clientReferenceId) => {
+      const { url, messages } = await startServer((socket, message) => {
+        if (typeof message.stream_id === 'string' && typeof message.text === 'string') {
+          socket.send(
+            JSON.stringify({
+              stream_id: message.stream_id,
+              audio: Buffer.alloc(480).toString('base64'),
+              audio_end: true,
+              terminated: true,
+            }),
+          );
+        }
+      });
+      const synthesizer = createTTS({ websocketUrl: url, clientReferenceId });
+
+      await consume(synthesizer.synthesize('hello'));
+
+      const config = messages.find((message) => 'model' in message);
+      if (clientReferenceId === undefined) {
+        expect(config).not.toHaveProperty('client_reference_id');
+      } else {
+        expect(config).toMatchObject({ client_reference_id: clientReferenceId });
+      }
+    },
+  );
+});
+
 describe('Soniox TTS connection errors', () => {
   const cases = ([undefined, ''] as const).flatMap((streamId) =>
     [401, 429].flatMap((statusCode) =>
