@@ -715,6 +715,8 @@ export class AgentTask<ResultT = unknown, UserData = any> extends Agent<UserData
   /** @internal */
   _oldAgent?: Agent;
 
+  private ownerSpeechHandle?: SpeechHandle;
+
   #logger = log();
 
   static create<ResultT = unknown, UserData = unknown>(
@@ -777,6 +779,7 @@ export class AgentTask<ResultT = unknown, UserData = any> extends Agent<UserData
     }
 
     const speechHandle = speechHandleStorage.getStore();
+    this.ownerSpeechHandle = speechHandle;
     const oldActivity = agentActivityStorage.getStore();
     if (!oldActivity) {
       throw new Error(`${this.constructor.name} must be executed inside an AgentActivity context`);
