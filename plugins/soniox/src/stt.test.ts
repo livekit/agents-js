@@ -584,7 +584,7 @@ describe('SpeechStream config', () => {
       const { authorization, config } = await requestPromise;
       expect(authorization).toBe('Bearer test-key');
       expect(config).not.toHaveProperty('api_key');
-      expect(config.model).toBe('stt-rt-v4');
+      expect(config.model).toBe('stt-rt-v5');
 
       stream.close();
       await drain.catch(() => {});
