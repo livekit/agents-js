@@ -155,8 +155,7 @@ scenarios:
         mayonnaise.
       - Don't order anything else, and finish once the agent confirms.
     agent_expectations: The agent collects the drink, sizes and sauce, then
-      adds a Big Mac Combo with large fries, a large Coca-Cola and mayonnaise,
-      and confirms it.
+      adds a Big Mac Combo with large fries, a large Coca-Cola and mayonnaise.
     tags:
       feature: combo
     userdata:
