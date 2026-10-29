@@ -157,7 +157,6 @@ export class Agent<UserData = any> {
     get stt(): STT | undefined;
     // @internal (undocumented)
     _stt?: STT | null;
-    // (undocumented)
     sttNode(audio: ReadableStream_2<AudioFrame> | AsyncIterable<AudioFrame>, modelSettings: ModelSettings): Promise<ReadableStream_2<SpeechEvent | string> | null>;
     // (undocumented)
     get toolCtx(): ToolContext<UserData>;

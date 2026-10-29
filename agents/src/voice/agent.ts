@@ -363,6 +363,16 @@ export class Agent<UserData = any> {
     });
   }
 
+  /**
+   * Transcribes audio frames into speech events. Override it for custom pre-processing or STT
+   * strategies.
+   *
+   * For an STT with `capabilities.manualFlush`, the framework flushes the stream created by
+   * `Agent.default.sttNode` when the user stops speaking. If your override buffers audio before
+   * passing it to `Agent.default.sttNode`, that flush can reach the STT before the buffered audio
+   * does. If your override creates its own STT stream, the framework can't flush it. In either
+   * case, set `stt.capabilities.manualFlush = false` and call `flush()` on the stream yourself.
+   */
   async sttNode(
     audio: ReadableStream<AudioFrame> | AsyncIterable<AudioFrame>,
     modelSettings: ModelSettings,
