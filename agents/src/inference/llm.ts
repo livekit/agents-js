@@ -614,7 +614,11 @@ export class LLMStream extends llm.LLMStream {
          */
         let callChunk: llm.ChatChunk | undefined;
         // If we have a previous tool call and this is a new one, emit the previous
-        if (this.toolCallId && tool.id && tool.index !== this.toolIndex) {
+        if (
+          this.toolCallId &&
+          tool.id &&
+          (tool.index !== this.toolIndex || tool.id !== this.toolCallId)
+        ) {
           callChunk = this.createRunningToolCallChunk(id, delta);
           this.toolCallId = this.fncName = this.fncRawArguments = undefined;
           // Note: We intentionally do NOT reset toolExtra here.
