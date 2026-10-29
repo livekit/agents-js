@@ -1043,11 +1043,29 @@ export type MockToolFn = (...args: any[]) => any;
 /** Map from agent constructor to a record of mocked tools by name. */
 export type MockToolsMap = Map<AgentConstructor, Record<string, MockToolFn>>;
 
+/** Options for scoping mocked tools. */
+export interface MockToolsOptions {
+  /** Restrict the mocks to tool calls from this session. */
+  session?: AgentSession;
+}
+
 /** @internal */
 export let activeMockTools: MockToolsMap | undefined;
 
+const sessionMockTools = new WeakMap<AgentSession, MockToolsMap>();
+
 /** @internal */
-export function getMockTool(agent: Agent, toolName: string): MockToolFn | undefined {
+export function getMockTool(
+  agent: Agent,
+  toolName: string,
+  session?: AgentSession,
+): MockToolFn | undefined {
+  const scopedMocks = session ? sessionMockTools.get(session) : undefined;
+  if (scopedMocks) {
+    for (const [agentConstructor, mocks] of scopedMocks) {
+      if (agent.constructor === agentConstructor) return mocks[toolName];
+    }
+  }
   if (!activeMockTools) return undefined;
 
   for (const [agentConstructor, mocks] of activeMockTools) {
@@ -1070,6 +1088,7 @@ export function getMockTool(agent: Agent, toolName: string): MockToolFn | undefi
  *
  * @param agent - The Agent constructor whose tools should be mocked.
  * @param mocks - A record mapping tool name to a mock implementation.
+ * @param options - Optional scope for the mocks.
  *
  * @example
  * ```typescript
@@ -1087,7 +1106,25 @@ export function getMockTool(agent: Agent, toolName: string): MockToolFn | undefi
 export function withMockTools(
   agent: AgentConstructor,
   mocks: Record<string, MockToolFn>,
+  options: MockToolsOptions = {},
 ): Disposable {
+  if (options.session) {
+    const previous = sessionMockTools.get(options.session);
+    const updated: MockToolsMap = new Map(previous ?? []);
+    updated.set(agent, mocks);
+    sessionMockTools.set(options.session, updated);
+
+    return {
+      [Symbol.dispose]() {
+        if (previous) {
+          sessionMockTools.set(options.session!, previous);
+        } else {
+          sessionMockTools.delete(options.session!);
+        }
+      },
+    };
+  }
+
   const previous = activeMockTools;
   const updated: MockToolsMap = new Map(previous ?? []);
   updated.set(agent, mocks);
