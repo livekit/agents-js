@@ -587,6 +587,7 @@ class FallbackSynthesizeStream extends SynthesizeStream {
     })();
 
     for (let i = 0; i < this.adapter.ttsInstances.length; i++) {
+      if (this.abortSignal.aborted) return;
       const originalTts = this.adapter.ttsInstances[i]!;
       const status = this.adapter.status[i]!;
       let lastRequestId: string = '';
@@ -597,7 +598,10 @@ class FallbackSynthesizeStream extends SynthesizeStream {
         continue;
       }
       const tts = this.adapter.getStreamingInstance(i);
-      const resampler = this.adapter.createResamplerForTTS(i);
+      let stream!: SynthesizeStream;
+      let resampler: AudioResampler | null = null;
+      const closeStream = () => stream?.close();
+      this.abortSignal.addEventListener('abort', closeStream, { once: true });
       // why the stream failed, if its provider reported it
       let providerError: Error | undefined;
 
@@ -608,6 +612,7 @@ class FallbackSynthesizeStream extends SynthesizeStream {
       let captureStartedTime: () => void = () => {};
 
       try {
+        resampler = this.adapter.createResamplerForTTS(i);
         this._logger.debug({ tts: originalTts.label }, 'attempting TTS stream');
 
         const connOptions: APIConnectOptions = {
@@ -615,7 +620,8 @@ class FallbackSynthesizeStream extends SynthesizeStream {
           maxRetry: this.adapter.maxRetryPerTTS,
         };
 
-        const stream = tts.stream({ connOptions });
+        stream = tts.stream({ connOptions });
+        if (this.abortSignal.aborted) stream.close();
         let bufferIndex = 0;
         let streamOutputCompleted = false;
 
@@ -716,6 +722,13 @@ class FallbackSynthesizeStream extends SynthesizeStream {
             throw err;
           }),
         ]);
+        if (this.abortSignal.aborted) {
+          if (this.audioPushed) {
+            this.servedTts = originalTts;
+            recordFallbackServed(originalTts, i, this.ttsRequestSpan, this.callerSpan);
+          }
+          return;
+        }
         if (outputResult.status === 'rejected') {
           stream.close();
           throw outputResult.reason;
@@ -751,6 +764,7 @@ class FallbackSynthesizeStream extends SynthesizeStream {
         await readInputLLMStream.catch(() => {});
         return;
       } catch (error) {
+        if (this.abortSignal.aborted) return;
         if (this.audioPushed) {
           this._logger.error(
             { tts: originalTts.label, error: providerError ?? error },
@@ -775,6 +789,8 @@ class FallbackSynthesizeStream extends SynthesizeStream {
         // the stream may have received text and failed before emitting audio;
         // its started time must still anchor the fallback's ttfb
         captureStartedTime();
+        this.abortSignal.removeEventListener('abort', closeStream);
+        stream?.close();
         resampler?.close();
         // a non-streaming instance gets a StreamAdapter for this attempt only
         if (tts !== originalTts) {
@@ -783,6 +799,7 @@ class FallbackSynthesizeStream extends SynthesizeStream {
       }
     }
     await readInputLLMStream.catch(() => {});
+    if (this.abortSignal.aborted) return;
     const labels = this.adapter.ttsInstances.map((t) => t.label).join(', ');
     throw new APIConnectionError({
       message: `all TTS instances failed (${labels})`,
