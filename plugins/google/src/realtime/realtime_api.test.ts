@@ -467,20 +467,24 @@ describe('Google Realtime non-blocking tool scheduling', () => {
       functionCalls: [{ name: 'getWeather', args: { location: 'Seattle' } }],
     });
 
-    expect(session.sendClientEvent).toHaveBeenCalledWith({
-      type: 'tool_response',
-      value: {
-        functionResponses: [
-          {
-            id: undefined,
-            name: 'getWeather',
-            response: {},
-            ...(vertexai ? {} : { scheduling: FunctionResponseScheduling.WHEN_IDLE }),
-            willContinue: true,
-          },
-        ],
-      },
-    });
+    if (vertexai) {
+      expect(session.sendClientEvent).not.toHaveBeenCalled();
+    } else {
+      expect(session.sendClientEvent).toHaveBeenCalledWith({
+        type: 'tool_response',
+        value: {
+          functionResponses: [
+            {
+              id: undefined,
+              name: 'getWeather',
+              response: {},
+              scheduling: FunctionResponseScheduling.WHEN_IDLE,
+              willContinue: true,
+            },
+          ],
+        },
+      });
+    }
 
     const callId = (
       session.currentGeneration?.functionChannel.write.mock.calls[0]?.[0] as { callId: string }
@@ -502,15 +506,19 @@ describe('Google Realtime non-blocking tool scheduling', () => {
         id: undefined,
         name: 'getWeather',
         response: { output: 'The weather in Seattle is sunny today.' },
-        ...(vertexai ? {} : { scheduling: FunctionResponseScheduling.WHEN_IDLE }),
-        willContinue: false,
+        ...(vertexai
+          ? {}
+          : {
+              scheduling: FunctionResponseScheduling.WHEN_IDLE,
+              willContinue: false,
+            }),
       },
     ]);
   });
 });
 
 describe('Google Realtime Vertex scheduling', () => {
-  it('warns when tool response scheduling is configured for Vertex AI', () => {
+  it('warns when tool response scheduling is configured for Vertex AI 2.5', () => {
     const warn = vi.spyOn(log(), 'warn').mockImplementation(() => undefined);
 
     new RealtimeModel({
@@ -524,6 +532,46 @@ describe('Google Realtime Vertex scheduling', () => {
     warn.mockRestore();
   });
 
+  it('does not warn and forwards scheduling for Vertex AI gemini-3.8-live', () => {
+    const warn = vi.spyOn(log(), 'warn').mockImplementation(() => undefined);
+
+    const model = new RealtimeModel({
+      model: 'gemini-3.8-live',
+      vertexai: true,
+      project: 'p',
+      location: 'us-central1',
+      toolResponseScheduling: FunctionResponseScheduling.INTERRUPT,
+    });
+    model.updateOptions({ toolResponseScheduling: FunctionResponseScheduling.WHEN_IDLE });
+
+    expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('not supported by Vertex AI'));
+    warn.mockRestore();
+
+    const session = createSessionForTest(FunctionResponseScheduling.WHEN_IDLE);
+    (session.options as { model?: string; vertexai?: boolean }).model = 'gemini-3.8-live';
+    session.options.vertexai = true;
+
+    const ctx = llm.ChatContext.empty();
+    ctx.insert(
+      llm.FunctionCallOutput.create({
+        callId: 'call_38',
+        name: 'getWeather',
+        output: 'sunny',
+        isError: false,
+        replyRequired: false,
+      }),
+    );
+
+    expect(session.getToolResultsForRealtime(ctx, true)?.functionResponses).toEqual([
+      {
+        id: 'call_38',
+        name: 'getWeather',
+        response: { output: 'sunny' },
+        scheduling: FunctionResponseScheduling.SILENT,
+      },
+    ]);
+  });
+
   it('does not warn for Gemini API scheduling', () => {
     const warn = vi.spyOn(log(), 'warn').mockImplementation(() => undefined);
 
@@ -531,6 +579,234 @@ describe('Google Realtime Vertex scheduling', () => {
 
     expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('not supported by Vertex AI'));
     warn.mockRestore();
+  });
+});
+
+describe('Google Realtime 3.8 defaults, labels, and contextUpdate', () => {
+  it('defaults gemini-3.8-live to NON_BLOCKING and keeps realtime input open during tools', () => {
+    const model38 = new RealtimeModel({
+      model: 'gemini-3.8-live',
+      vertexai: true,
+      project: 'test-project',
+      location: 'us-central1',
+    });
+    const model25 = new RealtimeModel({
+      model: 'gemini-live-2.5-flash-native-audio',
+      vertexai: true,
+      project: 'test-project',
+      location: 'us-central1',
+    });
+
+    expect(model38._options.toolBehavior).toBe(Behavior.NON_BLOCKING);
+    expect(model25._options.toolBehavior).toBeUndefined();
+
+    const session38 = Object.create(RealtimeSession.prototype) as {
+      options: typeof model38._options;
+      pendingToolCallIds: Set<string>;
+      shouldBlockRealtimeInputForPendingTools(): boolean;
+    };
+    session38.options = model38._options;
+    session38.pendingToolCallIds = new Set(['call_1']);
+    expect(session38.shouldBlockRealtimeInputForPendingTools()).toBe(false);
+
+    const session25 = Object.create(RealtimeSession.prototype) as {
+      options: typeof model25._options;
+      pendingToolCallIds: Set<string>;
+      shouldBlockRealtimeInputForPendingTools(): boolean;
+    };
+    session25.options = model25._options;
+    session25.pendingToolCallIds = new Set(['call_1']);
+    expect(session25.shouldBlockRealtimeInputForPendingTools()).toBe(true);
+  });
+
+  it('forwards labels in buildConnectConfig when configured', () => {
+    const realtimeModel = new RealtimeModel({
+      model: 'gemini-3.8-live',
+      vertexai: true,
+      project: 'test-project',
+      location: 'us-central1',
+      labels: { env: 'prod', workload: 'voice-agent' },
+    });
+    const session = Object.create(RealtimeSession.prototype) as {
+      options: typeof realtimeModel._options;
+      _tools: llm.ToolContext;
+      buildConnectConfig(): { labels?: Record<string, string> };
+    };
+    session.options = realtimeModel._options;
+    session._tools = llm.ToolContext.empty();
+
+    expect(session.buildConnectConfig().labels).toEqual({
+      env: 'prod',
+      workload: 'voice-agent',
+    });
+  });
+
+  it('uses context_update on Vertex AI gemini-3.8-live and re-sends it on resume', async () => {
+    const never = new Promise<void>(() => {});
+    const closeActiveSession = vi
+      .spyOn(
+        RealtimeSession.prototype as unknown as { closeActiveSession(): Promise<void> },
+        'closeActiveSession',
+      )
+      .mockReturnValue(never);
+    const model = new RealtimeModel({
+      model: 'gemini-3.8-live',
+      vertexai: true,
+      project: 'test-project',
+      location: 'us-central1',
+      geminiTools: { googleSearch: {} },
+    });
+    expect(model.capabilities.midSessionToolsUpdate).toBe(true);
+
+    const session = model.session();
+    closeActiveSession.mockRestore();
+
+    const sentContextUpdates: unknown[] = [];
+    const activeSessionMock = {
+      close: vi.fn(async () => {}),
+      sendContextUpdate: vi.fn((params: unknown) => {
+        sentContextUpdates.push(params);
+      }),
+    };
+    const internals = session as unknown as {
+      activeSession?: typeof activeSessionMock;
+      _tools: llm.ToolContext;
+      contextUpdated: boolean;
+      sessionResumptionHandle?: string;
+      sessionShouldClose: { isSet: boolean; set(): void; clear(): void };
+      markRestartNeeded(): void;
+      sendTask(s: typeof activeSessionMock, controller: AbortController): Promise<void>;
+      onReceiveMessage(s: typeof activeSessionMock, msg: unknown): Promise<void>;
+    };
+
+    // before a session is up, updateTools still asks for a restart
+    const weatherTool = llm.tool({
+      description: 'Get weather',
+      execute: async () => 'sunny',
+    });
+    await session.updateTools(new llm.ToolContext({ getWeather: weatherTool }));
+    expect(internals.sessionShouldClose.isSet).toBe(true);
+    expect(internals.contextUpdated).toBe(false);
+    internals.sessionShouldClose.clear();
+
+    internals.activeSession = activeSessionMock;
+
+    // mid-session instruction update via context_update
+    await session.updateInstructions('Speak concisely.');
+    expect(internals.contextUpdated).toBe(true);
+
+    // a handle arriving after an update is still kept: it holds the spoken conversation
+    await internals.onReceiveMessage(activeSessionMock, {
+      sessionResumptionUpdate: { resumable: true, newHandle: 'handle-after-update' },
+    });
+    expect(internals.sessionResumptionHandle).toBe('handle-after-update');
+
+    // clearing tools sends tools: { tools: [...] } preserving geminiTools
+    await session.updateTools(llm.ToolContext.empty());
+
+    // drain messageChannel through a single sendTask (mirroring #mainTask)
+    const controller = new AbortController();
+    const sendPromise = internals.sendTask(activeSessionMock, controller);
+    await vi.waitFor(() => expect(sentContextUpdates).toHaveLength(2));
+
+    expect(sentContextUpdates[0]).toEqual({
+      systemInstruction: { parts: [{ text: 'Speak concisely.' }] },
+    });
+    expect(sentContextUpdates[1]).toEqual({
+      tools: { tools: [{ googleSearch: {} }] },
+    });
+
+    // without geminiTools, clearing tools sends { tools: { tools: [] } }
+    (session as unknown as { options: { geminiTools?: unknown } }).options.geminiTools = undefined;
+    await session.updateTools(new llm.ToolContext({ getWeather: weatherTool }));
+    await session.updateTools(llm.ToolContext.empty());
+    await vi.waitFor(() => expect(sentContextUpdates).toHaveLength(4));
+    expect(sentContextUpdates[3]).toEqual({
+      tools: { tools: [] },
+    });
+
+    // a tool set that fails conversion is not committed, so the same set can be retried
+    const badTool = llm.tool({
+      description: 'bad',
+      parameters: {
+        type: 'object',
+        properties: { a: { type: 'string', minLength: 'many' } },
+      } as never,
+      execute: async () => 'never',
+    });
+    const badTools = new llm.ToolContext({ bad: badTool });
+    await expect(session.updateTools(badTools)).rejects.toThrow(
+      'tool bad has a schema Gemini rejected',
+    );
+    expect(internals._tools.equals(badTools)).toBe(false);
+    expect(sentContextUpdates).toHaveLength(4);
+
+    // a config-change restart on this model keeps the handle
+    internals.markRestartNeeded();
+    expect(internals.sessionResumptionHandle).toBe('handle-after-update');
+
+    controller.abort();
+    await sendPromise;
+    await session.close();
+  });
+
+  it('re-sends the current instructions and tools when resuming after a context update', async () => {
+    const model = new RealtimeModel({
+      model: 'gemini-3.8-live',
+      vertexai: true,
+      project: 'test-project',
+      location: 'us-central1',
+      instructions: 'Be brief.',
+    });
+    const sendContextUpdate = vi.fn();
+    const sendClientContent = vi.fn();
+    const session = Object.create(RealtimeSession.prototype) as {
+      options: typeof model._options;
+      _tools: llm.ToolContext;
+      _chatCtx: llm.ChatContext;
+      contextUpdated: boolean;
+      sessionResumptionHandle?: string;
+      sessionLock: { lock(): Promise<() => void> };
+      activeSession?: unknown;
+      onSessionOpened(s: unknown): Promise<void>;
+    };
+    session.options = model._options;
+    session._tools = new llm.ToolContext({
+      getWeather: llm.tool({ description: 'Get weather', execute: async () => 'sunny' }),
+    });
+    session._chatCtx = llm.ChatContext.empty();
+    session.sessionLock = { lock: async () => () => {} };
+
+    // no update happened: nothing is re-sent
+    session.contextUpdated = false;
+    session.sessionResumptionHandle = 'h1';
+    await session.onSessionOpened({ sendContextUpdate, sendClientContent });
+    expect(sendContextUpdate).not.toHaveBeenCalled();
+
+    // an update happened and a handle is being resumed: current instructions and tools go first
+    session.contextUpdated = true;
+    await session.onSessionOpened({ sendContextUpdate, sendClientContent });
+    expect(sendContextUpdate).toHaveBeenCalledTimes(1);
+    const sent = sendContextUpdate.mock.calls[0]![0] as {
+      systemInstruction: { parts: { text: string }[] };
+      tools: { tools: { functionDeclarations?: { name: string }[] }[] };
+    };
+    expect(sent.systemInstruction.parts[0]!.text).toBe('Be brief.');
+    expect(sent.tools.tools[0]!.functionDeclarations![0]!.name).toBe('getWeather');
+
+    // cleared instructions are re-sent as an empty instruction, not dropped
+    session.options.instructions = '';
+    await session.onSessionOpened({ sendContextUpdate, sendClientContent });
+    expect(sendContextUpdate).toHaveBeenCalledTimes(2);
+    const cleared = sendContextUpdate.mock.calls[1]![0] as {
+      systemInstruction?: { parts: { text: string }[] };
+    };
+    expect(cleared.systemInstruction?.parts[0]!.text).toBe('');
+
+    // a fresh connection (no handle) carries them in the setup message instead
+    session.sessionResumptionHandle = undefined;
+    await session.onSessionOpened({ sendContextUpdate, sendClientContent });
+    expect(sendContextUpdate).toHaveBeenCalledTimes(2);
   });
 });
 

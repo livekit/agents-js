@@ -63,6 +63,18 @@ const KNOWN_GEMINI_API_MODELS = new Set([
 // answer that placeholder with an empty turn instead, so they must not get it, and take
 // reply instructions as a user turn instead.
 const MODELS_WITHOUT_REPLY_PLACEHOLDER = ['3.1', '3.8'];
+const MODELS_DEFAULT_NON_BLOCKING = ['3.8'];
+
+function defaultToolBehavior(model: string): types.Behavior | undefined {
+  if (MODELS_DEFAULT_NON_BLOCKING.some((tag) => model.includes(tag))) {
+    return types.Behavior.NON_BLOCKING;
+  }
+  return undefined;
+}
+
+function supportsContextUpdate(model: string | undefined, vertexai: boolean | undefined): boolean {
+  return Boolean(vertexai && model?.includes('3.8'));
+}
 
 function needsReplyPlaceholder(model: string): boolean {
   return !MODELS_WITHOUT_REPLY_PLACEHOLDER.some((tag) => model.includes(tag));
@@ -193,6 +205,7 @@ interface RealtimeOptions {
   thinkingConfig?: types.ThinkingConfig;
   toolBehavior?: types.Behavior;
   toolResponseScheduling?: types.FunctionResponseScheduling;
+  labels?: Record<string, string>;
 }
 
 /**
@@ -400,16 +413,21 @@ export class RealtimeModel extends llm.RealtimeModel {
       thinkingConfig?: types.ThinkingConfig;
 
       /**
-       * The behavior for tool calls. Default behavior is `BLOCKING` in Gemini Realtime API.
-       * Note: Not supported in Vertex AI.
+       * The behavior for tool calls. Gemini 3.8 Live models default to `NON_BLOCKING`;
+       * earlier models use the API default (`BLOCKING`).
        */
       toolBehavior?: types.Behavior;
 
       /**
        * The scheduling for tool responses. Default scheduling is `WHEN_IDLE`.
-       * Note: Vertex AI currently does not support the scheduling parameter.
+       * Supported on the Gemini API and on Vertex AI Gemini 3.8 Live models.
        */
       toolResponseScheduling?: types.FunctionResponseScheduling;
+
+      /**
+       * User-defined metadata labels to associate with billing and request telemetry.
+       */
+      labels?: Record<string, string>;
     } = {},
   ) {
     const inputAudioTranscription =
@@ -429,9 +447,6 @@ export class RealtimeModel extends llm.RealtimeModel {
       options.vertexai ??
       (process.env.GOOGLE_GENAI_USE_VERTEXAI === 'true' ||
         process.env.GOOGLE_GENAI_USE_VERTEXAI === '1');
-    if (vertexai && options.toolResponseScheduling !== undefined) {
-      warnVertexSchedulingUnsupported();
-    }
 
     // Model selection based on API type
     const defaultModel = vertexai
@@ -439,6 +454,9 @@ export class RealtimeModel extends llm.RealtimeModel {
       : 'gemini-2.5-flash-native-audio-preview-12-2025';
 
     const model = options.model || defaultModel;
+    if (vertexai && !model.includes('3.8') && options.toolResponseScheduling !== undefined) {
+      warnVertexSchedulingUnsupported();
+    }
     warnModelAPIMismatch(model, vertexai);
 
     if (
@@ -461,7 +479,7 @@ export class RealtimeModel extends llm.RealtimeModel {
       manualFunctionCalls: false,
       midSessionChatCtxUpdate: true,
       midSessionInstructionsUpdate: true,
-      midSessionToolsUpdate: false,
+      midSessionToolsUpdate: supportsContextUpdate(model, vertexai),
       perResponseToolChoice: false,
     });
 
@@ -495,8 +513,9 @@ export class RealtimeModel extends llm.RealtimeModel {
       apiVersion: options.apiVersion,
       geminiTools: options.geminiTools,
       thinkingConfig: options.thinkingConfig,
-      toolBehavior: options.toolBehavior,
+      toolBehavior: options.toolBehavior ?? defaultToolBehavior(model),
       toolResponseScheduling: options.toolResponseScheduling,
+      labels: options.labels,
     };
   }
 
@@ -527,7 +546,9 @@ export class RealtimeModel extends llm.RealtimeModel {
     }
     if (options.toolResponseScheduling !== undefined) {
       this._options.toolResponseScheduling = options.toolResponseScheduling;
-      if (this._options.vertexai) warnVertexSchedulingUnsupported();
+      if (this._options.vertexai && !this._options.model.includes('3.8')) {
+        warnVertexSchedulingUnsupported();
+      }
     }
 
     // TODO: Notify active sessions of option changes
@@ -566,6 +587,9 @@ export class RealtimeSession extends llm.RealtimeSession {
   private pendingGenerationFut?: Future<llm.GenerationCreatedEvent>;
 
   private sessionResumptionHandle?: string;
+  // a contextUpdate changed the instructions/tools of this session. a resumed session keeps
+  // the ones it was created with, so they are sent again on resume
+  private contextUpdated = false;
   private inUserActivity = false;
   private sessionLock = new Mutex();
   private numRetries = 0;
@@ -669,8 +693,9 @@ export class RealtimeSession extends llm.RealtimeSession {
     vertexai: boolean,
   ): types.LiveClientToolResponse | undefined {
     const toolResponses: types.FunctionResponse[] = [];
+    const supportsScheduling = !vertexai || Boolean(this.options.model?.includes('3.8'));
     const supportsSilentScheduling =
-      !vertexai && this.options.toolBehavior === types.Behavior.NON_BLOCKING;
+      supportsScheduling && this.options.toolBehavior === types.Behavior.NON_BLOCKING;
 
     for (const item of ctx.items) {
       if (item.type === 'function_call_output') {
@@ -681,12 +706,12 @@ export class RealtimeSession extends llm.RealtimeSession {
           response: item.isError ? { error: item.output } : { output: item.output },
         };
 
-        // Vertex AI does not support scheduling; the Gemini API defaults it to WHEN_IDLE.
+        // The Gemini API defaults non-blocking scheduling to WHEN_IDLE when omitted.
         const scheduling =
           supportsSilentScheduling && !item.replyRequired
             ? types.FunctionResponseScheduling.SILENT
             : this.options.toolResponseScheduling;
-        if (!vertexai && scheduling !== undefined) {
+        if (supportsScheduling && scheduling !== undefined) {
           response.scheduling = scheduling;
         }
         this.toolResponseCallIds.set(response, item.callId);
@@ -734,7 +759,9 @@ export class RealtimeSession extends llm.RealtimeSession {
       this.options.toolResponseScheduling !== options.toolResponseScheduling
     ) {
       this.options.toolResponseScheduling = options.toolResponseScheduling;
-      if (this.options.vertexai) warnVertexSchedulingUnsupported();
+      if (this.options.vertexai && !this.options.model?.includes('3.8')) {
+        warnVertexSchedulingUnsupported();
+      }
       // no need to restart
     }
 
@@ -755,16 +782,33 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.options.instructions = instructions;
 
     const unlock = await this.sessionLock.lock();
+    let sentContextUpdate = false;
     try {
       if (!this.activeSession) {
         this.markRestartNeeded();
         return;
       }
+      if (!this.realtimeModel.capabilities.midSessionInstructionsUpdate) {
+        return;
+      }
+      if (supportsContextUpdate(this.options.model, this.options.vertexai)) {
+        this.#logger.debug('Updating instructions mid-session via contextUpdate');
+        this.contextUpdated = true;
+        this.sendClientEvent({
+          type: 'context_update',
+          value: {
+            systemInstruction: {
+              parts: [{ text: instructions }],
+            },
+          },
+        });
+        sentContextUpdate = true;
+      }
     } finally {
       unlock();
     }
 
-    if (!this.realtimeModel.capabilities.midSessionInstructionsUpdate) {
+    if (sentContextUpdate || !this.realtimeModel.capabilities.midSessionInstructionsUpdate) {
       return;
     }
 
@@ -811,8 +855,10 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
 
     if (appendCtx.items.length > 0) {
+      const supportsScheduling =
+        !this.options.vertexai || Boolean(this.options.model?.includes('3.8'));
       const supportsSilentScheduling =
-        !this.options.vertexai && this.options.toolBehavior === types.Behavior.NON_BLOCKING;
+        supportsScheduling && this.options.toolBehavior === types.Behavior.NON_BLOCKING;
       const silenced = appendCtx.items
         .filter(
           (item): item is llm.FunctionCallOutput =>
@@ -822,7 +868,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       if (!supportsSilentScheduling && silenced.length > 0) {
         this.#logger.warn(
           { functions: silenced },
-          'a tool result wants no reply, but Gemini will answer it anyway; declare the tools NON_BLOCKING on the Gemini API to keep it silent. Sending it regardless, since an unanswered call blocks the session.',
+          'a tool result wants no reply, but Gemini will answer it anyway; declare the tools NON_BLOCKING on a scheduling-capable model to keep it silent. Sending it regardless, since an unanswered call blocks the session.',
         );
       }
 
@@ -885,8 +931,37 @@ export class RealtimeSession extends llm.RealtimeSession {
       return;
     }
 
-    this._tools = tools;
-    this.markRestartNeeded();
+    if (!this.realtimeModel.capabilities.midSessionToolsUpdate) {
+      this._tools = tools;
+      this.markRestartNeeded();
+      return;
+    }
+
+    const unlock = await this.sessionLock.lock();
+    try {
+      if (!this.activeSession) {
+        this._tools = tools;
+        this.markRestartNeeded();
+        return;
+      }
+
+      // convert before committing, so a tool set that fails conversion can be retried
+      const convertedTools = this.toolsConfig(tools);
+      this._tools = tools;
+
+      this.#logger.debug('Updating tools mid-session via contextUpdate');
+      this.contextUpdated = true;
+      this.sendClientEvent({
+        type: 'context_update',
+        value: {
+          tools: {
+            tools: convertedTools,
+          },
+        },
+      });
+    } finally {
+      unlock();
+    }
   }
 
   get chatCtx(): llm.ChatContext {
@@ -1155,24 +1230,7 @@ export class RealtimeSession extends llm.RealtimeSession {
         connected.session = session;
 
         await sessionOpened.wait();
-
-        const unlock = await this.sessionLock.lock();
-        try {
-          this.activeSession = session;
-
-          // Send existing chat context
-          const [turns] = await this._chatCtx
-            .copy({
-              excludeFunctionCall: true,
-            })
-            .toProviderFormat('google', false);
-
-          if (turns.length > 0) {
-            await session.sendClientContent({ turns, turnComplete: false });
-          }
-        } finally {
-          unlock();
-        }
+        await this.onSessionOpened(session);
 
         const sendTask = Task.from((controller) => this.sendTask(session, controller));
         const restartWaitTask = Task.from(({ signal }) => {
@@ -1295,6 +1353,18 @@ export class RealtimeSession extends llm.RealtimeSession {
             }
             if (activityStart) await session.sendRealtimeInput({ activityStart });
             if (activityEnd) await session.sendRealtimeInput({ activityEnd });
+            break;
+          case 'context_update':
+            if (LK_GOOGLE_DEBUG) {
+              this.#logger.debug(
+                {
+                  eventType: msg.type,
+                  'lk.pii.event': this.loggableClientEvent(msg),
+                },
+                'sent Gemini Live client event',
+              );
+            }
+            session.sendContextUpdate(msg.value);
             break;
           default:
             this.#logger.warn(`Warning: Received unhandled message type: ${msg.type}`);
@@ -1560,14 +1630,66 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.emit('error', event);
   }
 
-  private buildConnectConfig(): types.LiveConnectConfig {
-    const opts = this.options;
+  /**
+   * Makes `session` the active session and brings it up to date.
+   *
+   * When resuming a handle after a contextUpdate, the current instructions and tools are sent
+   * first, because the handle restores the ones the session was created with. The local chat
+   * context is then replayed.
+   */
+  private async onSessionOpened(session: types.Session): Promise<void> {
+    const unlock = await this.sessionLock.lock();
+    try {
+      this.activeSession = session;
+
+      if (this.sessionResumptionHandle !== undefined && this.contextUpdated) {
+        // the handle restores the conversation, but with the instructions/tools the
+        // session had when it was created. a handle may also predate the last
+        // contextUpdate, so the current ones are sent again rather than trusting it
+        session.sendContextUpdate({
+          // an empty string is a real value here: it clears the instructions
+          systemInstruction:
+            this.options.instructions !== undefined
+              ? { parts: [{ text: this.options.instructions }] }
+              : undefined,
+          tools: { tools: this.toolsConfig(this._tools) },
+        });
+      }
+
+      // Send existing chat context
+      const [turns] = await this._chatCtx
+        .copy({
+          excludeFunctionCall: true,
+        })
+        .toProviderFormat('google', false);
+
+      if (turns.length > 0) {
+        await session.sendClientContent({ turns, turnComplete: false });
+      }
+    } finally {
+      unlock();
+    }
+  }
+
+  /**
+   * Converts `toolCtx` (plus any configured `geminiTools`) to Gemini tool declarations.
+   *
+   * Returns an empty list when there is nothing to declare, so a contextUpdate can clear the
+   * session's tools. Throws if a tool schema is one Gemini rejects.
+   */
+  private toolsConfig(toolCtx: llm.ToolContext): types.Tool[] {
     const [tools] = toToolsConfig({
-      toolCtx: this._tools,
+      toolCtx,
       geminiTools: this.options.geminiTools,
       toolBehavior: this.options.toolBehavior,
       useParametersJsonSchema: false,
     });
+    return tools ?? [];
+  }
+
+  private buildConnectConfig(): types.LiveConnectConfig {
+    const opts = this.options;
+    const tools = this.toolsConfig(this._tools);
 
     const config: types.LiveConnectConfig = {
       thinkingConfig: opts.thinkingConfig,
@@ -1624,6 +1746,10 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     if (opts.contextWindowCompression !== undefined) {
       config.contextWindowCompression = opts.contextWindowCompression;
+    }
+
+    if (opts.labels !== undefined) {
+      config.labels = opts.labels;
     }
 
     return config;
@@ -1854,14 +1980,15 @@ export class RealtimeSession extends llm.RealtimeSession {
         willContinueSent: false,
         createdAt: Date.now(),
       });
-      if (this.isNonBlockingToolBehavior()) {
+      // Vertex AI throws if FunctionResponse.willContinue is set.
+      if (this.isNonBlockingToolBehavior() && !this.options.vertexai) {
         const continuingResponse: types.FunctionResponse = {
           id: fc.id || undefined,
           name: fc.name,
           response: {},
           willContinue: true,
         };
-        if (!this.options.vertexai && this.options.toolResponseScheduling !== undefined) {
+        if (this.options.toolResponseScheduling !== undefined) {
           continuingResponse.scheduling = this.options.toolResponseScheduling;
         }
         this.sendClientEvent({
