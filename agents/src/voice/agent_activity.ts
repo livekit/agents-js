@@ -2746,6 +2746,8 @@ export class AgentActivity implements RecognitionHooks {
           },
           'skipping user input, word count below minimum interruption threshold',
         );
+        // a skipped backchannel must not count again on the next trigger or join the next turn
+        info.dropTranscript = true;
         return false;
       }
     }

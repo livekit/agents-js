@@ -94,6 +94,12 @@ export interface EndOfTurnInfo {
    * caller drives its own `generateReply` (e.g. leaving a voicemail).
    */
   skipReply?: boolean;
+  /**
+   * Set by the activity when it skips the turn for having fewer than `minWords` words.
+   * Recognition then drops `newTranscript` instead of keeping it for the next trigger, so
+   * skipped backchannels can't add up to `minWords` or prefix the next committed turn.
+   */
+  dropTranscript?: boolean;
   /** The turn's speech overlapped agent speech and was classified a backchannel. */
   backchannelOverAgent?: boolean;
   /**
@@ -1930,6 +1936,8 @@ export class AudioRecognition {
           backchannelOverAgent: this.turnBackchannelOverAgent,
           userTurnSpan,
         };
+        // finals evaluated here; any that arrive while the hook runs are not part of this decision
+        const evaluatedFinals = this.finalTranscriptConfidence.length;
         const committed = await this.hooks.onEndOfTurn(endOfTurn);
 
         if (committed) {
@@ -1968,9 +1976,18 @@ export class AudioRecognition {
             this.turnDetectorFlushed = true;
           }
           this.resetTranscriptionTimeout();
-        } else if (eouWaitSpan.isRecording()) {
-          // the decision is deferred (below min words, realtime backchannel): keep waiting
-          this.eouWaitNotCommitted += 1;
+        } else {
+          if (endOfTurn.dropTranscript) {
+            this.dropSkippedTranscript(endOfTurn.newTranscript, evaluatedFinals, {
+              turn: userTurnSpan,
+              wait: eouWaitSpan,
+              lastSpeakingTime,
+            });
+          }
+          if (eouWaitSpan.isRecording()) {
+            // the decision is deferred (below min words, realtime backchannel): keep waiting
+            this.eouWaitNotCommitted += 1;
+          }
         }
 
         this.turnBackchannelOverAgent = false;
@@ -2430,6 +2447,48 @@ export class AudioRecognition {
         if (idx >= 0) this.subscriberWriters.splice(idx, 1);
       });
     return transform.readable;
+  }
+
+  /**
+   * Drops a transcript the activity skipped (see `EndOfTurnInfo.dropTranscript`). Only the
+   * evaluated text and its finals' confidences are removed: finals that arrived while
+   * `onEndOfTurn` ran start a new utterance and stay. When nothing is left, the skipped turn
+   * ends as dropped, so the next utterance opens its own turn with its own start time.
+   */
+  private dropSkippedTranscript(
+    skipped: string,
+    skippedFinals: number,
+    decided: { turn: Span; wait: Span; lastSpeakingTime: number | undefined },
+  ) {
+    const rest = this.audioTranscript.slice(skipped.length);
+    if (!skipped || !this.audioTranscript.startsWith(skipped) || /^\S/.test(rest)) return;
+    this.audioTranscript = rest.trimStart();
+    if (this.audioPreflightTranscript.startsWith(skipped)) {
+      this.audioPreflightTranscript = this.audioPreflightTranscript
+        .slice(skipped.length)
+        .trimStart();
+    }
+    this.finalTranscriptConfidence.splice(0, skippedFinals);
+
+    const resumed =
+      this.audioTranscript !== '' ||
+      this.speaking ||
+      this.lastSpeakingTime !== decided.lastSpeakingTime;
+    if (resumed) {
+      // the user spoke again while the skip was decided: that speech keeps the turn open, and
+      // with the skipped words gone it is where the turn now starts
+      const resumedAt = this.activeVadSpeechStartedAt ?? this.speechStartTime;
+      if (resumedAt !== undefined && resumedAt > (this.userTurnStart ?? -Infinity)) {
+        this.userTurnStart = resumedAt;
+      }
+      return;
+    }
+
+    this.lastFinalTranscriptTime = 0;
+    this._endUserTurnSpan(undefined, { turn: decided.turn, wait: decided.wait });
+    this.speechStartTime = undefined;
+    this.vadSpeechStarted = false;
+    this.lastSpeakingTime = undefined;
   }
 
   clearUserTurn() {
