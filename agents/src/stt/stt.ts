@@ -132,6 +132,8 @@ export interface SpeechEvent {
 export interface STTCapabilities {
   streaming: boolean;
   interimResults: boolean;
+  /** Whether the voice pipeline should flush the stream when it detects the end of speech. */
+  manualFlush?: boolean;
   /**
    * Whether this STT supports aligned transcripts with word/chunk timestamps.
    * - 'word': Provider returns word-level timestamps
@@ -506,6 +508,11 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
   }
 
   protected abstract run(): Promise<void>;
+
+  /** Mark meaningful provider activity so a healthy stream does not exhaust its retry budget. */
+  protected markProviderProgress(): void {
+    this._numRetries = 0;
+  }
 
   protected get abortSignal(): AbortSignal {
     return this.abortController.signal;

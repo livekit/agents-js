@@ -21,6 +21,7 @@ import { Participant } from '@livekit/rtc-node';
 import { ParticipantKind } from '@livekit/rtc-node';
 import { ReadableStream as ReadableStream_2 } from 'node:stream/web';
 import type { ReadableStreamDefaultReader as ReadableStreamDefaultReader_2 } from 'node:stream/web';
+import type { RealtimeConnection } from '@mistralai/mistralai/extra/realtime';
 import { RemoteParticipant } from '@livekit/rtc-node';
 import { Room } from '@livekit/rtc-node';
 import { Span } from '@opentelemetry/api';
@@ -50,6 +51,9 @@ export class ChunkedStream extends tts.ChunkedStream {
     // (undocumented)
     protected run(): Promise<void>;
 }
+
+// @internal (undocumented)
+export function _isProviderProgressEvent(type: unknown): boolean;
 
 // Warning: (ae-forgotten-export) The symbol "llm" needs to be exported by the entry point index.d.ts
 // Warning: (ae-missing-release-tag) "LLM" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -139,7 +143,7 @@ export type MistralChatModels = 'mistral-large-latest' | 'mistral-large-2512' | 
 // Warning: (ae-missing-release-tag) "MistralSTTModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-export type MistralSTTModels = 'voxtral-mini-transcribe-realtime-2602' | 'voxtral-mini-latest' | 'voxtral-mini-2602' | 'voxtral-mini-2507';
+export type MistralSTTModels = 'voxtral-mini-transcribe-realtime-3' | 'voxtral-mini-transcribe-3' | 'voxtral-small-transcribe-3' | 'voxtral-mini-transcribe-realtime-2602' | 'voxtral-mini-2602';
 
 // Warning: (ae-missing-release-tag) "MistralTTSModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -156,10 +160,14 @@ export type MistralTTSVoices = 'gb_jane_confident' | 'gb_jane_confused' | 'gb_ja
 //
 // @public (undocumented)
 export class SpeechStream extends stt.SpeechStream {
+    // Warning: (ae-forgotten-export) The symbol "ConnectionPool" needs to be exported by the entry point index.d.ts
+    // Warning: (ae-forgotten-export) The symbol "ResolvedSTTOptions" needs to be exported by the entry point index.d.ts
     // Warning: (ae-forgotten-export) The symbol "VAD" needs to be exported by the entry point index.d.ts
-    constructor(sttInstance: STT, client: Mistral, opts: STTOptions, vad: VAD | undefined, connOptions?: APIConnectOptions);
+    constructor(sttInstance: STT, pool: ConnectionPool<RealtimeConnection>, opts: ResolvedSTTOptions, vad: VAD | undefined, language: string | null | undefined, connOptions: APIConnectOptions);
     // (undocumented)
     label: string;
+    // @internal (undocumented)
+    _reconnect(opts: ResolvedSTTOptions): void;
     // (undocumented)
     protected run(): Promise<void>;
 }
@@ -176,21 +184,24 @@ export class STT extends stt.STT {
     // (undocumented)
     get model(): string;
     // (undocumented)
+    prewarm(): void;
+    // (undocumented)
     get provider(): string;
     // Warning: (ae-forgotten-export) The symbol "AudioBuffer_2" needs to be exported by the entry point index.d.ts
     //
     // (undocumented)
-    _recognize(buffer: AudioBuffer_2, abortSignal?: AbortSignal): Promise<stt.SpeechEvent>;
+    recognize(buffer: AudioBuffer_2, abortSignal?: AbortSignal): Promise<stt.SpeechEvent>;
+    // (undocumented)
+    recognize(buffer: AudioBuffer_2, options?: STTRecognizeOptions): Promise<stt.SpeechEvent>;
+    // (undocumented)
+    protected _recognize(buffer: AudioBuffer_2, abortSignal?: AbortSignal): Promise<stt.SpeechEvent>;
     // (undocumented)
     stream(options?: {
+        language?: string | null;
         connOptions?: APIConnectOptions;
     }): SpeechStream;
     // (undocumented)
-    updateOptions(opts: {
-        language?: string;
-        contextBias?: string[];
-        targetStreamingDelayMs?: number;
-    }): void;
+    updateOptions(opts: Partial<Pick<STTOptions, 'model' | 'language' | 'contextBias' | 'targetStreamingDelayMs' | 'diarize' | 'turnDetection'>>): void;
 }
 
 // Warning: (ae-missing-release-tag) "STTOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -202,15 +213,29 @@ export interface STTOptions {
     // (undocumented)
     client?: Mistral;
     // (undocumented)
-    contextBias?: string[];
+    contextBias?: string[] | null;
     // (undocumented)
-    language?: string;
+    diarize?: boolean;
+    // (undocumented)
+    language?: string | null;
     // (undocumented)
     model: MistralSTTModels | string;
     // (undocumented)
-    targetStreamingDelayMs?: number;
+    targetStreamingDelayMs?: number | null;
+    // (undocumented)
+    turnDetection?: TurnDetection | null;
     // (undocumented)
     vad?: VAD;
+}
+
+// Warning: (ae-missing-release-tag) "STTRecognizeOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+export interface STTRecognizeOptions {
+    // (undocumented)
+    abortSignal?: AbortSignal;
+    // (undocumented)
+    language?: string | null;
 }
 
 // Warning: (ae-missing-release-tag) "TTS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -250,6 +275,22 @@ export interface TTSOptions {
     refAudio?: string;
     // (undocumented)
     voice?: MistralTTSVoices | string;
+}
+
+// Warning: (ae-missing-release-tag) "TurnDetection" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export interface TurnDetection {
+    // (undocumented)
+    eagerEndThreshold?: number;
+    // (undocumented)
+    endThreshold?: number;
+    // (undocumented)
+    endTimeoutMs?: number | null;
+    // (undocumented)
+    minSilenceMs?: number;
+    // (undocumented)
+    startThreshold?: number;
 }
 
 // Warnings were encountered during analysis:

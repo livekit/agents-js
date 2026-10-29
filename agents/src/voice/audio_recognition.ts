@@ -37,7 +37,7 @@ import { DeferredReadableStream } from '../stream/deferred_stream.js';
 import { IdentityTransform } from '../stream/identity_transform.js';
 import { mergeReadableStreams } from '../stream/merge_readable_streams.js';
 import { type StreamChannel, createStreamChannel } from '../stream/stream_channel.js';
-import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
+import { type STT, type SpeechEvent, SpeechEventType, type SpeechStream } from '../stt/stt.js';
 import { traceTypes, tracer } from '../telemetry/index.js';
 import { splitWords } from '../tokenize/basic/word.js';
 import type { Future } from '../utils.js';
@@ -52,7 +52,7 @@ import {
   createEotPredictionEvent,
   createUserTurnExceededEvent,
 } from './events.js';
-import type { STTNode } from './io.js';
+import { type STTNode, sttStreamRegistration } from './io.js';
 import { toSnakeCaseDeep } from './report.js';
 import {
   type BaseEndpointing,
@@ -192,6 +192,7 @@ export class STTPipeline {
   private _pumpTask: Task<void>;
   /** Wall-clock anchor for this stream, used for STT-derived turn metrics. */
   inputStartedAt?: number;
+  private activeStream?: { stream: SpeechStream; stt: STT };
 
   constructor(
     sttNode: STTNode,
@@ -240,7 +241,17 @@ export class STTPipeline {
     while (!signal.aborted) {
       let node: Awaited<ReturnType<STTNode>> | undefined;
       try {
-        node = await this.sttNode(this._audioChannel.stream(), {});
+        node = await sttStreamRegistration.run(
+          {
+            register: (stream, stt) => {
+              this.activeStream = { stream, stt };
+            },
+            unregister: (stream) => {
+              if (this.activeStream?.stream === stream) this.activeStream = undefined;
+            },
+          },
+          () => this.sttNode(this._audioChannel.stream(), {}),
+        );
         if (node === null) return;
 
         for await (const value of readStream(node, signal)) {
@@ -273,6 +284,16 @@ export class STTPipeline {
 
   async close(): Promise<void> {
     await cancelAndWait([this._pumpTask], STTPipeline.PUMP_TASK_CANCEL_TIMEOUT);
+  }
+
+  flush(): boolean {
+    if (this.activeStream?.stt.capabilities.manualFlush !== true) return false;
+    try {
+      this.activeStream.stream.flush();
+      return true;
+    } catch {
+      return false;
+    }
   }
 }
 
@@ -2221,6 +2242,7 @@ export class AudioRecognition {
             this.vadSpeechStarted = false;
             this.speaking = false;
             this.lastSpeakingTime = Date.now() - ev.silenceDuration - ev.inferenceDuration;
+            this.sttPipeline?.flush?.();
 
             // A committed turn clears vadSpeechStarted before its late VAD EOS arrives.
             if (this.sttPipeline !== undefined && vadSpeechStarted) {

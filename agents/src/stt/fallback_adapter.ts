@@ -12,6 +12,7 @@ import { StreamAdapter } from './stream_adapter.js';
 import {
   STT,
   type STTCallbacks,
+  type STTCapabilities,
   type STTError,
   type SpeechEvent,
   SpeechEventType,
@@ -134,6 +135,7 @@ export class FallbackAdapter extends STT {
     super({
       streaming: true,
       interimResults: wrapped.every((s) => s.capabilities.interimResults),
+      manualFlush: wrapped.every((s) => s.capabilities.manualFlush === true),
       diarization: wrapped.every((s) => !!s.capabilities.diarization),
       alignedTranscript,
       keyterms: wrapped.some((s) => !!s.capabilities.keyterms),
@@ -154,6 +156,14 @@ export class FallbackAdapter extends STT {
     }));
 
     this.setupEventForwarding();
+  }
+
+  override get capabilities(): STTCapabilities {
+    const active = this._served?.stt ?? this.nextInstance();
+    return {
+      ...super.capabilities,
+      manualFlush: active.capabilities.manualFlush === true,
+    };
   }
 
   /**

@@ -46,7 +46,7 @@ import {
   createAgentV2,
 } from './agent_v2.js';
 import type { UserTurnExceededEvent } from './events.js';
-import type { TimedString } from './io.js';
+import { type TimedString, sttStreamRegistration } from './io.js';
 import type { SpeechHandle } from './speech_handle.js';
 import type { ToolHandlingOptions } from './tool_executor.js';
 import type { TurnHandlingOptions } from './turn_config/turn_handling.js';
@@ -497,6 +497,8 @@ export class Agent<UserData = any> {
 
       const connOptions = activity.agentSession.connOptions.sttConnOptions;
       const stream = wrappedStt.stream({ connOptions });
+      const registration = sttStreamRegistration.getStore();
+      registration?.register(stream, wrappedStt);
 
       // Set startTimeOffset to provide linear timestamps across reconnections
       const audioInputStartedAt =
@@ -513,6 +515,7 @@ export class Agent<UserData = any> {
       const cleanup = () => {
         if (cleaned) return;
         cleaned = true;
+        registration?.unregister(stream);
         stream.detachInputStream();
         stream.close();
       };

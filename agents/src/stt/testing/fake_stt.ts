@@ -106,6 +106,7 @@ export class FakeSTT extends STT {
     super({
       streaming: opts.capabilities?.streaming ?? true,
       interimResults: opts.capabilities?.interimResults ?? false,
+      manualFlush: opts.capabilities?.manualFlush ?? false,
       diarization: opts.capabilities?.diarization ?? false,
       alignedTranscript: opts.capabilities?.alignedTranscript ?? false,
     });

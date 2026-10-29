@@ -19,10 +19,11 @@ export type MistralChatModels =
   | 'ministral-3b-2512';
 
 export type MistralSTTModels =
+  | 'voxtral-mini-transcribe-realtime-3'
+  | 'voxtral-mini-transcribe-3'
+  | 'voxtral-small-transcribe-3'
   | 'voxtral-mini-transcribe-realtime-2602'
-  | 'voxtral-mini-latest'
-  | 'voxtral-mini-2602'
-  | 'voxtral-mini-2507';
+  | 'voxtral-mini-2602';
 
 export type MistralTTSModels = 'voxtral-mini-tts-latest' | 'voxtral-mini-tts-2603';
 
