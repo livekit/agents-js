@@ -108,6 +108,7 @@ export type PersonaConfig = {
 export type SessionOptions = {
     videoWidth?: number;
     videoHeight?: number;
+    showAIAvatarDisclosure?: boolean;
 };
 
 // (No @packageDocumentation comment for this package)
