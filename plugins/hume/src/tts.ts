@@ -66,8 +66,11 @@ export class TTS extends tts.TTS {
       throw new Error('Hume API key is required, whether as an argument or as $HUME_API_KEY');
     }
 
-    const voice = opts.voice ?? DEFAULT_VOICE;
-    const instantMode = opts.instantMode;
+    const voice = opts.voice === undefined ? DEFAULT_VOICE : opts.voice;
+    const instantMode = opts.instantMode ?? voice !== null;
+    if (instantMode && voice === null) {
+      throw new Error('Hume TTS: instant_mode cannot be enabled without specifying a voice');
+    }
 
     this.opts = {
       ...merged,
@@ -85,6 +88,12 @@ export class TTS extends tts.TTS {
    * @param opts - Partial options to update
    */
   updateOptions(opts: Partial<Omit<TTSOptions, 'apiKey' | 'baseUrl'>>): void {
+    const newVoice = opts.voice !== undefined ? opts.voice : this.opts.voice;
+    const newInstantMode = opts.instantMode ?? this.opts.instantMode;
+    if (newInstantMode && newVoice === null) {
+      throw new Error('Hume TTS: instant_mode cannot be enabled without specifying a voice');
+    }
+
     if (opts.description !== undefined) this.opts.description = opts.description;
     if (opts.speed !== undefined) this.opts.speed = opts.speed;
     if (opts.voice !== undefined) this.opts.voice = opts.voice;
@@ -131,7 +140,7 @@ export class ChunkedStream extends tts.ChunkedStream {
     const utterance: Record<string, unknown> = {
       text: this.text,
     };
-    if (this.opts.voice !== undefined) {
+    if (this.opts.voice != null) {
       utterance.voice = this.opts.voice;
     }
     if (this.opts.description !== undefined) {
