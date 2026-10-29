@@ -1094,15 +1094,37 @@ export type MockToolFn = (...args: any[]) => any;
 /** Map from agent constructor to a record of mocked tools by name. */
 export type MockToolsMap = Map<AgentConstructor, Record<string, MockToolFn>>;
 
+/** Options for scoping mocked tools. */
+export interface MockToolsOptions {
+  /** Restrict the mocks to tool calls from this session. */
+  session?: AgentSession;
+}
+
 /** @internal */
 export let activeMockTools: MockToolsMap | undefined;
 
-/** @internal */
-export function getMockTool(agent: Agent, toolName: string): MockToolFn | undefined {
-  if (!activeMockTools) return undefined;
+interface SessionMockTools {
+  agent: AgentConstructor;
+  mocks: Record<string, MockToolFn>;
+}
 
-  for (const [agentConstructor, mocks] of activeMockTools) {
-    if (agent.constructor === agentConstructor) {
+// Each registration is kept separately so scopes can be disposed in any order.
+const sessionMockTools = new WeakMap<AgentSession, SessionMockTools[]>();
+
+/** @internal */
+export function getMockTool(
+  agent: Agent,
+  toolName: string,
+  session?: AgentSession,
+): MockToolFn | undefined {
+  // Block-scoped mocks take precedence over session-scoped ones, matching Python.
+  const blockMocks = activeMockTools?.get(agent.constructor as AgentConstructor);
+  if (blockMocks && Object.hasOwn(blockMocks, toolName)) return blockMocks[toolName];
+
+  const scoped = session ? sessionMockTools.get(session) : undefined;
+  for (let i = (scoped?.length ?? 0) - 1; i >= 0; i--) {
+    const { agent: agentConstructor, mocks } = scoped![i]!;
+    if (agent.constructor === agentConstructor && Object.hasOwn(mocks, toolName)) {
       return mocks[toolName];
     }
   }
@@ -1121,6 +1143,8 @@ export function getMockTool(agent: Agent, toolName: string): MockToolFn | undefi
  *
  * @param agent - The Agent constructor whose tools should be mocked.
  * @param mocks - A record mapping tool name to a mock implementation.
+ * @param options - Optional scope for the mocks. With `session`, the mocks apply only to
+ *   tool calls from that session; mocks registered without a session take precedence.
  *
  * @example
  * ```typescript
@@ -1138,7 +1162,23 @@ export function getMockTool(agent: Agent, toolName: string): MockToolFn | undefi
 export function withMockTools(
   agent: AgentConstructor,
   mocks: Record<string, MockToolFn>,
+  options: MockToolsOptions = {},
 ): Disposable {
+  const { session } = options;
+  if (session) {
+    const registration: SessionMockTools = { agent, mocks };
+    const registrations = sessionMockTools.get(session) ?? [];
+    registrations.push(registration);
+    sessionMockTools.set(session, registrations);
+
+    return {
+      [Symbol.dispose]() {
+        const index = registrations.indexOf(registration);
+        if (index !== -1) registrations.splice(index, 1);
+      },
+    };
+  }
+
   const previous = activeMockTools;
   const updated: MockToolsMap = new Map(previous ?? []);
   updated.set(agent, mocks);

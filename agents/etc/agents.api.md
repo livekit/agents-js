@@ -5705,6 +5705,11 @@ type MockToolFn = (...args: any[]) => any;
 // @public
 type MockToolsMap = Map<AgentConstructor, Record<string, MockToolFn>>;
 
+// @public
+interface MockToolsOptions {
+    session?: AgentSession;
+}
+
 // @public (undocumented)
 export interface ModelSettings {
     toolChoice?: ToolChoice;
@@ -8254,6 +8259,7 @@ declare namespace testing {
         RunResult,
         withMockTools,
         MockToolFn,
+        MockToolsOptions,
         MockToolsMap,
         RunOutputOptions,
         isAgentHandoffEvent,
@@ -9747,7 +9753,7 @@ function withInferenceTracking<T>(fn: (marker: InferenceMarker) => T, options?: 
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "Disposable"
 //
 // @public
-function withMockTools(agent: AgentConstructor, mocks: Record<string, MockToolFn>): Disposable;
+function withMockTools(agent: AgentConstructor, mocks: Record<string, MockToolFn>, options?: MockToolsOptions): Disposable;
 
 // @public (undocumented)
 export function withResolvers<T = unknown>(): {

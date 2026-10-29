@@ -1640,7 +1640,7 @@ export function performToolExecutions({
           const toolExecution = functionCallStorage.run(
             { functionCall: toolCall, speechHandle },
             async () => {
-              const mock = getMockTool(session.currentAgent, toolCall.name);
+              const mock = getMockTool(session.currentAgent, toolCall.name, session);
               const toolToExecute = mock
                 ? {
                     ...tool,

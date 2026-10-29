@@ -32,6 +32,7 @@ export {
   RunResult,
   withMockTools,
   type MockToolFn,
+  type MockToolsOptions,
   type MockToolsMap,
   type RunOutputOptions,
 } from './run_result.js';
