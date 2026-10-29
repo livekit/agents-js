@@ -1753,6 +1753,7 @@ export interface AudioOutputOptions {
     queueSizeMs?: number;
     // (undocumented)
     sampleRate: number;
+    trackName?: string;
     // (undocumented)
     trackPublishOptions: TrackPublishOptions;
 }
@@ -1959,6 +1960,9 @@ declare namespace beta {
         WarmTransferTaskOptions,
         InstructionParts,
         Instructions,
+        translation,
+        TranslationModel,
+        TranslationSession,
         END_CALL_DESCRIPTION,
         createEndCallTool,
         sendDtmfEvents,
@@ -2976,6 +2980,9 @@ export const DEFAULT_EXPRESSIVE_OPTIONS: ExpressiveOptions;
 
 // @public
 const DEFAULT_MOOD: AgentMood;
+
+// @public
+const DEFAULT_OUTPUT_SEGMENT_TIMEOUT = 500;
 
 // @public (undocumented)
 export const DEFAULT_PARTICIPANT_KINDS: ParticipantKind[];
@@ -4536,13 +4543,29 @@ export interface InputDetails {
     modality: 'audio' | 'text';
 }
 
+// @public
+class InputSpeechStarted {
+}
+
 // @public (undocumented)
 export type InputSpeechStartedEvent = object;
+
+// @public
+class InputSpeechStopped {
+}
 
 // @public (undocumented)
 export interface InputSpeechStoppedEvent {
     // (undocumented)
     userTranscriptionEnabled: boolean;
+}
+
+// @public
+interface InputTranscript {
+    isFinal: boolean;
+    language?: string;
+    speakerId?: string;
+    text: string;
 }
 
 // @public (undocumented)
@@ -4911,6 +4934,12 @@ interface LemonSliceOptions {
     idle_timeout?: number;
     image_url?: string;
     prompt?: string;
+}
+
+// @public
+interface LinkedTranslationTrack {
+    participant: RemoteParticipant;
+    publication: RemoteTrackPublication;
 }
 
 // Warning: (ae-forgotten-export) The symbol "LLM_base" needs to be exported by the entry point index.d.ts
@@ -5837,6 +5866,17 @@ type OriginateHumanAgent = (options: {
     signal: AbortSignal;
 }) => Promise<void>;
 
+// @public
+class OutputSpeechStopped {
+}
+
+// @public
+interface OutputTranscript {
+    isFinal: boolean;
+    language?: string;
+    text: string;
+}
+
 // Warning: (ae-forgotten-export) The symbol "TextOutput" needs to be exported by the entry point index.d.ts
 //
 // @public (undocumented)
@@ -5844,6 +5884,7 @@ export class ParalellTextOutput extends TextOutput {
     constructor(sinks: TextOutput[], nextInChain?: TextOutput);
     // (undocumented)
     captureText(text: string | TimedString): Promise<void>;
+    close(): Promise<void>;
     // (undocumented)
     flush(): void;
     // @internal (undocumented)
@@ -5896,14 +5937,23 @@ export class ParticipantAudioOutput extends AudioOutput {
 //
 // @public (undocumented)
 export class ParticipantLegacyTranscriptionOutput extends BaseParticipantTranscriptionOutput {
+    // @internal (undocumented)
+    protected acceptsTrackParticipant(participant: RemoteParticipant): boolean;
+    close(): Promise<void>;
     // (undocumented)
     protected handleCaptureText(text: string): Promise<void>;
     // (undocumented)
     protected handleFlush(): void;
+    // @internal (undocumented)
+    protected onParticipantSelected(participantIdentity: string | null): void;
+    // @internal (undocumented)
+    protected onTrackSelected(participant: RemoteParticipant): void;
     // (undocumented)
     publishTranscription(id: string, text: string, final: boolean, signal?: AbortSignal): Promise<void>;
     // (undocumented)
     protected resetState(): void;
+    // (undocumented)
+    setParticipant(participant: Participant | string | null): void;
 }
 
 // @public (undocumented)
@@ -5911,6 +5961,7 @@ export class ParticipantTranscriptionOutput extends BaseParticipantTranscription
     constructor(room: Room, isDeltaStream: boolean, participant: Participant | string | null, options?: ParticipantTranscriptionOutputOptions);
     // (undocumented)
     captureText(text: string | TimedString): Promise<void>;
+    close(): Promise<void>;
     // (undocumented)
     protected handleCaptureText(_text: string): Promise<void>;
     // (undocumented)
@@ -8851,6 +8902,7 @@ class TracingRpcInterceptor implements RpcInterceptor {
 // @public (undocumented)
 export interface TranscriptionOutputOptions {
     expressiveEnabled?: () => boolean;
+    trackSid?: string | null;
 }
 
 // @public
@@ -8859,6 +8911,238 @@ class TranscriptMarkupStripper {
     flush(): string;
     push(text: string): string;
     get tags(): ExpressiveTag[];
+}
+
+// @public
+interface TranslatedAudioFrame {
+    frame: AudioFrame;
+    language?: string;
+}
+
+declare namespace translation {
+    export {
+        TranslationAudioInputOptions,
+        TranslationAudioOutputOptions,
+        TranslationTextOutputOptions,
+        TranslationRoomOptions,
+        LinkedTranslationTrack,
+        TranslationRoomIO,
+        TranslationCapabilities,
+        TranslatedAudioFrame,
+        InputTranscript,
+        OutputTranscript,
+        InputSpeechStarted,
+        InputSpeechStopped,
+        OutputSpeechStopped,
+        TranslationModelError,
+        TranslationEventTypes,
+        TranslationModelSessionCallbacks,
+        TranslationModelSessionEventMap,
+        TranslationModel,
+        TranslationModelSession,
+        DEFAULT_OUTPUT_SEGMENT_TIMEOUT,
+        TranslationTranscribedEvent,
+        TranslationErrorEvent,
+        TranslationSessionCallbacks,
+        TranslationSessionEventMap,
+        TranslationSessionOptions,
+        TranslationSessionStartOptions,
+        TranslationSession
+    }
+}
+
+// @public
+interface TranslationAudioInputOptions {
+    frameSizeMs?: number;
+    noiseCancellation?: NoiseCancellationOptions | FrameProcessor<AudioFrame>;
+    numChannels?: number;
+    sampleRate?: number;
+}
+
+// @public
+interface TranslationAudioOutputOptions {
+    numChannels?: number;
+    queueSizeMs?: number;
+    sampleRate?: number;
+    trackName?: string;
+    trackPublishOptions?: TrackPublishOptions;
+}
+
+// @public
+class TranslationCapabilities {
+    constructor(options?: Partial<TranslationCapabilities>);
+    inputTranscription: boolean;
+    outputSegmentation: boolean;
+    outputTranscription: boolean;
+    retargetable: boolean;
+    turnReporting: boolean;
+}
+
+// @public
+interface TranslationErrorEvent {
+    createdAt: number;
+    error: TranslationModelError;
+    source: TranslationModel;
+    type: 'error';
+}
+
+// @public
+type TranslationEventTypes = 'input_speech_started' | 'input_speech_stopped' | 'input_transcript' | 'output_transcript' | 'error';
+
+// @public
+abstract class TranslationModel {
+    constructor(options: {
+        capabilities: TranslationCapabilities;
+        targetLanguage: string;
+        sourceLanguage?: string;
+    });
+    readonly capabilities: TranslationCapabilities;
+    abstract close(): Promise<void>;
+    get label(): string;
+    get model(): string;
+    get provider(): string;
+    abstract session(): TranslationModelSession;
+    readonly sourceLanguage?: string;
+    get targetLanguage(): string;
+    protected _targetLanguage: string;
+    updateOptions(options: {
+        targetLanguage: string;
+    }): void;
+}
+
+// @public
+interface TranslationModelError {
+    error: Error;
+    label: string;
+    recoverable: boolean;
+    timestamp: number;
+    type: 'translation_model_error';
+}
+
+// @public
+abstract class TranslationModelSession<Events extends EventMap = Record<never, never>> extends EventEmitter_2<TranslationModelSessionEventMap<Events>> {
+    constructor(
+    translationModel: TranslationModel);
+    abstract get audioStream(): ReadableStream_2<TranslatedAudioFrame | OutputSpeechStopped>;
+    get capabilities(): TranslationCapabilities;
+    clearAudio(): void;
+    abstract close(): Promise<void>;
+    abstract pushAudio(frame: AudioFrame): void;
+    readonly translationModel: TranslationModel;
+    updateOptions(_options: {
+        targetLanguage: string;
+    }): void;
+}
+
+// @public
+type TranslationModelSessionCallbacks = {
+    input_speech_started: (event: InputSpeechStarted) => void;
+    input_speech_stopped: (event: InputSpeechStopped) => void;
+    input_transcript: (event: InputTranscript) => void;
+    output_transcript: (event: OutputTranscript) => void;
+    error: (event: TranslationModelError) => void;
+};
+
+// @public
+type TranslationModelSessionEventMap<Events extends EventMap = Record<never, never>> = {
+    [K in keyof (Omit<Events, keyof TranslationModelSessionCallbacks> & TranslationModelSessionCallbacks)]: (Omit<Events, keyof TranslationModelSessionCallbacks> & TranslationModelSessionCallbacks)[K] extends (...args: infer Args) => unknown ? Args : never;
+};
+
+// @public
+class TranslationRoomIO {
+    constructor(session: TranslationSession,
+    room: Room, options?: TranslationRoomOptions);
+    // @internal
+    _abort(): void;
+    // @internal
+    _applyLink(linked: LinkedTranslationTrack): void;
+    get audioInput(): AudioInput | null;
+    get audioOutput(): AudioOutput | null;
+    close(): Promise<void>;
+    get linkedParticipant(): RemoteParticipant | null;
+    get linkedTrack(): LinkedTranslationTrack | null;
+    // @internal
+    _onTrackPublished(publication: RemoteTrackPublication, participant: RemoteParticipant): void;
+    readonly room: Room;
+    setTrack(trackSid: string | null): void;
+    start(): Promise<void>;
+    get subscribed(): boolean | null;
+    get transcriptionOutput(): TextOutput | null;
+    unsetTrack(): void;
+    waitForReady(): Promise<void>;
+}
+
+// @public
+interface TranslationRoomOptions {
+    audioInput?: TranslationAudioInputOptions | boolean;
+    audioOutput?: TranslationAudioOutputOptions | boolean;
+    closeOnDisconnect?: boolean;
+    participantIdentity?: string;
+    participantKinds?: ParticipantKind[];
+    textOutput?: TranslationTextOutputOptions | boolean;
+    track?: string;
+}
+
+// @public
+class TranslationSession<UserData = unknown> extends EventEmitter_2<TranslationSessionEventMap> {
+    constructor(options: TranslationSessionOptions<UserData>);
+    close(): Promise<void>;
+    // @internal
+    _closeSoon(reason: CloseReason): void;
+    readonly input: AgentInput;
+    readonly model: TranslationModel;
+    readonly output: AgentOutput;
+    get roomIO(): TranslationRoomIO | null;
+    setTargetLanguage(language: string): void;
+    shutdown(): void;
+    start(options?: TranslationSessionStartOptions): Promise<void>;
+    get userData(): UserData;
+    set userData(value: UserData);
+    get userState(): UserState;
+}
+
+// @public
+type TranslationSessionCallbacks = {
+    user_state_changed: (event: UserStateChangedEvent) => void;
+    user_input_transcribed: (event: UserInputTranscribedEvent) => void;
+    translation_transcribed: (event: TranslationTranscribedEvent) => void;
+    error: (event: TranslationErrorEvent) => void;
+    close: (event: CloseEvent_2) => void;
+};
+
+// @public
+type TranslationSessionEventMap = {
+    [K in keyof TranslationSessionCallbacks]: Parameters<TranslationSessionCallbacks[K]>;
+};
+
+// @public
+interface TranslationSessionOptions<UserData> {
+    model: TranslationModel;
+    outputSegmentTimeout?: number;
+    userData?: UserData;
+}
+
+// @public
+interface TranslationSessionStartOptions {
+    room?: Room;
+    roomOptions?: TranslationRoomOptions;
+}
+
+// @public
+interface TranslationTextOutputOptions {
+    jsonFormat?: boolean;
+    nextInChain?: TextOutput;
+    syncTranscription?: boolean;
+    transcriptionSpeedFactor?: number;
+}
+
+// @public
+interface TranslationTranscribedEvent {
+    createdAt: number;
+    isFinal: boolean;
+    language: string | null;
+    transcript: string;
+    type: 'translation_transcribed';
 }
 
 // Warning: (ae-forgotten-export) The symbol "TTS_base" needs to be exported by the entry point index.d.ts
@@ -9898,7 +10182,7 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 // src/voice/amd.ts:323:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "aclose"
 // src/voice/amd.ts:517:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "gateListening"
 // src/voice/events.ts:437:3 - (ae-forgotten-export) The symbol "InterruptionDetectionError" needs to be exported by the entry point index.d.ts
-// src/voice/room_io/_output.ts:183:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "segmentTags"
+// src/voice/room_io/_output.ts:246:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "segmentTags"
 // src/voice/testing/run_result.ts:93:5 - (ae-forgotten-export) The symbol "OutputSchema" needs to be exported by the entry point index.d.ts
 
 ```
