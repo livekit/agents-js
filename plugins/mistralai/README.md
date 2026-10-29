@@ -122,14 +122,42 @@ kind.
 
 ### TTS
 
-Text-to-speech with voice presets or reference audio for voice cloning.
+The Voxtral 3 model (`voxtral-mini-tts-3`) is the default. By default, text is
+synthesized over HTTP sentence by sentence, so speech starts when the first
+sentence of an LLM reply is complete.
 
 ```ts
 const tts = new mistral.TTS({
-  model: 'voxtral-mini-tts-latest',
+  model: 'voxtral-mini-tts-3',
   voice: 'en_paul_neutral',
 });
+
+// Voxtral 3 adds multilingual `voice_<n>` presets and accepts older voices.
+// Older models only accept Voxtral 2 voices.
+const multilingualTts = new mistral.TTS({
+  model: 'voxtral-mini-tts-3',
+  voice: 'voice_447', // Margaret, en-US
+});
+
+// Voxtral 3 supports expressiveness from 1 to 5 and IPA pronunciation hints.
+const expressiveTts = new mistral.TTS({
+  expressiveness: 3,
+  phonemeHints: { tomato: ['t', 'ə', 'm', 'ɑ', 't', 'oʊ'] },
+});
 ```
+
+#### Realtime WebSocket
+
+With `useRealtime: true`, speech is streamed over the realtime WebSocket API
+while the LLM generates text, using a pool of connections reused between
+requests. `phonemeHints` is not supported in this mode.
+
+```ts
+const tts = new mistral.TTS({ useRealtime: true });
+```
+
+Realtime speech is always PCM. Replies longer than the realtime engine's request
+limit are split automatically.
 
 ### Environment variables
 

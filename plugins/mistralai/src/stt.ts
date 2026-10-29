@@ -392,8 +392,8 @@ export class STT extends stt.STT {
               ? segments.map((segment) =>
                   createTimedString({
                     text: segment.text,
-                    startTime: segment.start,
-                    endTime: segment.end,
+                    startTime: segment.start ?? undefined,
+                    endTime: segment.end ?? undefined,
                     speakerId: segment.speakerId,
                   }),
                 )

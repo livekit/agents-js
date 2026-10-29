@@ -12,6 +12,7 @@ import { EventEmitter } from 'events';
 import { EventEmitter as EventEmitter_2 } from 'node:events';
 import type { EventMap } from '@livekit/typed-emitter';
 import { FrameProcessor } from '@livekit/rtc-node';
+import type { IPAPhoneme } from '@mistralai/mistralai/models/components';
 import { JsonObject } from '@bufbuild/protobuf';
 import type { JSONSchema7 } from 'json-schema';
 import { Logger } from 'pino';
@@ -25,6 +26,7 @@ import type { RealtimeConnection } from '@mistralai/mistralai/extra/realtime';
 import { RemoteParticipant } from '@livekit/rtc-node';
 import { Room } from '@livekit/rtc-node';
 import { Span } from '@opentelemetry/api';
+import type { SpeechOutputFormat } from '@mistralai/mistralai/models/components';
 import type { TextStreamInfo } from '@livekit/rtc-node';
 import { Throws } from '@livekit/throws-transformer/throws';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
@@ -45,6 +47,10 @@ export class ChunkedStream extends tts.ChunkedStream {
         model: string;
         voice?: string;
         refAudio?: string;
+        responseFormat: SpeechOutputFormat;
+        expressiveness?: number;
+        phonemeHints?: Record<string, IPAPhoneme[]>;
+        useRealtime: boolean;
     }, text: string, connOptions?: APIConnectOptions, abortSignal?: AbortSignal);
     // (undocumented)
     label: string;
@@ -148,12 +154,22 @@ export type MistralSTTModels = 'voxtral-mini-transcribe-realtime-3' | 'voxtral-m
 // Warning: (ae-missing-release-tag) "MistralTTSModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-export type MistralTTSModels = 'voxtral-mini-tts-latest' | 'voxtral-mini-tts-2603';
+export type MistralTTSModels = 'voxtral-mini-tts-3' | 'voxtral-mini-tts-latest' | 'voxtral-mini-tts-2603';
 
 // Warning: (ae-missing-release-tag) "MistralTTSVoices" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-export type MistralTTSVoices = 'gb_jane_confident' | 'gb_jane_confused' | 'gb_jane_curious' | 'gb_jane_frustrated' | 'gb_jane_jealousy' | 'gb_jane_neutral' | 'gb_jane_sad' | 'gb_jane_sarcasm' | 'gb_jane_shameful' | 'fr_marie_angry' | 'fr_marie_curious' | 'fr_marie_excited' | 'fr_marie_happy' | 'fr_marie_neutral' | 'fr_marie_sad' | 'gb_oliver_angry' | 'gb_oliver_cheerful' | 'gb_oliver_confident' | 'gb_oliver_curious' | 'gb_oliver_excited' | 'gb_oliver_neutral' | 'gb_oliver_sad' | 'en_paul_angry' | 'en_paul_cheerful' | 'en_paul_confident' | 'en_paul_excited' | 'en_paul_frustrated' | 'en_paul_happy' | 'en_paul_neutral' | 'en_paul_sad';
+export type MistralTTSVoices = MistralTTSVoxtral2Voices | MistralTTSVoxtral3Voices;
+
+// Warning: (ae-missing-release-tag) "MistralTTSVoxtral2Voices" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+export type MistralTTSVoxtral2Voices = 'gb_jane_confident' | 'gb_jane_confused' | 'gb_jane_curious' | 'gb_jane_frustrated' | 'gb_jane_jealousy' | 'gb_jane_neutral' | 'gb_jane_sad' | 'gb_jane_sarcasm' | 'gb_jane_shameful' | 'fr_marie_angry' | 'fr_marie_curious' | 'fr_marie_excited' | 'fr_marie_happy' | 'fr_marie_neutral' | 'fr_marie_sad' | 'gb_oliver_angry' | 'gb_oliver_cheerful' | 'gb_oliver_confident' | 'gb_oliver_curious' | 'gb_oliver_excited' | 'gb_oliver_neutral' | 'gb_oliver_sad' | 'en_paul_angry' | 'en_paul_cheerful' | 'en_paul_confident' | 'en_paul_excited' | 'en_paul_frustrated' | 'en_paul_happy' | 'en_paul_neutral' | 'en_paul_sad';
+
+// Warning: (ae-missing-release-tag) "MistralTTSVoxtral3Voices" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export type MistralTTSVoxtral3Voices = 'voice_479' | 'voice_3143' | 'voice_481' | 'voice_1788' | 'voice_591' | 'voice_590' | 'voice_3147' | 'voice_3149' | 'voice_1787' | 'voice_1786' | 'voice_3150' | 'voice_447' | 'voice_485' | 'voice_478' | 'voice_483' | 'voice_3141' | 'voice_589' | 'voice_3137' | 'voice_592' | 'voice_3139' | 'voice_3153' | 'voice_3146' | 'voice_482' | 'voice_3133' | 'voice_3135' | 'voice_3136' | 'voice_3145' | 'voice_3134' | 'voice_3154' | 'voice_480' | 'voice_3155' | 'voice_3132' | 'voice_3138' | 'voice_3140' | 'voice_3144' | 'voice_3142';
 
 // Warning: (ae-forgotten-export) The symbol "stt" needs to be exported by the entry point index.d.ts
 // Warning: (ae-missing-release-tag) "SpeechStream" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -238,27 +254,46 @@ export interface STTRecognizeOptions {
     language?: string | null;
 }
 
+// Warning: (ae-missing-release-tag) "SynthesizeStream" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export class SynthesizeStream extends tts.SynthesizeStream {
+    constructor(instance: TTS, connOptions?: APIConnectOptions);
+    // (undocumented)
+    readonly done: Promise<void>;
+    // (undocumented)
+    label: string;
+    // (undocumented)
+    protected onStreamDone(): void;
+    // (undocumented)
+    protected run(): Promise<void>;
+}
+
 // Warning: (ae-missing-release-tag) "TTS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
 export class TTS extends tts.TTS {
-    constructor(opts?: Partial<TTSOptions>);
+    constructor(opts?: TTSOptions);
+    // (undocumented)
+    close(): Promise<void>;
     // (undocumented)
     label: string;
     // (undocumented)
     get model(): string;
     // (undocumented)
+    prewarm(): void;
+    // (undocumented)
     get provider(): string;
     // (undocumented)
-    stream(): tts.SynthesizeStream;
+    releaseIdleConnections(): Promise<void>;
+    // (undocumented)
+    stream(options?: {
+        connOptions?: APIConnectOptions;
+    }): SynthesizeStream;
     // (undocumented)
     synthesize(text: string, connOptions?: APIConnectOptions, abortSignal?: AbortSignal): ChunkedStream;
     // (undocumented)
-    updateOptions(opts: {
-        model?: MistralTTSModels | string;
-        voice?: MistralTTSVoices | string;
-        refAudio?: string;
-    }): void;
+    updateOptions(opts: Omit<Partial<TTSOptions>, 'apiKey' | 'client'>): void;
 }
 
 // Warning: (ae-missing-release-tag) "TTSOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -269,10 +304,13 @@ export interface TTSOptions {
     apiKey?: string;
     // (undocumented)
     client?: Mistral;
+    expressiveness?: number;
     // (undocumented)
-    model: MistralTTSModels | string;
+    model?: MistralTTSModels | string;
+    phonemeHints?: Record<string, IPAPhoneme[]> | null;
     // (undocumented)
     refAudio?: string;
+    useRealtime?: boolean;
     // (undocumented)
     voice?: MistralTTSVoices | string;
 }
