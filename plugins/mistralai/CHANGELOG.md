@@ -1,5 +1,19 @@
 # @livekit/agents-plugin-mistralai
 
+## 1.9.6
+
+### Patch Changes
+
+- Add Voxtral 3 TTS models, voices, expressiveness, phoneme hints, and realtime streaming. - [#2900](https://github.com/livekit/agents-js/pull/2900) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Add Voxtral 3 transcription, server-side turn detection, diarization, and voice-pipeline flushing for manually endpointed STT streams. - [#2901](https://github.com/livekit/agents-js/pull/2901) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Expose the Mistral Conversations API `store` option on the LLM. - [#2881](https://github.com/livekit/agents-js/pull/2881) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Updated dependencies [[`6a792a8`](https://github.com/livekit/agents-js/commit/6a792a855154610fee263de336c0a890e25f7332), [`bd78ca6`](https://github.com/livekit/agents-js/commit/bd78ca6f2883367fcfd838022feb7c3a56115bd5), [`649a0fd`](https://github.com/livekit/agents-js/commit/649a0fd06a02f22f2d1e78c7f8f2245edd029466), [`87f16a7`](https://github.com/livekit/agents-js/commit/87f16a77480677399696d613156e757f81555299), [`b78ac16`](https://github.com/livekit/agents-js/commit/b78ac16200690ab6cfc8f8f9c4bc0c29138c36d8)]:
+  - @livekit/agents@1.9.6
+  - @livekit/agents-plugin-silero@1.9.6
+
 ## 1.9.5
 
 ### Patch Changes
