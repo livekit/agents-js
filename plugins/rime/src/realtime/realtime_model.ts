@@ -326,7 +326,11 @@ export class RealtimeSession extends llm.RealtimeSession {
       await sdk.close();
       return;
     }
-    this.history = new PrismHistory(sdk);
+    const { RimeRealtimeError } = this.sdkTypes;
+    this.history = new PrismHistory(
+      sdk,
+      (error) => error instanceof RimeRealtimeError && error.fault.scope === 'event',
+    );
     this.emit('session_updated', this.sessionInfo);
     this.background(this.readEvents());
   }
@@ -336,6 +340,8 @@ export class RealtimeSession extends llm.RealtimeSession {
     return this.sdk;
   }
   private normalize(error: unknown): llm.RealtimeError {
+    if (error instanceof HistoryUpdateError && error.cause !== undefined)
+      error.cause = this.normalize(error.cause);
     if (error instanceof llm.RealtimeError) return error;
     if (this.sdkTypes && error instanceof this.sdkTypes.RealtimeIdleTimeout)
       return new PrismIdleTimeoutError(error.idleTimeoutS);
@@ -491,7 +497,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
   /**
    * Copy and synchronize text and tool history. Invalid edits fail before mutation;
-   * an edit that fails after a confirmed mutation closes the session.
+   * explicitly refused appends preserve accepted items. Uncertain partial edits close the session.
    */
   updateChatCtx(ctx: llm.ChatContext): Promise<void> {
     // Preserve class instances while copying the caller's text/tool context.
@@ -633,6 +639,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     return this.operation(async () => {
       options.signal?.throwIfAborted();
       await this.history!.waitForUpdates();
+      this.history!.checkReply();
       if (!disableTools)
         return this.requestReply(instructions, parent, report, metadata, options.signal);
       const created = await this.settings.run(async () => {
@@ -698,6 +705,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     signal?: AbortSignal,
   ): Promise<PrismGenerationCreatedEvent> {
     const sdk = this.requireSdk();
+    this.history!.checkReply();
     let ref: r.ResponseRef;
     if (instruction) ref = await sdk.requestReply({ instruction, metadata, signal });
     else if (parent) {

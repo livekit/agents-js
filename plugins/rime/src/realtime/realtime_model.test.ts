@@ -193,29 +193,49 @@ describe('Prism SDK adapter', () => {
     peer.reply(await request(peer));
     await next;
   });
-  it('submits multiple tool results without holding admission behind history updates', async () => {
-    const { peer, session } = await setup();
-    const first = session.generateReply();
-    peer.accepted(await request(peer));
-    peer.tool('reply-1', 'one');
-    peer.tool('reply-1', 'two');
-    peer.ended();
-    const created = await first;
-    const calls = await collect(created.functionStream);
-    expect(calls).toHaveLength(2);
-    const ctx = session.chatCtx;
-    for (const call of calls)
-      ctx.items.push(
-        new llm.FunctionCallOutput({ callId: call.callId, output: '42', isError: false }),
+  it.each([false, true])(
+    'continues the owning response after tool submission, refusal=%s',
+    async (refuse) => {
+      const { peer, session } = await setup();
+      const first = session.generateReply();
+      peer.accepted(await request(peer));
+      peer.tool('reply-1', 'one');
+      peer.tool('reply-1', 'two');
+      peer.ended();
+      const created = await first;
+      const calls = await collect(created.functionStream);
+      expect(calls).toHaveLength(2);
+      const ctx = session.chatCtx;
+      for (const [index, call] of calls.entries())
+        ctx.items.push(
+          new llm.FunctionCallOutput({
+            callId: call.callId,
+            output: '42',
+            isError: false,
+            replyRequired: index === 0,
+          }),
+        );
+      if (refuse) {
+        let results = 0;
+        peer.onRequest = (q) => {
+          if (q.item?.type === 'function_call_output' && ++results === 2) {
+            peer.fault(q, 'invalid_item');
+            return true;
+          }
+        };
+        await expect(session.updateChatCtx(ctx)).rejects.toThrow('invalid_item');
+      }
+      await session.updateChatCtx(ctx);
+      const next = session.generateReply();
+      const q = await request(peer, 2);
+      expect(q.response?.metadata?.prism_parent_response_id).toBe('reply-1');
+      peer.reply(q, 'next');
+      await next;
+      expect(peer.requests.filter((q) => q.item?.type === 'function_call_output')).toHaveLength(
+        refuse ? 3 : 2,
       );
-    await session.updateChatCtx(ctx);
-    const next = session.generateReply();
-    const q = await request(peer, 2);
-    expect(q.response?.metadata?.prism_parent_response_id).toBe('reply-1');
-    peer.reply(q, 'next');
-    await next;
-    expect(peer.requests.filter((q) => q.item?.type === 'function_call_output')).toHaveLength(2);
-  });
+    },
+  );
   it.each(['empty', 'text'] as const)('closes %s response streams', async (mode) => {
     const { peer, session } = await setup();
     const pending = session.generateReply();
@@ -651,6 +671,41 @@ describe('standard AgentSession', () => {
     expect(peer.requests.some((q) => q.item?.text === 'Check my order')).toBe(true);
     expect(output.frames.length).toBeGreaterThan(0);
   });
+  it('recovers a rejected tool result without reexecuting tools or sending an incomplete reply', async () => {
+    const { peer, session, execute, realtime } = await start();
+    const errors: llm.RealtimeModelError[] = [];
+    realtime.on('error', (error) => errors.push(error));
+    let results = 0;
+    peer.onRequest = (q) => {
+      if (q.item?.type === 'function_call_output' && ++results === 2) {
+        peer.fault(q, 'invalid_item');
+        return true;
+      }
+    };
+    const handle = session.generateReply();
+    peer.accepted(await request(peer));
+    peer.tool('reply-1', 'one');
+    peer.tool('reply-1', 'two');
+    peer.ended();
+    await handle.waitForPlayout();
+    expect(execute).toHaveBeenCalledTimes(2);
+    expect(results).toBe(2);
+    expect(errors.filter((error) => !error.recoverable)).toEqual([]);
+    expect(
+      realtime.chatCtx.items.filter((item) => item.type === 'function_call_output'),
+    ).toHaveLength(1);
+    await realtime.updateChatCtx(realtime.chatCtx);
+    await expect(realtime.generateReply()).rejects.toThrow('tool results');
+    expect(peer.requests.filter((q) => q.type === 'response.create')).toHaveLength(1);
+    await session.currentAgent.updateChatCtx(session.currentAgent.chatCtx.copy());
+    const reply = session.generateReply();
+    const continuation = await request(peer, 2);
+    expect(continuation.response?.metadata?.prism_parent_response_id).toBe('reply-1');
+    peer.reply(continuation, 'recovered');
+    await reply.waitForPlayout();
+    expect(results).toBe(3);
+    expect(execute).toHaveBeenCalledTimes(2);
+  });
   it.each(['session', 'handle'] as const)(
     'cancels active provider output using %s interruption',
     async (mode) => {
@@ -830,7 +885,7 @@ describe('Prism history', () => {
     expect(peer.history).toEqual([]);
   });
 
-  it('fails the session when a batch partially applies', async () => {
+  it('keeps accepted appends and retries only missing items after an explicit refusal', async () => {
     const { peer, session, errors } = await setupHistory();
     let mutations = 0;
     peer.onRequest = (q) => {
@@ -842,11 +897,80 @@ describe('Prism history', () => {
     const ctx = session.chatCtx;
     ctx.addMessage({ role: 'user', content: 'First' });
     ctx.addMessage({ role: 'user', content: 'Second' });
-    await expect(session.updateChatCtx(ctx)).rejects.toThrow('partially applied');
-    await session.close();
-    expect(errors.filter((error) => !error.recoverable)).toHaveLength(1);
-    await expect(session.updateInstructions('Do not continue')).rejects.toThrow();
+    await expect(session.updateChatCtx(ctx)).rejects.toMatchObject({
+      code: 'invalid_item',
+      scope: 'event',
+    });
+    expect(session.chatCtx.items.at(-1)).toMatchObject({ content: ['First'] });
+    expect(errors.filter((error) => !error.recoverable)).toHaveLength(0);
+    await session.updateChatCtx(ctx);
+    expect(peer.history.filter((item) => item.text === 'First')).toHaveLength(1);
+    expect(peer.history.at(-1)?.text).toBe('Second');
+    expect(mutations).toBe(3);
   });
+  it.each([1, 2])('recovers an imported tool pair refused at operation %s', async (refusedAt) => {
+    const { peer, session } = await setup();
+    const target = llm.ChatContext.empty();
+    target.items.push(new llm.FunctionCall({ callId: 'imported', name: 'lookup', args: '{}' }));
+    target.items.push(
+      new llm.FunctionCallOutput({ callId: 'imported', output: '42', isError: false }),
+    );
+    let mutations = 0;
+    peer.onRequest = (q) => {
+      if (q.type === 'conversation.item.create' && ++mutations === refusedAt) {
+        peer.fault(q, 'invalid_item');
+        return true;
+      }
+    };
+    await expect(session.updateChatCtx(target)).rejects.toThrow('invalid_item');
+    expect(session.chatCtx.items).toHaveLength(refusedAt - 1);
+    await session.updateChatCtx(session.chatCtx);
+    if (refusedAt === 2) await expect(session.generateReply()).rejects.toThrow('tool results');
+    else {
+      const reply = session.generateReply();
+      peer.accepted(await request(peer));
+      peer.ended();
+      await reply;
+    }
+    await session.updateChatCtx(target);
+    expect(peer.history).toHaveLength(2);
+    expect(mutations).toBe(3);
+    const next = session.generateReply();
+    peer.reply(await request(peer, refusedAt === 1 ? 2 : 1), 'recovered-import');
+    await next;
+  });
+  it.each(['replacement', 'session', 'disconnect'])(
+    'keeps %s failures fatal after a mutation',
+    async (failure) => {
+      const { peer, session, errors } = await setupHistory();
+      let mutations = 0;
+      peer.onRequest = (q) => {
+        if (
+          (q.type === 'conversation.item.create' || q.type === 'conversation.item.delete') &&
+          ++mutations === 2
+        ) {
+          if (failure === 'disconnect') peer.socket.close();
+          else peer.fault(q, 'invalid_item', failure === 'session' ? 'session' : 'event');
+          return true;
+        }
+      };
+      const target = failure === 'replacement' ? llm.ChatContext.empty() : session.chatCtx;
+      target.addMessage({ role: 'user', content: 'First' });
+      target.addMessage({ role: 'user', content: 'Second' });
+      const failed = session.updateChatCtx(target);
+      if (failure === 'replacement') {
+        await expect(failed).rejects.toMatchObject({
+          cause: {
+            code: 'invalid_item',
+            scope: 'event',
+            message: 'Prism operation failed (invalid_item)',
+          },
+        });
+      } else await expect(failed).rejects.toThrow();
+      await vi.waitFor(() => expect(errors.some((error) => !error.recoverable)).toBe(true));
+      await expect(session.updateInstructions('must not continue')).rejects.toThrow();
+    },
+  );
 
   it('preserves events received while an edit waits for acknowledgment', async () => {
     const { peer, session } = await setupHistory();
