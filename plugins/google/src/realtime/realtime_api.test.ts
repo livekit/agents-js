@@ -467,20 +467,24 @@ describe('Google Realtime non-blocking tool scheduling', () => {
       functionCalls: [{ name: 'getWeather', args: { location: 'Seattle' } }],
     });
 
-    expect(session.sendClientEvent).toHaveBeenCalledWith({
-      type: 'tool_response',
-      value: {
-        functionResponses: [
-          {
-            id: undefined,
-            name: 'getWeather',
-            response: {},
-            ...(vertexai ? {} : { scheduling: FunctionResponseScheduling.WHEN_IDLE }),
-            willContinue: true,
-          },
-        ],
-      },
-    });
+    if (vertexai) {
+      expect(session.sendClientEvent).not.toHaveBeenCalled();
+    } else {
+      expect(session.sendClientEvent).toHaveBeenCalledWith({
+        type: 'tool_response',
+        value: {
+          functionResponses: [
+            {
+              id: undefined,
+              name: 'getWeather',
+              response: {},
+              scheduling: FunctionResponseScheduling.WHEN_IDLE,
+              willContinue: true,
+            },
+          ],
+        },
+      });
+    }
 
     const callId = (
       session.currentGeneration?.functionChannel.write.mock.calls[0]?.[0] as { callId: string }
@@ -502,15 +506,19 @@ describe('Google Realtime non-blocking tool scheduling', () => {
         id: undefined,
         name: 'getWeather',
         response: { output: 'The weather in Seattle is sunny today.' },
-        ...(vertexai ? {} : { scheduling: FunctionResponseScheduling.WHEN_IDLE }),
-        willContinue: false,
+        ...(vertexai
+          ? {}
+          : {
+              scheduling: FunctionResponseScheduling.WHEN_IDLE,
+              willContinue: false,
+            }),
       },
     ]);
   });
 });
 
 describe('Google Realtime Vertex scheduling', () => {
-  it('warns when tool response scheduling is configured for Vertex AI', () => {
+  it('warns when tool response scheduling is configured for Vertex AI 2.5', () => {
     const warn = vi.spyOn(log(), 'warn').mockImplementation(() => undefined);
 
     new RealtimeModel({
@@ -524,6 +532,46 @@ describe('Google Realtime Vertex scheduling', () => {
     warn.mockRestore();
   });
 
+  it('does not warn and forwards scheduling for Vertex AI gemini-3.8-live', () => {
+    const warn = vi.spyOn(log(), 'warn').mockImplementation(() => undefined);
+
+    const model = new RealtimeModel({
+      model: 'gemini-3.8-live',
+      vertexai: true,
+      project: 'p',
+      location: 'us-central1',
+      toolResponseScheduling: FunctionResponseScheduling.INTERRUPT,
+    });
+    model.updateOptions({ toolResponseScheduling: FunctionResponseScheduling.WHEN_IDLE });
+
+    expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('not supported by Vertex AI'));
+    warn.mockRestore();
+
+    const session = createSessionForTest(FunctionResponseScheduling.WHEN_IDLE);
+    (session.options as { model?: string; vertexai?: boolean }).model = 'gemini-3.8-live';
+    session.options.vertexai = true;
+
+    const ctx = llm.ChatContext.empty();
+    ctx.insert(
+      llm.FunctionCallOutput.create({
+        callId: 'call_38',
+        name: 'getWeather',
+        output: 'sunny',
+        isError: false,
+        replyRequired: false,
+      }),
+    );
+
+    expect(session.getToolResultsForRealtime(ctx, true)?.functionResponses).toEqual([
+      {
+        id: 'call_38',
+        name: 'getWeather',
+        response: { output: 'sunny' },
+        scheduling: FunctionResponseScheduling.SILENT,
+      },
+    ]);
+  });
+
   it('does not warn for Gemini API scheduling', () => {
     const warn = vi.spyOn(log(), 'warn').mockImplementation(() => undefined);
 
@@ -531,6 +579,183 @@ describe('Google Realtime Vertex scheduling', () => {
 
     expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('not supported by Vertex AI'));
     warn.mockRestore();
+  });
+});
+
+describe('Google Realtime 3.8 defaults, labels, and contextUpdate', () => {
+  it('defaults gemini-3.8-live to NON_BLOCKING and keeps realtime input open during tools', () => {
+    const model38 = new RealtimeModel({
+      model: 'gemini-3.8-live',
+      vertexai: true,
+      project: 'test-project',
+      location: 'us-central1',
+    });
+    const model25 = new RealtimeModel({
+      model: 'gemini-live-2.5-flash-native-audio',
+      vertexai: true,
+      project: 'test-project',
+      location: 'us-central1',
+    });
+
+    expect(model38._options.toolBehavior).toBe(Behavior.NON_BLOCKING);
+    expect(model25._options.toolBehavior).toBeUndefined();
+
+    const session38 = Object.create(RealtimeSession.prototype) as {
+      options: typeof model38._options;
+      pendingToolCallIds: Set<string>;
+      shouldBlockRealtimeInputForPendingTools(): boolean;
+    };
+    session38.options = model38._options;
+    session38.pendingToolCallIds = new Set(['call_1']);
+    expect(session38.shouldBlockRealtimeInputForPendingTools()).toBe(false);
+
+    const session25 = Object.create(RealtimeSession.prototype) as {
+      options: typeof model25._options;
+      pendingToolCallIds: Set<string>;
+      shouldBlockRealtimeInputForPendingTools(): boolean;
+    };
+    session25.options = model25._options;
+    session25.pendingToolCallIds = new Set(['call_1']);
+    expect(session25.shouldBlockRealtimeInputForPendingTools()).toBe(true);
+  });
+
+  it('forwards labels in buildConnectConfig when configured', () => {
+    const realtimeModel = new RealtimeModel({
+      model: 'gemini-3.8-live',
+      vertexai: true,
+      project: 'test-project',
+      location: 'us-central1',
+      labels: { env: 'prod', workload: 'voice-agent' },
+    });
+    const session = Object.create(RealtimeSession.prototype) as {
+      options: typeof realtimeModel._options;
+      _tools: llm.ToolContext;
+      buildConnectConfig(): { labels?: Record<string, string> };
+    };
+    session.options = realtimeModel._options;
+    session._tools = llm.ToolContext.empty();
+
+    expect(session.buildConnectConfig().labels).toEqual({
+      env: 'prod',
+      workload: 'voice-agent',
+    });
+  });
+
+  it('uses context_update on Vertex AI gemini-3.8-live and guards session resumption handles', async () => {
+    const never = new Promise<void>(() => {});
+    const closeActiveSession = vi
+      .spyOn(
+        RealtimeSession.prototype as unknown as { closeActiveSession(): Promise<void> },
+        'closeActiveSession',
+      )
+      .mockReturnValue(never);
+    const model = new RealtimeModel({
+      model: 'gemini-3.8-live',
+      vertexai: true,
+      project: 'test-project',
+      location: 'us-central1',
+      geminiTools: { googleSearch: {} },
+    });
+    expect(model.capabilities.midSessionToolsUpdate).toBe(true);
+
+    const session = model.session();
+    closeActiveSession.mockRestore();
+
+    const sentContextUpdates: unknown[] = [];
+    const activeSessionMock = {
+      close: vi.fn(async () => {}),
+      sendContextUpdate: vi.fn((params: unknown) => {
+        sentContextUpdates.push(params);
+      }),
+    };
+    const internals = session as unknown as {
+      activeSession?: typeof activeSessionMock;
+      messageChannel: { get(opts: { signal: AbortSignal }): Promise<unknown> };
+      pendingContextUpdates: number;
+      contextChangedSinceHandle: boolean;
+      freshSessionNeeded: boolean;
+      sessionResumptionHandle?: string;
+      sessionShouldClose: { isSet: boolean; set(): void; clear(): void };
+      markRestartNeeded(onError?: boolean): void;
+      sendTask(s: typeof activeSessionMock, controller: AbortController): Promise<void>;
+      onReceiveMessage(s: typeof activeSessionMock, msg: unknown): Promise<void>;
+    };
+
+    // Pre-connect updateTools marks restart needed with freshSessionNeeded = true
+    const weatherTool = llm.tool({
+      description: 'Get weather',
+      execute: async () => 'sunny',
+    });
+    await session.updateTools(new llm.ToolContext({ getWeather: weatherTool }));
+    expect(internals.freshSessionNeeded).toBe(true);
+    internals.freshSessionNeeded = false;
+    internals.sessionShouldClose.clear();
+
+    // Error restart followed by config change while sessionShouldClose is set still sets freshSessionNeeded
+    internals.markRestartNeeded(true);
+    expect(internals.freshSessionNeeded).toBe(false);
+    internals.markRestartNeeded(false);
+    expect(internals.freshSessionNeeded).toBe(true);
+    internals.freshSessionNeeded = false;
+    internals.sessionShouldClose.clear();
+
+    internals.activeSession = activeSessionMock;
+
+    // Mid-session instruction update via context_update
+    await session.updateInstructions('Speak concisely.');
+    expect(internals.pendingContextUpdates).toBe(1);
+    expect(internals.contextChangedSinceHandle).toBe(true);
+
+    // Handle arriving while pendingContextUpdates > 0 is ignored
+    await internals.onReceiveMessage(activeSessionMock, {
+      sessionResumptionUpdate: { resumable: true, newHandle: 'stale-handle' },
+    });
+    expect(internals.sessionResumptionHandle).toBeUndefined();
+    expect(internals.contextChangedSinceHandle).toBe(true);
+
+    // Mid-session tool clear sends tools: { tools: [...] } preserving geminiTools, and empty when geminiTools is unset
+    await session.updateTools(llm.ToolContext.empty());
+    expect(internals.pendingContextUpdates).toBe(2);
+
+    // Drain messageChannel through a single sendTask (mirroring #mainTask)
+    const controller = new AbortController();
+    const sendPromise = internals.sendTask(activeSessionMock, controller);
+    await vi.waitFor(() => expect(sentContextUpdates).toHaveLength(2));
+
+    expect(internals.pendingContextUpdates).toBe(0);
+    expect(sentContextUpdates[0]).toEqual({
+      systemInstruction: { parts: [{ text: 'Speak concisely.' }] },
+    });
+    expect(sentContextUpdates[1]).toEqual({
+      tools: { tools: [{ googleSearch: {} }] },
+    });
+
+    // Without geminiTools, clearing tools sends { tools: { tools: [] } }
+    (session as unknown as { options: { geminiTools?: unknown } }).options.geminiTools = undefined;
+    await session.updateTools(new llm.ToolContext({ getWeather: weatherTool }));
+    await session.updateTools(llm.ToolContext.empty());
+    await vi.waitFor(() => expect(sentContextUpdates).toHaveLength(4));
+    expect(sentContextUpdates[3]).toEqual({
+      tools: { tools: [] },
+    });
+
+    // Now that pendingContextUpdates === 0, a new handle is adopted and clears contextChangedSinceHandle
+    await internals.onReceiveMessage(activeSessionMock, {
+      sessionResumptionUpdate: { resumable: true, newHandle: 'fresh-handle' },
+    });
+    expect(internals.sessionResumptionHandle).toBe('fresh-handle');
+    expect(internals.contextChangedSinceHandle).toBe(false);
+
+    // Handle arriving while sessionShouldClose.isSet is ignored
+    internals.sessionShouldClose.set();
+    await internals.onReceiveMessage(activeSessionMock, {
+      sessionResumptionUpdate: { resumable: true, newHandle: 'closing-socket-handle' },
+    });
+    expect(internals.sessionResumptionHandle).toBe('fresh-handle');
+
+    controller.abort();
+    await sendPromise;
+    await session.close();
   });
 });
 
