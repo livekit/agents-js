@@ -472,7 +472,8 @@ export class SpeechStream extends stt.SpeechStream {
   #pool: ConnectionPool<RealtimeConnection>;
   #opts: ResolvedSTTOptions;
   #vad: VAD | undefined;
-  #language: string | null;
+  // undefined follows the STT's language; null asks for automatic detection
+  #language: string | null | undefined;
   #connOptions: APIConnectOptions;
   #reconnectEvent = new DeferredEvent();
   #requestId = '';
@@ -482,6 +483,7 @@ export class SpeechStream extends stt.SpeechStream {
   #currentText = '';
   #preflightText = '';
   #detectedLanguage = '';
+  #sentAudioDuration = 0;
   #logger = log();
   label = 'mistral.SpeechStream';
 
@@ -497,9 +499,8 @@ export class SpeechStream extends stt.SpeechStream {
     this.#pool = pool;
     this.#opts = opts;
     this.#vad = vad;
-    this.#language = language ?? null;
+    this.#language = language;
     this.#connOptions = connOptions;
-    this.#detectedLanguage = language ?? '';
   }
 
   /** @internal */
@@ -517,6 +518,7 @@ export class SpeechStream extends stt.SpeechStream {
         connection = await this.#pool.get(this.#connOptions.timeoutMs, this.abortSignal);
         this.#audioPending = false;
         this.#audioEnded = false;
+        this.#sentAudioDuration = 0;
         await this.#applyStreamLanguage(connection);
         vadStream = this.#vad?.stream();
 
@@ -564,7 +566,7 @@ export class SpeechStream extends stt.SpeechStream {
 
   async #applyStreamLanguage(connection: RealtimeConnection): Promise<void> {
     if (
-      this.#language &&
+      this.#language !== undefined &&
       this.#language !== this.#opts.language &&
       isRealtime(this.#opts.model) &&
       isVoxtral3(this.#opts.model)
@@ -579,6 +581,7 @@ export class SpeechStream extends stt.SpeechStream {
   async #sendAudio(connection: RealtimeConnection, data: Uint8Array): Promise<void> {
     await connection.sendAudio(data);
     this.#audioPending = true;
+    this.#sentAudioDuration += data.byteLength / (SAMPLE_RATE * NUM_CHANNELS * 2);
   }
 
   async #flushAudio(connection: RealtimeConnection): Promise<void> {
@@ -699,7 +702,7 @@ export class SpeechStream extends stt.SpeechStream {
       ? event.segments.map(asRecord).filter((segment): segment is RawEvent => segment !== undefined)
       : [];
     const text = stringValue(event.text) ?? '';
-    const language = stringValue(event.language) ?? this.#detectedLanguage;
+    const language = stringValue(event.language) ?? this.#currentLanguage();
     const words = segments.length
       ? segments.map((segment) => {
           const start = numberValue(segment.start);
@@ -731,11 +734,16 @@ export class SpeechStream extends stt.SpeechStream {
     }
 
     const usage = asRecord(event.usage) ?? {};
+    // older realtime models don't report the audio duration, so fall back to what was sent
+    const audioDuration =
+      numberValue(usage.prompt_audio_seconds ?? usage.promptAudioSeconds) ??
+      this.#sentAudioDuration;
+    this.#sentAudioDuration = 0;
     this.#put({
       type: stt.SpeechEventType.RECOGNITION_USAGE,
       requestId: this.#requestId,
       recognitionUsage: {
-        audioDuration: numberValue(usage.prompt_audio_seconds ?? usage.promptAudioSeconds) ?? 0,
+        audioDuration,
         inputTokens: numberValue(usage.prompt_tokens ?? usage.promptTokens) ?? 0,
         outputTokens: numberValue(usage.completion_tokens ?? usage.completionTokens) ?? 0,
       },
@@ -771,12 +779,18 @@ export class SpeechStream extends stt.SpeechStream {
   #speechData(text: string, speakerId?: string): stt.SpeechData {
     return {
       text,
-      language: asLanguageCode(this.#detectedLanguage),
+      language: asLanguageCode(this.#currentLanguage()),
       startTime: 0,
       endTime: 0,
       confidence: 0,
       speakerId: speakerId ?? null,
     };
+  }
+
+  /** The detected language, else the one this stream was configured with. */
+  #currentLanguage(): string {
+    if (this.#detectedLanguage) return this.#detectedLanguage;
+    return (this.#language !== undefined ? this.#language : this.#opts.language) ?? '';
   }
 
   #put(event: stt.SpeechEvent): void {
