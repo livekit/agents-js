@@ -1,0 +1,28 @@
+agents/src/tts/fallback_adapter_lifecycle.test.ts
+  s_a1090670582754::t_80c78f60f32a44 68-70,83,85,117-119,172-174,216-217,269-274,276-277,279-282,287,295-298,341,346
+  s_a1090670582754::t_c9547a3e4f5127 175-215,299-315
+  s_a1090670582754::t_4b59fb2cda11f7 316
+agents/src/voice/interrupted_reply_cleanup.test.ts
+  s_a1090670582754::t_83cb5d03d479aa 49,179-181,202-203
+  s_a1090670582754::t_9c7c3a5517c571 182-201
+agents/src/tts/fallback_adapter.ts
+  s_a1090670582754::t_21c6a9d7af4c33 420,443,470,474,493,542-545,605
+.changeset/quiet-fallback-turns.md
+  s_a1090670582754::t_21c6a9d7af4c33 5
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "00d23b04c4fa0f8c1b0d916c40ec782090f494f0",
+  "prompts": {},
+  "sessions": {
+    "s_a1090670582754": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a17f9a-e091-7f20-995d-a0d596a40d46",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
