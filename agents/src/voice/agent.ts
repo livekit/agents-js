@@ -368,10 +368,11 @@ export class Agent<UserData = any> {
    * strategies.
    *
    * For an STT with `capabilities.manualFlush`, the framework flushes the stream created by
-   * `Agent.default.sttNode` when the user stops speaking. If your override buffers audio before
-   * passing it to `Agent.default.sttNode`, that flush can reach the STT before the buffered audio
-   * does. If your override creates its own STT stream, the framework can't flush it. In either
-   * case, set `stt.capabilities.manualFlush = false` and call `flush()` on the stream yourself.
+   * `Agent.default.sttNode` at turn boundaries, in order with the audio. If your override wraps
+   * the audio before passing it to `Agent.default.sttNode`, the wrapper can read ahead, so that
+   * flush can reach the STT before audio the wrapper still holds. If your override creates its
+   * own STT stream, the framework can't flush it. In either case, set
+   * `stt.capabilities.manualFlush = false` and call `flush()` on the stream yourself.
    */
   async sttNode(
     audio: ReadableStream<AudioFrame> | AsyncIterable<AudioFrame>,
@@ -524,7 +525,7 @@ export class Agent<UserData = any> {
       };
       try {
         stream = wrappedStt.stream({ connOptions });
-        registration?.register(stream, wrappedStt);
+        registration?.register(stream, wrappedStt, input);
 
         // Set startTimeOffset to provide linear timestamps across reconnections
         const audioInputStartedAt =

@@ -23,7 +23,8 @@ export type STTNode = (
 
 /** @internal */
 export interface STTStreamRegistration {
-  register(stream: SpeechStream, stt: STT): void;
+  /** `audio` is the input the node gave the stream, so the pipeline can tell it is unwrapped. */
+  register(stream: SpeechStream, stt: STT, audio: ReadableStream<AudioFrame>): void;
   unregister(stream: SpeechStream): void;
 }
 

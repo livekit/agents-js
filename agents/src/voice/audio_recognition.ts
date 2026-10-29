@@ -11,8 +11,8 @@ import {
   context as otelContext,
   trace,
 } from '@opentelemetry/api';
-import type { ReadableStream, WritableStreamDefaultWriter } from 'node:stream/web';
-import { TransformStream } from 'node:stream/web';
+import type { WritableStreamDefaultWriter } from 'node:stream/web';
+import { ReadableStream, TransformStream } from 'node:stream/web';
 import { isAPIError } from '../_exceptions.js';
 import {
   BaseStreamingTurnDetector,
@@ -37,7 +37,13 @@ import { DeferredReadableStream } from '../stream/deferred_stream.js';
 import { IdentityTransform } from '../stream/identity_transform.js';
 import { mergeReadableStreams } from '../stream/merge_readable_streams.js';
 import { type StreamChannel, createStreamChannel } from '../stream/stream_channel.js';
-import { type STT, type SpeechEvent, SpeechEventType, type SpeechStream } from '../stt/stt.js';
+import {
+  type STT,
+  type SpeechEvent,
+  SpeechEventType,
+  type SpeechStream,
+  _FLUSH_MARKER,
+} from '../stt/stt.js';
 import { traceTypes, tracer } from '../telemetry/index.js';
 import { splitWords } from '../tokenize/basic/word.js';
 import type { Future } from '../utils.js';
@@ -187,7 +193,8 @@ export class STTPipeline {
   private sttNode: STTNode;
   private isClosing: () => boolean;
   private onError?: (error: Error) => void;
-  private _audioChannel: StreamChannel<AudioFrame> = createStreamChannel();
+  // a flush is queued with the audio, so it reaches the STT after the audio pushed before it
+  private _audioChannel: StreamChannel<AudioFrame | typeof _FLUSH_MARKER> = createStreamChannel();
   private _eventChannel: StreamChannel<SpeechEvent> = createStreamChannel();
   private _pumpTask: Task<void>;
   /** Wall-clock anchor for this stream, used for STT-derived turn metrics. */
@@ -240,17 +247,21 @@ export class STTPipeline {
   private async sttPump(signal: AbortSignal): Promise<void> {
     while (!signal.aborted) {
       let node: Awaited<ReturnType<STTNode>> | undefined;
+      const input = this.audioInput();
       try {
         node = await sttStreamRegistration.run(
           {
-            register: (stream, stt) => {
+            register: (stream, stt, audio) => {
               this.activeStream = { stream, stt };
+              // the default node hands our audio to the stream unchanged: the flush can travel
+              // with it, past the buffering between here and the stream
+              if (audio === input.stream) input.inBand = true;
             },
             unregister: (stream) => {
               if (this.activeStream?.stream === stream) this.activeStream = undefined;
             },
           },
-          () => this.sttNode(this._audioChannel.stream(), {}),
+          () => this.sttNode(input.stream, {}),
         );
         if (node === null) return;
 
@@ -274,6 +285,7 @@ export class STTPipeline {
         log().warn({ err: e }, 'STT stream ended on an unrecoverable error, recreating');
       } finally {
         await node?.cancel().catch(() => {});
+        input.release();
       }
 
       await delay(STT_RECONNECT_INTERVAL_MS, { signal }).catch(() => {});
@@ -286,14 +298,68 @@ export class STTPipeline {
     await cancelAndWait([this._pumpTask], STTPipeline.PUMP_TASK_CANCEL_TIMEOUT);
   }
 
+  /** Whether the open STT stream finalizes a segment only when it is flushed. */
+  get manualFlush(): boolean {
+    return this.activeStream?.stt.capabilities.manualFlush === true;
+  }
+
+  /** Ask the open STT stream to finalize, after the audio already queued. */
   flush(): boolean {
-    if (this.activeStream?.stt.capabilities.manualFlush !== true) return false;
-    try {
-      this.activeStream.stream.flush();
-      return true;
-    } catch {
-      return false;
-    }
+    if (!this.manualFlush) return false;
+    this._audioChannel.write(_FLUSH_MARKER).catch(() => {});
+    return true;
+  }
+
+  /**
+   * The audio for one STT node; `release` hands the channel back for the next node. A custom node
+   * never sees the flush marker: the open stream is flushed when the node reads past it, so a
+   * node that buffers audio can see the flush arrive before that audio (see `Agent.sttNode`).
+   */
+  private audioInput(): {
+    stream: ReadableStream<AudioFrame>;
+    release: () => void;
+    inBand: boolean;
+  } {
+    const reader = this._audioChannel.stream().getReader();
+    let released = false;
+    const input = {
+      inBand: false,
+      release: () => {
+        if (released) return;
+        released = true;
+        reader.releaseLock();
+      },
+      stream: undefined as unknown as ReadableStream<AudioFrame>,
+    };
+    input.stream = new ReadableStream<AudioFrame>(
+      {
+        pull: async (controller) => {
+          while (true) {
+            let result: Awaited<ReturnType<typeof reader.read>>;
+            try {
+              result = await reader.read();
+            } catch (error) {
+              // a released reader rejects its pending read: this node is done with the audio
+              if (released) return controller.close();
+              throw error;
+            }
+            if (result.done) return controller.close();
+            if (result.value !== _FLUSH_MARKER) return controller.enqueue(result.value);
+            if (!this.manualFlush) continue;
+            if (input.inBand) return controller.enqueue(_FLUSH_MARKER as unknown as AudioFrame);
+            try {
+              this.activeStream?.stream.flush();
+            } catch {
+              // the stream closed meanwhile; its replacement starts a fresh segment
+            }
+          }
+        },
+        cancel: () => input.release(),
+      },
+      // read only on demand, so no frame is left buffered here when the node goes away
+      { highWaterMark: 0 },
+    );
+    return input;
   }
 }
 
@@ -381,6 +447,8 @@ export class AudioRecognition {
   private isClosing?: () => boolean;
   private onSttError?: (error: Error) => void;
   private sttPipeline?: STTPipeline;
+  /** Whether this turn already asked a manual-flush STT for its final transcript. */
+  private sttFlushRequested = false;
   private vad?: VAD;
   private turnDetector?: _TurnDetector | BaseStreamingTurnDetector;
   private turnDetectorStream?: BaseStreamingTurnDetectorStream;
@@ -1614,7 +1682,15 @@ export class AudioRecognition {
       'running EOU detection',
     );
 
-    if (this.stt && !this.audioTranscript && this.turnDetectionMode !== 'manual') {
+    // a manual-flush STT only finalizes when flushed, so detection runs without a transcript
+    // to request that flush
+    const autoFlush = this.vadBaseTurnDetection && this.sttPipeline?.manualFlush === true;
+    if (
+      this.stt &&
+      !this.audioTranscript &&
+      this.turnDetectionMode !== 'manual' &&
+      (!autoFlush || this.sttFlushRequested)
+    ) {
       // stt enabled but no transcript yet
       this.logger.debug('skipping EOU detection');
       return;
@@ -1660,6 +1736,7 @@ export class AudioRecognition {
         if (controller.signal.aborted) return;
 
         let endpointingDelay = this.endpointing.minDelay;
+        let negativeEot = false;
 
         // a turn created here (no VAD/start-of-speech opened it) starts at the earliest
         // anchor known, so the eou_wait child back-dated to lastSpeakingTime fits inside
@@ -1769,6 +1846,7 @@ export class AudioRecognition {
                     unlikelyThreshold !== undefined &&
                     endOfTurnProbability < unlikelyThreshold
                   ) {
+                    negativeEot = true;
                     endpointingDelay = this.endpointing.maxDelay;
                   }
 
@@ -1882,6 +1960,26 @@ export class AudioRecognition {
               },
             );
           }
+        }
+
+        if (autoFlush && !this.sttFlushRequested) {
+          if (negativeEot) {
+            // Keep context through short pauses. Reserve the rest of the maximum endpointing
+            // delay for the final transcript, without awaiting an ack.
+            let flushDelay = endpointingDelay / 2;
+            if (lastSpeakingTime !== undefined) flushDelay += lastSpeakingTime - Date.now();
+            if (flushDelay > 0) {
+              try {
+                await delay(flushDelay, {
+                  signal: AbortSignal.any([controller.signal, this.closeWakeController.signal]),
+                });
+              } catch (error) {
+                if (!this.closeWakeController.signal.aborted) throw error;
+              }
+            }
+          }
+          if (this.closeWakeController.signal.aborted) return;
+          this.sttFlushRequested = this.sttPipeline?.flush() ?? false;
         }
 
         if (eouWaitSpan.isRecording()) {
@@ -2158,6 +2256,7 @@ export class AudioRecognition {
         switch (ev.type) {
           case VADEventType.START_OF_SPEECH:
             this.logger.debug('VAD task: START_OF_SPEECH');
+            this.sttFlushRequested = false;
             {
               const startTime = Date.now() - ev.speechDuration - ev.inferenceDuration;
               this.activeVadSpeechStartedAt = startTime;
@@ -2242,7 +2341,6 @@ export class AudioRecognition {
             this.vadSpeechStarted = false;
             this.speaking = false;
             this.lastSpeakingTime = Date.now() - ev.silenceDuration - ev.inferenceDuration;
-            this.sttPipeline?.flush?.();
 
             // A committed turn clears vadSpeechStarted before its late VAD EOS arrives.
             if (this.sttPipeline !== undefined && vadSpeechStarted) {
@@ -2455,6 +2553,8 @@ export class AudioRecognition {
   }
 
   clearUserTurn() {
+    this.bounceEOUTask?.cancel();
+    this.sttFlushRequested = false;
     this.audioTranscript = '';
     this.audioInterimTranscript = '';
     this.audioPreflightTranscript = '';
@@ -2542,9 +2642,13 @@ export class AudioRecognition {
     const commitUserTurnTask =
       (delayDuration: number = 500) =>
       async (controller: AbortController) => {
-        if (Date.now() - this.lastFinalTranscriptTime > delayDuration) {
-          // flush the stt by pushing silence
-          if (audioDetached && this.sampleRate !== undefined) {
+        const canFlush = this.sttPipeline?.manualFlush === true;
+        if (canFlush || Date.now() - this.lastFinalTranscriptTime > delayDuration) {
+          if (canFlush) {
+            // a manual-flush STT finalizes on request instead of on trailing silence
+            this.sttFlushRequested = this.sttPipeline?.flush() ?? false;
+          } else if (audioDetached && this.sampleRate !== undefined) {
+            // flush the stt by pushing silence
             const silenceFrame = createSilenceFrame(delayDuration, this.sampleRate);
             this.silenceAudioWriter.write(silenceFrame);
           }
