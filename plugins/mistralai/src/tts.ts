@@ -350,21 +350,18 @@ export class ChunkedStream extends tts.ChunkedStream {
         lastFrame = undefined;
       };
 
-      // The SDK's stream wrapper currently exposes a broader event type than its iterator yields.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      for await (const raw of stream as any) {
+      // SSE events arrive wrapped as `{ event, data }`; the payload lives in `data`.
+      for await (const { data } of stream) {
         if (this.abortController.signal.aborted) break;
-        // SSE events arrive wrapped as `{ event, data }`; the payload lives in `data`.
-        const ev = raw?.data ?? raw;
-        if (ev.type === 'speech.audio.delta') {
-          for (const frame of audioByteStream.write(f32leToS16le(audioBytes(ev)))) {
+        if (data.type === 'speech.audio.delta') {
+          for (const frame of audioByteStream.write(f32leToS16le(audioBytes(data)))) {
             sendLastFrame(false);
             lastFrame = frame;
           }
-        } else if (ev.type === 'speech.audio.done') {
+        } else if (data.type === 'speech.audio.done') {
           this.setTokenUsage({
-            inputTokens: ev.usage.promptTokens ?? 0,
-            outputTokens: ev.usage.completionTokens ?? 0,
+            inputTokens: data.usage.promptTokens ?? 0,
+            outputTokens: data.usage.completionTokens ?? 0,
           });
         }
       }
