@@ -9,8 +9,10 @@ export class HistoryUpdateError extends llm.RealtimeError {
   constructor(
     message: string,
     readonly partial = false,
+    cause?: unknown,
   ) {
     super(message);
+    this.cause = cause;
   }
 }
 
@@ -89,9 +91,14 @@ export class PrismHistory {
   private active = new Map<string, Set<string>>();
   private revision = 0;
   private failure?: HistoryUpdateError;
+  private rejectedResults = new Set<string>();
+  private submitted: { ref: r.ToolCallRef; output: llm.FunctionCallOutput }[] = [];
   private edits = new SerialQueue();
 
-  constructor(private readonly sdk: r.RealtimeSession) {}
+  constructor(
+    private readonly sdk: r.RealtimeSession,
+    private readonly isEventRefusal: (error: unknown) => boolean,
+  ) {}
 
   get chatCtx(): llm.ChatContext {
     return new llm.ChatContext(items(this.chat).map(clone));
@@ -102,6 +109,10 @@ export class PrismHistory {
   async waitForUpdates(): Promise<void> {
     await this.edits.idle();
     if (this.failure) throw this.failure;
+  }
+  checkReply(): void {
+    if (this.rejectedResults.size)
+      throw new HistoryUpdateError('Submit the rejected tool results before requesting a reply');
   }
   lastCall(response: r.ResponseRef): r.ToolCallRef | undefined {
     return [...this.calls.values()]
@@ -233,7 +244,11 @@ export class PrismHistory {
     const completed = new Set(
       old.filter((item) => item.type === 'function_call_output').map((item) => item.callId),
     );
-    const pending = new Set([...this.calls.keys()].filter((key) => !completed.has(key)));
+    const pending = new Set(
+      old
+        .filter((item) => item.type === 'function_call' && !completed.has(item.callId))
+        .map((item) => (item as llm.FunctionCall).callId),
+    );
     if (desired.length !== newById.size)
       throw new HistoryUpdateError('Prism history item IDs must be unique');
     const callItems = new Map<string, llm.FunctionCall>();
@@ -252,10 +267,7 @@ export class PrismHistory {
       }
     }
     for (const [id, item] of callItems) {
-      if (
-        !results.has(id) &&
-        !(pending.has(id) && this.calls.get(id)?.item.id === item.id && unchanged.has(item.id))
-      )
+      if (!results.has(id) && !(pending.has(id) && oldById.has(item.id) && unchanged.has(item.id)))
         throw new HistoryUpdateError('Imported tool calls require completed results');
     }
     const removed = old.filter((item) => !newById.has(item.id));
@@ -308,7 +320,6 @@ export class PrismHistory {
       }
     }
     let committed = false;
-    const submitted: { ref: r.ToolCallRef; output: llm.FunctionCallOutput }[] = [];
     const checkRevision = () => {
       if (rebuild && revision !== this.revision)
         throw new HistoryUpdateError('A reply started during history replacement');
@@ -328,25 +339,48 @@ export class PrismHistory {
         committed = true;
         checkRevision();
       }
-      for (const item of toCreate) {
+      for (const [index, item] of toCreate.entries()) {
         checkRevision();
         if (!rebuild && item.type === 'function_call_output' && this.calls.has(item.callId)) {
           const ref = this.calls.get(item.callId)!.ref;
           const output = wire(item) as Extract<r.HistoryItem, { type: 'function_call_output' }>;
           await this.sdk.submitToolResult(ref, output.output);
-          submitted.push({ ref, output: item });
+          this.submitted.push({ ref, output: clone(item) as llm.FunctionCallOutput });
         } else {
           const ref = await this.sdk.createItem(wire(item));
           this.ids.set(item.id, ref.itemId);
         }
         committed = true;
+        if (appendOnly) this.chat.items.splice(old.length + index, 0, clone(item));
+        if (item.type === 'function_call_output') this.rejectedResults.delete(item.callId);
         checkRevision();
       }
     } catch (error) {
+      if (appendOnly && this.isEventRefusal(error)) {
+        const accepted = new Set(
+          this.chat.items
+            .filter((item) => item.type === 'function_call_output')
+            .map((item) => item.callId),
+        );
+        const knownCalls = new Set(
+          this.chat.items
+            .filter((item) => item.type === 'function_call')
+            .map((item) => item.callId),
+        );
+        for (const item of toCreate)
+          if (
+            item.type === 'function_call_output' &&
+            knownCalls.has(item.callId) &&
+            !accepted.has(item.callId)
+          )
+            this.rejectedResults.add(item.callId);
+        throw error;
+      }
       if (committed)
         throw new HistoryUpdateError(
           'Prism history update partially applied; restart required',
           true,
+          error,
         );
       throw error;
     }
@@ -359,6 +393,9 @@ export class PrismHistory {
       .concat(arrived);
     for (const item of deletions) if (item.type === 'function_call') this.calls.delete(item.callId);
     for (const item of removed) this.ids.delete(item.id);
-    return submitted;
+    if (this.rejectedResults.size) return [];
+    const submitted = this.submitted;
+    this.submitted = [];
+    return submitted.filter(({ output }) => newById.has(output.id));
   }
 }

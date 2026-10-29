@@ -62,8 +62,18 @@ Updates are not atomic. Each accepted setting remains applied if a later update 
 With `toolChoice: 'none'`, the plugin removes tools until Prism accepts the reply or
 the request is cancelled, then restores them. The SDK cancels responses accepted after
 cancellation. An automatic speech reply can start during that gap with no tools.
-This also applies when LiveKit reaches `maxToolSteps`. Failed tool restoration or a
-partially applied history edit closes the session.
+This also applies when LiveKit reaches `maxToolSteps`. Failed tool restoration closes
+the session.
+
+An explicit event-scoped refusal during an append preserves acknowledged history
+items and reports the original provider error code and request IDs. Keep the
+requested context to retry or correct the unaccepted items. Preserve newer
+conversation items and accepted item IDs when retrying. The plugin does not retry
+automatically or execute tools again.
+Replies requested through the plugin are blocked until rejected tool results have
+been submitted. Server-initiated speech replies are still controlled by Prism.
+Unknown request outcomes, session failures, and partially applied deletions or
+replacements still close the session.
 
 ### Interruption and limits
 
