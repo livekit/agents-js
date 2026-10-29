@@ -4808,6 +4808,8 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
     get sessionDirectory(): string;
     // @internal (undocumented)
     _sessionDirectory: string;
+    // @internal
+    _sessionHost?: SessionHost;
     shutdown(reason?: string): void;
     // @internal (undocumented)
     shutdownCallbacks: (() => Promise<void>)[];
@@ -6509,11 +6511,12 @@ export type RemoteSessionCallbacks = {
     eot_prediction: (ev: AgentSession_2.AgentSessionEvent_EotPrediction) => void;
     session_usage: (ev: AgentSession_2.AgentSessionEvent_SessionUsageUpdated) => void;
     debug_message: (ev: AgentSession_2.DebugMessage) => void;
+    session_closed: (ev: AgentSession_2.AgentSessionEvent_SessionClosed) => void;
     error: (ev: AgentSession_2.AgentSessionEvent_Error) => void;
 };
 
 // @public (undocumented)
-export type RemoteSessionEventTypes = 'agent_false_interruption' | 'agent_state_changed' | 'user_state_changed' | 'conversation_item_added' | 'user_input_transcribed' | 'function_tools_executed' | 'overlapping_speech' | 'amd_prediction' | 'eot_prediction' | 'session_usage' | 'debug_message' | 'error';
+export type RemoteSessionEventTypes = 'agent_false_interruption' | 'agent_state_changed' | 'user_state_changed' | 'conversation_item_added' | 'user_input_transcribed' | 'function_tools_executed' | 'overlapping_speech' | 'amd_prediction' | 'eot_prediction' | 'session_usage' | 'debug_message' | 'session_closed' | 'error';
 
 // @public (undocumented)
 function replace(replacements: Record<string, string>, options?: {
@@ -7025,19 +7028,22 @@ export interface SessionConnectOptions {
     ttsConnOptions?: Partial<APIConnectOptions>;
 }
 
-// @public (undocumented)
+// @public
 export class SessionHost {
     constructor(transport: SessionTransport, audioInput?: TcpAudioInput, audioOutput?: TcpAudioOutput);
+    attach(session: AgentSession): void;
+    get attachedSession(): AgentSession | undefined;
     // (undocumented)
     close(): Promise<void>;
+    detach(): void;
     // @internal
     _onAmdPrediction(event: AMDPredictionEvent): void;
     // @internal
     _onEotPrediction(event: EotPredictionEvent): void;
     // (undocumented)
-    registerSession(session: AgentSession): void;
-    // (undocumented)
     start(): Promise<void>;
+    // @internal
+    _waitForSimulationFinalized(): Promise<void>;
 }
 
 // @public (undocumented)
@@ -9889,10 +9895,10 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 // src/stt/stt.ts:378:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "STT"
 // src/utils.ts:468:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "cancelled"
 // src/voice/agent_session.ts:411:3 - (ae-unresolved-link) The @link reference could not be resolved: This type of declaration is not supported yet by the resolver
-// src/voice/agent_session.ts:1091:5 - (ae-forgotten-export) The symbol "RecordingOptions" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1808:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1808:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1808:5 - (ae-forgotten-export) The symbol "LLMError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1089:5 - (ae-forgotten-export) The symbol "RecordingOptions" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1806:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1806:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1806:5 - (ae-forgotten-export) The symbol "LLMError" needs to be exported by the entry point index.d.ts
 // src/voice/amd.ts:315:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "waitForTrackPublication" has more than one declaration; you need to add a TSDoc member reference selector
 // src/voice/amd.ts:315:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "gateListening"
 // src/voice/amd.ts:323:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "aclose"

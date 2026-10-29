@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { AgentSession as pb } from '@livekit/protocol';
 import type { Room } from '@livekit/rtc-node';
+import { EventEmitter } from 'node:events';
 import * as net from 'node:net';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { InferenceExecutor } from '../ipc/inference_executor.js';
@@ -15,8 +16,10 @@ import {
 import { initializeLogger, log } from '../log.js';
 import type { SimulationContext } from '../simulation.js';
 import type { AgentSession } from './agent_session.js';
+import { AgentSessionEventTypes, CloseReason, createCloseEvent } from './events.js';
 import { FinalizeSimulationError } from './index.js';
 import {
+  NO_ACTIVE_SESSION_ERROR,
   RemoteSession,
   RoomSessionTransport,
   SessionHost,
@@ -36,6 +39,7 @@ beforeAll(() => {
 const FORWARDED_EVENTS = new Set([
   'agent_false_interruption',
   'agent_state_changed',
+  'close',
   'conversation_item_added',
   'debug_message',
   'eot_prediction',
@@ -356,7 +360,7 @@ describe('SessionHost event forwarding', () => {
     const session = { on, off: vi.fn() } as unknown as AgentSession;
     const host = new SessionHost(new FakeTransport());
 
-    host.registerSession(session);
+    host.attach(session);
 
     const subscribed = new Set(on.mock.calls.map(([event]) => event));
     expect(subscribed).toEqual(FORWARDED_EVENTS);
@@ -367,12 +371,122 @@ describe('SessionHost event forwarding', () => {
     const session = { on: vi.fn(), off } as unknown as AgentSession;
     const host = new SessionHost(new FakeTransport());
 
-    host.registerSession(session);
+    host.attach(session);
     await host.start();
     await host.close();
 
     const unsubscribed = new Set(off.mock.calls.map(([event]) => event));
     expect(unsubscribed).toEqual(FORWARDED_EVENTS);
+  });
+});
+
+describe('SessionHost without an attached session', () => {
+  it('refuses a session request', async () => {
+    const transport = new FakeTransport();
+    const host = new SessionHost(transport);
+    await host.start();
+
+    transport.push(pingMessage('p1'));
+    await vi.waitFor(() => expect(transport.sent.length).toBe(1));
+
+    const resp = transport.sent[0]!.message.value as pb.SessionResponse;
+    expect(resp.requestId).toBe('p1');
+    expect(resp.error).toBe(NO_ACTIVE_SESSION_ERROR);
+    await host.close();
+  });
+
+  it('still answers finalizeSimulation once the session has detached', async () => {
+    const ctx = fakeSimJobContext((simCtx) => simCtx.fail('verdict after hangup'));
+    const transport = new FakeTransport();
+    const host = new SessionHost(transport);
+    host.attach({ on: vi.fn(), off: vi.fn() } as unknown as AgentSession);
+    await runWithJobContextAsync(ctx, async () => host.start());
+    host.detach();
+
+    transport.push(finalizeMessage('f1', true, 'ok'));
+    await host._waitForSimulationFinalized();
+
+    const value = (transport.sent[0]!.message.value as pb.SessionResponse).response
+      .value as pb.SessionResponse_FinalizeSimulationResponse;
+    expect(value.userVerdict?.reason).toBe('verdict after hangup');
+    await host.close();
+  });
+
+  it('stops forwarding a detached session', () => {
+    const off = vi.fn();
+    const session = { on: vi.fn(), off } as unknown as AgentSession;
+    const host = new SessionHost(new FakeTransport());
+
+    host.attach(session);
+    host.detach();
+
+    expect(new Set(off.mock.calls.map(([event]) => event))).toEqual(FORWARDED_EVENTS);
+    expect(host.attachedSession).toBeUndefined();
+  });
+});
+
+describe('SessionHost session_closed', () => {
+  it('tells the client the attached session closed, and why', async () => {
+    const [clientTransport, hostTransport] = createConnectedTransportPair();
+    const session = new EventEmitter();
+    const host = new SessionHost(hostTransport);
+    host.attach(session as unknown as AgentSession);
+    await host.start();
+    const client = new RemoteSession(clientTransport);
+    await client.start();
+    const closed = new Promise<pb.AgentSessionEvent_SessionClosed>((resolve) =>
+      client.once('session_closed', resolve),
+    );
+
+    session.emit(AgentSessionEventTypes.Close, createCloseEvent(CloseReason.USER_INITIATED, null));
+
+    expect((await closed).reason).toBe(pb.CloseReason.CR_USER_INITIATED);
+    await client.close();
+    await host.close();
+  });
+});
+
+describe('SessionHost send order', () => {
+  it('sends the reply to a run the close cut short after session_closed', async () => {
+    // an event still on the wire holds back everything sent after it
+    class SlowEventsTransport extends FakeTransport {
+      override async sendMessage(msg: pb.AgentSessionMessage): Promise<void> {
+        if (msg.message.case === 'event') await new Promise((r) => setTimeout(r, 10));
+        await super.sendMessage(msg);
+      }
+    }
+    const transport = new SlowEventsTransport();
+    let failRun!: (error: Error) => void;
+    const run = new Promise<void>((_, reject) => {
+      failRun = reject;
+    });
+    const session = Object.assign(new EventEmitter(), {
+      interrupt: () => ({ await: Promise.resolve() }),
+      run: () => ({ wait: () => run, events: [] }),
+    });
+    const host = new SessionHost(transport);
+    host.attach(session as unknown as AgentSession);
+    await host.start();
+
+    transport.push(
+      new pb.AgentSessionMessage({
+        message: {
+          case: 'request',
+          value: new pb.SessionRequest({
+            requestId: 'r1',
+            request: { case: 'runInput', value: new pb.SessionRequest_RunInput({ text: 'bye' }) },
+          }),
+        },
+      }),
+    );
+    await new Promise((r) => setTimeout(r, 0));
+    session.emit(AgentSessionEventTypes.Close, createCloseEvent(CloseReason.USER_INITIATED, null));
+    failRun(new Error('session closed'));
+    await vi.waitFor(() => expect(transport.sent.length).toBe(2));
+
+    expect(transport.sent.map((m) => m.message.case)).toEqual(['event', 'response']);
+    expect((transport.sent[1]!.message.value as pb.SessionResponse).error).toBe('session closed');
+    await host.close();
   });
 });
 
@@ -418,7 +532,7 @@ async function startConnectedClientHost(ctx: JobContext) {
   const [clientTransport, hostTransport] = createConnectedTransportPair();
   const remote = new RemoteSession(clientTransport);
   const host = new SessionHost(hostTransport);
-  host.registerSession(fakeAgentSession());
+  host.attach(fakeAgentSession());
   await runWithJobContextAsync(ctx, async () => host.start());
   await remote.start();
 
@@ -551,7 +665,7 @@ describe('SessionHost updateIo', () => {
 
     const transport = new FakeTransport();
     const host = new SessionHost(transport);
-    host.registerSession(fakeSession);
+    host.attach(fakeSession);
     await host.start();
 
     transport.push(
@@ -605,7 +719,7 @@ describe('SessionHost updateIo', () => {
 
     const transport = new FakeTransport();
     const host = new SessionHost(transport);
-    host.registerSession(fakeSession);
+    host.attach(fakeSession);
     await host.start();
 
     transport.push(
@@ -705,7 +819,7 @@ describe('SessionHost finalizeSimulation', () => {
 
     const transport = new FakeTransport();
     const host = new SessionHost(transport);
-    host.registerSession(fakeAgentSession());
+    host.attach(fakeAgentSession());
     await runWithJobContextAsync(ctx, async () => host.start());
 
     transport.push(finalizeMessage('f1', true, 'all good'));
@@ -727,7 +841,7 @@ describe('SessionHost finalizeSimulation', () => {
     const ctx = fakeSimJobContext(() => {});
     const transport = new FakeTransport();
     const host = new SessionHost(transport);
-    host.registerSession(fakeAgentSession());
+    host.attach(fakeAgentSession());
     await runWithJobContextAsync(ctx, async () => host.start());
 
     transport.push(finalizeMessage('f2', false, 'agent never answered'));
@@ -746,7 +860,7 @@ describe('SessionHost finalizeSimulation', () => {
     });
     const transport = new FakeTransport();
     const host = new SessionHost(transport);
-    host.registerSession(fakeAgentSession());
+    host.attach(fakeAgentSession());
     await runWithJobContextAsync(ctx, async () => host.start());
 
     transport.push(finalizeMessage('f3', true, 'fine'));
@@ -766,7 +880,7 @@ describe('SessionHost finalizeSimulation', () => {
     });
     const transport = new FakeTransport();
     const host = new SessionHost(transport);
-    host.registerSession(fakeAgentSession());
+    host.attach(fakeAgentSession());
     await runWithJobContextAsync(ctx, async () => host.start());
 
     transport.push(finalizeMessage('f4', true, 'fine'));
@@ -785,7 +899,7 @@ describe('SessionHost finalizeSimulation', () => {
   it('responds without a job context (no simulation)', async () => {
     const transport = new FakeTransport();
     const host = new SessionHost(transport);
-    host.registerSession(fakeAgentSession());
+    host.attach(fakeAgentSession());
     await host.start();
 
     transport.push(finalizeMessage('f5', true, 'fine'));

@@ -28,7 +28,7 @@ import type {
 } from '../metrics/model_usage.js';
 import { encodeChatItem, msToTimestamp } from '../proto.js';
 import type { SimulationContext } from '../simulation.js';
-import { Future, Task, asError, shortuuid } from '../utils.js';
+import { Event, Future, Task, asError, shortuuid } from '../utils.js';
 import { version } from '../version.js';
 import type { AgentSession, AgentSessionUsage } from './agent_session.js';
 import { AMDCategory, type AMDPredictionEvent } from './amd.js';
@@ -38,6 +38,8 @@ import {
   AgentSessionEventTypes,
   type AgentState,
   type AgentStateChangedEvent,
+  type CloseEvent,
+  CloseReason,
   type ConversationItemAddedEvent,
   type EotPredictionEvent,
   type ErrorEvent,
@@ -74,6 +76,7 @@ export type RemoteSessionEventTypes =
   | 'eot_prediction'
   | 'session_usage'
   | 'debug_message'
+  | 'session_closed'
   | 'error';
 
 /** @experimental */
@@ -89,6 +92,7 @@ export type RemoteSessionCallbacks = {
   eot_prediction: (ev: pb.AgentSessionEvent_EotPrediction) => void;
   session_usage: (ev: pb.AgentSessionEvent_SessionUsageUpdated) => void;
   debug_message: (ev: pb.DebugMessage) => void;
+  session_closed: (ev: pb.AgentSessionEvent_SessionClosed) => void;
   error: (ev: pb.AgentSessionEvent_Error) => void;
 };
 
@@ -370,6 +374,13 @@ export class TcpSessionTransport extends SessionTransport {
 // ===========================================================================
 // Enum maps
 // ===========================================================================
+const CLOSE_REASON_MAP: Record<string, pb.CloseReason> = {
+  [CloseReason.ERROR]: pb.CloseReason.CR_ERROR,
+  [CloseReason.JOB_SHUTDOWN]: pb.CloseReason.CR_JOB_SHUTDOWN,
+  [CloseReason.PARTICIPANT_DISCONNECTED]: pb.CloseReason.CR_PARTICIPANT_DISCONNECTED,
+  [CloseReason.USER_INITIATED]: pb.CloseReason.CR_USER_INITIATED,
+};
+
 const AGENT_STATE_MAP: Record<AgentState, pb.AgentState> = {
   initializing: pb.AgentState.AS_INITIALIZING,
   idle: pb.AgentState.AS_IDLE,
@@ -553,15 +564,27 @@ function protoSerializeOptions(opts: {
 // ===========================================================================
 // SessionHost (protobuf-based server-side handler)
 // ===========================================================================
+export const NO_ACTIVE_SESSION_ERROR = 'no active session';
+
+/**
+ * Serves a `RemoteSession` client for the whole job.
+ *
+ * The host outlives any one `AgentSession`: at most one session is attached at a time, and
+ * none once it has closed. Session requests go to the attached session and fail with
+ * `NO_ACTIVE_SESSION_ERROR` while none is; `finalize_simulation` needs only the job, so
+ * it is answered either way.
+ */
 export class SessionHost {
   private readonly transport: SessionTransport;
   private readonly audioInput: TcpAudioInput | undefined;
   private readonly audioOutput: TcpAudioOutput | undefined;
+  // the attached session is exactly the one whose events are subscribed
   private session: AgentSession | undefined;
   private started = false;
-  private eventsRegistered = false;
   private recvTask: Task<void> | undefined;
   private readonly tasks = new Set<Task<void>>();
+  private readonly simulationFinalized = new Event();
+  private sendChain: Promise<void> = Promise.resolve();
 
   constructor(
     transport: SessionTransport,
@@ -573,22 +596,45 @@ export class SessionHost {
     this.audioOutput = audioOutput;
   }
 
-  registerSession(session: AgentSession): void {
+  /** The session this host currently serves, if any. */
+  get attachedSession(): AgentSession | undefined {
+    return this.session;
+  }
+
+  /** Serve `session`: forward its events and route session requests to it. */
+  attach(session: AgentSession): void {
+    this.detach();
     this.session = session;
-    if (!this.eventsRegistered) {
-      this.eventsRegistered = true;
-      session.on(AgentSessionEventTypes.AgentStateChanged, this.onAgentStateChanged);
-      session.on(AgentSessionEventTypes.UserStateChanged, this.onUserStateChanged);
-      session.on(AgentSessionEventTypes.ConversationItemAdded, this.onConversationItemAdded);
-      session.on(AgentSessionEventTypes.UserInputTranscribed, this.onUserInputTranscribed);
-      session.on(AgentSessionEventTypes.FunctionToolsExecuted, this.onFunctionToolsExecuted);
-      session.on(AgentSessionEventTypes.MetricsCollected, this.onMetricsCollected);
-      session.on(AgentSessionEventTypes.OverlappingSpeech, this.onOverlappingSpeech);
-      session.on(AgentSessionEventTypes.AgentFalseInterruption, this.onAgentFalseInterruption);
-      session.on(AgentSessionEventTypes.EotPrediction, this.onEotPrediction);
-      session.on(AgentSessionEventTypes.Error, this.onHostError);
-      session.on(AgentSessionEventTypes.DebugMessage, this.onDebugMessage);
-    }
+    session.on(AgentSessionEventTypes.AgentStateChanged, this.onAgentStateChanged);
+    session.on(AgentSessionEventTypes.UserStateChanged, this.onUserStateChanged);
+    session.on(AgentSessionEventTypes.ConversationItemAdded, this.onConversationItemAdded);
+    session.on(AgentSessionEventTypes.UserInputTranscribed, this.onUserInputTranscribed);
+    session.on(AgentSessionEventTypes.FunctionToolsExecuted, this.onFunctionToolsExecuted);
+    session.on(AgentSessionEventTypes.MetricsCollected, this.onMetricsCollected);
+    session.on(AgentSessionEventTypes.OverlappingSpeech, this.onOverlappingSpeech);
+    session.on(AgentSessionEventTypes.AgentFalseInterruption, this.onAgentFalseInterruption);
+    session.on(AgentSessionEventTypes.EotPrediction, this.onEotPrediction);
+    session.on(AgentSessionEventTypes.Error, this.onHostError);
+    session.on(AgentSessionEventTypes.DebugMessage, this.onDebugMessage);
+    session.on(AgentSessionEventTypes.Close, this.onClose);
+  }
+
+  /** Stop serving the attached session; the host itself stays up. */
+  detach(): void {
+    if (!this.session) return;
+    this.session.off(AgentSessionEventTypes.AgentStateChanged, this.onAgentStateChanged);
+    this.session.off(AgentSessionEventTypes.UserStateChanged, this.onUserStateChanged);
+    this.session.off(AgentSessionEventTypes.ConversationItemAdded, this.onConversationItemAdded);
+    this.session.off(AgentSessionEventTypes.UserInputTranscribed, this.onUserInputTranscribed);
+    this.session.off(AgentSessionEventTypes.FunctionToolsExecuted, this.onFunctionToolsExecuted);
+    this.session.off(AgentSessionEventTypes.MetricsCollected, this.onMetricsCollected);
+    this.session.off(AgentSessionEventTypes.OverlappingSpeech, this.onOverlappingSpeech);
+    this.session.off(AgentSessionEventTypes.AgentFalseInterruption, this.onAgentFalseInterruption);
+    this.session.off(AgentSessionEventTypes.EotPrediction, this.onEotPrediction);
+    this.session.off(AgentSessionEventTypes.Error, this.onHostError);
+    this.session.off(AgentSessionEventTypes.DebugMessage, this.onDebugMessage);
+    this.session.off(AgentSessionEventTypes.Close, this.onClose);
+    this.session = undefined;
   }
 
   async start(): Promise<void> {
@@ -598,27 +644,16 @@ export class SessionHost {
     this.recvTask = Task.from(async () => this.recvLoop());
   }
 
+  /** @internal Resolves once the simulator has been answered for `finalize_simulation`. */
+  async _waitForSimulationFinalized(): Promise<void> {
+    await this.simulationFinalized.wait();
+  }
+
   async close(): Promise<void> {
     if (!this.started) return;
     this.started = false;
 
-    if (this.session && this.eventsRegistered) {
-      this.eventsRegistered = false;
-      this.session.off(AgentSessionEventTypes.AgentStateChanged, this.onAgentStateChanged);
-      this.session.off(AgentSessionEventTypes.UserStateChanged, this.onUserStateChanged);
-      this.session.off(AgentSessionEventTypes.ConversationItemAdded, this.onConversationItemAdded);
-      this.session.off(AgentSessionEventTypes.UserInputTranscribed, this.onUserInputTranscribed);
-      this.session.off(AgentSessionEventTypes.FunctionToolsExecuted, this.onFunctionToolsExecuted);
-      this.session.off(AgentSessionEventTypes.MetricsCollected, this.onMetricsCollected);
-      this.session.off(AgentSessionEventTypes.OverlappingSpeech, this.onOverlappingSpeech);
-      this.session.off(
-        AgentSessionEventTypes.AgentFalseInterruption,
-        this.onAgentFalseInterruption,
-      );
-      this.session.off(AgentSessionEventTypes.EotPrediction, this.onEotPrediction);
-      this.session.off(AgentSessionEventTypes.Error, this.onHostError);
-      this.session.off(AgentSessionEventTypes.DebugMessage, this.onDebugMessage);
-    }
+    this.detach();
 
     if (this.recvTask) {
       this.recvTask.cancel();
@@ -635,13 +670,9 @@ export class SessionHost {
       for await (const msg of this.transport) {
         switch (msg.message.case) {
           case 'request':
-            if (this.session) {
-              this.trackTask(
-                Task.from(async () =>
-                  this.handleRequestSafe(msg.message.value as pb.SessionRequest),
-                ),
-              );
-            }
+            this.trackTask(
+              Task.from(async () => this.handleRequestSafe(msg.message.value as pb.SessionRequest)),
+            );
             break;
           case 'audioInput':
             this.audioInput?.pushFrame(msg.message.value);
@@ -658,6 +689,14 @@ export class SessionHost {
     }
   }
 
+  // one message on the wire at a time, in call order: the room transport streams each message
+  // separately, and a client hears session_closed before a reply sent after it
+  private send(msg: pb.AgentSessionMessage): Promise<void> {
+    const sent = this.sendChain.then(() => this.transport.sendMessage(msg));
+    this.sendChain = sent.catch(() => {});
+    return sent;
+  }
+
   private sendEvent(event: pb.AgentSessionEvent): void {
     const msg = new pb.AgentSessionMessage({
       message: { case: 'event', value: event },
@@ -666,7 +705,7 @@ export class SessionHost {
     this.trackTask(
       Task.from(async () => {
         try {
-          await this.transport.sendMessage(msg);
+          await this.send(msg);
         } catch (e) {
           log().warn({ error: e }, 'failed to send session event');
         }
@@ -789,6 +828,19 @@ export class SessionHost {
     );
   };
 
+  private onClose = (event: CloseEvent): void => {
+    this.emitEvent(
+      {
+        case: 'sessionClosed',
+        value: new pb.AgentSessionEvent_SessionClosed({
+          reason: CLOSE_REASON_MAP[event.reason] ?? pb.CloseReason.CR_UNKNOWN,
+          error: event.error ? String(event.error) : undefined,
+        }),
+      },
+      event.createdAt,
+    );
+  };
+
   private onMetricsCollected = (event: MetricsCollectedEvent): void => {
     if (!this.session) return;
     this.emitEvent(
@@ -867,7 +919,7 @@ export class SessionHost {
             }),
           },
         });
-        await this.transport.sendMessage(resp);
+        await this.send(resp);
       } catch (e) {
         log().debug({ error: e }, 'failed to send error response');
       }
@@ -875,7 +927,15 @@ export class SessionHost {
   }
 
   private async handleRequest(req: pb.SessionRequest): Promise<void> {
-    if (!this.session) return;
+    if (req.request.case === 'finalizeSimulation') {
+      return this.handleFinalizeSimulation(req.requestId, req.request.value);
+    }
+
+    // a detach while this request is in flight must not swap its session out
+    const session = this.session;
+    if (!session) {
+      return this.sendResponse(req.requestId, { case: undefined }, NO_ACTIVE_SESSION_ERROR);
+    }
 
     switch (req.request.case) {
       case 'ping':
@@ -884,13 +944,13 @@ export class SessionHost {
           value: new pb.SessionResponse_Pong(),
         });
       case 'getChatHistory':
-        return this.handleGetChatHistory(req.requestId);
+        return this.handleGetChatHistory(session, req.requestId);
       case 'getAgentInfo':
-        return this.handleGetAgentInfo(req.requestId);
+        return this.handleGetAgentInfo(session, req.requestId);
       case 'runInput':
-        return this.handleRunInput(req.requestId, req.request.value);
+        return this.handleRunInput(session, req.requestId, req.request.value);
       case 'getSessionState':
-        return this.handleGetSessionState(req.requestId);
+        return this.handleGetSessionState(session, req.requestId);
       case 'getRtcStats':
         return this.sendResponse(req.requestId, {
           case: 'getRtcStats',
@@ -900,7 +960,7 @@ export class SessionHost {
           }),
         });
       case 'getSessionUsage':
-        return this.handleGetSessionUsage(req.requestId);
+        return this.handleGetSessionUsage(session, req.requestId);
       case 'getFrameworkInfo':
         return this.sendResponse(req.requestId, {
           case: 'getFrameworkInfo',
@@ -910,9 +970,7 @@ export class SessionHost {
           }),
         });
       case 'updateIo':
-        return this.handleUpdateIo(req.requestId, req.request.value);
-      case 'finalizeSimulation':
-        return this.handleFinalizeSimulation(req.requestId, req.request.value);
+        return this.handleUpdateIo(session, req.requestId, req.request.value);
     }
   }
 
@@ -951,7 +1009,7 @@ export class SessionHost {
         reason: simCtx.userVerdict.reason,
       });
     }
-    return this.sendResponse(
+    await this.sendResponse(
       requestId,
       {
         case: 'finalizeSimulation',
@@ -959,13 +1017,14 @@ export class SessionHost {
       },
       simError,
     );
+    this.simulationFinalized.set();
   }
 
   private async handleUpdateIo(
+    session: AgentSession,
     requestId: string,
     update: pb.SessionRequest_UpdateIO,
   ): Promise<void> {
-    const session = this.session!;
     // Each field is proto3 `optional`; only apply the ones the peer actually set.
     // JS `AgentInput`/`AgentOutput` expose no video toggle, so video_enabled is ignored.
     if (update.input?.audioEnabled !== undefined) {
@@ -986,16 +1045,16 @@ export class SessionHost {
     });
   }
 
-  private async handleGetChatHistory(requestId: string): Promise<void> {
-    const items = chatItemsToProto(this.session!.history.items);
+  private async handleGetChatHistory(session: AgentSession, requestId: string): Promise<void> {
+    const items = chatItemsToProto(session.history.items);
     return this.sendResponse(requestId, {
       case: 'getChatHistory',
       value: new pb.SessionResponse_GetChatHistoryResponse({ items }),
     });
   }
 
-  private async handleGetAgentInfo(requestId: string): Promise<void> {
-    const agent = this.session!.currentAgent;
+  private async handleGetAgentInfo(session: AgentSession, requestId: string): Promise<void> {
+    const agent = session.currentAgent;
     return this.sendResponse(requestId, {
       case: 'getAgentInfo',
       value: new pb.SessionResponse_GetAgentInfoResponse({
@@ -1008,6 +1067,7 @@ export class SessionHost {
   }
 
   private async handleRunInput(
+    session: AgentSession,
     requestId: string,
     input: pb.SessionRequest_RunInput,
   ): Promise<void> {
@@ -1025,12 +1085,12 @@ export class SessionHost {
       // always return empty responses to the remote driver. This mirrors the
       // Python SessionHost behavior.
       try {
-        await this.session!.interrupt({ force: true }).await;
+        await session.interrupt({ force: true }).await;
       } catch {
         // ignore
       }
 
-      const result = this.session!.run({ userInput: text });
+      const result = session.run({ userInput: text });
       try {
         await result.wait();
       } catch (e) {
@@ -1053,32 +1113,32 @@ export class SessionHost {
     );
   }
 
-  private async handleGetSessionState(requestId: string): Promise<void> {
-    const agent = this.session!.currentAgent;
-    const startedAt = this.session!._startedAt ?? Date.now();
+  private async handleGetSessionState(session: AgentSession, requestId: string): Promise<void> {
+    const agent = session.currentAgent;
+    const startedAt = session._startedAt ?? Date.now();
     return this.sendResponse(requestId, {
       case: 'getSessionState',
       value: new pb.SessionResponse_GetSessionStateResponse({
-        agentState: AGENT_STATE_MAP[this.session!.agentState],
-        userState: USER_STATE_MAP[this.session!.userState],
+        agentState: AGENT_STATE_MAP[session.agentState],
+        userState: USER_STATE_MAP[session.userState],
         agentId: agent.id,
         options: protoSerializeOptions({
-          turnHandling: this.session!.sessionOptions.turnHandling,
-          maxToolSteps: this.session!.sessionOptions.maxToolSteps,
-          userAwayTimeout: this.session!.sessionOptions.userAwayTimeout,
-          transcriptionTimeout: this.session!.sessionOptions.transcriptionTimeout,
-          useTtsAlignedTranscript: this.session!.sessionOptions.useTtsAlignedTranscript,
+          turnHandling: session.sessionOptions.turnHandling,
+          maxToolSteps: session.sessionOptions.maxToolSteps,
+          userAwayTimeout: session.sessionOptions.userAwayTimeout,
+          transcriptionTimeout: session.sessionOptions.transcriptionTimeout,
+          useTtsAlignedTranscript: session.sessionOptions.useTtsAlignedTranscript,
         }),
         createdAt: msToTimestamp(startedAt),
       }),
     });
   }
 
-  private async handleGetSessionUsage(requestId: string): Promise<void> {
+  private async handleGetSessionUsage(session: AgentSession, requestId: string): Promise<void> {
     return this.sendResponse(requestId, {
       case: 'getSessionUsage',
       value: new pb.SessionResponse_GetSessionUsageResponse({
-        usage: sessionUsageToProto(this.session!.usage),
+        usage: sessionUsageToProto(session.usage),
         createdAt: nowTimestamp(),
       }),
     });
@@ -1089,7 +1149,7 @@ export class SessionHost {
     response: pb.SessionResponse['response'],
     error?: string,
   ): Promise<void> {
-    await this.transport.sendMessage(
+    await this.send(
       new pb.AgentSessionMessage({
         message: {
           case: 'response',
@@ -1234,6 +1294,9 @@ export class RemoteSession extends (EventEmitter as new () => TypedEventEmitter<
         break;
       case 'debugMessage':
         this.emit('debug_message', ev.value);
+        break;
+      case 'sessionClosed':
+        this.emit('session_closed', ev.value);
         break;
       case 'error':
         this.emit('error', ev.value);

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { type Room, RoomEvent } from '@livekit/rtc-node';
 import type { Span } from '@opentelemetry/api';
 import type { Logger } from 'pino';
 import { callbackName } from './ipc/job_trace.js';
@@ -13,7 +14,9 @@ import {
   traceTypes,
   tracer,
 } from './telemetry/index.js';
-import { IdleTimeoutError, waitUntilTimeout } from './utils.js';
+import { ATTRIBUTE_SIMULATOR } from './types.js';
+import { Event, IdleTimeoutError, waitUntilTimeout } from './utils.js';
+import type { SessionHost } from './voice/remote_session.js';
 
 export const DEFAULT_SESSION_END_TIMEOUT = 300 * 1000;
 const ENTRYPOINT_SHUTDOWN_TIMEOUT = 15 * 1000;
@@ -131,6 +134,54 @@ export async function finalizeSession(
       { name: 'session_end_upload' },
     );
   });
+
+  const sessionHost = ctx._sessionHost;
+  if (sessionHost) {
+    if (ctx.simulationContext()) {
+      await waitForSimulationFinalize(ctx.room, sessionHost, sessionEndTimeout, logger);
+    }
+    await waitOrContinue(() => sessionHost.close(), SESSION_CLOSE_TIMEOUT, logger, {
+      timeout: 'SessionHost.close() timed out; proceeding with shutdown',
+      error: 'SessionHost.close() failed; proceeding with shutdown',
+      lateReject: 'SessionHost.close() rejected after shutdown timeout',
+    });
+  }
+}
+
+/**
+ * The simulator asks for the onSimulationEnd verdict only once it has judged the run, which can
+ * be well after the agent ended the call; it can no longer ask once it has left the room.
+ */
+async function waitForSimulationFinalize(
+  room: Room,
+  sessionHost: SessionHost,
+  timeout: number,
+  logger: Logger,
+): Promise<void> {
+  const simulatorLeft = new Event();
+  const checkSimulatorLeft = () => {
+    if (
+      !room.isConnected ||
+      ![...room.remoteParticipants.values()].some((p) => ATTRIBUTE_SIMULATOR in p.attributes)
+    ) {
+      simulatorLeft.set();
+    }
+  };
+  room.on(RoomEvent.ParticipantDisconnected, checkSimulatorLeft);
+  room.on(RoomEvent.Disconnected, checkSimulatorLeft);
+  checkSimulatorLeft();
+  try {
+    await waitUntilTimeout(
+      Promise.race([sessionHost._waitForSimulationFinalized(), simulatorLeft.wait()]),
+      timeout,
+    );
+  } catch (error) {
+    if (!(error instanceof IdleTimeoutError)) throw error;
+    logger.warn({ timeout }, 'simulator did not finalize in time');
+  } finally {
+    room.off(RoomEvent.ParticipantDisconnected, checkSimulatorLeft);
+    room.off(RoomEvent.Disconnected, checkSimulatorLeft);
+  }
 }
 
 /**
