@@ -65,7 +65,9 @@ class TestChunk extends ChunkedStream {
     if (this.provider.mode === 'error')
       throw new APIConnectionError({ message: 'provider failed' });
     this.provider.received.resolve();
-    if (this.provider.mode === 'audio') this.queue.put(audio());
+    if (this.provider.mode === 'audio' || this.provider.mode === 'blocked-after-audio') {
+      this.queue.put(audio());
+    }
     if (this.provider.mode.startsWith('blocked')) await this.provider.release.await;
   }
 }
@@ -78,8 +80,9 @@ class TestTTS extends TTS {
   constructor(
     public label: string,
     public mode: Mode,
+    streaming = true,
   ) {
-    super(24000, 1, { streaming: true });
+    super(24000, 1, { streaming });
   }
   stream(options?: { connOptions?: APIConnectOptions }) {
     const stream = new TestStream(this, options?.connOptions);
@@ -111,9 +114,9 @@ function waitForRun(stream: SynthesizeStream | ChunkedStream): () => Promise<voi
   };
 }
 
-function setup(mode: Mode) {
-  const primary = new TestTTS('primary', mode);
-  const secondary = new TestTTS('secondary', 'audio');
+function setup(mode: Mode, streaming = true) {
+  const primary = new TestTTS('primary', mode, streaming);
+  const secondary = new TestTTS('secondary', 'audio', streaming);
   const adapter = new FallbackAdapter({
     ttsInstances: [primary, secondary],
     maxRetryPerTTS: 0,
@@ -166,49 +169,52 @@ describe('TTS fallback lifecycle', () => {
     },
   );
 
-  it('attributes cancelled partial audio to the provider that served it', async () => {
-    const { adapter, secondary, errors } = setup('error');
-    secondary.mode = 'blocked-after-audio';
-    vi.spyOn(secondary, 'model', 'get').mockReturnValue('secondary-model');
-    vi.spyOn(secondary, 'provider', 'get').mockReturnValue('cartesia');
-    const exporter = new InMemorySpanExporter();
-    const provider = new NodeTracerProvider({
-      spanProcessors: [new SimpleSpanProcessor(exporter)],
-    });
-    provider.register();
-    const previous = tracer.getProvider();
-    setTracerProvider(provider);
-    try {
-      await tracer.startActiveSpan(
-        async () => {
-          const stream = adapter.stream();
-          const settled = waitForRun(stream);
-          try {
-            stream.pushText('Hello.');
-            const frame = await stream.next();
-            expect(frame.done).toBe(false);
-            expect(frame.value).not.toBe(SynthesizeStream.END_OF_STREAM);
-            // Recovery can make the primary preferred before this speech is cancelled.
-            adapter.status[0]!.available = true;
-          } finally {
-            stream.close();
-            await settled();
-          }
-        },
-        { name: 'caller' },
-      );
-      const caller = exporter.getFinishedSpans().find((span) => span.name === 'caller');
-      expect(caller?.attributes[traceTypes.ATTR_GEN_AI_RESPONSE_MODEL]).toBe('secondary-model');
-      expect(caller?.attributes[traceTypes.ATTR_GEN_AI_PROVIDER_NAME]).toBe('cartesia');
-      expect(errors).toEqual([]);
-    } finally {
-      await adapter.close();
-      setTracerProvider(previous);
-      await provider.shutdown();
-      trace.disable();
-      otelContext.disable();
-    }
-  });
+  it.each(['streaming', 'chunked'] as const)(
+    'attributes cancelled partial %s audio to the provider that served it',
+    async (mode) => {
+      const { adapter, secondary, errors } = setup('error');
+      secondary.mode = 'blocked-after-audio';
+      vi.spyOn(secondary, 'model', 'get').mockReturnValue('secondary-model');
+      vi.spyOn(secondary, 'provider', 'get').mockReturnValue('cartesia');
+      const exporter = new InMemorySpanExporter();
+      const provider = new NodeTracerProvider({
+        spanProcessors: [new SimpleSpanProcessor(exporter)],
+      });
+      provider.register();
+      const previous = tracer.getProvider();
+      setTracerProvider(provider);
+      try {
+        await tracer.startActiveSpan(
+          async () => {
+            const stream = mode === 'streaming' ? adapter.stream() : adapter.synthesize('Hello.');
+            const settled = waitForRun(stream);
+            try {
+              if (stream instanceof SynthesizeStream) stream.pushText('Hello.');
+              const frame = await stream.next();
+              expect(frame.done).toBe(false);
+              expect(frame.value).not.toBe(SynthesizeStream.END_OF_STREAM);
+              // Recovery can make the primary preferred before this speech is cancelled.
+              adapter.status[0]!.available = true;
+            } finally {
+              stream.close();
+              await settled();
+            }
+          },
+          { name: 'caller' },
+        );
+        const caller = exporter.getFinishedSpans().find((span) => span.name === 'caller');
+        expect(caller?.attributes[traceTypes.ATTR_GEN_AI_RESPONSE_MODEL]).toBe('secondary-model');
+        expect(caller?.attributes[traceTypes.ATTR_GEN_AI_PROVIDER_NAME]).toBe('cartesia');
+        expect(errors).toEqual([]);
+      } finally {
+        await adapter.close();
+        setTracerProvider(previous);
+        await provider.shutdown();
+        trace.disable();
+        otelContext.disable();
+      }
+    },
+  );
 
   it.each(['close', 'abort'] as const)('cancels chunked synthesis through %s', async (method) => {
     const { primary, secondary, adapter, errors } = setup('blocked');
@@ -260,30 +266,53 @@ describe('TTS fallback lifecycle', () => {
     },
   );
 
-  it.each(['empty', 'already aborted'] as const)(
-    'skips providers for %s chunked input',
-    async (mode) => {
-      const { primary, secondary, adapter, errors } = setup('audio');
-      const controller = new AbortController();
-      if (mode === 'already aborted') controller.abort();
-      const stream = adapter.synthesize(
-        mode === 'empty' ? '' : 'Hello.',
-        undefined,
-        controller.signal,
-      );
+  it.each([{ tokens: [' \n\t'] }, { tokens: [' ', '\n', '\t'] }])(
+    'keeps providers healthy for whitespace input $tokens through StreamAdapter',
+    async ({ tokens }) => {
+      const { primary, secondary, adapter, errors } = setup('audio', false);
+      const stream = adapter.stream();
+      const settled = waitForRun(stream);
       try {
+        for (const token of tokens) stream.pushText(token);
+        stream.endInput();
         const frames = [];
-        for await (const frame of stream) frames.push(frame);
+        for await (const frame of stream) {
+          if (frame !== SynthesizeStream.END_OF_STREAM) frames.push(frame);
+        }
+        await settled();
         expect(frames).toEqual([]);
         expect(errors).toEqual([]);
         expect(primary.chunks).toHaveLength(0);
         expect(secondary.chunks).toHaveLength(0);
+        expect(adapter.status.map((status) => status.available)).toEqual([true, true]);
       } finally {
         stream.close();
         await adapter.close();
       }
     },
   );
+
+  it.each([
+    { name: 'empty', text: '', aborted: false },
+    { name: 'whitespace-only', text: ' \n\t', aborted: false },
+    { name: 'already aborted', text: 'Hello.', aborted: true },
+  ])('skips providers for $name chunked input', async ({ text, aborted }) => {
+    const { primary, secondary, adapter, errors } = setup('audio');
+    const controller = new AbortController();
+    if (aborted) controller.abort();
+    const stream = adapter.synthesize(text, undefined, controller.signal);
+    try {
+      const frames = [];
+      for await (const frame of stream) frames.push(frame);
+      expect(frames).toEqual([]);
+      expect(errors).toEqual([]);
+      expect(primary.chunks).toHaveLength(0);
+      expect(secondary.chunks).toHaveLength(0);
+    } finally {
+      stream.close();
+      await adapter.close();
+    }
+  });
 
   it('falls back on real silence while the text input remains open', async () => {
     const { adapter, primary, secondary, errors } = setup('silent');
@@ -309,11 +338,12 @@ describe('TTS fallback lifecycle', () => {
     }
   });
 
-  it('does not hide a provider error when input is empty', async () => {
+  it.each(['', ' \n\t'])('does not hide a provider error for input %j', async (text) => {
     const { adapter, errors } = setup('error');
     const stream = adapter.stream();
     const settled = waitForRun(stream);
     try {
+      stream.pushText(text);
       stream.endInput();
       await settled();
       expect(adapter.status.map((status) => status.available)).toEqual([false, true]);

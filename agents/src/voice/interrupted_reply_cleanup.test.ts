@@ -46,7 +46,7 @@ class TestSynthesis extends tts.SynthesizeStream {
       if (typeof text === 'string') transcript += text;
     }
     this.hasReceivedText = true;
-    if (!transcript) return;
+    if (!transcript.trim()) return;
     if (this.mode !== 'before-audio') {
       this.queue.put({
         requestId: 'test',
@@ -176,27 +176,31 @@ describe('interrupted reply cleanup', () => {
     10000,
   );
 
-  it('continues after empty speech input with no TTS error budget', async () => {
-    const { session, provider, output, close } = await startSession(['complete'], true);
-    let input!: ReadableStreamDefaultController<string>;
-    try {
-      const empty = session.say(
-        new ReadableStream<string>({
-          start(controller) {
-            input = controller;
-          },
-        }),
-      );
-      await vi.waitFor(() => expect(provider.streams).toHaveLength(1));
-      input.close();
-      await empty.waitForPlayout();
-      expect(output.frames).toEqual([]);
-      await session.generateReply({ userInput: 'correction' }).waitForPlayout();
-      expect(output.frames).toEqual([2]);
-    } finally {
-      await close();
-    }
-  });
+  it.each(['', ' \n\t'])(
+    'continues after blank speech input %j with no TTS error budget',
+    async (text) => {
+      const { session, provider, output, close } = await startSession(['complete'], true);
+      let input!: ReadableStreamDefaultController<string>;
+      try {
+        const empty = session.say(
+          new ReadableStream<string>({
+            start(controller) {
+              input = controller;
+            },
+          }),
+        );
+        await vi.waitFor(() => expect(provider.streams).toHaveLength(1));
+        if (text) input.enqueue(text);
+        input.close();
+        await empty.waitForPlayout();
+        expect(output.frames).toEqual([]);
+        await session.generateReply({ userInput: 'correction' }).waitForPlayout();
+        expect(output.frames).toEqual([2]);
+      } finally {
+        await close();
+      }
+    },
+  );
 
   it.each([false, true])(
     'releases stalled speech when the session closes (fallback=%s)',

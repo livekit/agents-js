@@ -417,7 +417,7 @@ class FallbackChunkedStream extends ChunkedStream {
    * @throws {APIConnectionError} When all TTS providers have been exhausted
    */
   protected async run(): Promise<Throws<void, APIConnectionError>> {
-    if (this.abortSignal.aborted || this.inputText.length === 0) return;
+    if (this.abortSignal.aborted || this.inputText.trim().length === 0) return;
 
     const allTTSFailed = this.adapter.status.every((s) => !s.available);
     let lastRequestId: string = '';
@@ -440,6 +440,7 @@ class FallbackChunkedStream extends ChunkedStream {
       // A phantom `AudioResampler.flush()` frame (observed on rtc-node
       // 0.13.25) could otherwise mask a silent failure as a success.
       let sawRawAudio = false;
+      let audioPushed = false;
       let closeStream: () => void = () => {};
 
       try {
@@ -466,9 +467,11 @@ class FallbackChunkedStream extends ChunkedStream {
                 ...audio,
                 frame,
               });
+              audioPushed = true;
             }
           } else {
             this.queue.put(audio);
+            audioPushed = true;
           }
           lastRequestId = audio.requestId;
           lastSegmentId = audio.segmentId;
@@ -487,6 +490,7 @@ class FallbackChunkedStream extends ChunkedStream {
               frame,
               final: true,
             });
+            audioPushed = true;
           }
         }
 
@@ -535,6 +539,10 @@ class FallbackChunkedStream extends ChunkedStream {
           throw error;
         }
       } finally {
+        if (this.abortSignal.aborted && audioPushed) {
+          this.servedTts = tts;
+          recordFallbackServed(tts, i, this.ttsRequestSpan, this.callerSpan);
+        }
         this.abortSignal.removeEventListener('abort', closeStream);
         closeStream();
         resampler?.close();
@@ -594,7 +602,7 @@ class FallbackSynthesizeStream extends SynthesizeStream {
         for await (const input of this.input) {
           if (this.abortController.signal.aborted) break;
           this.tokenBuffer.push(input);
-          if (typeof input === 'string' && input.length > 0) textReceived = true;
+          if (typeof input === 'string' && input.trim().length > 0) textReceived = true;
         }
       } catch (error) {
         this._logger.debug({ error }, 'Error reading input LLM stream');
