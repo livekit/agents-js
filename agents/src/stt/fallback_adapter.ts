@@ -12,6 +12,7 @@ import { StreamAdapter } from './stream_adapter.js';
 import {
   STT,
   type STTCallbacks,
+  type STTCapabilities,
   type STTError,
   type SpeechEvent,
   SpeechEventType,
@@ -139,6 +140,7 @@ export class FallbackAdapter extends STT {
     super({
       streaming: true,
       interimResults: wrapped.every((s) => s.capabilities.interimResults),
+      manualFlush: wrapped.every((s) => s.capabilities.manualFlush === true),
       diarization: wrapped.every((s) => !!s.capabilities.diarization),
       alignedTranscript,
       keyterms: wrapped.some((s) => !!s.capabilities.keyterms),
@@ -160,6 +162,14 @@ export class FallbackAdapter extends STT {
     }));
 
     this.setupEventForwarding();
+  }
+
+  override get capabilities(): STTCapabilities {
+    // recompute manualFlush, as a wrapped instance's capabilities can change after construction
+    return {
+      ...super.capabilities,
+      manualFlush: this.sttInstances.every((s) => s.capabilities.manualFlush === true),
+    };
   }
 
   /**

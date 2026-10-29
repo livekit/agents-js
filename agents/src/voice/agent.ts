@@ -46,7 +46,7 @@ import {
   createAgentV2,
 } from './agent_v2.js';
 import type { UserTurnExceededEvent } from './events.js';
-import type { TimedString } from './io.js';
+import { type TimedString, sttStreamRegistration } from './io.js';
 import type { SpeechHandle } from './speech_handle.js';
 import type { ToolHandlingOptions } from './tool_executor.js';
 import type { TurnHandlingOptions } from './turn_config/turn_handling.js';
@@ -363,6 +363,17 @@ export class Agent<UserData = any> {
     });
   }
 
+  /**
+   * Transcribes audio frames into speech events. Override it for custom pre-processing or STT
+   * strategies.
+   *
+   * For an STT with `capabilities.manualFlush`, the framework flushes the stream created by
+   * `Agent.default.sttNode` at turn boundaries, in order with the audio. If your override wraps
+   * the audio before passing it to `Agent.default.sttNode`, the wrapper can read ahead, so that
+   * flush can reach the STT before audio the wrapper still holds. If your override creates its
+   * own STT stream, the framework can't flush it. In either case, set
+   * `stt.capabilities.manualFlush = false` and call `flush()` on the stream yourself.
+   */
   async sttNode(
     audio: ReadableStream<AudioFrame> | AsyncIterable<AudioFrame>,
     modelSettings: ModelSettings,
@@ -498,12 +509,14 @@ export class Agent<UserData = any> {
       }
 
       const connOptions = activity.agentSession.connOptions.sttConnOptions;
+      const registration = sttStreamRegistration.getStore();
       let stream!: ReturnType<STT['stream']>;
       let cleaned = false;
       const cleanup = async () => {
         if (cleaned) return;
         cleaned = true;
         try {
+          if (stream) registration?.unregister(stream);
           stream?.detachInputStream();
           stream?.close();
         } finally {
@@ -512,6 +525,7 @@ export class Agent<UserData = any> {
       };
       try {
         stream = wrappedStt.stream({ connOptions });
+        registration?.register(stream, wrappedStt, input);
 
         // Set startTimeOffset to provide linear timestamps across reconnections
         const audioInputStartedAt =
