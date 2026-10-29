@@ -134,22 +134,25 @@ describe('withMockTools', () => {
     }
   });
 
-  it('scopes session mocks to their session and falls back to global mocks', () => {
+  it('scopes session mocks to their session and merges them with block mocks', () => {
     const agent = new AgentA();
     const sessionA = {} as never;
     const sessionB = {} as never;
     const scoped = () => 'scoped';
-    const global = () => 'global';
+    const block = () => 'block';
 
-    using _global = withMockTools(AgentA, { tool1: global, tool2: global });
+    using _scoped = withMockTools(AgentA, { tool1: scoped, tool2: scoped }, { session: sessionA });
+    expect(getMockTool(agent, 'tool1', sessionA)).toBe(scoped);
+    expect(getMockTool(agent, 'tool1', sessionB)).toBeUndefined();
+    expect(getMockTool(agent, 'tool1')).toBeUndefined();
     {
-      using _scoped = withMockTools(AgentA, { tool1: scoped }, { session: sessionA });
-      expect(getMockTool(agent, 'tool1', sessionA)).toBe(scoped);
-      expect(getMockTool(agent, 'tool2', sessionA)).toBe(global);
-      expect(getMockTool(agent, 'tool1', sessionB)).toBe(global);
-      expect(getMockTool(agent, 'tool1')).toBe(global);
+      using _block = withMockTools(AgentA, { tool1: block, tool3: block });
+      expect(getMockTool(agent, 'tool1', sessionA)).toBe(block);
+      expect(getMockTool(agent, 'tool2', sessionA)).toBe(scoped);
+      expect(getMockTool(agent, 'tool3', sessionA)).toBe(block);
+      expect(getMockTool(agent, 'tool1', sessionB)).toBe(block);
     }
-    expect(getMockTool(agent, 'tool1', sessionA)).toBe(global);
+    expect(getMockTool(agent, 'tool1', sessionA)).toBe(scoped);
   });
 
   it('keeps overlapping session mocks when disposed out of order', () => {

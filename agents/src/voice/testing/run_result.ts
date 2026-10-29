@@ -1066,17 +1066,14 @@ export function getMockTool(
   toolName: string,
   session?: AgentSession,
 ): MockToolFn | undefined {
+  // Block-scoped mocks take precedence over session-scoped ones, matching Python.
+  const blockMocks = activeMockTools?.get(agent.constructor as AgentConstructor);
+  if (blockMocks && Object.hasOwn(blockMocks, toolName)) return blockMocks[toolName];
+
   const scoped = session ? sessionMockTools.get(session) : undefined;
   for (let i = (scoped?.length ?? 0) - 1; i >= 0; i--) {
     const { agent: agentConstructor, mocks } = scoped![i]!;
     if (agent.constructor === agentConstructor && Object.hasOwn(mocks, toolName)) {
-      return mocks[toolName];
-    }
-  }
-  if (!activeMockTools) return undefined;
-
-  for (const [agentConstructor, mocks] of activeMockTools) {
-    if (agent.constructor === agentConstructor) {
       return mocks[toolName];
     }
   }
@@ -1095,7 +1092,8 @@ export function getMockTool(
  *
  * @param agent - The Agent constructor whose tools should be mocked.
  * @param mocks - A record mapping tool name to a mock implementation.
- * @param options - Optional scope for the mocks.
+ * @param options - Optional scope for the mocks. With `session`, the mocks apply only to
+ *   tool calls from that session; mocks registered without a session take precedence.
  *
  * @example
  * ```typescript
