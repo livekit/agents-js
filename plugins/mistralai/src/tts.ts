@@ -387,7 +387,8 @@ export class SynthesizeStream extends tts.SynthesizeStream {
   #withRealtimeConnection: NonNullable<ReturnType<typeof realtimeConnectionAccess.get>>;
 
   constructor(instance: TTS, connOptions?: APIConnectOptions) {
-    super(instance, connOptions);
+    // Own copy: run() disables retries once text is sent, which must not leak to other streams.
+    super(instance, { ...(connOptions ?? DEFAULT_API_CONNECT_OPTIONS) });
     this.#withRealtimeConnection = realtimeConnectionAccess.get(instance)!;
     this.done = new Promise((resolve) => {
       this.#resolveDone = resolve;
