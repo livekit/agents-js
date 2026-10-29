@@ -1,0 +1,241 @@
+.changeset/bright-voxtral-speech.md
+  s_de5d34fcc7db11::t_24988bcc22cb8d 2,5
+.changeset/close-speech-stream-adapters.md
+  s_de5d34fcc7db11::t_4f4feaf543287b 5-6
+.changeset/mistralai-conversation-store.md
+  s_de5d34fcc7db11::t_9a4238909a5eb7 2,5
+agents/CHANGELOG.md
+  s_de5d34fcc7db11::t_31f1f4784899ef 3-26
+agents/etc/agents.api.md
+  s_de5d34fcc7db11::t_3b921a9224ccad 942-944,966-970,7698-7699,9001,9008,9085,9099,9887
+agents/package.json
+  s_de5d34fcc7db11::t_4a36d4c984ad44 3
+agents/src/inference/tts.test.ts
+  s_de5d34fcc7db11::t_8e2c15eacebf57 17,437-463
+agents/src/inference/tts.ts
+  s_de5d34fcc7db11::t_348a984bb7c158 63-64,148-153,160-161,170,187-189,204-205,220-225,259-276,325,328,392,395,469,472
+agents/src/inference/tts_alignment.test.ts
+  s_de5d34fcc7db11::t_f105469cc80c39 69-131
+agents/src/ipc/inference_proc_executor.ts
+  s_de5d34fcc7db11::t_ad36a206987582 89-92
+agents/src/ipc/job_proc_executor.ts
+  s_de5d34fcc7db11::t_17fc39fad6da95 86,111-116
+agents/src/ipc/supervised_proc.test.ts
+  s_de5d34fcc7db11::t_9964f061106904 4,12,14-16,18,217,223-226,295-372
+agents/src/ipc/supervised_proc.ts
+  s_de5d34fcc7db11::t_998de62e6a9be2 50,83,118-121,128-133,140,149,155,178-181,301
+agents/src/log.test.ts
+  s_de5d34fcc7db11::t_07b0e3a38f90c1 6,8,256-264,289-363
+agents/src/log.ts
+  s_de5d34fcc7db11::t_a028ccb3f06013 26-27,52-71,95
+agents/src/stt/fallback_adapter.test.ts
+  s_de5d34fcc7db11::t_3b7dacc1bae656 10,86-109,309-321
+agents/src/stt/fallback_adapter.ts
+  s_de5d34fcc7db11::t_c39afc57abcb21 105,124-130,149,349
+agents/src/stt/stream_adapter.ts
+  s_de5d34fcc7db11::t_cc6111a6c5eb2f 7,13,21-28,40-42,44-47
+agents/src/telemetry/loop_monitor.test.ts
+  s_de5d34fcc7db11::t_5654f2d90482cb 199-216
+agents/src/tts/fallback_adapter.test.ts
+  s_de5d34fcc7db11::t_a64f7b66ab52a5 18,31,49-56,113,115,117,120-127,162-163,175-176,182-194,198-202,206-223,240-358,942
+agents/src/tts/fallback_adapter.ts
+  s_de5d34fcc7db11::t_f0a740181b84a4 590,601-604,615,623-624,725-731,767,792-793,802
+agents/src/voice/agent.test.ts
+  s_de5d34fcc7db11::t_12be725d877aed 4,8,11-15,19,56-129,547-658
+agents/src/voice/agent.ts
+  s_de5d34fcc7db11::t_c6e80c8ff13ea4 487,496-497,501,503,506-511,513-529,542,544,547,637,642-651,654-660,675,679
+agents/src/voice/generation_tts_timeout.test.ts
+  s_de5d34fcc7db11::t_1a03a8de672c2b 260-282
+plugins/anam/CHANGELOG.md
+  s_de5d34fcc7db11::t_3d7002a3d00612 3-9
+plugins/anam/package.json
+  s_de5d34fcc7db11::t_1aad099dd007b2 3
+plugins/anthropic/CHANGELOG.md
+  s_de5d34fcc7db11::t_95100b4fd63021 3-9
+plugins/anthropic/package.json
+  s_de5d34fcc7db11::t_c1e2304943d62e 3
+plugins/assemblyai/CHANGELOG.md
+  s_de5d34fcc7db11::t_137dfa317b272a 3-11
+plugins/assemblyai/package.json
+  s_de5d34fcc7db11::t_561cea7cb4dabb 3
+plugins/azure/CHANGELOG.md
+  s_de5d34fcc7db11::t_adb80761852e91 3-9
+plugins/azure/package.json
+  s_de5d34fcc7db11::t_0291b4e6b64705 3
+plugins/baseten/CHANGELOG.md
+  s_de5d34fcc7db11::t_5ad3ed16602a16 3-9
+plugins/baseten/package.json
+  s_de5d34fcc7db11::t_b49ef40b52df18 3
+plugins/bey/CHANGELOG.md
+  s_de5d34fcc7db11::t_03cf35d3c638d8 3-9
+plugins/bey/package.json
+  s_de5d34fcc7db11::t_324db242d86497 3
+plugins/cartesia/CHANGELOG.md
+  s_de5d34fcc7db11::t_242f0af4afe103 3-9
+plugins/cartesia/package.json
+  s_de5d34fcc7db11::t_fe5f32069a37dc 3
+plugins/cerebras/CHANGELOG.md
+  s_de5d34fcc7db11::t_c479cdc3b07256 3-10
+plugins/cerebras/package.json
+  s_de5d34fcc7db11::t_85dc0f5c3fe6bc 3
+plugins/deepgram/CHANGELOG.md
+  s_de5d34fcc7db11::t_7ec32a38f5a6cf 3-17
+plugins/deepgram/package.json
+  s_de5d34fcc7db11::t_a63cdb7e1f1bec 3
+plugins/did/CHANGELOG.md
+  s_de5d34fcc7db11::t_5c4824f271cc0c 3-9
+plugins/did/package.json
+  s_de5d34fcc7db11::t_f8b6b19ea5e307 3
+plugins/elevenlabs/CHANGELOG.md
+  s_de5d34fcc7db11::t_e5f279811c9633 3-9
+plugins/elevenlabs/package.json
+  s_de5d34fcc7db11::t_f2d5b31dd8d93d 3
+plugins/fishaudio/CHANGELOG.md
+  s_de5d34fcc7db11::t_94076cffa43685 3-9
+plugins/fishaudio/package.json
+  s_de5d34fcc7db11::t_b84b97d98ef71d 3
+plugins/google/CHANGELOG.md
+  s_de5d34fcc7db11::t_29146082216a82 3-9
+plugins/google/package.json
+  s_de5d34fcc7db11::t_1ed1b9336b4760 3
+plugins/hume/CHANGELOG.md
+  s_de5d34fcc7db11::t_4bc9743d9db7b9 3-9
+plugins/hume/package.json
+  s_de5d34fcc7db11::t_3bb860d7fdbc6f 3
+plugins/inworld/CHANGELOG.md
+  s_de5d34fcc7db11::t_3084ee88133018 3-9
+plugins/inworld/package.json
+  s_de5d34fcc7db11::t_e695cef0f799e0 3
+plugins/krisp/CHANGELOG.md
+  s_de5d34fcc7db11::t_c35ae6e7bcb31f 3-11
+plugins/krisp/package.json
+  s_de5d34fcc7db11::t_1771c20d351e9e 3,48
+plugins/lemonslice/CHANGELOG.md
+  s_de5d34fcc7db11::t_e47d1bcf49e529 3-9
+plugins/lemonslice/package.json
+  s_de5d34fcc7db11::t_b3bb4dfa265702 3
+plugins/liveavatar/CHANGELOG.md
+  s_de5d34fcc7db11::t_541497eaba0991 3-9
+plugins/liveavatar/package.json
+  s_de5d34fcc7db11::t_8e1fc9834f85be 3
+plugins/livekit/CHANGELOG.md
+  s_de5d34fcc7db11::t_53e50e6dfb3f87 3-9
+plugins/livekit/package.json
+  s_de5d34fcc7db11::t_a6f83bc8c6b287 3
+plugins/meta/CHANGELOG.md
+  s_de5d34fcc7db11::t_12c2e098b82c57 3-9
+plugins/meta/package.json
+  s_de5d34fcc7db11::t_9252f439080466 3
+plugins/minimax/CHANGELOG.md
+  s_de5d34fcc7db11::t_5c3ed66e90adc6 3-9
+plugins/minimax/package.json
+  s_de5d34fcc7db11::t_77a3c9002f2c97 3
+plugins/mistral/CHANGELOG.md
+  s_de5d34fcc7db11::t_966c8124f2fba7 3-10
+plugins/mistral/package.json
+  s_de5d34fcc7db11::t_4e206691f7b2a3 3
+plugins/mistralai/CHANGELOG.md
+  s_de5d34fcc7db11::t_065717cbf8be87 3-10
+plugins/mistralai/README.md
+  s_de5d34fcc7db11::t_b34afc43929049 56-58,62,65-77,80-92
+plugins/mistralai/etc/agents-plugin-mistralai.api.md
+  s_de5d34fcc7db11::t_d67ef1ac013745 10,13,15,27-28,49-52,93,115,153,158-168,232-246,251-253,259-260,263-267,271,282,284-285,288,295
+plugins/mistralai/package.json
+  s_de5d34fcc7db11::t_667facf6cf075d 3,46
+plugins/mistralai/src/llm.test.ts
+  s_de5d34fcc7db11::t_668a2f7f2b13eb 4,10-26,51-99
+plugins/mistralai/src/llm.ts
+  s_de5d34fcc7db11::t_7e62dfa5d50438 37,58-59,78,114,125,143
+plugins/mistralai/src/models.ts
+  s_de5d34fcc7db11::t_97ff3a5ff07cff 27-30,32,63-103
+plugins/mistralai/src/tts.ts
+  s_de5d34fcc7db11::t_0f7b2805667f1b 7,9,11,18-25,30,32-35,37-74,77,80-85,90-108,110,112-117,120,125-130,139,142-145,148-156,167,171-180,190-198,209-294,301-302,307-315,323,326,330,333-338,342-343,347-350,353-354,356-358,361,369-370,373,376-433,435-476,478-479,481-492,494-507,509-565,567-576,578-582,586-591,593-720,723-744,746-748
+plugins/neuphonic/CHANGELOG.md
+  s_de5d34fcc7db11::t_7a6b7a93c511a0 3-9
+plugins/neuphonic/package.json
+  s_de5d34fcc7db11::t_3c060518336521 3
+plugins/openai/CHANGELOG.md
+  s_de5d34fcc7db11::t_6f17daea25a099 3-11
+plugins/openai/package.json
+  s_de5d34fcc7db11::t_b92c09c8c833f3 3
+plugins/perplexity/CHANGELOG.md
+  s_de5d34fcc7db11::t_64de3149b4fa79 3-10
+plugins/perplexity/package.json
+  s_de5d34fcc7db11::t_c0ef21dd8a9d58 3
+plugins/phonic/CHANGELOG.md
+  s_de5d34fcc7db11::t_9c73f3be55cb11 3-9
+plugins/phonic/package.json
+  s_de5d34fcc7db11::t_ba6704c9acc570 3
+plugins/protoface/CHANGELOG.md
+  s_de5d34fcc7db11::t_309712e88c22a5 3-9
+plugins/protoface/package.json
+  s_de5d34fcc7db11::t_1f0e1f15e41c17 3
+plugins/resemble/CHANGELOG.md
+  s_de5d34fcc7db11::t_63fb930be1ed17 3-9
+plugins/resemble/package.json
+  s_de5d34fcc7db11::t_c9d08ac2027ecd 3
+plugins/rime/CHANGELOG.md
+  s_de5d34fcc7db11::t_509901985588d1 3-9
+plugins/rime/package.json
+  s_de5d34fcc7db11::t_cd25937ab1ef0d 3
+plugins/runway/CHANGELOG.md
+  s_de5d34fcc7db11::t_5075eebd628f7a 3-9
+plugins/runway/package.json
+  s_de5d34fcc7db11::t_b9197eebc7dfcb 3
+plugins/sarvam/CHANGELOG.md
+  s_de5d34fcc7db11::t_1975d1b8f748af 3-9
+plugins/sarvam/package.json
+  s_de5d34fcc7db11::t_c198e8fbb0e131 3
+plugins/silero/CHANGELOG.md
+  s_de5d34fcc7db11::t_f9973493fd8f89 3-9
+plugins/silero/package.json
+  s_de5d34fcc7db11::t_ff484dc7b0be72 3
+plugins/soniox/CHANGELOG.md
+  s_de5d34fcc7db11::t_338c9888750533 3-9
+plugins/soniox/package.json
+  s_de5d34fcc7db11::t_c60852184a6906 3
+plugins/speechify/CHANGELOG.md
+  s_de5d34fcc7db11::t_3d419f1fdb89fc 3-9
+plugins/speechify/package.json
+  s_de5d34fcc7db11::t_bf93635ab51b12 3
+plugins/synthesia/CHANGELOG.md
+  s_de5d34fcc7db11::t_8cbef0e0209009 3-9
+plugins/synthesia/package.json
+  s_de5d34fcc7db11::t_22dec5a0b3c042 3
+plugins/tavus/CHANGELOG.md
+  s_de5d34fcc7db11::t_63fbb801ebc2db 3-9
+plugins/tavus/package.json
+  s_de5d34fcc7db11::t_51693a1e3b4f5b 3
+plugins/test/CHANGELOG.md
+  s_de5d34fcc7db11::t_f72ee2d2110f1b 3-9
+plugins/test/package.json
+  s_de5d34fcc7db11::t_993ba7233b2e4c 3
+plugins/trugen/CHANGELOG.md
+  s_de5d34fcc7db11::t_df22dd1923dfb0 3-9
+plugins/trugen/package.json
+  s_de5d34fcc7db11::t_3ecf71c61d9981 3
+plugins/xai/CHANGELOG.md
+  s_de5d34fcc7db11::t_7cbe479ee78412 3-10
+plugins/xai/package.json
+  s_de5d34fcc7db11::t_acaaef48c31037 3
+pnpm-lock.yaml
+  s_de5d34fcc7db11::t_5cbd18acaa68d5 806,906-907,1108-1109,2125-2130,2504-2505,2510-2511,2516-2517,2523-2524,2529-2530,2535-2536,2625-2664,2674-2683,2804,2811,3325-3328,3512-3515,3550-3553,3569-3572,3645-3656,3660-3671,3733-3736,3793-3795,3802-3805,3864-3866,4054-4057,4078-4087,4154-4157,4203-4210,4370-4373,4377-4380,4404-4407,4446-4453,4527-4529,4648-4650,4790-4797,4813-4816,4821-4824,4868-4871,4904-4907,4947-4950,5028-5031,5055-5057,5184-5187,5195-5198,5212-5219,5302-5305,5347-5350,5355-5358,5367-5369,5390-5401,5406-5409,5460-5463,5596-5599,5669-5672,5728-5731,5739-5742,6378,6384-6385,6391-6394,6689,6692,6695,6704-6708,6710,6713,6716,6863,6865-6866,6870-6876,6878,6880,6897-6918,7577-7581,7781-7794,7828-7829,7847-7851,7912-7917,7920-7928,7985-7986,8029-8030,8035-8036,8203-8204,8480-8481,8494-8534,8600-8610,8664-8667,8858-8859,8862-8869,8901-8904,8939-8942,9007-9008,9114-9115,9250-9253,9277-9278,9283-9286,9323-9326,9347-9348,9399-9402,9486-9487,9506-9507,9660-9664,9672-9676,9685-9693,9812-9821,9855-9870,9875-9883,9900-9901,9981-10000,10008-10015,10053-10054,10195-10196,10301-10306,10371-10372,10379-10380
+pnpm-workspace.yaml
+  s_de5d34fcc7db11::t_fd57c2f4ef3850 10-13
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e923d15e2a96ac55b1aff2220237db68e8af5458",
+  "prompts": {},
+  "sessions": {
+    "s_de5d34fcc7db11": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1461f-331c-7182-920c-a8752fbaf7b8",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
