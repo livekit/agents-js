@@ -7693,6 +7693,8 @@ declare namespace stream {
 class StreamAdapter extends STT {
     constructor(stt: STT, vad: VAD);
     // (undocumented)
+    close(): Promise<void>;
+    // (undocumented)
     label: string;
     // (undocumented)
     _pushConversationItem(ev: ConversationItemAddedEvent): void;
