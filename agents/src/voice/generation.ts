@@ -25,7 +25,6 @@ import {
   isAgentHandoff,
   isFunctionTool,
   isToolError,
-  sortedToolNames,
 } from '../llm/tool_context.js';
 import { parseFunctionArguments } from '../llm/utils.js';
 import { isZodSchema, parseZodSchema } from '../llm/zod-utils.js';
@@ -716,7 +715,10 @@ export function performLLMInference(
       JSON.stringify(toSnakeCaseDeep(delta.chatCtx.toJSON())),
     );
     inputDelta.setAttributes(span, delta);
-    span.setAttribute(traceTypes.ATTR_FUNCTION_TOOLS, JSON.stringify(sortedToolNames(toolCtx)));
+    span.setAttribute(
+      traceTypes.ATTR_FUNCTION_TOOLS,
+      JSON.stringify(Object.keys(toolCtx.functionTools)),
+    );
 
     let nodeError: Error | string | undefined;
 
@@ -1459,7 +1461,7 @@ export function performToolExecutions({
 
       const tool = toolCtx.getFunctionTool(toolCall.name);
       if (!tool) {
-        const availableTools = sortedToolNames(toolCtx).join(', ');
+        const availableTools = Object.keys(toolCtx.functionTools).join(', ');
         const message = `Unknown function: ${toolCall.name} - available tools: ${availableTools}`;
         logger.warn(
           {

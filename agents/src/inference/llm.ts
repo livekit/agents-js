@@ -426,10 +426,10 @@ export class LLMStream extends llm.LLMStream {
         this.providerFmt,
       )) as OpenAI.ChatCompletionMessageParam[];
 
-      // Provider-defined tools are not supported by the inference adapter; `sortedToolEntries`
-      // yields only function tools (sorted by name), so they are skipped here. See AJS-112.
+      // Provider-defined tools are not supported by the inference adapter; `functionTools`
+      // holds only function tools, so they are skipped here. See AJS-112.
       const tools = this.toolCtx
-        ? llm.sortedToolEntries(this.toolCtx).map(([name, func]) => {
+        ? Object.entries(this.toolCtx.functionTools).map(([name, func]) => {
             // zod v3 conversion embeds a `$schema` URI ("draft/2019-09") that some gateway
             // deployments reject, silently ending the stream with no tool call. Python's
             // pydantic schemas carry no `$schema` key, so strip it for parity. Destructure

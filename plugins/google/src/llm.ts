@@ -67,7 +67,7 @@ function toFunctionCallingConfig(
     };
   }
   if (toolChoice === 'required') {
-    const toolNames = llm.sortedToolNames(toolCtx);
+    const toolNames = Object.keys(toolCtx?.functionTools ?? {});
     return {
       mode: FunctionCallingConfigMode.ANY,
       allowedFunctionNames: toolNames.length > 0 ? toolNames : undefined,

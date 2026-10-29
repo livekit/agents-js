@@ -37,9 +37,8 @@ export function toResponsesTools(
   toolCtx: llm.ToolContext,
   strictToolSchema: boolean,
 ): OpenAI.Responses.Tool[] | undefined {
-  // Function tools are emitted first, sorted by name for deterministic payloads; provider
-  // tools follow in registration order.
-  const functionTools = llm.sortedToolEntries(toolCtx).map(([, tool]) => tool);
+  // Function tools are emitted first, followed by provider tools, each in registration order.
+  const functionTools = Object.values(toolCtx.functionTools);
   const providerTools = toolCtx.flatten().filter((tool) => !llm.isFunctionTool(tool));
   const tools = [...functionTools, ...providerTools]
     .map((tool) => toResponsesTool(tool, strictToolSchema))

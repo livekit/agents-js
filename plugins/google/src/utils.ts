@@ -179,9 +179,9 @@ export function toFunctionDeclarations(
 ): FunctionDeclaration[] {
   const functionDeclarations: FunctionDeclaration[] = [];
 
-  // Provider tools are not supported by the Gemini schema; `sortedToolEntries` yields only
-  // function tools (sorted by name), so they are skipped here.
-  for (const [name, tool] of llm.sortedToolEntries(toolCtx)) {
+  // Provider tools are not supported by the Gemini schema; `functionTools` holds only
+  // function tools, so they are skipped here.
+  for (const [name, tool] of Object.entries(toolCtx.functionTools)) {
     try {
       const { description, parameters } = tool;
       const jsonSchema = llm.toJsonSchema(parameters, false);

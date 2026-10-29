@@ -222,10 +222,10 @@ export class LLMStream extends llm.LLMStream {
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const toolsList: any[] = [];
-      // Provider tools are not supported by the Mistral schema; `sortedToolEntries` yields only
-      // function tools (sorted by name), so they are skipped here.
+      // Provider tools are not supported by the Mistral schema; `functionTools` holds only
+      // function tools, so they are skipped here.
       if (this.toolCtx) {
-        for (const [name, func] of llm.sortedToolEntries(this.toolCtx)) {
+        for (const [name, func] of Object.entries(this.toolCtx.functionTools)) {
           toolsList.push({
             type: 'function' as const,
             function: {
