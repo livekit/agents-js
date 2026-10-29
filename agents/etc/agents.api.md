@@ -3679,6 +3679,8 @@ interface FakeUserSpeech {
 // @public
 export class FallbackAdapter extends LLM {
     constructor(options: FallbackAdapterOptions);
+    // @internal (undocumented)
+    _attemptId: number;
     // (undocumented)
     readonly attemptTimeout: number;
     // (undocumented)
@@ -3694,6 +3696,8 @@ export class FallbackAdapter extends LLM {
     _emitAvailabilityChanged(llm: LLM, available: boolean): void;
     // (undocumented)
     label(): string;
+    // @internal (undocumented)
+    _llmOrder(): number[];
     // (undocumented)
     readonly llms: LLM[];
     // (undocumented)
@@ -3709,6 +3713,8 @@ export class FallbackAdapter extends LLM {
     //
     // @internal (undocumented)
     _status: LLMStatus[];
+    // (undocumented)
+    readonly sticky: boolean;
 }
 
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "StreamAdapter"
@@ -3795,6 +3801,7 @@ export interface FallbackAdapterOptions {
     maxRetryPerLLM?: number;
     retryInterval?: number;
     retryOnChunkSent?: boolean;
+    sticky?: boolean;
 }
 
 // @public
@@ -5240,6 +5247,8 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
     protected get responseModel(): string;
     // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "responseModel"
     protected get responseProvider(): string;
+    // @internal (undocumented)
+    _retryOnChunkSent: boolean;
     // (undocumented)
     protected abstract run(): Promise<void>;
     get toolCtx(): ToolContext | undefined;
