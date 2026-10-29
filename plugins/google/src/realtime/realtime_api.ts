@@ -587,9 +587,9 @@ export class RealtimeSession extends llm.RealtimeSession {
   private pendingGenerationFut?: Future<llm.GenerationCreatedEvent>;
 
   private sessionResumptionHandle?: string;
-  private freshSessionNeeded = false;
-  private contextChangedSinceHandle = false;
-  private pendingContextUpdates = 0;
+  // a contextUpdate changed the instructions/tools of this session. a resumed session keeps
+  // the ones it was created with, so they are sent again on resume
+  private contextUpdated = false;
   private inUserActivity = false;
   private sessionLock = new Mutex();
   private numRetries = 0;
@@ -673,14 +673,10 @@ export class RealtimeSession extends llm.RealtimeSession {
     unlock();
   }
 
-  private markRestartNeeded(onError: boolean = false): void {
+  private markRestartNeeded(): void {
     if (!this.sessionShouldClose.isSet) {
       this.sessionShouldClose.set();
       this.messageChannel = new Queue();
-    }
-    this.pendingContextUpdates = 0;
-    if (!onError) {
-      this.freshSessionNeeded = true;
     }
   }
 
@@ -797,8 +793,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       }
       if (supportsContextUpdate(this.options.model, this.options.vertexai)) {
         this.#logger.debug('Updating instructions mid-session via contextUpdate');
-        this.contextChangedSinceHandle = true;
-        this.pendingContextUpdates += 1;
+        this.contextUpdated = true;
         this.sendClientEvent({
           type: 'context_update',
           value: {
@@ -936,9 +931,8 @@ export class RealtimeSession extends llm.RealtimeSession {
       return;
     }
 
-    this._tools = tools;
-
     if (!this.realtimeModel.capabilities.midSessionToolsUpdate) {
+      this._tools = tools;
       this.markRestartNeeded();
       return;
     }
@@ -946,25 +940,22 @@ export class RealtimeSession extends llm.RealtimeSession {
     const unlock = await this.sessionLock.lock();
     try {
       if (!this.activeSession) {
+        this._tools = tools;
         this.markRestartNeeded();
         return;
       }
 
-      const [convertedTools] = toToolsConfig({
-        toolCtx: this._tools,
-        geminiTools: this.options.geminiTools,
-        toolBehavior: this.options.toolBehavior,
-        useParametersJsonSchema: false,
-      });
+      // convert before committing, so a tool set that fails conversion can be retried
+      const convertedTools = this.toolsConfig(tools);
+      this._tools = tools;
 
       this.#logger.debug('Updating tools mid-session via contextUpdate');
-      this.contextChangedSinceHandle = true;
-      this.pendingContextUpdates += 1;
+      this.contextUpdated = true;
       this.sendClientEvent({
         type: 'context_update',
         value: {
           tools: {
-            tools: convertedTools ?? [],
+            tools: convertedTools,
           },
         },
       });
@@ -1175,12 +1166,6 @@ export class RealtimeSession extends llm.RealtimeSession {
       await this.closeActiveSession();
 
       this.sessionShouldClose.clear();
-      this.pendingContextUpdates = 0;
-      if (this.freshSessionNeeded || this.contextChangedSinceHandle) {
-        this.freshSessionNeeded = false;
-        this.contextChangedSinceHandle = false;
-        this.sessionResumptionHandle = undefined;
-      }
 
       try {
         const config = this.buildConnectConfig();
@@ -1206,7 +1191,7 @@ export class RealtimeSession extends llm.RealtimeSession {
             onerror: (error: ErrorEvent) => {
               this.#logger.error('Gemini Live session error:', error);
               if (!this.sessionShouldClose.isSet) {
-                this.markRestartNeeded(true);
+                this.markRestartNeeded();
               }
             },
             onclose: (event: CloseEvent) => {
@@ -1245,24 +1230,7 @@ export class RealtimeSession extends llm.RealtimeSession {
         connected.session = session;
 
         await sessionOpened.wait();
-
-        const unlock = await this.sessionLock.lock();
-        try {
-          this.activeSession = session;
-
-          // Send existing chat context
-          const [turns] = await this._chatCtx
-            .copy({
-              excludeFunctionCall: true,
-            })
-            .toProviderFormat('google', false);
-
-          if (turns.length > 0) {
-            await session.sendClientContent({ turns, turnComplete: false });
-          }
-        } finally {
-          unlock();
-        }
+        await this.onSessionOpened(session);
 
         const sendTask = Task.from((controller) => this.sendTask(session, controller));
         const restartWaitTask = Task.from(({ signal }) => {
@@ -1396,11 +1364,7 @@ export class RealtimeSession extends llm.RealtimeSession {
                 'sent Gemini Live client event',
               );
             }
-            try {
-              session.sendContextUpdate(msg.value);
-            } finally {
-              this.pendingContextUpdates = Math.max(0, this.pendingContextUpdates - 1);
-            }
+            session.sendContextUpdate(msg.value);
             break;
           default:
             this.#logger.warn(`Warning: Received unhandled message type: ${msg.type}`);
@@ -1410,7 +1374,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     } catch (e) {
       if (!this.sessionShouldClose.isSet) {
         this.#logger.error(`Error in send task: ${e}`);
-        this.markRestartNeeded(true);
+        this.markRestartNeeded();
       }
     } finally {
       this.#logger.debug(
@@ -1496,12 +1460,9 @@ export class RealtimeSession extends llm.RealtimeSession {
     if (response.sessionResumptionUpdate) {
       if (
         response.sessionResumptionUpdate.resumable &&
-        response.sessionResumptionUpdate.newHandle &&
-        this.pendingContextUpdates === 0 &&
-        !this.sessionShouldClose.isSet
+        response.sessionResumptionUpdate.newHandle
       ) {
         this.sessionResumptionHandle = response.sessionResumptionUpdate.newHandle;
-        this.contextChangedSinceHandle = false;
       }
     }
 
@@ -1532,7 +1493,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     } catch (e) {
       if (!this.sessionShouldClose.isSet) {
         this.#logger.error(`Error in onReceiveMessage: ${e}`);
-        this.markRestartNeeded(true);
+        this.markRestartNeeded();
       }
     }
   }
@@ -1669,14 +1630,51 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.emit('error', event);
   }
 
-  private buildConnectConfig(): types.LiveConnectConfig {
-    const opts = this.options;
+  private async onSessionOpened(session: types.Session): Promise<void> {
+    const unlock = await this.sessionLock.lock();
+    try {
+      this.activeSession = session;
+
+      if (this.sessionResumptionHandle !== undefined && this.contextUpdated) {
+        // the handle restores the conversation, but with the instructions/tools the
+        // session had when it was created. a handle may also predate the last
+        // contextUpdate, so the current ones are sent again rather than trusting it
+        session.sendContextUpdate({
+          systemInstruction: this.options.instructions
+            ? { parts: [{ text: this.options.instructions }] }
+            : undefined,
+          tools: { tools: this.toolsConfig(this._tools) },
+        });
+      }
+
+      // Send existing chat context
+      const [turns] = await this._chatCtx
+        .copy({
+          excludeFunctionCall: true,
+        })
+        .toProviderFormat('google', false);
+
+      if (turns.length > 0) {
+        await session.sendClientContent({ turns, turnComplete: false });
+      }
+    } finally {
+      unlock();
+    }
+  }
+
+  private toolsConfig(toolCtx: llm.ToolContext): types.Tool[] {
     const [tools] = toToolsConfig({
-      toolCtx: this._tools,
+      toolCtx,
       geminiTools: this.options.geminiTools,
       toolBehavior: this.options.toolBehavior,
       useParametersJsonSchema: false,
     });
+    return tools ?? [];
+  }
+
+  private buildConnectConfig(): types.LiveConnectConfig {
+    const opts = this.options;
+    const tools = this.toolsConfig(this._tools);
 
     const config: types.LiveConnectConfig = {
       thinkingConfig: opts.thinkingConfig,

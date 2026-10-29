@@ -641,7 +641,7 @@ describe('Google Realtime 3.8 defaults, labels, and contextUpdate', () => {
     });
   });
 
-  it('uses context_update on Vertex AI gemini-3.8-live and guards session resumption handles', async () => {
+  it('uses context_update on Vertex AI gemini-3.8-live and re-sends it on resume', async () => {
     const never = new Promise<void>(() => {});
     const closeActiveSession = vi
       .spyOn(
@@ -670,59 +670,45 @@ describe('Google Realtime 3.8 defaults, labels, and contextUpdate', () => {
     };
     const internals = session as unknown as {
       activeSession?: typeof activeSessionMock;
-      messageChannel: { get(opts: { signal: AbortSignal }): Promise<unknown> };
-      pendingContextUpdates: number;
-      contextChangedSinceHandle: boolean;
-      freshSessionNeeded: boolean;
+      _tools: llm.ToolContext;
+      contextUpdated: boolean;
       sessionResumptionHandle?: string;
       sessionShouldClose: { isSet: boolean; set(): void; clear(): void };
-      markRestartNeeded(onError?: boolean): void;
+      markRestartNeeded(): void;
       sendTask(s: typeof activeSessionMock, controller: AbortController): Promise<void>;
       onReceiveMessage(s: typeof activeSessionMock, msg: unknown): Promise<void>;
     };
 
-    // Pre-connect updateTools marks restart needed with freshSessionNeeded = true
+    // before a session is up, updateTools still asks for a restart
     const weatherTool = llm.tool({
       description: 'Get weather',
       execute: async () => 'sunny',
     });
     await session.updateTools(new llm.ToolContext({ getWeather: weatherTool }));
-    expect(internals.freshSessionNeeded).toBe(true);
-    internals.freshSessionNeeded = false;
-    internals.sessionShouldClose.clear();
-
-    // Error restart followed by config change while sessionShouldClose is set still sets freshSessionNeeded
-    internals.markRestartNeeded(true);
-    expect(internals.freshSessionNeeded).toBe(false);
-    internals.markRestartNeeded(false);
-    expect(internals.freshSessionNeeded).toBe(true);
-    internals.freshSessionNeeded = false;
+    expect(internals.sessionShouldClose.isSet).toBe(true);
+    expect(internals.contextUpdated).toBe(false);
     internals.sessionShouldClose.clear();
 
     internals.activeSession = activeSessionMock;
 
-    // Mid-session instruction update via context_update
+    // mid-session instruction update via context_update
     await session.updateInstructions('Speak concisely.');
-    expect(internals.pendingContextUpdates).toBe(1);
-    expect(internals.contextChangedSinceHandle).toBe(true);
+    expect(internals.contextUpdated).toBe(true);
 
-    // Handle arriving while pendingContextUpdates > 0 is ignored
+    // a handle arriving after an update is still kept: it holds the spoken conversation
     await internals.onReceiveMessage(activeSessionMock, {
-      sessionResumptionUpdate: { resumable: true, newHandle: 'stale-handle' },
+      sessionResumptionUpdate: { resumable: true, newHandle: 'handle-after-update' },
     });
-    expect(internals.sessionResumptionHandle).toBeUndefined();
-    expect(internals.contextChangedSinceHandle).toBe(true);
+    expect(internals.sessionResumptionHandle).toBe('handle-after-update');
 
-    // Mid-session tool clear sends tools: { tools: [...] } preserving geminiTools, and empty when geminiTools is unset
+    // clearing tools sends tools: { tools: [...] } preserving geminiTools
     await session.updateTools(llm.ToolContext.empty());
-    expect(internals.pendingContextUpdates).toBe(2);
 
-    // Drain messageChannel through a single sendTask (mirroring #mainTask)
+    // drain messageChannel through a single sendTask (mirroring #mainTask)
     const controller = new AbortController();
     const sendPromise = internals.sendTask(activeSessionMock, controller);
     await vi.waitFor(() => expect(sentContextUpdates).toHaveLength(2));
 
-    expect(internals.pendingContextUpdates).toBe(0);
     expect(sentContextUpdates[0]).toEqual({
       systemInstruction: { parts: [{ text: 'Speak concisely.' }] },
     });
@@ -730,7 +716,7 @@ describe('Google Realtime 3.8 defaults, labels, and contextUpdate', () => {
       tools: { tools: [{ googleSearch: {} }] },
     });
 
-    // Without geminiTools, clearing tools sends { tools: { tools: [] } }
+    // without geminiTools, clearing tools sends { tools: { tools: [] } }
     (session as unknown as { options: { geminiTools?: unknown } }).options.geminiTools = undefined;
     await session.updateTools(new llm.ToolContext({ getWeather: weatherTool }));
     await session.updateTools(llm.ToolContext.empty());
@@ -739,23 +725,79 @@ describe('Google Realtime 3.8 defaults, labels, and contextUpdate', () => {
       tools: { tools: [] },
     });
 
-    // Now that pendingContextUpdates === 0, a new handle is adopted and clears contextChangedSinceHandle
-    await internals.onReceiveMessage(activeSessionMock, {
-      sessionResumptionUpdate: { resumable: true, newHandle: 'fresh-handle' },
+    // a tool set that fails conversion is not committed, so the same set can be retried
+    const badTool = llm.tool({
+      description: 'bad',
+      parameters: {
+        type: 'object',
+        properties: { a: { type: 'string', minLength: 'many' } },
+      } as never,
+      execute: async () => 'never',
     });
-    expect(internals.sessionResumptionHandle).toBe('fresh-handle');
-    expect(internals.contextChangedSinceHandle).toBe(false);
+    const badTools = new llm.ToolContext({ bad: badTool });
+    await expect(session.updateTools(badTools)).rejects.toThrow(
+      'tool bad has a schema Gemini rejected',
+    );
+    expect(internals._tools.equals(badTools)).toBe(false);
+    expect(sentContextUpdates).toHaveLength(4);
 
-    // Handle arriving while sessionShouldClose.isSet is ignored
-    internals.sessionShouldClose.set();
-    await internals.onReceiveMessage(activeSessionMock, {
-      sessionResumptionUpdate: { resumable: true, newHandle: 'closing-socket-handle' },
-    });
-    expect(internals.sessionResumptionHandle).toBe('fresh-handle');
+    // a config-change restart on this model keeps the handle
+    internals.markRestartNeeded();
+    expect(internals.sessionResumptionHandle).toBe('handle-after-update');
 
     controller.abort();
     await sendPromise;
     await session.close();
+  });
+
+  it('re-sends the current instructions and tools when resuming after a context update', async () => {
+    const model = new RealtimeModel({
+      model: 'gemini-3.8-live',
+      vertexai: true,
+      project: 'test-project',
+      location: 'us-central1',
+      instructions: 'Be brief.',
+    });
+    const sendContextUpdate = vi.fn();
+    const sendClientContent = vi.fn();
+    const session = Object.create(RealtimeSession.prototype) as {
+      options: typeof model._options;
+      _tools: llm.ToolContext;
+      _chatCtx: llm.ChatContext;
+      contextUpdated: boolean;
+      sessionResumptionHandle?: string;
+      sessionLock: { lock(): Promise<() => void> };
+      activeSession?: unknown;
+      onSessionOpened(s: unknown): Promise<void>;
+    };
+    session.options = model._options;
+    session._tools = new llm.ToolContext({
+      getWeather: llm.tool({ description: 'Get weather', execute: async () => 'sunny' }),
+    });
+    session._chatCtx = llm.ChatContext.empty();
+    session.sessionLock = { lock: async () => () => {} };
+
+    // no update happened: nothing is re-sent
+    session.contextUpdated = false;
+    session.sessionResumptionHandle = 'h1';
+    await session.onSessionOpened({ sendContextUpdate, sendClientContent });
+    expect(sendContextUpdate).not.toHaveBeenCalled();
+
+    // an update happened and a handle is being resumed: current instructions and tools go first
+    session.contextUpdated = true;
+    await session.onSessionOpened({ sendContextUpdate, sendClientContent });
+    expect(sendContextUpdate).toHaveBeenCalledTimes(1);
+    const sent = sendContextUpdate.mock.calls[0]![0] as {
+      systemInstruction: { parts: { text: string }[] };
+      tools: { tools: { functionDeclarations?: { name: string }[] }[] };
+    };
+    expect(sent.systemInstruction.parts[0]!.text).toBe('Be brief.');
+    expect(sent.tools.tools[0]!.functionDeclarations![0]!.name).toBe('getWeather');
+
+    // a fresh connection (no handle) carries them in the setup message instead
+    session.sessionResumptionHandle = undefined;
+    await session.onSessionOpened({ sendContextUpdate, sendClientContent });
+    expect(sendContextUpdate).toHaveBeenCalledTimes(1);
   });
 });
 
