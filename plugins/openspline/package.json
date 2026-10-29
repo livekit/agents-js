@@ -1,0 +1,56 @@
+{
+  "name": "@livekit/agents-plugin-openspline",
+  "version": "1.9.4",
+  "description": "OpenSpline avatar plugin for LiveKit Agents",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    }
+  },
+  "files": [
+    "dist/*.js",
+    "dist/*.cjs",
+    "dist/*.d.ts",
+    "dist/*.d.cts",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsup",
+    "lint": "eslint \"src/**/*.{ts,js}\"",
+    "api:check": "api-extractor run",
+    "api:update": "api-extractor run --local"
+  },
+  "dependencies": {
+    "@openspline/node": "^0.1.2",
+    "ws": "catalog:"
+  },
+  "peerDependencies": {
+    "@livekit/agents": "workspace:*",
+    "@livekit/rtc-node": "catalog:",
+    "livekit-server-sdk": "^2.19.1"
+  },
+  "devDependencies": {
+    "@livekit/agents": "workspace:*",
+    "@livekit/rtc-node": "catalog:",
+    "@microsoft/api-extractor": "^7.58.12",
+    "tsup": "^8.5.0",
+    "typescript": "^5.9.2",
+    "@types/node": "^22"
+  }
+}
