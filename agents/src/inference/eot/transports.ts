@@ -212,6 +212,7 @@ export class LocalTransport implements StreamingTurnDetectionTransport {
         { err: err instanceof Error ? err.message : String(err) },
         'local audio EOT inference (executor) failed',
       );
+      prob = 1.0;
     }
     const freshStream = this._streamRef?.deref();
     if (freshStream === undefined) return;

@@ -24,9 +24,11 @@ import { AudioFrame } from '@livekit/rtc-node';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { APIConnectionError, APIError } from '../../_exceptions.js';
 import type { InferenceExecutor } from '../../ipc/inference_executor.js';
+import * as job from '../../job.js';
 import { log } from '../../log.js';
 import { DEFAULT_API_CONNECT_OPTIONS } from '../../types.js';
 import type { Task } from '../../utils.js';
+import * as warmup from '../_warmup.js';
 import type { BaseStreamingTurnDetectorStream } from './base.js';
 import {
   type BaseStreamingTurnDetectorOptions,
@@ -854,6 +856,48 @@ describe('LocalModelExecutor', () => {
   function pcmFrame(samples = 320): AudioFrame {
     return new AudioFrame(new Int16Array(samples), 16000, 1, samples);
   }
+
+  async function predictOnce(detector: TurnDetector): Promise<number> {
+    const stream = detector.stream();
+    try {
+      stream.pushAudio(pcmFrame());
+      return (await stream.predict().await).endOfTurnProbability;
+    } finally {
+      await stream.aclose();
+    }
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('resolves a failed inference to the positive default', async () => {
+    const executor: InferenceExecutor = {
+      doInference: () => Promise.reject(new Error('inference failed')),
+    };
+
+    expect(await predictOnce(new TurnDetector({ version: 'v1-mini', executor }))).toBe(1.0);
+  });
+
+  it('skips the job executor without the native binding', async () => {
+    const doInference = vi.fn();
+    vi.spyOn(job, 'getJobContext').mockReturnValue({
+      inferenceExecutor: { doInference },
+    } as unknown as ReturnType<typeof job.getJobContext>);
+    vi.spyOn(warmup, '_getLocalInferenceModule').mockReturnValue(undefined);
+
+    expect(await predictOnce(new TurnDetector({ version: 'v1-mini' }))).toBe(1.0);
+    expect(doInference).not.toHaveBeenCalled();
+  });
+
+  it('keeps an explicit executor without the native binding', async () => {
+    vi.spyOn(warmup, '_getLocalInferenceModule').mockReturnValue(undefined);
+    const executor: InferenceExecutor = {
+      doInference: async () => ({ probability: 0.3, inferenceDurationMs: 5 }),
+    };
+
+    expect(await predictOnce(new TurnDetector({ version: 'v1-mini', executor }))).toBe(0.3);
+  });
 
   it.each([undefined, false])(
     'routes local predict through the executor (localFallback=%s)',
