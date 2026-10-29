@@ -1,4 +1,6 @@
+// SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 // SPDX-FileCopyrightText: 2026 OpenSpline contributors
+//
 // SPDX-License-Identifier: Apache-2.0
 import { Openspline, type Quality } from '@openspline/node';
 import { LiveKitAvatarSession } from '@openspline/node/livekit';

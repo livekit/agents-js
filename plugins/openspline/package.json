@@ -37,7 +37,8 @@
     "api:update": "api-extractor run --local"
   },
   "dependencies": {
-    "@openspline/node": "^0.1.2"
+    "@openspline/node": "^0.1.2",
+    "ws": "catalog:"
   },
   "peerDependencies": {
     "@livekit/agents": "workspace:*",

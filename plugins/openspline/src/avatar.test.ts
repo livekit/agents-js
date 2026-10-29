@@ -1,4 +1,6 @@
+// SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 // SPDX-FileCopyrightText: 2026 OpenSpline contributors
+//
 // SPDX-License-Identifier: Apache-2.0
 import { initializeLogger, voice } from '@livekit/agents';
 import type { Room } from '@livekit/rtc-node';

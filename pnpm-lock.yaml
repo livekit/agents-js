@@ -1209,6 +1209,9 @@ importers:
       livekit-server-sdk:
         specifier: ^2.19.1
         version: 2.19.2
+      ws:
+        specifier: 'catalog:'
+        version: 8.21.3
     devDependencies:
       '@livekit/agents':
         specifier: workspace:*
