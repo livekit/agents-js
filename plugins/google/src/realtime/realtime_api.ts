@@ -2046,14 +2046,17 @@ export class RealtimeSession extends llm.RealtimeSession {
       return true;
     }
 
+    // Gemini ends a tool call's turn with a content-free generationComplete after handleToolCall
+    // has finished its generation. A new one would interrupt the speech that owns the call, so a
+    // bare completion only opens the generation a pending generateReply() waits on.
     const serverContent = response.serverContent;
     return (
       !!serverContent &&
-      (serverContent.modelTurn ||
-        serverContent.outputTranscription != null ||
-        serverContent.inputTranscription != null ||
-        serverContent.generationComplete != null ||
-        serverContent.turnComplete != null)
+      (!!serverContent.modelTurn ||
+        !!serverContent.outputTranscription?.text ||
+        !!serverContent.inputTranscription?.text ||
+        (!!this.pendingGenerationFut &&
+          (serverContent.generationComplete != null || serverContent.turnComplete != null)))
     );
   }
 }
