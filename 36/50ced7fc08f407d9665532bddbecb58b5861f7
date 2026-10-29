@@ -1,0 +1,61 @@
+agents/src/voice/amd/fsm.ts
+  s_a76e625a99c445::t_e94f1991ce4975 54-61
+agents/src/voice/amd/inference.ts
+  s_a76e625a99c445::t_e94f1991ce4975 101-103,258-262
+agents/src/voice/amd/detector_lifecycle.test.ts
+  s_a76e625a99c445::t_528b8c9b040303 1059-1090
+agents/src/voice/amd/chat_context.ts
+  s_a76e625a99c445::t_86605153570f2c 57-66,75,90,94-96,103,127,132,142
+  s_a76e625a99c445::t_9337cb33d61f10 98-102,105
+  s_a76e625a99c445::t_e78d4941517439 76
+examples/src/telephony/README.md
+  s_a76e625a99c445::t_a9129837bd13e1 140-149,236-244,291-294
+  s_a76e625a99c445::t_8c7ee02efcbd2d 226-234
+  s_a76e625a99c445::t_fb50dc02a61a63 235
+agents/src/voice/amd/detector_context.test.ts
+  s_a76e625a99c445::t_bb705ce94245d3 19,28,42-46,337,443,813,847,866,1305-1309,1404
+  s_a76e625a99c445::t_94ae86c16f8987 50,52,366-432,465-549
+  s_a76e625a99c445::t_6d95ecc724b913 550
+agents/src/voice/amd/stt.ts
+  s_a76e625a99c445::t_f91f0798c54580 10,32-77,89-93,133-138,161-165,169-175,182-188
+  s_a76e625a99c445::t_1709fd0f960b1d 189
+agents/src/voice/amd/stt.test.ts
+  s_a76e625a99c445::t_363543947a79ea 10,88-146
+  s_a76e625a99c445::t_a71a0d5d078ade 147
+agents/src/voice/amd/silence.test.ts
+  s_a76e625a99c445::t_11f49dca972289 44,748,1181-1194
+agents/src/voice/amd/models.test.ts
+  s_a76e625a99c445::t_580d7b2c978b4c 333-335
+agents/src/voice/amd/detector_turns.test.ts
+  s_a76e625a99c445::t_910fa74770245f 718-720
+  s_a76e625a99c445::t_899336a2e9bc80 25,51,826-853,865,884,896
+  s_a76e625a99c445::t_ff2a8b5b3359a5 387-388,415-419
+agents/src/voice/amd/detector.ts
+  s_a76e625a99c445::t_9337cb33d61f10 43-48,61,70-74,290-291,695,738-741,767-773,780-832,838,842,964-978,1014-1024,1173-1176
+  s_a76e625a99c445::t_a9d7814b5f64ab 42
+agents/src/voice/amd/amd_test_utils.ts
+  s_a76e625a99c445::t_0919a7facb1090 243-255
+  s_a76e625a99c445::t_0b3541f7528f56 690-703
+  s_a76e625a99c445::t_608458f143e9ef 45
+  s_a76e625a99c445::t_194f96b825bbe8 272,279-285
+agents/src/voice/amd/corrections.test.ts
+  s_a76e625a99c445::t_b98683eea50b15 13,24,110-114
+agents/src/voice/amd/realtime.test.ts
+  s_a76e625a99c445::t_7aa3ddc202ba2b 674-675,687,1029-1035
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3650ced7fc08f407d9665532bddbecb58b5861f7",
+  "prompts": {},
+  "sessions": {
+    "s_a76e625a99c445": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c9702b8a-b660-4f34-bd32-230591d391a0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
