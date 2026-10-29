@@ -731,6 +731,58 @@ function makeFrame(samplesPerChannel = 800, sampleRate = 16000): AudioFrame {
   return new AudioFrame(new Int16Array(samplesPerChannel), sampleRate, 1, samplesPerChannel);
 }
 
+async function waitUntil(predicate: () => boolean, timeoutMs = 1000): Promise<void> {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error('timed out waiting for condition');
+}
+
+describe('SpeechStream flush', () => {
+  it('sends a finalize message when flush() is called', async () => {
+    const { wss, baseUrl } = await startWebSocketServer();
+    const wire: string[] = [];
+    wss.on('connection', (ws) => {
+      let configured = false;
+      ws.on('message', (data: Buffer, isBinary) => {
+        if (!configured) {
+          configured = true; // first message is the JSON config
+          wire.push('config');
+          return;
+        }
+        if (isBinary) {
+          wire.push('audio');
+          return;
+        }
+        const msg = JSON.parse(data.toString()) as { type?: string };
+        wire.push(msg.type ?? 'unknown');
+      });
+    });
+
+    const stream = new STT({ apiKey: 'test-key', baseUrl }).stream({
+      connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1000 },
+    });
+    const drain = (async () => {
+      for await (const _ of stream) {
+        /* discard events */
+      }
+    })();
+    try {
+      stream.pushFrame(makeFrame());
+      await waitUntil(() => wire.includes('audio'));
+      stream.flush();
+      await waitUntil(() => wire.includes('finalize'));
+      expect(wire.join(',')).toBe('config,audio,finalize');
+    } finally {
+      stream.close();
+      await drain.catch(() => {});
+      await closeWebSocketServer(wss);
+    }
+  });
+});
+
 describe('SpeechStream graceful close', () => {
   it('signals end-of-audio on input end and delivers the flushed final transcript', async () => {
     const { wss, baseUrl } = await startWebSocketServer();
