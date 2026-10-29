@@ -2,8 +2,13 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from 'vitest';
-import { SentenceTokenizer, WordTokenizer, hyphenateWord } from './basic/index.js';
+import {
+  SentenceTokenizer as BasicSentenceTokenizer,
+  WordTokenizer,
+  hyphenateWord,
+} from './basic/index.js';
 import { splitParagraphs } from './basic/paragraph.js';
+import { SentenceTokenizer as BlingfireSentenceTokenizer } from './blingfire.js';
 
 const TEXT =
   'Hi! ' +
@@ -28,6 +33,13 @@ const EXPECTED_MIN_20 = [
   'Find additional resources on docs.livekit.com.',
   'f(x) = x * 2.54 + 42.',
   'Hey! Hi! Hello!',
+];
+
+const TERMINATOR_RUN_CASES: [string, string[]][] = [
+  ['Really?! Yes it is.', ['Really?!', 'Yes it is.']],
+  ['Wow!!! That was great.', ['Wow!!!', 'That was great.']],
+  ['What?? No way.', ['What??', 'No way.']],
+  ['She asked "really?!" and left.', ['She asked "really?!"', 'and left.']],
 ];
 
 const WORDS_TEXT = 'This is a test. Blabla another test! multiple consecutive spaces:     done';
@@ -127,7 +139,7 @@ const PARAGRAPH_TEST_CASES: [string, [string, number, number][]][] = [
 
 describe('tokenizer', () => {
   describe('SentenceTokenizer', () => {
-    const tokenizer = new SentenceTokenizer();
+    const tokenizer = new BasicSentenceTokenizer();
 
     it('should tokenize sentences correctly', () => {
       expect(tokenizer.tokenize(TEXT).every((x, i) => EXPECTED_MIN_20[i] === x)).toBeTruthy();
@@ -161,6 +173,22 @@ describe('tokenizer', () => {
           }
         });
       }
+    });
+
+    describe.each([
+      ['basic', BasicSentenceTokenizer],
+      ['blingfire', BlingfireSentenceTokenizer],
+    ])('%s terminator runs', (_name, Tokenizer) => {
+      it.each(TERMINATOR_RUN_CASES)('keeps the run together in %s', (text, expected) => {
+        expect(new Tokenizer({ minSentenceLength: 1 }).tokenize(text)).toStrictEqual(expected);
+      });
+    });
+
+    it('keeps terminator runs unspaced with the default minimum length', () => {
+      const text = 'That is amazing!!! I cannot believe it happened today.';
+      expect(new BasicSentenceTokenizer().tokenize(text)).toStrictEqual([
+        'That is amazing!!! I cannot believe it happened today.',
+      ]);
     });
   });
   describe('WordTokenizer', () => {

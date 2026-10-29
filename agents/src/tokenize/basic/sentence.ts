@@ -47,13 +47,13 @@ export const splitSentences = (
   );
   text = text.replaceAll(new RegExp(` ${suffixes.source}[.]`, 'g'), '$1<prd>');
   text = text.replaceAll(new RegExp(` ${alphabets.source}[.]`, 'g'), '$1<prd>');
-  text = text.replaceAll('.”', '”.');
-  text = text.replaceAll('."', '".');
-  text = text.replaceAll('!"', '"!');
-  text = text.replaceAll('?"', '"?');
-  text = text.replace(/\.(?=\s|$)/g, '.<stop>');
-  text = text.replaceAll('?', '?<stop>');
-  text = text.replaceAll('!', '!<stop>');
+  // A run like "?!" or "!!!" ends one sentence; the lookbehind starts a match
+  // only at the start of a run, so a long run is not rescanned from every position.
+  text = text.replace(/(?<![.!?。！？؟۔।॥])([.!?。！？؟۔।॥]+)(["”])/gu, '$1$2<stop>');
+  text = text.replace(
+    /(?<![.!?。！？؟۔।॥])([.!?。！？؟۔।॥]*[!?。！？؟۔।॥][.!?。！？؟۔।॥]*|[.]+(?=\s|$))(?!["”.!?。！？؟۔।॥])/gu,
+    '$1<stop>',
+  );
   text = text.replaceAll('<prd>', '.');
 
   if (retainFormat) {
