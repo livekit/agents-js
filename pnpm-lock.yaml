@@ -1313,8 +1313,8 @@ importers:
         specifier: ^10.0.0
         version: 10.0.0
       '@rimelabs/api':
-        specifier: 0.0.1
-        version: 0.0.1
+        specifier: '>=0.3.0'
+        version: 0.4.0
       ws:
         specifier: 'catalog:'
         version: 8.21.3
@@ -2857,8 +2857,8 @@ packages:
   '@protobufjs/utf8@1.1.1':
     resolution: {integrity: sha512-oOAWABowe8EAbMyWKM0tYDKi8Yaox52D+HWZhAIJqQXbqe0xI/GV7FhLWqlEKreMkfDjshR5FKgi3mnle0h6Eg==}
 
-  '@rimelabs/api@0.0.1':
-    resolution: {integrity: sha512-U8cHW3aRyzDWFU9ww4qZFOJyIH+2p7zQBkWwmpcKoOsrdUmsi6qVXVGohipbOxUCmX+qaGGtd/g8MD6LVwTpTg==}
+  '@rimelabs/api@0.4.0':
+    resolution: {integrity: sha512-Tj59qnCEOQPk68fTAXtpj6TqDh88zpasya9ZuzqHDs1uwJH2ZKUwRIlddzGfc/SaA9tCW8GxoJZGd9DFmhKigw==}
 
   '@rollup/rollup-android-arm-eabi@4.62.2':
     resolution: {integrity: sha512-6o7ZLZK+BeenkZCFNDXqpbjw9bD6nuWonvS/lwQJp7NoVVxm6p3qE7qQ5jGuBjiFsgvqjD8mZAU5oWxTmbOeOg==}
@@ -7106,7 +7106,7 @@ snapshots:
 
   '@protobufjs/utf8@1.1.1': {}
 
-  '@rimelabs/api@0.0.1':
+  '@rimelabs/api@0.4.0':
     dependencies:
       '@bufbuild/protobuf': 2.14.1
 
