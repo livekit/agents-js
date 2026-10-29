@@ -319,11 +319,39 @@ export class BackgroundAudioPlayer {
 
   /**
    * Close and cleanup the background audio system
+   *
+   * @param options - Options for closing background audio playback
    */
-  async close(): Promise<void> {
+  async close(options: { signal?: AbortSignal } = {}): Promise<void> {
     this.closed = true;
 
-    await cancelAndWait(this.playTasks, TASK_TIMEOUT_MS);
+    // Detach before teardown awaits so state changes cannot play on a half-closed player.
+    this.agentSession?.off(AgentSessionEventTypes.AgentStateChanged, this.onAgentStateChanged);
+
+    const { signal } = options;
+    let onAbort: (() => void) | undefined;
+    try {
+      const playTasksClosed = cancelAndWait(this.playTasks, TASK_TIMEOUT_MS);
+      if (signal) {
+        const aborted = new Promise<never>((_resolve, reject) => {
+          onAbort = () => reject(signal.reason);
+          if (signal.aborted) {
+            onAbort();
+          } else {
+            signal.addEventListener('abort', onAbort, { once: true });
+          }
+        });
+        await Promise.race([playTasksClosed, aborted]);
+      } else {
+        await playTasksClosed;
+      }
+    } catch (error) {
+      // The mixer is still running, so keep thinking sounds working if teardown is interrupted.
+      this.agentSession?.on(AgentSessionEventTypes.AgentStateChanged, this.onAgentStateChanged);
+      throw error;
+    } finally {
+      if (onAbort) signal?.removeEventListener('abort', onAbort);
+    }
 
     await this.audioMixer.aclose();
     await this.audioSource.close();
@@ -331,8 +359,6 @@ export class BackgroundAudioPlayer {
     if (this.mixerTask) {
       await this.mixerTask.cancelAndWait(TASK_TIMEOUT_MS);
     }
-
-    this.agentSession?.off(AgentSessionEventTypes.AgentStateChanged, this.onAgentStateChanged);
 
     // The cached publication SID may be stale if the SDK auto-republished it
     // during a full reconnect, so resolve the current publication by track

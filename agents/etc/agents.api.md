@@ -1881,7 +1881,9 @@ interface AvatarSessionStartOptions {
 // @public
 export class BackgroundAudioPlayer {
     constructor(options?: BackgroundAudioPlayerOptions);
-    close(): Promise<void>;
+    close(options?: {
+        signal?: AbortSignal;
+    }): Promise<void>;
     getPublication(): LocalTrackPublication | undefined;
     // (undocumented)
     play(audio: AudioSourceType | AudioConfig | AudioConfig[], loop?: boolean): PlayHandle;
