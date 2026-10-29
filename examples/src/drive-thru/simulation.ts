@@ -87,6 +87,9 @@ export function onSimulationEnd(simulation: SimulationContext): void {
         `expected the order to be ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`,
       );
     }
+  } catch (error) {
+    // A thrown callback is reported as an error and its verdict is dropped, so record it instead.
+    simulation.fail(`failed to grade the order: ${error instanceof Error ? error.message : error}`);
   } finally {
     mocks.get(simulation)?.[Symbol.dispose]();
     mocks.delete(simulation);
