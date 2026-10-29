@@ -159,10 +159,10 @@ export class FallbackAdapter extends STT {
   }
 
   override get capabilities(): STTCapabilities {
-    const active = this._served?.stt ?? this.nextInstance();
+    // recompute manualFlush, as a wrapped instance's capabilities can change after construction
     return {
       ...super.capabilities,
-      manualFlush: active.capabilities.manualFlush === true,
+      manualFlush: this.sttInstances.every((s) => s.capabilities.manualFlush === true),
     };
   }
 

@@ -97,15 +97,23 @@ describe('STTPipeline manual flush', () => {
 describe('FallbackAdapter manual flush', () => {
   initializeLogger({ pretty: false, level: 'silent' });
 
-  it('reports the manual flush capability of the instance that serves next', () => {
-    const manual = new FakeSTT({ capabilities: { manualFlush: true } });
-    const endpointing = new FakeSTT();
+  it('asks for manual flushes only when every instance does', () => {
+    const manual = () => new FakeSTT({ capabilities: { manualFlush: true } });
 
     expect(
-      new FallbackAdapter({ sttInstances: [manual, endpointing] }).capabilities.manualFlush,
+      new FallbackAdapter({ sttInstances: [manual(), manual()] }).capabilities.manualFlush,
     ).toBe(true);
     expect(
-      new FallbackAdapter({ sttInstances: [endpointing, manual] }).capabilities.manualFlush,
+      new FallbackAdapter({ sttInstances: [manual(), new FakeSTT()] }).capabilities.manualFlush,
     ).toBe(false);
+  });
+
+  it('follows a wrapped instance whose capability changes', () => {
+    const changing = new FakeSTT({ capabilities: { manualFlush: true } });
+    const adapter = new FallbackAdapter({ sttInstances: [changing] });
+    expect(adapter.capabilities.manualFlush).toBe(true);
+
+    changing.capabilities.manualFlush = false;
+    expect(adapter.capabilities.manualFlush).toBe(false);
   });
 });
