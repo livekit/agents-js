@@ -1861,8 +1861,9 @@ export class RealtimeSession extends llm.RealtimeSession {
           response: {},
           willContinue: true,
         };
-        if (!this.options.vertexai && this.options.toolResponseScheduling !== undefined) {
-          continuingResponse.scheduling = this.options.toolResponseScheduling;
+        // The placeholder carries no result; scheduled WHEN_IDLE it opens an empty model turn.
+        if (!this.options.vertexai) {
+          continuingResponse.scheduling = types.FunctionResponseScheduling.SILENT;
         }
         this.sendClientEvent({
           type: 'tool_response',

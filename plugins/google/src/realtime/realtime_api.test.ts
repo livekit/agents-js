@@ -308,7 +308,7 @@ describe('Google Realtime instruction updates', () => {
 
 describe('Google Realtime non-blocking tool scheduling', () => {
   it.each(schedulingModes)(
-    'sends %s on the immediate willContinue response',
+    'sends SILENT on the immediate willContinue response when the session uses %s',
     (toolResponseScheduling) => {
       const session = createSessionForTest(toolResponseScheduling);
 
@@ -330,7 +330,7 @@ describe('Google Realtime non-blocking tool scheduling', () => {
               id: 'call_123',
               name: 'getWeather',
               response: {},
-              scheduling: toolResponseScheduling,
+              scheduling: FunctionResponseScheduling.SILENT,
               willContinue: true,
             },
           ],
@@ -475,7 +475,7 @@ describe('Google Realtime non-blocking tool scheduling', () => {
             id: undefined,
             name: 'getWeather',
             response: {},
-            ...(vertexai ? {} : { scheduling: FunctionResponseScheduling.WHEN_IDLE }),
+            ...(vertexai ? {} : { scheduling: FunctionResponseScheduling.SILENT }),
             willContinue: true,
           },
         ],
