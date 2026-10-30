@@ -46,7 +46,7 @@ import {
   createAgentV2,
 } from './agent_v2.js';
 import type { UserTurnExceededEvent } from './events.js';
-import type { TimedString } from './io.js';
+import { type TimedString, sttStreamRegistration } from './io.js';
 import type { SpeechHandle } from './speech_handle.js';
 import type { ToolHandlingOptions } from './tool_executor.js';
 import type { TurnHandlingOptions } from './turn_config/turn_handling.js';
@@ -363,6 +363,17 @@ export class Agent<UserData = any> {
     });
   }
 
+  /**
+   * Transcribes audio frames into speech events. Override it for custom pre-processing or STT
+   * strategies.
+   *
+   * For an STT with `capabilities.manualFlush`, the framework flushes the stream created by
+   * `Agent.default.sttNode` at turn boundaries, in order with the audio. If your override wraps
+   * the audio before passing it to `Agent.default.sttNode`, the wrapper can read ahead, so that
+   * flush can reach the STT before audio the wrapper still holds. If your override creates its
+   * own STT stream, the framework can't flush it. In either case, set
+   * `stt.capabilities.manualFlush = false` and call `flush()` on the stream yourself.
+   */
   async sttNode(
     audio: ReadableStream<AudioFrame> | AsyncIterable<AudioFrame>,
     modelSettings: ModelSettings,
@@ -484,6 +495,7 @@ export class Agent<UserData = any> {
       }
 
       let wrappedStt = activity.stt;
+      let temporaryAdapter: STTStreamAdapter | undefined;
 
       if (!wrappedStt.capabilities.streaming) {
         const vad = agent.vad || activity.vad;
@@ -492,30 +504,43 @@ export class Agent<UserData = any> {
             'STT does not support streaming, add a VAD to the AgentTask/VoiceAgent to enable streaming',
           );
         }
-        wrappedStt = new STTStreamAdapter(wrappedStt, vad);
+        temporaryAdapter = new STTStreamAdapter(wrappedStt, vad);
+        wrappedStt = temporaryAdapter;
       }
 
       const connOptions = activity.agentSession.connOptions.sttConnOptions;
-      const stream = wrappedStt.stream({ connOptions });
-
-      // Set startTimeOffset to provide linear timestamps across reconnections
-      const audioInputStartedAt =
-        activity.inputStartedAt ?? // Use input started at proxied from AudioRecognition if available
-        activity.agentSession._recorderIO?.recordingStartedAt ?? // Fallback to recording start time if available
-        activity.agentSession._startedAt ?? // Fallback to session start time
-        Date.now(); // Fallback to current time
-
-      stream.startTimeOffset = (Date.now() - audioInputStartedAt) / 1000;
-
-      stream.updateInputStream(input);
-
+      const registration = sttStreamRegistration.getStore();
+      let stream!: ReturnType<STT['stream']>;
       let cleaned = false;
-      const cleanup = () => {
+      const cleanup = async () => {
         if (cleaned) return;
         cleaned = true;
-        stream.detachInputStream();
-        stream.close();
+        try {
+          if (stream) registration?.unregister(stream);
+          stream?.detachInputStream();
+          stream?.close();
+        } finally {
+          await temporaryAdapter?.close();
+        }
       };
+      try {
+        stream = wrappedStt.stream({ connOptions });
+        registration?.register(stream, wrappedStt, input);
+
+        // Set startTimeOffset to provide linear timestamps across reconnections
+        const audioInputStartedAt =
+          activity.inputStartedAt ?? // Use input started at proxied from AudioRecognition if available
+          activity.agentSession._recorderIO?.recordingStartedAt ?? // Fallback to recording start time if available
+          activity.agentSession._startedAt ?? // Fallback to session start time
+          Date.now(); // Fallback to current time
+
+        stream.startTimeOffset = (Date.now() - audioInputStartedAt) / 1000;
+
+        stream.updateInputStream(input);
+      } catch (error) {
+        await cleanup();
+        throw error;
+      }
 
       return new ReadableStream({
         async start(controller) {
@@ -526,14 +551,14 @@ export class Agent<UserData = any> {
             // the retry loop swallows its own failure; surface it so the STT pipeline can
             // tell an exhausted stream from a closed audio input
             if (stream.terminalError) throw stream.terminalError;
-            controller.close();
           } finally {
             // Always clean up the STT stream, whether it ends naturally or is cancelled
-            cleanup();
+            await cleanup();
           }
+          controller.close();
         },
         cancel() {
-          cleanup();
+          return cleanup();
         },
       });
     },
@@ -623,19 +648,30 @@ export class Agent<UserData = any> {
       activity.tts._setExpressive(expressiveActive);
 
       const connOptions = activity.agentSession.connOptions.ttsConnOptions;
-      const stream = wrappedTts.stream({ connOptions });
-      stream.updateInputStream(input);
-
+      let stream!: SynthesizeStream;
       let cleaned = false;
       const cleanup = async () => {
         if (cleaned) return;
         cleaned = true;
-        stream.close();
-        await input.cancel('tts node cleanup').catch(() => {});
-        if (wrappedTts !== activity.tts) {
-          await wrappedTts.close();
+        try {
+          stream?.close();
+        } finally {
+          try {
+            if (wrappedTts !== activity.tts) {
+              await wrappedTts.close();
+            }
+          } finally {
+            await input.cancel('tts node cleanup').catch(() => {});
+          }
         }
       };
+      try {
+        stream = wrappedTts.stream({ connOptions });
+        stream.updateInputStream(input);
+      } catch (error) {
+        await cleanup();
+        throw error;
+      }
 
       return new ReadableStream({
         async start(controller) {
@@ -650,10 +686,11 @@ export class Agent<UserData = any> {
               }
               controller.enqueue(chunk.frame);
             }
-            controller.close();
+            if (stream.error) throw stream.error;
           } finally {
             await cleanup();
           }
+          controller.close();
         },
         cancel() {
           return cleanup();

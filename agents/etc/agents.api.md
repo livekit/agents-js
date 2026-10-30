@@ -157,7 +157,6 @@ export class Agent<UserData = any> {
     get stt(): STT | undefined;
     // @internal (undocumented)
     _stt?: STT | null;
-    // (undocumented)
     sttNode(audio: ReadableStream_2<AudioFrame> | AsyncIterable<AudioFrame>, modelSettings: ModelSettings): Promise<ReadableStream_2<SpeechEvent | string> | null>;
     // (undocumented)
     get toolCtx(): ToolContext<UserData>;
@@ -940,6 +939,9 @@ export function asError(maybeError: unknown): Error;
 export function asLanguageCode(language: string): LanguageCode;
 
 // @public (undocumented)
+type AssemblyAIModels = 'assemblyai' | 'assemblyai/assemblyai-tts-1';
+
+// @public (undocumented)
 type AssemblyaiModels = 'assemblyai/universal-streaming' | 'assemblyai/universal-streaming-multilingual' | 'assemblyai/u3-rt-pro' | 'assemblyai/universal-3-5-pro' | 'assemblyai/universal-3-6-pro';
 
 // @public (undocumented)
@@ -958,6 +960,11 @@ interface AssemblyAIOptions {
     speaker_labels?: boolean;
     voice_focus?: 'near-field' | 'far-field';
     voice_focus_threshold?: number;
+}
+
+// @public
+interface AssemblyAIOptions_2 {
+    word_timestamps?: boolean;
 }
 
 // @public
@@ -3712,6 +3719,8 @@ class FallbackAdapter_2 extends STT {
     // (undocumented)
     readonly attemptTimeoutMs: number;
     // (undocumented)
+    get capabilities(): STTCapabilities;
+    // (undocumented)
     close(): Promise<void>;
     // (undocumented)
     emitAvailabilityChanged(stt: STT, available: boolean): void;
@@ -5697,6 +5706,11 @@ type MockToolFn = (...args: any[]) => any;
 // @public
 type MockToolsMap = Map<AgentConstructor, Record<string, MockToolFn>>;
 
+// @public
+interface MockToolsOptions {
+    session?: AgentSession;
+}
+
 // @public (undocumented)
 export interface ModelSettings {
     toolChoice?: ToolChoice;
@@ -6486,6 +6500,7 @@ export class RemoteSession extends RemoteSession_base {
     sendMessage(text: string, responseTimeout?: number): Promise<AgentSession_2.SessionResponse_RunInputResponse>;
     // (undocumented)
     start(): Promise<void>;
+    waitForReady(timeout?: number, retryInterval?: number): Promise<void>;
 }
 
 // @public (undocumented)
@@ -6632,12 +6647,12 @@ export interface RoomOutputOptions {
 // @public (undocumented)
 export class RoomSessionTransport extends SessionTransport {
     // (undocumented)
-    [Symbol.asyncIterator](): AsyncIterator<AgentSession_2.AgentSessionMessage>;
+    [Symbol.asyncIterator](signal?: AbortSignal): AsyncIterator<AgentSession_2.AgentSessionMessage>;
     constructor(room: Room, roomIO: RoomIO);
     // (undocumented)
     close(): Promise<void>;
     // (undocumented)
-    sendMessage(msg: AgentSession_2.AgentSessionMessage): Promise<void>;
+    sendMessage(msg: AgentSession_2.AgentSessionMessage, signal?: AbortSignal): Promise<void>;
     // (undocumented)
     start(): Promise<void>;
 }
@@ -6773,10 +6788,14 @@ class RunResult<T = unknown> {
         oldAgent?: Agent;
         newAgent: Agent;
     }): void;
+    // @internal
+    _cancel(): Promise<void>;
     done(): boolean;
     get events(): RunEvent[];
     get expect(): RunAssert;
     get finalOutput(): T;
+    // @internal
+    _isActive(): boolean;
     // @internal
     _itemAdded(item: ChatItem): void;
     // @internal (undocumented)
@@ -7020,7 +7039,6 @@ export interface SessionConnectOptions {
 // @public (undocumented)
 export class SessionHost {
     constructor(transport: SessionTransport, audioInput?: TcpAudioInput, audioOutput?: TcpAudioOutput);
-    // (undocumented)
     close(): Promise<void>;
     // @internal
     _onAmdPrediction(event: AMDPredictionEvent): void;
@@ -7094,12 +7112,10 @@ export function sessionReportToJSON(report: SessionReport, jsonOptions?: Session
 
 // @public (undocumented)
 export abstract class SessionTransport {
-    // (undocumented)
-    abstract [Symbol.asyncIterator](): AsyncIterator<AgentSession_2.AgentSessionMessage>;
+    abstract [Symbol.asyncIterator](signal?: AbortSignal): AsyncIterator<AgentSession_2.AgentSessionMessage>;
     // (undocumented)
     abstract close(): Promise<void>;
-    // (undocumented)
-    abstract sendMessage(msg: AgentSession_2.AgentSessionMessage): Promise<void>;
+    abstract sendMessage(msg: AgentSession_2.AgentSessionMessage, signal?: AbortSignal): Promise<void>;
     // (undocumented)
     start(): Promise<void>;
 }
@@ -7556,6 +7572,7 @@ abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent> {
     protected input: AsyncIterableQueue<AudioFrame | typeof SpeechStream.FLUSH_SENTINEL>;
     // (undocumented)
     abstract label: string;
+    protected markProviderProgress(): void;
     // (undocumented)
     protected monitorMetrics(): Promise<void>;
     // (undocumented)
@@ -7684,6 +7701,8 @@ declare namespace stream {
 // @public (undocumented)
 class StreamAdapter extends STT {
     constructor(stt: STT, vad: VAD);
+    // (undocumented)
+    close(): Promise<void>;
     // (undocumented)
     label: string;
     // (undocumented)
@@ -7927,6 +7946,7 @@ interface STTCapabilities {
     // (undocumented)
     interimResults: boolean;
     keyterms?: boolean;
+    manualFlush?: boolean;
     // (undocumented)
     streaming: boolean;
 }
@@ -8173,12 +8193,12 @@ export class TcpAudioOutput extends AudioOutput {
 // @public
 export class TcpSessionTransport extends SessionTransport {
     // (undocumented)
-    [Symbol.asyncIterator](): AsyncIterableIterator<AgentSession_2.AgentSessionMessage>;
+    [Symbol.asyncIterator](signal?: AbortSignal): AsyncIterableIterator<AgentSession_2.AgentSessionMessage>;
     constructor(host: string, port: number);
     // (undocumented)
     close(): Promise<void>;
     // (undocumented)
-    sendMessage(msg: AgentSession_2.AgentSessionMessage): Promise<void>;
+    sendMessage(msg: AgentSession_2.AgentSessionMessage, signal?: AbortSignal): Promise<void>;
     // (undocumented)
     start(): Promise<void>;
 }
@@ -8242,6 +8262,7 @@ declare namespace testing {
         RunResult,
         withMockTools,
         MockToolFn,
+        MockToolsOptions,
         MockToolsMap,
         RunOutputOptions,
         isAgentHandoffEvent,
@@ -8986,12 +9007,14 @@ declare namespace tts_2 {
         RimeModels,
         XaiTTSModels,
         FishAudioModels,
+        AssemblyAIModels,
         CartesiaOptions_2 as CartesiaOptions,
         DeepgramTTSOptions,
         RimeOptions,
         InworldOptions,
         XaiTTSOptions,
         FishAudioOptions,
+        AssemblyAIOptions_2 as AssemblyAIOptions,
         TTSModels,
         ModelWithVoice,
         TTSOptions,
@@ -9068,7 +9091,7 @@ export type TTSMetrics = {
 };
 
 // @public (undocumented)
-type TTSModels = CartesiaModels_2 | DeepgramTTSModels | RimeModels | InworldModels | XaiTTSModels | FishAudioModels | AnyString;
+type TTSModels = CartesiaModels_2 | DeepgramTTSModels | RimeModels | InworldModels | XaiTTSModels | FishAudioModels | AssemblyAIModels | AnyString;
 
 // @public (undocumented)
 export type TTSModelUsage = {
@@ -9082,7 +9105,7 @@ export type TTSModelUsage = {
 };
 
 // @public (undocumented)
-type TTSOptions<TModel extends TTSModels> = TModel extends CartesiaModels_2 ? CartesiaOptions_2 : TModel extends DeepgramTTSModels ? DeepgramTTSOptions : TModel extends RimeModels ? RimeOptions : TModel extends InworldModels ? InworldOptions : TModel extends XaiTTSModels ? XaiTTSOptions : TModel extends FishAudioModels ? FishAudioOptions : Record<string, unknown>;
+type TTSOptions<TModel extends TTSModels> = TModel extends CartesiaModels_2 ? CartesiaOptions_2 : TModel extends DeepgramTTSModels ? DeepgramTTSOptions : TModel extends RimeModels ? RimeOptions : TModel extends InworldModels ? InworldOptions : TModel extends XaiTTSModels ? XaiTTSOptions : TModel extends FishAudioModels ? FishAudioOptions : TModel extends AssemblyAIModels ? AssemblyAIOptions_2 : Record<string, unknown>;
 
 // Warning: (ae-forgotten-export) The symbol "BaseStreamingTurnDetector" needs to be exported by the entry point index.d.ts
 //
@@ -9733,7 +9756,7 @@ function withInferenceTracking<T>(fn: (marker: InferenceMarker) => T, options?: 
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "Disposable"
 //
 // @public
-function withMockTools(agent: AgentConstructor, mocks: Record<string, MockToolFn>): Disposable;
+function withMockTools(agent: AgentConstructor, mocks: Record<string, MockToolFn>, options?: MockToolsOptions): Disposable;
 
 // @public (undocumented)
 export function withResolvers<T = unknown>(): {
@@ -9870,25 +9893,25 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 //
 // src/_exceptions.ts:90:5 - (ae-forgotten-export) The symbol "APIStatusErrorOptions" needs to be exported by the entry point index.d.ts
 // src/_exceptions.ts:128:5 - (ae-forgotten-export) The symbol "APIErrorOptions" needs to be exported by the entry point index.d.ts
-// src/inference/tts.ts:280:5 - (ae-forgotten-export) The symbol "TTSEncoding" needs to be exported by the entry point index.d.ts
+// src/inference/tts.ts:315:5 - (ae-forgotten-export) The symbol "TTSEncoding" needs to be exported by the entry point index.d.ts
 // src/llm/chat_context.ts:80:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "audio"
 // src/llm/tool_context.ts:709:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "ToolFlag" has more than one declaration; you need to add a TSDoc member reference selector
 // src/llm/tool_context.ts:756:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "ToolFlag" has more than one declaration; you need to add a TSDoc member reference selector
 // src/metrics/base.ts:226:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsInputTokenDetails" needs to be exported by the entry point index.d.ts
 // src/metrics/base.ts:230:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsOutputTokenDetails" needs to be exported by the entry point index.d.ts
-// src/stt/stt.ts:381:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "STT"
+// src/stt/stt.ts:398:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "STT"
 // src/utils.ts:468:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "cancelled"
 // src/voice/agent_session.ts:411:3 - (ae-unresolved-link) The @link reference could not be resolved: This type of declaration is not supported yet by the resolver
 // src/voice/agent_session.ts:1091:5 - (ae-forgotten-export) The symbol "RecordingOptions" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1808:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1808:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1808:5 - (ae-forgotten-export) The symbol "LLMError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1809:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1809:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1809:5 - (ae-forgotten-export) The symbol "LLMError" needs to be exported by the entry point index.d.ts
 // src/voice/amd.ts:315:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "waitForTrackPublication" has more than one declaration; you need to add a TSDoc member reference selector
 // src/voice/amd.ts:315:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "gateListening"
 // src/voice/amd.ts:323:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "aclose"
 // src/voice/amd.ts:517:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "gateListening"
 // src/voice/events.ts:437:3 - (ae-forgotten-export) The symbol "InterruptionDetectionError" needs to be exported by the entry point index.d.ts
 // src/voice/room_io/_output.ts:183:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "segmentTags"
-// src/voice/testing/run_result.ts:93:5 - (ae-forgotten-export) The symbol "OutputSchema" needs to be exported by the entry point index.d.ts
+// src/voice/testing/run_result.ts:94:5 - (ae-forgotten-export) The symbol "OutputSchema" needs to be exported by the entry point index.d.ts
 
 ```

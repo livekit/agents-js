@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { dispose } from '@livekit/rtc-node';
 import { Command, Option } from 'commander';
 import type { EventEmitter } from 'node:events';
 import { CLIClient } from './cli_client.js';
@@ -259,12 +260,19 @@ export const runApp = (opts: ServerOptions) => {
       opts.logLevel = commandOptions.logLevel;
       initializeLogger({ pretty: true, level: opts.logLevel });
       process.env.LIVEKIT_DEV_MODE = '1';
-      runConsole({
-        agentPath: opts.agent,
-        connectAddr: commandOptions.connectAddr,
-        record: commandOptions.record === true,
-        sessionEndTimeout: opts.sessionEndTimeout,
-      }).catch((error) => {
+      (async () => {
+        try {
+          await runConsole({
+            agentPath: opts.agent,
+            connectAddr: commandOptions.connectAddr,
+            record: commandOptions.record === true,
+            sessionEndTimeout: opts.sessionEndTimeout,
+          });
+        } finally {
+          // The console owns this process's RTC runtime, including its native threads.
+          await dispose();
+        }
+      })().catch((error) => {
         log().fatal(`console mode failed: ${formatErrorMessage(error)}`);
         process.exit(1);
       });
