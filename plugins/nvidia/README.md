@@ -30,7 +30,9 @@ const tts = new nvidia.TTS();
 
 For a local NIM deployment, pass its gRPC address to `server` and disable SSL.
 
-Call `close()` on each provider after its streams finish to release its gRPC channel.
+TTS reuses pooled gRPC channels. The last session using a provider releases its idle
+channels; active synthesis finishes before its channel closes. STT releases its channel
+after each recognition attempt. For standalone use, call `close()` after all streams finish.
 
 TTS keeps one logical audio segment per stream. `flush()` sends pending text;
 `endInput()` ends the segment. A failed sentence is logged and skipped so later

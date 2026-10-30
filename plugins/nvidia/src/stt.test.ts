@@ -189,6 +189,22 @@ describe('NVIDIA STT', () => {
     expect(usage.map((e) => e.recognitionUsage!.audioDuration)).toEqual([0.1, 0.3]);
   });
 
+  it('does not retry authorization failures', async () => {
+    let calls = 0;
+    const provider = await startServer((call) => {
+      calls++;
+      call.emit('error', { code: grpc.status.PERMISSION_DENIED, details: 'authorization failed' });
+    });
+    const errors: boolean[] = [];
+    provider.on('error', (error) => errors.push(error.recoverable));
+    stream = provider.stream({ connOptions: { maxRetry: 3, retryIntervalMs: 1, timeoutMs: 1000 } });
+    stream.pushFrame(frame());
+    stream.endInput();
+    await collect(stream);
+    expect(calls).toBe(1);
+    expect(errors).toEqual([false]);
+  });
+
   it('cancels the call quietly on close', async () => {
     let cancelled = false;
     let configured = false;

@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import * as grpc from '@grpc/grpc-js';
 import {
+  Agent,
+  AgentSession,
   DEFAULT_API_CONNECT_OPTIONS,
   initializeLogger,
   type metrics,
@@ -19,6 +21,7 @@ type SynthesizeCall = grpc.ServerWritableStream<ProtoRecord, ProtoRecord>;
 let server: grpc.Server | undefined;
 let instance: TTS | undefined;
 let stream: tts.SynthesizeStream | undefined;
+const sessions: AgentSession[] = [];
 
 async function startServer(synthesizeOnline: (call: SynthesizeCall) => void): Promise<TTS> {
   server = new grpc.Server();
@@ -47,6 +50,7 @@ beforeAll(() => {
 
 afterEach(async () => {
   stream?.close();
+  await Promise.all(sessions.splice(0).map((session) => session.close()));
   await instance?.close();
   instance = undefined;
   stream = undefined;
@@ -161,6 +165,59 @@ describe('NVIDIA TTS', () => {
     expect(peers[0]).toBe(peers[1]);
   });
 
+  it('releases a shared channel only when the last session closes', async () => {
+    const peers: string[] = [];
+    const provider = await startServer((call) => {
+      peers.push(call.getPeer());
+      call.write({ audio: Buffer.alloc(3200) });
+      call.end();
+    });
+    const first = new AgentSession({ tts: provider });
+    const second = new AgentSession({ tts: provider });
+    sessions.push(first, second);
+    await first.start({ agent: Agent.create({ instructions: 'test' }) });
+    await second.start({ agent: Agent.create({ instructions: 'test' }) });
+    const synthesize = async () => {
+      stream = provider.stream();
+      stream.pushText('Hello there.');
+      stream.endInput();
+      expect(await collect(stream)).toHaveLength(1);
+    };
+
+    await synthesize();
+    await first.close();
+    await synthesize();
+    expect(peers[0]).toBe(peers[1]);
+    await second.close();
+    await synthesize();
+    expect(peers[2]).not.toBe(peers[1]);
+  });
+
+  it('keeps active synthesis alive during idle release and retires its channel afterwards', async () => {
+    const calls: SynthesizeCall[] = [];
+    const provider = await startServer((call) => calls.push(call));
+    stream = provider.stream();
+    stream.pushText('Hello there.');
+    stream.endInput();
+    const audio = collect(stream);
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    const firstPeer = calls[0]!.getPeer();
+    await provider.releaseIdleConnections();
+    calls[0]!.write({ audio: Buffer.alloc(3200) });
+    calls[0]!.end();
+    expect(await audio).toHaveLength(1);
+
+    stream = provider.stream();
+    stream.pushText('Another sentence.');
+    stream.endInput();
+    const nextAudio = collect(stream);
+    await vi.waitFor(() => expect(calls).toHaveLength(2));
+    expect(calls[1]!.getPeer()).not.toBe(firstPeer);
+    calls[1]!.write({ audio: Buffer.alloc(3200) });
+    calls[1]!.end();
+    expect(await nextAudio).toHaveLength(1);
+  });
+
   it('cancels the active request and skips buffered text on close', async () => {
     const calls: SynthesizeCall[] = [];
     let cancelled = 0;
@@ -180,5 +237,27 @@ describe('NVIDIA TTS', () => {
     await vi.waitFor(() => expect(cancelled).toBe(1));
     await new Promise((resolve) => setTimeout(resolve, 100));
     expect(calls).toHaveLength(1);
+  });
+
+  it('reports pending text and cancelled usage when interrupted before endInput', async () => {
+    let cancelled = false;
+    const provider = await startServer((call) => {
+      call.on('cancelled', () => {
+        cancelled = true;
+      });
+      call.write({ audio: Buffer.alloc(1600 * 6 * 2) });
+    });
+    const collected: metrics.TTSMetrics[] = [];
+    provider.on('metrics_collected', (value) => collected.push(value));
+    const text = 'This sentence is long enough to start speaking.';
+    stream = provider.stream();
+    stream.pushText(text);
+    stream.flush();
+    expect((await stream.next()).done).toBe(false);
+    stream.close();
+
+    await vi.waitFor(() => expect(cancelled).toBe(true));
+    await vi.waitFor(() => expect(collected).toHaveLength(1));
+    expect(collected[0]).toMatchObject({ charactersCount: text.length, cancelled: true });
   });
 });

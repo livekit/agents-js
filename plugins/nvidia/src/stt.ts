@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { type ServiceError, status } from '@grpc/grpc-js';
 import {
   type APIConnectOptions,
   APIConnectionError,
@@ -79,7 +80,7 @@ export class STT extends stt.STT {
     const resolvedOpts = {
       ...defaultSTTOptions,
       ...opts,
-      apiKey: opts.apiKey ?? process.env.NVIDIA_API_KEY,
+      apiKey: opts.apiKey || process.env.NVIDIA_API_KEY,
     };
     super({ streaming: true, interimResults: true });
     connections.set(this, new RivaConnection(resolvedOpts, RivaSpeechRecognition));
@@ -103,24 +104,29 @@ export class STT extends stt.STT {
   /** List the server's online ASR models, grouped by language code. */
   async listModels(): Promise<Record<string, { model: string[] }[]>> {
     const session = connections.get(this)!;
-    const response = await new Promise<ModelConfigResponse>((resolve, reject) => {
-      session.client.GetRivaSpeechRecognitionConfig({}, session.metadata, (error, value) =>
-        error ? reject(error) : resolve(value),
-      );
-    });
-    const result: Record<string, { model: string[] }[]> = {};
-    for (const config of response.modelConfig) {
-      if (config.parameters['type'] !== 'online') continue;
-      const language = config.parameters['language_code'];
-      if (!language || !config.modelName) continue;
-      (result[language] ??= []).push({ model: [config.modelName] });
+    const client = await session.pool.get();
+    try {
+      const response = await new Promise<ModelConfigResponse>((resolve, reject) => {
+        client.GetRivaSpeechRecognitionConfig({}, session.metadata, (error, value) =>
+          error ? reject(error) : resolve(value),
+        );
+      });
+      const result: Record<string, { model: string[] }[]> = {};
+      for (const config of response.modelConfig) {
+        if (config.parameters['type'] !== 'online') continue;
+        const language = config.parameters['language_code'];
+        if (!language || !config.modelName) continue;
+        (result[language] ??= []).push({ model: [config.modelName] });
+      }
+      return Object.fromEntries(Object.entries(result).sort(([a], [b]) => a.localeCompare(b)));
+    } finally {
+      session.pool.remove(client);
     }
-    return Object.fromEntries(Object.entries(result).sort(([a], [b]) => a.localeCompare(b)));
   }
 
-  /** Close the provider's gRPC channel after its streams have finished. */
+  /** Close all provider channels after its streams have finished. */
   override async close(): Promise<void> {
-    connections.get(this)!.close();
+    await connections.get(this)!.pool.close();
     await super.close();
   }
 }
@@ -145,10 +151,20 @@ export class SpeechStream extends stt.SpeechStream {
 
   protected async run(): Promise<void> {
     if (this.abortSignal.aborted) return;
+    const client = await this.#connection.pool.get();
+    try {
+      await this.#run(client);
+    } finally {
+      this.#connection.pool.remove(client);
+    }
+  }
+
+  async #run(client: RivaSpeechRecognitionClient): Promise<void> {
+    if (this.abortSignal.aborted) return;
     // A new call has no recognition context from a failed one: start the next utterance fresh.
     this.#speaking = false;
     this.#requestId = '';
-    const call = this.#connection.client.StreamingRecognize(this.#connection.metadata);
+    const call = client.StreamingRecognize(this.#connection.metadata);
     let inputEnded = false;
     const cancel = () => call.cancel();
     this.abortSignal.addEventListener('abort', cancel, { once: true });
@@ -176,10 +192,21 @@ export class SpeechStream extends stt.SpeechStream {
         else
           reject(new APIConnectionError({ message: 'NVIDIA STT connection closed unexpectedly' }));
       });
-      call.on('error', (error) => {
+      call.on('error', (error: ServiceError) => {
         if (this.abortSignal.aborted) resolve();
         else
-          reject(new APIConnectionError({ message: `NVIDIA STT stream failed: ${error.message}` }));
+          reject(
+            new APIConnectionError({
+              message: `NVIDIA STT stream failed: ${error.message}`,
+              options: {
+                retryable: ![
+                  status.INVALID_ARGUMENT,
+                  status.PERMISSION_DENIED,
+                  status.UNAUTHENTICATED,
+                ].includes(error.code),
+              },
+            }),
+          );
       });
     });
 
@@ -266,7 +293,7 @@ export class SpeechStream extends stt.SpeechStream {
         alternatives: [speechData],
       });
 
-      if (result.isFinal && this.#speaking) {
+      if (result.isFinal) {
         this.#speaking = false;
         this.queue.put({ type: stt.SpeechEventType.END_OF_SPEECH });
       }

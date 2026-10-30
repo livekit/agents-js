@@ -11,7 +11,7 @@ import { TTS } from './tts.js';
 beforeAll(() => initializeLogger({ pretty: false, level: 'silent' }));
 afterEach(() => vi.unstubAllEnvs());
 
-it('reuses its channel and sends authentication metadata only with TLS', () => {
+it('reuses its channel and sends authentication metadata only with TLS', async () => {
   const options = {
     apiKey: 'test-key',
     functionId: 'test-function',
@@ -25,10 +25,14 @@ it('reuses its channel and sends authentication metadata only with TLS', () => {
     expect(secure.metadata.get('function-id')).toEqual(['test-function']);
     expect(local.metadata.get('authorization')).toEqual([]);
     expect(local.metadata.get('function-id')).toEqual([]);
-    expect(local.client).toBe(local.client);
+    const client = await local.pool.get();
+    local.pool.put(client);
+    const reused = await local.pool.get();
+    expect(reused).toBe(client);
+    local.pool.put(reused);
   } finally {
-    secure.close();
-    local.close();
+    await secure.pool.close();
+    await local.pool.close();
   }
 });
 

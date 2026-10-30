@@ -99,6 +99,7 @@ export class TTS extends tts.TTS {
     get model(): string;
     // (undocumented)
     get provider(): string;
+    releaseIdleConnections(): Promise<void>;
     stream(options?: {
         connOptions?: APIConnectOptions;
     }): SynthesizeStream;

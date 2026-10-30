@@ -2,8 +2,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import * as grpc from '@grpc/grpc-js';
+import { ConnectionPool } from '@livekit/agents';
 import type { RivaClientConstructor } from './proto.js';
 
+/** Endpoint and authentication settings shared by the Riva services. */
 interface ConnectionOptions {
   apiKey?: string;
   functionId: string;
@@ -11,15 +13,12 @@ interface ConnectionOptions {
   useSsl: boolean;
 }
 
-/** Owns one lazy gRPC channel and the metadata shared by its calls. */
+/** Creates authenticated Riva clients and delegates their lifetime to the framework pool. */
 export class RivaConnection<T extends grpc.Client> {
   readonly metadata = new grpc.Metadata();
-  #client?: T;
+  readonly pool: ConnectionPool<T>;
 
-  constructor(
-    private readonly options: ConnectionOptions,
-    private readonly Client: RivaClientConstructor<T>,
-  ) {
+  constructor(options: ConnectionOptions, Client: RivaClientConstructor<T>) {
     if (options.useSsl && !options.apiKey) {
       throw new Error(
         'NVIDIA API key is required when using SSL. Pass apiKey, set NVIDIA_API_KEY, or disable SSL for a locally hosted Riva NIM service.',
@@ -29,17 +28,12 @@ export class RivaConnection<T extends grpc.Client> {
       if (options.apiKey) this.metadata.set('authorization', `Bearer ${options.apiKey}`);
       this.metadata.set('function-id', options.functionId);
     }
-  }
-
-  get client(): T {
-    return (this.#client ??= new this.Client(
-      this.options.server,
-      this.options.useSsl ? grpc.credentials.createSsl() : grpc.credentials.createInsecure(),
-    ));
-  }
-
-  close(): void {
-    this.#client?.close();
-    this.#client = undefined;
+    const credentials = options.useSsl
+      ? grpc.credentials.createSsl()
+      : grpc.credentials.createInsecure();
+    this.pool = new ConnectionPool({
+      connectCb: async () => new Client(options.server, credentials),
+      closeCb: async (client) => client.close(),
+    });
   }
 }

@@ -95,27 +95,37 @@ export class TTS extends tts.TTS {
   /** List the server's voices, grouped by language code. */
   async listVoices(): Promise<Record<string, { voices: string[] }>> {
     const session = connections.get(this)!;
-    const response = await new Promise<ModelConfigResponse>((resolve, reject) => {
-      session.client.GetRivaSynthesisConfig({}, session.metadata, (error, value) =>
-        error ? reject(error) : resolve(value),
-      );
-    });
-    const result: Record<string, { voices: string[] }> = {};
-    for (const config of response.modelConfig) {
-      const language = config.parameters['language_code'] ?? 'unknown';
-      const voice = config.parameters['voice_name'] ?? 'unknown';
-      const subvoices = config.parameters['subvoices'];
-      const voices = subvoices
-        ? subvoices.split(',').map((item) => `${voice}.${item.split(':')[0]}`)
-        : [voice];
-      (result[language] ??= { voices: [] }).voices.push(...voices);
+    const client = await session.pool.get();
+    try {
+      const response = await new Promise<ModelConfigResponse>((resolve, reject) => {
+        client.GetRivaSynthesisConfig({}, session.metadata, (error, value) =>
+          error ? reject(error) : resolve(value),
+        );
+      });
+      const result: Record<string, { voices: string[] }> = {};
+      for (const config of response.modelConfig) {
+        const language = config.parameters['language_code'] ?? 'unknown';
+        const voice = config.parameters['voice_name'] ?? 'unknown';
+        const subvoices = config.parameters['subvoices'];
+        const voices = subvoices
+          ? subvoices.split(',').map((item) => `${voice}.${item.split(':')[0]}`)
+          : [voice];
+        (result[language] ??= { voices: [] }).voices.push(...voices);
+      }
+      return Object.fromEntries(Object.entries(result).sort(([a], [b]) => a.localeCompare(b)));
+    } finally {
+      session.pool.put(client);
     }
-    return Object.fromEntries(Object.entries(result).sort(([a], [b]) => a.localeCompare(b)));
   }
 
-  /** Close the provider's gRPC channel after its streams have finished. */
+  /** Release idle channels and retire in-flight channels when their streams finish. */
+  override async releaseIdleConnections(): Promise<void> {
+    await connections.get(this)!.pool.releaseIdle();
+  }
+
+  /** Close all provider channels after its streams have finished. */
   override async close(): Promise<void> {
-    connections.get(this)!.close();
+    await connections.get(this)!.pool.close();
     await super.close();
   }
 }
@@ -133,6 +143,8 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     super(instance, connOptions);
     this.#opts = opts;
     this.#connection = connections.get(instance)!;
+    // Commit pending metric text before the metrics task observes cancellation.
+    this.abortSignal.addEventListener('abort', () => super.flush(), { once: true });
   }
 
   /** Send buffered text while retaining the stream's logical audio segment. */
@@ -151,17 +163,26 @@ export class SynthesizeStream extends tts.SynthesizeStream {
   }
 
   protected async run(): Promise<void> {
+    if (this.abortSignal.aborted) return;
+    const client = await this.#connection.pool.get(this.connOptions.timeoutMs);
+    try {
+      await this.#run(client);
+    } finally {
+      this.#connection.pool.put(client);
+    }
+  }
+
+  async #run(client: RivaSpeechSynthesisClient): Promise<void> {
     const tokenizer = new tokenize.blingfire.SentenceTokenizer().stream();
     const requestId = shortuuid();
     const audio = new AudioByteStream(this.#opts.sampleRate, NUM_CHANNELS);
-    const segmentId = requestId;
     let receivedAudio = false;
     let synthesisError: APIConnectionError | undefined;
     let lastFrame: AudioFrame | undefined;
 
     const sendLastFrame = (final: boolean) => {
       if (!lastFrame) return;
-      this.queue.put({ requestId, segmentId, frame: lastFrame, final });
+      this.queue.put({ requestId, segmentId: requestId, frame: lastFrame, final });
       lastFrame = undefined;
     };
     const pushFrames = (frames: AudioFrame[]) => {
@@ -194,7 +215,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         if (this.abortSignal.aborted) break;
         this.markStarted();
         try {
-          await this.#synthesizeText(event.token, signal, (chunk) => {
+          await this.#synthesizeText(client, event.token, signal, (chunk) => {
             receivedAudio = true;
             pushFrames(audio.write(chunk));
           });
@@ -211,7 +232,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       await Promise.all(tasks);
       endSegment();
       if (synthesisError && !receivedAudio && !this.abortSignal.aborted) throw synthesisError;
-      if (!this.queue.closed) this.queue.put(SynthesizeStream.END_OF_STREAM);
+      this.queue.put(SynthesizeStream.END_OF_STREAM);
     } finally {
       attempt.abort();
       tokenizer.close();
@@ -220,11 +241,12 @@ export class SynthesizeStream extends tts.SynthesizeStream {
   }
 
   async #synthesizeText(
+    client: RivaSpeechSynthesisClient,
     text: string,
     signal: AbortSignal,
     onAudio: (audio: Buffer) => void,
   ): Promise<void> {
-    const call = this.#connection.client.SynthesizeOnline(
+    const call = client.SynthesizeOnline(
       {
         text,
         languageCode: this.#opts.languageCode,
