@@ -242,7 +242,7 @@ export class AvatarSession extends voice.AvatarSession {
   }
 
   private async startAgent(livekitUrl: string, livekitToken: string): Promise<void> {
-    for (let i = 0; i < this.connOptions.maxRetry; i++) {
+    for (let attempt = 0; attempt <= this.connOptions.maxRetry; attempt++) {
       try {
         const response = await fetch(`${this.apiUrl}/v1/session`, {
           method: 'POST',
@@ -267,17 +267,39 @@ export class AvatarSession extends voice.AvatarSession {
         }
         return;
       } catch (e) {
-        if (e instanceof APIConnectionError) {
-          this.#logger.warn({ error: String(e) }, 'failed to call bey presence api');
+        if (e instanceof APIStatusError) {
+          if (!e.retryable) {
+            throw e;
+          }
+          this.#logger.warn(
+            { attempt: attempt + 1, statusCode: e.statusCode },
+            'failed to call bey presence api',
+          );
+          if (attempt >= this.connOptions.maxRetry) {
+            throw e;
+          }
+        } else if (
+          e instanceof TypeError ||
+          (e instanceof DOMException && e.name === 'TimeoutError')
+        ) {
+          this.#logger.warn(
+            { attempt: attempt + 1, error: String(e) },
+            'failed to call bey presence api',
+          );
+          if (attempt >= this.connOptions.maxRetry) {
+            const error = new APIConnectionError({
+              message: 'Failed to start Bey Avatar Session after all retries',
+            });
+            error.cause = e;
+            throw error;
+          }
         } else {
-          this.#logger.error({ error: e }, 'failed to call bey presence api');
+          throw e;
         }
 
-        if (i < this.connOptions.maxRetry - 1) {
-          await new Promise((resolve) =>
-            setTimeout(resolve, intervalForRetry(this.connOptions, i)),
-          );
-        }
+        await new Promise((resolve) =>
+          setTimeout(resolve, intervalForRetry(this.connOptions, attempt)),
+        );
       }
     }
 
