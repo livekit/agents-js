@@ -316,6 +316,12 @@ export class SpeechStream extends stt.SpeechStream {
 
       const data = result.value;
       if (data === SpeechStream.FLUSH_SENTINEL) {
+        // Ask Soniox to emit a final transcript now (same role as Deepgram's
+        // Finalize). Without this, flush() is a no-op and finals wait for
+        // Soniox's own endpoint detection (~500ms+ after speech ends).
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'finalize' }));
+        }
         continue;
       }
       // Send only this frame's bytes. `data.data` may be a view into a larger
