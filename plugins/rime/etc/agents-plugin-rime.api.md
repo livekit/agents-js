@@ -45,6 +45,7 @@ export class STT extends stt.STT {
     constructor(options?: STTOptions);
     close(): Promise<void>;
     label: string;
+    get model(): string;
     get provider(): string;
     // Warning: (ae-forgotten-export) The symbol "AudioBuffer_2" needs to be exported by the entry point index.d.ts
     protected _recognize(audio: AudioBuffer_2, abortSignal?: AbortSignal): Promise<stt.SpeechEvent>;

@@ -116,6 +116,11 @@ export class STT extends stt.STT {
     this.updateOptions(options);
   }
 
+  /** Stable model name used in recognition telemetry. */
+  override get model(): string {
+    return 'rime-stt';
+  }
+
   /** Provider name. */
   override get provider(): string {
     return 'Rime';

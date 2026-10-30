@@ -68,7 +68,7 @@ it.each([
       expect.objectContaining({
         audioDurationMs: 200,
         streamed: false,
-        metadata: { modelProvider: 'Rime', modelName: 'unknown' },
+        metadata: { modelProvider: 'Rime', modelName: 'rime-stt' },
       }),
     );
   },

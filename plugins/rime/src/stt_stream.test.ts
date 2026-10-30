@@ -52,6 +52,8 @@ it.each(['revised_hypotheses', 'append_fragments'] as const)(
   'uploads live audio once and emits cumulative %s results with exact whitespace',
   async (contract) => {
     start(contract);
+    const metrics = vi.fn();
+    owner.on('metrics_collected', metrics);
     const value = await vad();
     await value.send(VADEventType.INFERENCE_DONE, [frame(16000, 1, 1)]);
     const prefix = frame();
@@ -78,6 +80,14 @@ it.each(['revised_hypotheses', 'append_fragments'] as const)(
     expect(events[3]!.speechEndTime).toBeGreaterThanOrEqual(beforeEnd - 520);
     expect(events[3]!.speechEndTime).toBeLessThanOrEqual(Date.now() - 520);
     expect(events[4]!.recognitionUsage!.audioDuration).toBeCloseTo(0.12);
+    expect(metrics).toHaveBeenCalledOnce();
+    expect(metrics).toHaveBeenCalledWith(
+      expect.objectContaining({
+        audioDurationMs: 120,
+        streamed: true,
+        metadata: { modelProvider: 'Rime', modelName: 'rime-stt' },
+      }),
+    );
     expect(mock.streams[0]!.options.timeout).toBe(2);
     expect(value.isClosed).toBe(true);
     expect(detector.close).not.toHaveBeenCalled();
