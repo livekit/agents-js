@@ -1,0 +1,75 @@
+// SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+//
+// SPDX-License-Identifier: MIT
+
+syntax = "proto3";
+
+package nvidia.riva.asr;
+
+import "riva/proto/riva_audio.proto";
+import "riva/proto/riva_common.proto";
+
+service RivaSpeechRecognition {
+  rpc StreamingRecognize(stream StreamingRecognizeRequest)
+      returns (stream StreamingRecognizeResponse) {}
+  rpc GetRivaSpeechRecognitionConfig(RivaSpeechRecognitionConfigRequest)
+      returns (RivaSpeechRecognitionConfigResponse) {}
+}
+
+message RivaSpeechRecognitionConfigRequest {
+  string model_name = 1;
+}
+
+message RivaSpeechRecognitionConfigResponse {
+  message Config {
+    string model_name = 1;
+    map<string, string> parameters = 2;
+  }
+  repeated Config model_config = 1;
+}
+
+message StreamingRecognizeRequest {
+  oneof streaming_request {
+    StreamingRecognitionConfig streaming_config = 1;
+    bytes audio_content = 2;
+  }
+}
+
+message RecognitionConfig {
+  nvidia.riva.AudioEncoding encoding = 1;
+  int32 sample_rate_hertz = 2;
+  string language_code = 3;
+  int32 max_alternatives = 4;
+  int32 audio_channel_count = 7;
+  bool enable_word_time_offsets = 8;
+  bool enable_automatic_punctuation = 11;
+  string model = 13;
+}
+
+message StreamingRecognitionConfig {
+  RecognitionConfig config = 1;
+  bool interim_results = 2;
+}
+
+message WordInfo {
+  int32 start_time = 1;
+  int32 end_time = 2;
+  string word = 3;
+  float confidence = 4;
+}
+
+message SpeechRecognitionAlternative {
+  string transcript = 1;
+  float confidence = 2;
+  repeated WordInfo words = 3;
+}
+
+message StreamingRecognitionResult {
+  repeated SpeechRecognitionAlternative alternatives = 1;
+  bool is_final = 2;
+}
+
+message StreamingRecognizeResponse {
+  repeated StreamingRecognitionResult results = 1;
+  nvidia.riva.RequestId id = 100;
+}
