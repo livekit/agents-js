@@ -21,7 +21,11 @@ export default defineAgent({
       tts: new nvidia.TTS(),
       turnHandling: {
         preemptiveGeneration: { enabled: true },
-        interruption: { resumeFalseInterruption: true, falseInterruptionTimeout: 1000 },
+        interruption: {
+          minDuration: 200,
+          resumeFalseInterruption: true,
+          falseInterruptionTimeout: 1000,
+        },
       },
     });
 

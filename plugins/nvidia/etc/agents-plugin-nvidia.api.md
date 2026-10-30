@@ -18,7 +18,7 @@ import type { WritableStreamDefaultWriter as WritableStreamDefaultWriter_2 } fro
 // Warning: (ae-forgotten-export) The symbol "stt" needs to be exported by the entry point index.d.ts
 // Warning: (ae-missing-release-tag) "SpeechStream" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
-// @public (undocumented)
+// @public
 export class SpeechStream extends stt.SpeechStream {
     // Warning: (ae-forgotten-export) The symbol "APIConnectOptions" needs to be exported by the entry point index.d.ts
     constructor(instance: STT, opts: STTOptions, connOptions?: APIConnectOptions);
@@ -30,12 +30,12 @@ export class SpeechStream extends stt.SpeechStream {
 
 // Warning: (ae-missing-release-tag) "STT" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
-// @public (undocumented)
+// @public
 export class STT extends stt.STT {
     constructor(opts?: Partial<STTOptions>);
+    close(): Promise<void>;
     // (undocumented)
     label: string;
-    // (undocumented)
     listModels(): Promise<Record<string, {
         model: string[];
     }[]>>;
@@ -47,7 +47,6 @@ export class STT extends stt.STT {
     //
     // (undocumented)
     _recognize(_buffer: AudioBuffer_2): Promise<stt.SpeechEvent>;
-    // (undocumented)
     stream(options?: {
         language?: string;
         connOptions?: APIConnectOptions;
@@ -56,46 +55,43 @@ export class STT extends stt.STT {
 
 // Warning: (ae-missing-release-tag) "STTOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
-// @public (undocumented)
+// @public
 export interface STTOptions {
-    // (undocumented)
     apiKey?: string;
-    // (undocumented)
     functionId: string;
-    // (undocumented)
     languageCode: string;
-    // (undocumented)
     model: string;
-    // (undocumented)
     punctuate: boolean;
-    // (undocumented)
     sampleRate: number;
-    // (undocumented)
     server: string;
-    // (undocumented)
     useSsl: boolean;
 }
 
 // Warning: (ae-forgotten-export) The symbol "tts" needs to be exported by the entry point index.d.ts
 // Warning: (ae-missing-release-tag) "SynthesizeStream" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
-// @public (undocumented)
+// @public
 export class SynthesizeStream extends tts.SynthesizeStream {
     constructor(instance: TTS, opts: TTSOptions, connOptions?: APIConnectOptions);
     // (undocumented)
+    endInput(): void;
+    flush(): void;
+    // (undocumented)
     label: string;
+    // (undocumented)
+    protected onStreamDone(): void;
     // (undocumented)
     protected run(): Promise<void>;
 }
 
 // Warning: (ae-missing-release-tag) "TTS" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
-// @public (undocumented)
+// @public
 export class TTS extends tts.TTS {
     constructor(opts?: Partial<TTSOptions>);
+    close(): Promise<void>;
     // (undocumented)
     label: string;
-    // (undocumented)
     listVoices(): Promise<Record<string, {
         voices: string[];
     }>>;
@@ -103,31 +99,22 @@ export class TTS extends tts.TTS {
     get model(): string;
     // (undocumented)
     get provider(): string;
-    // (undocumented)
     stream(options?: {
         connOptions?: APIConnectOptions;
     }): SynthesizeStream;
-    // (undocumented)
     synthesize(_text: string, _connOptions?: APIConnectOptions): tts.ChunkedStream;
 }
 
 // Warning: (ae-missing-release-tag) "TTSOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
-// @public (undocumented)
+// @public
 export interface TTSOptions {
-    // (undocumented)
     apiKey?: string;
-    // (undocumented)
     functionId: string;
-    // (undocumented)
     languageCode: string;
-    // (undocumented)
     sampleRate: number;
-    // (undocumented)
     server: string;
-    // (undocumented)
     useSsl: boolean;
-    // (undocumented)
     voice: string;
 }
 

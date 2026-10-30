@@ -23,7 +23,8 @@
     "dist",
     "proto",
     "src",
-    "README.md"
+    "README.md",
+    "NOTICE"
   ],
   "scripts": {
     "build": "tsup --onSuccess \"pnpm build:types\"",
