@@ -1,0 +1,46 @@
+plugins/nvidia/src/tts.test.ts
+  s_b39399c501c5ac::t_0445b234da2790 219,241-262
+  s_b39399c501c5ac::t_62aeb3716fbc12 6-7,24,53,168-218
+  s_b39399c501c5ac::t_fe9493f27646ee 220
+plugins/nvidia/src/stt.ts
+  s_b39399c501c5ac::t_38d4614f518c6d 4,195,198-209
+  s_b39399c501c5ac::t_0445b234da2790 83,154,296
+  s_b39399c501c5ac::t_b45854a9c69f1b 127
+  s_b39399c501c5ac::t_435b769eade699 107-123,129,155-162,167
+  s_b39399c501c5ac::t_105a679339f910 153
+plugins/nvidia/src/stt.test.ts
+  s_b39399c501c5ac::t_38d4614f518c6d 192-207
+plugins/nvidia/src/proto.ts
+  s_b39399c501c5ac::t_38d4614f518c6d 78,82,92,97
+  s_b39399c501c5ac::t_62aeb3716fbc12 8,10,14,19,25-32,36,40,59,68,70,72,76,90,105
+plugins/nvidia/README.md
+  s_b39399c501c5ac::t_b45854a9c69f1b 33-35
+plugins/nvidia/etc/agents-plugin-nvidia.api.md
+  s_b39399c501c5ac::t_d0a4bfde81f001 102
+plugins/nvidia/src/tts.ts
+  s_b39399c501c5ac::t_435b769eade699 98-117,121-124,128,166-175,218,244,249
+  s_b39399c501c5ac::t_b45854a9c69f1b 126
+  s_b39399c501c5ac::t_0445b234da2790 146-147,185,235
+  s_b39399c501c5ac::t_775af9816f7cfa 125
+plugins/nvidia/src/connection.ts
+  s_b39399c501c5ac::t_8a2c2ff4aa7568 5,8,16,19,31-37
+  s_b39399c501c5ac::t_435b769eade699 21
+plugins/nvidia/src/connection.test.ts
+  s_b39399c501c5ac::t_435b769eade699 14,28-32,34-35
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "07d3bd2bbd3a489e18d74e8850f0d294feba9c01",
+  "prompts": {},
+  "sessions": {
+    "s_b39399c501c5ac": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a18e78-d702-7551-8ddb-ec4234d95326",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
