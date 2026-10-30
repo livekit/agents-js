@@ -34,6 +34,7 @@ interface LLMOpts {
   frequencyPenalty: number | null;
   randomSeed: number | null;
   toolChoice: llm.ToolChoice | null;
+  store: boolean | null;
 }
 
 interface PendingFunctionCall {
@@ -54,6 +55,8 @@ export interface LLMOptions {
   randomSeed?: number;
   toolChoice?: llm.ToolChoice;
   maxCompletionTokens?: number;
+  /** Whether Mistral stores each conversation on its servers. Pass false to opt out. */
+  store?: boolean;
 }
 
 export class LLM extends llm.LLM {
@@ -72,6 +75,7 @@ export class LLM extends llm.LLM {
       randomSeed: opts.randomSeed ?? null,
       toolChoice: opts.toolChoice ?? null,
       maxCompletionTokens: opts.maxCompletionTokens ?? null,
+      store: opts.store ?? null,
     };
 
     const apiKey = opts.apiKey ?? process.env.MISTRAL_API_KEY;
@@ -107,6 +111,7 @@ export class LLM extends llm.LLM {
     frequencyPenalty?: number;
     randomSeed?: number;
     toolChoice?: llm.ToolChoice;
+    store?: boolean;
   }): void {
     if (opts.model !== undefined) this.#opts.model = opts.model;
     if (opts.maxCompletionTokens !== undefined)
@@ -117,6 +122,7 @@ export class LLM extends llm.LLM {
     if (opts.frequencyPenalty !== undefined) this.#opts.frequencyPenalty = opts.frequencyPenalty;
     if (opts.randomSeed !== undefined) this.#opts.randomSeed = opts.randomSeed;
     if (opts.toolChoice !== undefined) this.#opts.toolChoice = opts.toolChoice;
+    if (opts.store !== undefined) this.#opts.store = opts.store;
   }
 
   chat({
@@ -134,6 +140,7 @@ export class LLM extends llm.LLM {
     extraKwargs?: Record<string, unknown>;
   }): LLMStream {
     const extra: Record<string, unknown> = {};
+    if (this.#opts.store !== null) extra.store = this.#opts.store;
     if (extraKwargs) Object.assign(extra, extraKwargs);
 
     // Build CompletionArgs
