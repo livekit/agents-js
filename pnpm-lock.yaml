@@ -278,9 +278,6 @@ importers:
       '@livekit/agents-plugin-anam':
         specifier: workspace:*
         version: link:../plugins/anam
-      '@livekit/agents-plugin-assemblyai':
-        specifier: workspace:*
-        version: link:../plugins/assemblyai
       '@livekit/agents-plugin-baseten':
         specifier: workspace:*
         version: link:../plugins/baseten
@@ -359,9 +356,6 @@ importers:
       '@livekit/agents-plugin-trugen':
         specifier: workspace:*
         version: link:../plugins/trugen
-      '@livekit/agents-plugin-xai':
-        specifier: workspace:*
-        version: link:../plugins/xai
       '@livekit/noise-cancellation-node':
         specifier: ^0.1.9
         version: 0.1.9
