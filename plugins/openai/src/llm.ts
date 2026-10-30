@@ -46,7 +46,6 @@ const defaultLLMOptions: LLMOptions = {
 
 const defaultAzureLLMOptions: LLMOptions = {
   model: 'gpt-4.1',
-  apiKey: process.env.AZURE_API_KEY,
   strictToolSchema: false,
 };
 
@@ -133,15 +132,54 @@ export class LLM extends llm.LLM {
       temperature?: number;
     } = defaultAzureLLMOptions,
   ): LLM {
-    opts = { ...defaultAzureLLMOptions, ...opts };
-    if (opts.apiKey === undefined) {
-      throw new Error('Azure API key is required, whether as an argument or as $AZURE_API_KEY');
+    const {
+      model,
+      azureEndpoint,
+      azureDeployment,
+      azureAdToken,
+      azureAdTokenProvider,
+      apiKey: optApiKey,
+      temperature,
+      user,
+      ...clientOpts
+    } = { ...defaultAzureLLMOptions, ...opts };
+
+    // Explicit arguments take precedence over environment variables. The OpenAI SDK only
+    // accepts a token provider, so a static Azure AD token is wrapped in one.
+    // `AZURE_API_KEY` is still read for backwards compatibility.
+    let azureADTokenProvider =
+      azureAdTokenProvider ?? (azureAdToken ? async () => azureAdToken : undefined);
+    let apiKey = optApiKey;
+    if (!apiKey && !azureADTokenProvider) {
+      apiKey = process.env.AZURE_OPENAI_API_KEY || process.env.AZURE_API_KEY;
+    }
+    const envAdToken = process.env.AZURE_OPENAI_AD_TOKEN;
+    if (!apiKey && !azureADTokenProvider && envAdToken) {
+      azureADTokenProvider = async () => envAdToken;
+    }
+    if (!apiKey && !azureADTokenProvider) {
+      throw new Error(
+        'Azure credentials are required: pass `apiKey`, `azureAdToken` or `azureAdTokenProvider`, ' +
+          'or set $AZURE_OPENAI_API_KEY or $AZURE_OPENAI_AD_TOKEN',
+      );
     }
 
     return new LLM({
-      temperature: opts.temperature,
-      user: opts.user,
-      client: new AzureOpenAI({ ...opts, maxRetries: 0 }),
+      model,
+      temperature,
+      user,
+      client: new AzureOpenAI({
+        ...clientOpts,
+        // `AzureOpenAI` falls back to `AZURE_OPENAI_API_KEY` and `OPENAI_BASE_URL` when these
+        // are undefined, which would conflict with a token provider or an explicit endpoint.
+        // An empty string disables that fallback.
+        apiKey: azureADTokenProvider ? '' : apiKey,
+        baseURL: clientOpts.baseURL ?? (azureEndpoint ? '' : undefined),
+        azureADTokenProvider,
+        endpoint: azureEndpoint,
+        deployment: azureDeployment,
+        maxRetries: 0,
+      }),
     });
   }
 
