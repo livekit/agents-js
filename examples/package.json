@@ -43,6 +43,7 @@
     "@livekit/agents-plugin-minimax": "workspace:*",
     "@livekit/agents-plugin-mistralai": "workspace:*",
     "@livekit/agents-plugin-neuphonic": "workspace:*",
+    "@livekit/agents-plugin-nvidia": "workspace:*",
     "@livekit/agents-plugin-openai": "workspace:*",
     "@livekit/agents-plugin-phonic": "workspace:*",
     "@livekit/agents-plugin-protoface": "workspace:*",

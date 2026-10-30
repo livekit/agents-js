@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.json",
+  "include": ["./src"],
+  "compilerOptions": {
+    "rootDir": "./src",
+    "declarationDir": "./dist",
+    "outDir": "./dist"
+  },
+  "typedocOptions": {
+    "name": "plugins/agents-plugin-nvidia",
+    "entryPointStrategy": "resolve",
+    "readme": "none",
+    "entryPoints": ["src/index.ts"]
+  }
+}

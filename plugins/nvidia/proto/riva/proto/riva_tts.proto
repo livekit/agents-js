@@ -1,0 +1,42 @@
+// SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+//
+// SPDX-License-Identifier: MIT
+
+syntax = "proto3";
+
+package nvidia.riva.tts;
+
+import "riva/proto/riva_audio.proto";
+import "riva/proto/riva_common.proto";
+
+service RivaSpeechSynthesis {
+  rpc SynthesizeOnline(SynthesizeSpeechRequest)
+      returns (stream SynthesizeSpeechResponse) {}
+  rpc GetRivaSynthesisConfig(RivaSynthesisConfigRequest)
+      returns (RivaSynthesisConfigResponse) {}
+}
+
+message RivaSynthesisConfigRequest {
+  string model_name = 1;
+}
+
+message RivaSynthesisConfigResponse {
+  message Config {
+    string model_name = 1;
+    map<string, string> parameters = 2;
+  }
+  repeated Config model_config = 1;
+}
+
+message SynthesizeSpeechRequest {
+  string text = 1;
+  string language_code = 2;
+  nvidia.riva.AudioEncoding encoding = 3;
+  int32 sample_rate_hz = 4;
+  string voice_name = 5;
+}
+
+message SynthesizeSpeechResponse {
+  bytes audio = 1;
+  nvidia.riva.RequestId id = 100;
+}
