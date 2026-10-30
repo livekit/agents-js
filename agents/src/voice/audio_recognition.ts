@@ -906,7 +906,7 @@ export class AudioRecognition {
       this.sttPipeline = undefined;
       this.sttOwnershipTransferred = false;
 
-      if (!this.closed && this.stt !== undefined) {
+      if (!this.closed) {
         this.startSttTasks();
       }
     } finally {
@@ -925,7 +925,7 @@ export class AudioRecognition {
       this.vadTask = undefined;
       this.vadStream = undefined;
 
-      if (!this.closed && this.vad !== undefined) {
+      if (!this.closed) {
         this.startVadTask(this.vad);
       }
     } finally {
@@ -938,10 +938,7 @@ export class AudioRecognition {
     turnDetectorStream?: BaseStreamingTurnDetectorStream;
   }) {
     this.startSttTasks(options?.sttPipeline);
-
-    if (this.vad !== undefined) {
-      this.startVadTask(this.vad);
-    }
+    this.startVadTask(this.vad);
 
     this.interruptionTask = Task.from(({ signal }) =>
       this.createInterruptionTask(this.interruptionDetection, signal),
@@ -2169,7 +2166,15 @@ export class AudioRecognition {
   }
 
   private startSttTasks(reusePipeline?: STTPipeline) {
-    if (!this.stt) return;
+    if (!this.stt) {
+      this.sttForwardTask = Task.from(({ signal }) =>
+        this.drainInputStream(this.sttInputStream, signal),
+      );
+      this.sttForwardTask.result.catch((err) => {
+        this.logger.error(`Error draining STT input audio: ${err}`);
+      });
+      return;
+    }
 
     reusePipeline?.rebindNode(this.stt, this.onSttError);
     this.sttPipeline =
@@ -2229,6 +2234,30 @@ export class AudioRecognition {
     }
   }
 
+  /**
+   * Reads and discards frames from a VAD/STT input branch that has no consumer, so the tee
+   * doesn't buffer them for the lifetime of the session. Aborting releases the branch for the
+   * next consumer. Doesn't use `readStream`, which retains every chunk until its signal aborts.
+   */
+  private async drainInputStream(stream: ReadableStream<AudioFrame>, signal: AbortSignal) {
+    if (signal.aborted) return;
+    const reader = stream.getReader();
+    // releasing the lock rejects the pending read, which ends the loop below
+    const onAbort = () => reader.releaseLock();
+    signal.addEventListener('abort', onAbort, { once: true });
+    try {
+      while (true) {
+        const { done } = await reader.read();
+        if (done) break;
+      }
+    } catch {
+      // lock released on abort, or the stream errored
+    } finally {
+      signal.removeEventListener('abort', onAbort);
+      reader.releaseLock();
+    }
+  }
+
   private async consumeSttEvents(pipeline: STTPipeline, signal: AbortSignal) {
     for await (const ev of readStream(pipeline.eventChannel.stream(), signal)) {
       await this.onSTTEvent(ev);
@@ -2236,7 +2265,7 @@ export class AudioRecognition {
   }
 
   private async createVadTask(vad: VAD | undefined, signal: AbortSignal) {
-    if (!vad) return;
+    if (!vad) return this.drainInputStream(this.vadInputStream, signal);
 
     const vadStream = vad.stream();
     this.vadStream = vadStream;
@@ -2631,7 +2660,7 @@ export class AudioRecognition {
     }
   }
 
-  private startVadTask(vad: VAD): void {
+  private startVadTask(vad: VAD | undefined): void {
     this.vadTask = Task.from(({ signal }) => this.createVadTask(vad, signal));
     this.vadTask.result.catch((err) => {
       this.logger.error(`Error running VAD task: ${err}`);
