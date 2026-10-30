@@ -81,8 +81,9 @@ export class StreamAdapterWrapper extends SpeechStream {
     this.#vadStream.close();
   }
 
-  async monitorMetrics() {
-    return; // do nothing
+  override async monitorMetrics() {
+    // Events go directly to output; the base monitor still owns closing it at EOF.
+    await super.monitorMetrics();
   }
 
   protected async run() {
