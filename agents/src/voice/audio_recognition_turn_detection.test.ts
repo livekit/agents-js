@@ -33,6 +33,7 @@ import {
 import { type LanguageCode, asLanguageCode } from '../language.js';
 import { ChatContext } from '../llm/chat_context.js';
 import { initializeLogger } from '../log.js';
+import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
 import { Future } from '../utils.js';
 import { type VAD, type VADEvent, VADEventType } from '../vad.js';
 import {
@@ -73,6 +74,11 @@ interface RecognitionInternals {
   updateLastLanguage: (language: LanguageCode, transcript: string) => void;
   updateTurnDetector: (detector: _TurnDetector | BaseStreamingTurnDetector | undefined) => void;
   clearUserTurn: () => void;
+  stt?: unknown;
+  sttPipeline?: { manualFlush: boolean; flush: () => boolean };
+  sttFlushRequested: boolean;
+  closeWakeController: AbortController;
+  onSTTEvent: (ev: SpeechEvent) => Promise<void>;
 }
 
 function makeHooks(): RecognitionHooks {
@@ -816,4 +822,199 @@ describe('TestVadMinSilenceRequirement', () => {
     expect(internals.turnDetectorStream).toBeUndefined();
     expect((detector.stream as ReturnType<typeof vi.fn>).mock.calls.length).toBe(0);
   });
+});
+
+describe('TestSTTFlushAtEOT', () => {
+  /** A VAD-based recognition whose STT finalizes only when flushed, with interim text pending. */
+  function flushRecognition(probability = 0.9, maxEndpointingDelay = 500) {
+    const made = makeRecognition({ maxEndpointingDelay });
+    const { internals } = made;
+    const flushMock = vi.fn(() => true);
+    internals.stt = vi.fn();
+    internals.sttPipeline = { manualFlush: true, flush: flushMock };
+    internals.audioInterimTranscript = 'hello there';
+    internals.lastSpeakingTime = Date.now();
+    const stream = makeAudioStream();
+    internals.turnDetectorStream = stream;
+    internals.turnDetector = makeAudioDetector(stream);
+    internals.turnDetectorPredictionFut = resolvedPrediction(probability).fut;
+    return { ...made, stream, flushMock };
+  }
+
+  function textDetector(probability: number | Error): _TurnDetector {
+    return {
+      model: 'fake',
+      provider: 'fake',
+      supportsLanguage: vi.fn(async () => true),
+      unlikelyThreshold: vi.fn(async () => 0.5),
+      predictEndOfTurn: vi.fn(async () => {
+        if (probability instanceof Error) throw probability;
+        return probability;
+      }),
+    };
+  }
+
+  async function settle(internals: RecognitionInternals): Promise<void> {
+    await internals.bounceEOUTask?.result.catch(() => {});
+  }
+
+  it('flushes on a positive prediction before the final and does not commit an empty turn', async () => {
+    const { internals, hooks, flushMock } = flushRecognition();
+    internals.runEOUDetection(ChatContext.empty(), 'vad');
+    await settle(internals);
+    expect(flushMock).toHaveBeenCalledOnce();
+    expect(hooks.onEndOfTurn).not.toHaveBeenCalled();
+
+    internals.audioTranscript = 'hello there';
+    internals.audioInterimTranscript = '';
+    internals.runEOUDetection(ChatContext.empty(), 'stt');
+    await settle(internals);
+    expect(hooks.onEndOfTurn).toHaveBeenCalledOnce();
+    expect(flushMock).toHaveBeenCalledOnce();
+  });
+
+  it('flushes on a negative prediction before the maximum delay', async () => {
+    const { internals, hooks, flushMock } = flushRecognition(0.1, 300);
+    internals.runEOUDetection(ChatContext.empty(), 'vad');
+    await new Promise((r) => setTimeout(r, 50));
+    expect(flushMock).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(flushMock).toHaveBeenCalledOnce(), { timeout: 200 });
+    expect(internals.bounceEOUTask?.done).toBe(false);
+    expect(hooks.onEndOfTurn).not.toHaveBeenCalled();
+
+    // a final re-enters detection but keeps the same maximum deadline
+    internals.audioTranscript = 'hello there';
+    internals.audioInterimTranscript = '';
+    internals.runEOUDetection(ChatContext.empty(), 'stt');
+    await settle(internals);
+    expect(flushMock).toHaveBeenCalledOnce();
+    expect(hooks.onEndOfTurn).toHaveBeenCalledOnce();
+  });
+
+  it('cancels the delayed flush when speech resumes', async () => {
+    const { internals, hooks, flushMock } = flushRecognition(0.1, 100);
+    internals.runEOUDetection(ChatContext.empty(), 'vad');
+    const pending = internals.bounceEOUTask;
+    await flush();
+    const vad = runScriptedVad(internals);
+    try {
+      await vad.feed(startOfSpeech());
+    } finally {
+      await vad.stop();
+    }
+    await pending?.result.catch(() => {});
+    await new Promise((r) => setTimeout(r, 100));
+    expect(flushMock).not.toHaveBeenCalled();
+    expect(hooks.onEndOfTurn).not.toHaveBeenCalled();
+  });
+
+  it('runs a text detector on final text only', async () => {
+    const { internals, flushMock } = flushRecognition();
+    const detector = textDetector(0.9);
+    internals.turnDetector = detector;
+    internals.turnDetectorStream = undefined;
+    internals.audioTranscript = 'first sentence';
+    internals.runEOUDetection(ChatContext.empty(), 'vad');
+    await settle(internals);
+    const chatCtx = (detector.predictEndOfTurn as ReturnType<typeof vi.fn>).mock
+      .calls[0]![0] as ChatContext;
+    expect(chatCtx.items.at(-1)).toMatchObject({ role: 'user', content: ['first sentence'] });
+    expect(detector.predictEndOfTurn).toHaveBeenCalledOnce();
+    expect(flushMock).toHaveBeenCalledOnce();
+  });
+
+  it.each(['', 'ghost interim'])(
+    'flushes without committing the interim when the final is missing (%j)',
+    async (interim) => {
+      const { internals, hooks, flushMock } = flushRecognition(0.9, 6000);
+      const detector = textDetector(0.9);
+      internals.turnDetector = detector;
+      internals.turnDetectorStream = undefined;
+      internals.audioInterimTranscript = interim;
+      internals.runEOUDetection(ChatContext.empty(), 'vad');
+      await vi.waitFor(() => expect(internals.bounceEOUTask?.done).toBe(true), { timeout: 100 });
+      expect(detector.predictEndOfTurn).not.toHaveBeenCalled();
+      expect(flushMock).toHaveBeenCalledOnce();
+      expect(hooks.onEndOfTurn).not.toHaveBeenCalled();
+    },
+  );
+
+  it('waits for a transcript when the STT does not need flushing', () => {
+    const { internals, flushMock } = flushRecognition();
+    internals.sttPipeline!.manualFlush = false;
+    internals.runEOUDetection(ChatContext.empty(), 'vad');
+    expect(internals.bounceEOUTask).toBeUndefined();
+    expect(flushMock).not.toHaveBeenCalled();
+  });
+
+  it('anchors the delayed flush to the end of speech', async () => {
+    const { internals, hooks, flushMock } = flushRecognition(0.1, 6000);
+    internals.lastSpeakingTime = Date.now() - 2800;
+    internals.runEOUDetection(ChatContext.empty(), 'vad');
+    try {
+      await new Promise((r) => setTimeout(r, 50));
+      expect(flushMock).not.toHaveBeenCalled();
+      await vi.waitFor(() => expect(flushMock).toHaveBeenCalledOnce(), { timeout: 300 });
+      expect(internals.bounceEOUTask?.done).toBe(false);
+      expect(hooks.onEndOfTurn).not.toHaveBeenCalled();
+    } finally {
+      await internals.bounceEOUTask?.cancelAndWait().catch(() => {});
+    }
+  });
+
+  it('cancels the delayed flush on close', async () => {
+    const { internals, hooks, flushMock } = flushRecognition(0.1);
+    internals.runEOUDetection(ChatContext.empty(), 'vad');
+    await flush();
+    internals.closeWakeController.abort();
+    await settle(internals);
+    expect(flushMock).not.toHaveBeenCalled();
+    expect(hooks.onEndOfTurn).not.toHaveBeenCalled();
+  });
+
+  it.each(['timeout', 'missing', 'language', 'threshold', 'error'] as const)(
+    'keeps the minimum endpointing delay when the prediction is unavailable (%s)',
+    async (unavailable) => {
+      const { internals, hooks, stream, flushMock } = flushRecognition(0.9, 6000);
+      internals.audioTranscript = 'hello there';
+      internals.audioInterimTranscript = '';
+      if (unavailable === 'timeout') {
+        internals.turnDetectorPredictionFut = new Future<TurnDetectionEvent>();
+      } else if (unavailable === 'missing') {
+        internals.turnDetectorPredictionFut = undefined;
+      } else if (unavailable === 'language') {
+        stream.supportsLanguage = vi.fn(async () => false);
+      } else if (unavailable === 'threshold') {
+        stream.unlikelyThreshold = vi.fn(async () => undefined);
+      } else {
+        internals.turnDetector = textDetector(new Error('test failure'));
+        internals.turnDetectorStream = undefined;
+      }
+      internals.runEOUDetection(ChatContext.empty(), 'vad');
+      await vi.waitFor(() => expect(internals.bounceEOUTask?.done).toBe(true), { timeout: 200 });
+      expect(flushMock).toHaveBeenCalledOnce();
+      expect(hooks.onEndOfTurn).toHaveBeenCalledOnce();
+    },
+  );
+
+  it.each([SpeechEventType.INTERIM_TRANSCRIPT, SpeechEventType.PREFLIGHT_TRANSCRIPT])(
+    'does not restart detection on non-final text (%s)',
+    async (type) => {
+      const { recognition, internals } = flushRecognition(0.1);
+      const run = vi.spyOn(recognition as never, 'runEOUDetection');
+      await internals.onSTTEvent({
+        type,
+        alternatives: [
+          {
+            language: asLanguageCode('en'),
+            text: 'hello there',
+            startTime: 0,
+            endTime: 0,
+            confidence: 1,
+          },
+        ],
+      });
+      expect(run).not.toHaveBeenCalled();
+    },
+  );
 });
