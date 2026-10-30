@@ -1,5 +1,20 @@
 # @livekit/agents-plugin-deepgram
 
+## 1.9.5
+
+### Patch Changes
+
+- Stop sending the `languageHint` that Deepgram rejects, and add it where it applies, without ever discarding the caller's value. - [#2828](https://github.com/livekit/agents-js/pull/2828) ([@adrian-cowham](https://github.com/adrian-cowham))
+
+  `STTv2` (Flux) warned that `languageHint` was ignored for any model but `flux-general-multi`, then sent it anyway on the live config; Deepgram answers that with a 400, so the session failed. The hint is now kept in the options and left off the connection config for a model that cannot take it, with one warning. Because the value survives, a session that switches back to `flux-general-multi` sends it again, both on an existing stream and on a stream created afterwards; previously the hint was deleted from the instance, so the two disagreed.
+
+  `STT` (the `/v1/listen` plugin) gains `languageHint`, forwarded as a repeated `language_hint` query parameter. Deepgram applies the parameter only to `nova-3` / `nova-3-general` in multi language mode, so it is sent only when the session language is `multi` and the model is one of those two; on any other model or language it is kept but not sent, with one warning, and a change back into `multi` sends it again.
+
+  `STT` also stops rewriting `nova-3-general` to `nova-2-general` for a non-English language. That entry in the model validator was stale: Deepgram lists `nova-3` and `nova-3-general` on the same multilingual row, and the Python plugin's validator never carried the rule.
+
+- Updated dependencies [[`9ef420f`](https://github.com/livekit/agents-js/commit/9ef420f11bfd486c9c0ac65266924f55b2965e4b), [`f03a68e`](https://github.com/livekit/agents-js/commit/f03a68ef2bcfede42163b1d76aa7c31dc9496eca), [`3abfd22`](https://github.com/livekit/agents-js/commit/3abfd22045a83ca407f6784be1fc5059c6810bf9), [`a2c220f`](https://github.com/livekit/agents-js/commit/a2c220fc910d1080904774c16d12f8e6df9ef240), [`e3c31ff`](https://github.com/livekit/agents-js/commit/e3c31ff5fb7599b753c69e01e4db860ae15ec254), [`d3dd8c1`](https://github.com/livekit/agents-js/commit/d3dd8c119a26af6ef6b227b527273a48950437e0), [`3d35950`](https://github.com/livekit/agents-js/commit/3d35950a173a1d30276c80f3cb131796f52febd5), [`41a4f94`](https://github.com/livekit/agents-js/commit/41a4f94ebb43bffc064ed415d11e7cdba1be062f)]:
+  - @livekit/agents@1.9.5
+
 ## 1.9.4
 
 ### Patch Changes
