@@ -33,6 +33,7 @@ import {
   CloseReason,
   type ConversationItemAddedEvent,
   type UserInputTranscribedEvent,
+  createParticipantDisconnectedEvent,
 } from '../events.js';
 import type { AudioOutput, TextOutput } from '../io.js';
 import type { TextInputCallback } from '../remote_session.js';
@@ -296,6 +297,16 @@ export class RoomIO {
     if (participant.identity !== this.participantIdentity) {
       return;
     }
+    const disconnectEvent =
+      this.linkedParticipant?.identity === participant.identity
+        ? createParticipantDisconnectedEvent({
+            participantIdentity: participant.identity,
+            disconnectReason: participant.disconnectReason ?? DisconnectReason.UNKNOWN_REASON,
+            participantAttributes: {
+              ...(participantAttributes(participant) as Record<string, string | number | boolean>),
+            },
+          })
+        : undefined;
     this.agentSession._addSessionEvent?.('participant_disconnected', {
       ...(participantAttributes(participant) as Record<string, string>),
       [traceTypes.ATTR_DISCONNECT_REASON]:
@@ -319,6 +330,14 @@ export class RoomIO {
       this.agentSession._closeSoon({
         reason: CloseReason.PARTICIPANT_DISCONNECTED,
       });
+    }
+    if (!disconnectEvent) {
+      return;
+    }
+    try {
+      this.agentSession.emit(AgentSessionEventTypes.ParticipantDisconnected, disconnectEvent);
+    } catch (error) {
+      this.logger.error({ error }, 'ParticipantDisconnected listener threw an error');
     }
   };
 

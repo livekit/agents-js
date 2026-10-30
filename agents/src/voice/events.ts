@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import type { DisconnectReason } from '@livekit/rtc-node';
 import type { InterruptionDetectionError } from '../inference/interruption/errors.js';
 import type { OverlappingSpeechEvent } from '../inference/interruption/types.js';
 import type { LanguageCode } from '../language.js';
@@ -38,6 +39,8 @@ export enum AgentSessionEventTypes {
   /** Audio EOT detector emitted a per-turn prediction. */
   EotPrediction = 'eot_prediction',
   Error = 'error',
+  /** Emitted when the linked room participant disconnects. */
+  ParticipantDisconnected = 'participant_disconnected',
   /** Emitted after activity teardown, when the session is no longer running. */
   Close = 'close',
 }
@@ -432,6 +435,31 @@ export const createErrorEvent = (
   createdAt,
 });
 
+export type ParticipantDisconnectedEvent = {
+  type: 'participant_disconnected';
+  participantIdentity: string;
+  /** RTC disconnect reason enum value. */
+  disconnectReason: DisconnectReason;
+  /** Snapshot of participant telemetry attributes at disconnect time. */
+  participantAttributes: Record<string, string | number | boolean>;
+  createdAt: number;
+};
+
+export const createParticipantDisconnectedEvent = ({
+  participantIdentity,
+  disconnectReason,
+  participantAttributes,
+  createdAt = Date.now(),
+}: Omit<ParticipantDisconnectedEvent, 'type' | 'createdAt'> & {
+  createdAt?: number;
+}): ParticipantDisconnectedEvent => ({
+  type: 'participant_disconnected',
+  participantIdentity,
+  disconnectReason,
+  participantAttributes: { ...participantAttributes },
+  createdAt,
+});
+
 export type CloseEvent = {
   type: 'close';
   error: RealtimeModelError | STTError | TTSError | LLMError | InterruptionDetectionError | null;
@@ -488,4 +516,5 @@ export type AgentEvent =
   | AgentFalseInterruptionEvent
   | OverlappingSpeechEvent
   | ErrorEvent
-  | CloseEvent;
+  | CloseEvent
+  | ParticipantDisconnectedEvent;

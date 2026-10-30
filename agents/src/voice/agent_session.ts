@@ -108,6 +108,7 @@ import {
   type ErrorEvent,
   type FunctionToolsExecutedEvent,
   type MetricsCollectedEvent,
+  type ParticipantDisconnectedEvent,
   type SessionUsageUpdatedEvent,
   type ShutdownReason,
   type SpeechCreatedEvent,
@@ -297,6 +298,7 @@ export type AgentSessionCallbacks = {
   [AgentSessionEventTypes.AgentFalseInterruption]: (ev: AgentFalseInterruptionEvent) => void;
   [AgentSessionEventTypes.Error]: (ev: ErrorEvent) => void;
   [AgentSessionEventTypes.Close]: (ev: CloseEvent) => void;
+  [AgentSessionEventTypes.ParticipantDisconnected]: (ev: ParticipantDisconnectedEvent) => void;
   [AgentSessionEventTypes.OverlappingSpeech]: (ev: OverlappingSpeechEvent) => void;
   [AgentSessionEventTypes.EotPrediction]: (ev: EotPredictionEvent) => void;
 };
