@@ -43,6 +43,8 @@ export interface TTSOptions {
   speed: number;
   /** Shorten pauses between words. Only supported by models with silence reduction. */
   reduceSilence: boolean;
+  /** Optional identifier recorded with each request in Soniox usage logs. */
+  clientReferenceId?: string;
   apiKey?: string;
   websocketUrl: string;
 }
@@ -655,6 +657,9 @@ export class _Connection {
           }
           if (msg.opts.reduceSilence) {
             config.reduce_silence = true;
+          }
+          if (msg.opts.clientReferenceId !== undefined) {
+            config.client_reference_id = msg.opts.clientReferenceId;
           }
           this.#ws.send(JSON.stringify(config));
         } else if (msg.type === 'text') {
