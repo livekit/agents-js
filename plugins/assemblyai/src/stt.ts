@@ -44,7 +44,9 @@ const U3_PRO_ONLY_PARAMS = [
   'languageCodes',
 ] as const;
 
+// Server-side cap on steering codes. Universal-3.6 Pro has no documented cap.
 const MAX_LANGUAGE_CODES = 10;
+const UNCAPPED_LANGUAGE_CODES_MODELS = ['universal-3-6-pro'] as const;
 const MAX_AGENT_CONTEXT_CHARS = 1750;
 
 function isU3ProModel(model: STTModels): boolean {
@@ -62,11 +64,16 @@ function validateModelOptions(opts: Partial<STTOptions>, speechModel: STTModels)
   }
 }
 
-function normalizeLanguageCodes(languageCodes: string | string[]): string[] {
+function normalizeLanguageCodes(languageCodes: string | string[], model: STTModels): string[] {
   const codes =
     typeof languageCodes === 'string' ? (languageCodes ? [languageCodes] : []) : languageCodes;
   const normalized = [...new Set(codes.map(getBaseLanguage))];
-  if (normalized.length > MAX_LANGUAGE_CODES) {
+  if (
+    !UNCAPPED_LANGUAGE_CODES_MODELS.includes(
+      model as (typeof UNCAPPED_LANGUAGE_CODES_MODELS)[number],
+    ) &&
+    normalized.length > MAX_LANGUAGE_CODES
+  ) {
     throw new Error(
       `languageCodes accepts at most ${MAX_LANGUAGE_CODES} codes (got ${normalized.length} after normalization)`,
     );
@@ -115,7 +122,7 @@ function normalizeUpdateOptions(
   validateModelOptions(nextOpts, speechModel);
   validateAgentContext(nextOpts.agentContext);
   if (nextOpts.languageCodes !== undefined) {
-    nextOpts.languageCodes = normalizeLanguageCodes(nextOpts.languageCodes);
+    nextOpts.languageCodes = normalizeLanguageCodes(nextOpts.languageCodes, speechModel);
   }
   return nextOpts;
 }
@@ -215,7 +222,10 @@ export interface STTOptions {
    * or `max_accuracy`. Explicit turn-silence values still take precedence over mode defaults.
    */
   mode?: 'min_latency' | 'balanced' | 'max_accuracy';
-  /** Languages to steer transcription toward. Universal-3 Pro only. */
+  /**
+   * Languages to steer transcription toward. At most 10 codes, except on
+   * Universal-3.6 Pro. Universal-3 Pro only.
+   */
   languageCodes?: string | string[];
   /**
    * Redact PII from final turns. AssemblyAI disables partial turns when this is enabled unless
@@ -277,13 +287,13 @@ export class STT extends stt.STT {
   constructor(opts: Partial<STTOptions> = {}) {
     validateAgentContext(opts.agentContext);
     validateRedactionOptions(opts);
+    const rawModel = opts.speechModel ?? defaultSTTOptions.speechModel;
     if (opts.languageCodes !== undefined) {
-      const languageCodes = normalizeLanguageCodes(opts.languageCodes);
+      const languageCodes = normalizeLanguageCodes(opts.languageCodes, rawModel);
       opts.languageCodes = languageCodes.length > 0 ? languageCodes : undefined;
     }
 
     // u3-rt-pro family — "u3-pro" is normalized below — and is opt-in via the user)
-    const rawModel = opts.speechModel ?? defaultSTTOptions.speechModel;
     const supportsCarryover = isU3ProModel(rawModel) || rawModel === 'u3-pro';
     if (opts.agentContextCarryover && !supportsCarryover) {
       log().warn(
