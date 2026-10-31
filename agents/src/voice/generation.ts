@@ -189,30 +189,26 @@ export class _ToolOutput {
 // TODO(brian): remove this class in favor of ToolExecutionOutput
 export class _SanitizedOutput {
   toolCall: FunctionCall;
-  toolCallOutput?: FunctionCallOutput;
-  replyRequired: boolean;
+  toolCallOutput: FunctionCallOutput;
   agentTask?: Agent;
 
   constructor(
     toolCall: FunctionCall,
-    toolCallOutput: FunctionCallOutput | undefined,
-    replyRequired: boolean,
+    toolCallOutput: FunctionCallOutput,
     agentTask: Agent | undefined,
   ) {
     this.toolCall = toolCall;
     this.toolCallOutput = toolCallOutput;
-    this.replyRequired = replyRequired;
     this.agentTask = agentTask;
   }
 
   static create(params: {
     toolCall: FunctionCall;
-    toolCallOutput?: FunctionCallOutput;
-    replyRequired?: boolean;
+    toolCallOutput: FunctionCallOutput;
     agentTask?: Agent;
   }) {
-    const { toolCall, toolCallOutput, replyRequired = true, agentTask } = params;
-    return new _SanitizedOutput(toolCall, toolCallOutput, replyRequired, agentTask);
+    const { toolCall, toolCallOutput, agentTask } = params;
+    return new _SanitizedOutput(toolCall, toolCallOutput, agentTask);
   }
 }
 
@@ -251,37 +247,27 @@ function isValidToolOutput(toolOutput: unknown): boolean {
 export class ToolExecutionOutput {
   constructor(
     public readonly toolCall: FunctionCall,
-    public readonly toolCallOutput: FunctionCallOutput | undefined,
+    public readonly toolCallOutput: FunctionCallOutput,
     public readonly agentTask: Agent | undefined,
     public readonly rawOutput: unknown,
     public readonly rawException: Error | undefined,
-    public readonly replyRequired: boolean,
   ) {}
+
+  /**
+   * Tool choice of the reply to this output: `'none'` for a report from `update()`, undefined
+   * for a final answer, whose reply may make the next tool call.
+   */
+  replyToolChoice?: ToolChoice;
 
   static create(params: {
     toolCall: FunctionCall;
-    toolCallOutput?: FunctionCallOutput;
+    toolCallOutput: FunctionCallOutput;
     agentTask?: Agent;
     rawOutput: unknown;
     rawException?: Error;
-    replyRequired?: boolean;
   }) {
-    const {
-      toolCall,
-      toolCallOutput,
-      agentTask,
-      rawOutput,
-      rawException,
-      replyRequired = true,
-    } = params;
-    return new ToolExecutionOutput(
-      toolCall,
-      toolCallOutput,
-      agentTask,
-      rawOutput,
-      rawException,
-      replyRequired,
-    );
+    const { toolCall, toolCallOutput, agentTask, rawOutput, rawException } = params;
+    return new ToolExecutionOutput(toolCall, toolCallOutput, agentTask, rawOutput, rawException);
   }
 }
 
@@ -325,6 +311,13 @@ export class _JsOutput {
     if (isStopResponse(this.exception)) {
       return _SanitizedOutput.create({
         toolCall: FunctionCall.create({ ...this.toolCall }),
+        toolCallOutput: FunctionCallOutput.create({
+          name: this.toolCall.name,
+          callId: this.toolCall.callId,
+          output: '',
+          isError: false,
+          replyRequired: false,
+        }),
       });
     }
 
@@ -357,7 +350,12 @@ export class _JsOutput {
       );
       return _SanitizedOutput.create({
         toolCall: FunctionCall.create({ ...this.toolCall }),
-        toolCallOutput: undefined,
+        toolCallOutput: FunctionCallOutput.create({
+          name: this.toolCall.name,
+          callId: this.toolCall.callId,
+          output: 'the tool returned an invalid output',
+          isError: true,
+        }),
       });
     }
 
@@ -368,8 +366,8 @@ export class _JsOutput {
         callId: this.toolCall.callId,
         output: toolOutput !== undefined ? JSON.stringify(toolOutput) : '', // take the string representation of the output
         isError: false,
+        replyRequired: toolOutput !== undefined,
       }),
-      replyRequired: toolOutput !== undefined, // require a reply if the tool returned an output
       agentTask,
     });
   }
@@ -408,6 +406,13 @@ export function createToolOutput(params: {
   if (isStopResponse(finalException)) {
     return ToolExecutionOutput.create({
       toolCall: FunctionCall.create({ ...toolCall }),
+      toolCallOutput: FunctionCallOutput.create({
+        name: toolCall.name,
+        callId: toolCall.callId,
+        output: '',
+        isError: false,
+        replyRequired: false,
+      }),
       rawOutput: finalOutput,
       rawException: finalException,
     });
@@ -427,9 +432,40 @@ export function createToolOutput(params: {
     });
   }
 
-  let agentTask: Agent | undefined = undefined;
+  let agentTask: Agent | undefined;
   let toolOutput: unknown = finalOutput;
-  if (isAgentHandoff(finalOutput)) {
+  if (Array.isArray(finalOutput)) {
+    const handoffs = finalOutput.filter(isAgentHandoff);
+    if (handoffs.length > 1) {
+      logger.error(
+        { callId: toolCall.callId, 'lk.pii.output': finalOutput },
+        `AI function ${toolCall.name} returned more than one agent`,
+      );
+      return ToolExecutionOutput.create({
+        toolCall: FunctionCall.create({ ...toolCall }),
+        toolCallOutput: FunctionCallOutput.create({
+          name: toolCall.name,
+          callId: toolCall.callId,
+          output: 'the tool returned more than one agent',
+          isError: true,
+        }),
+        rawOutput: finalOutput,
+        rawException: finalException,
+      });
+    }
+    // a handoff's `returns` stays part of the output, as it does outside a list
+    const otherOutputs = finalOutput.flatMap((item) =>
+      !isAgentHandoff(item) ? [item] : item.returns === undefined ? [] : [item.returns],
+    );
+    agentTask = handoffs[0]?.agent;
+    toolOutput = agentTask
+      ? otherOutputs.length === 0
+        ? undefined
+        : otherOutputs.length === 1
+          ? otherOutputs[0]
+          : otherOutputs
+      : otherOutputs;
+  } else if (isAgentHandoff(finalOutput)) {
     agentTask = finalOutput.agent;
     toolOutput = finalOutput.returns;
   }
@@ -444,6 +480,12 @@ export function createToolOutput(params: {
     );
     return ToolExecutionOutput.create({
       toolCall: FunctionCall.create({ ...toolCall }),
+      toolCallOutput: FunctionCallOutput.create({
+        name: toolCall.name,
+        callId: toolCall.callId,
+        output: 'the tool returned an invalid output',
+        isError: true,
+      }),
       rawOutput: finalOutput,
       rawException: finalException,
     });
@@ -456,12 +498,25 @@ export function createToolOutput(params: {
       callId: toolCall.callId,
       output: toolOutput !== undefined ? JSON.stringify(toolOutput) : '', // take the string representation of the output
       isError: false,
+      replyRequired: toolOutput !== undefined,
     }),
-    replyRequired: toolOutput !== undefined, // require a reply if the tool returned an output
     agentTask,
     rawOutput: finalOutput,
     rawException: finalException,
   });
+}
+
+/**
+ * Record the output of a tool that finished on an interrupted turn. A handoff answers as an
+ * error, since the interruption left it unapplied. Either way, the output asks for no reply.
+ */
+export function interruptedToolOutput(output: ToolExecutionOutput): FunctionCallOutput {
+  if (output.agentTask !== undefined) {
+    output.toolCallOutput.output = 'the agent handoff was interrupted and did not happen';
+    output.toolCallOutput.isError = true;
+  }
+  output.toolCallOutput.replyRequired = false;
+  return output.toolCallOutput;
 }
 
 export const INSTRUCTIONS_MESSAGE_ID = 'lk.agent_task.instructions';
@@ -845,6 +900,7 @@ export function performTTSInference(
   provider?: string,
   readIdleTimeout: number = DEFAULT_TTS_READ_IDLE_TIMEOUT_MS,
   textTransforms?: readonly TextTransform[] | null,
+  inputOptions?: { cancelOnFinish: boolean; onError: () => void },
 ): [Task<void>, _TTSGenerationData] {
   const logger = log();
   const audioStream = new IdentityTransform<AudioFrame>();
@@ -858,35 +914,64 @@ export function performTTSInference(
   // Transform stream to extract text from TimedString objects
   const textOnlyStream = new IdentityTransform<string>();
   const textOnlyWriter = textOnlyStream.writable.getWriter();
-  let startTime: number | undefined;
-  (async () => {
-    const reader = text.getReader();
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) {
-          break;
-        }
-        startTime ??= performance.now() / 1000;
-        const textValue = typeof value === 'string' ? value : value.text;
-        await textOnlyWriter.write(textValue);
-      }
-      await textOnlyWriter.close();
-    } catch (e) {
-      await textOnlyWriter.abort(e as Error);
-    } finally {
-      reader.releaseLock();
-    }
-  })();
-
-  let ttfb: number | undefined;
-
+  const synthesisFinished = new Future<void>();
   const genData: _TTSGenerationData = {
     audioStream: audioOutputStream,
     timedTextsFut,
     ttfb: undefined,
     error: null,
   };
+  let startTime: number | undefined;
+  const textReader = text.getReader();
+  let inputCancellation: Promise<void> | undefined;
+  const cancelInput = () => {
+    inputCancellation ??= textReader.cancel().catch((error) => {
+      logger.debug({ error }, 'failed to cancel TTS text reader');
+    });
+  };
+  controller.signal.addEventListener('abort', cancelInput, { once: true });
+  if (controller.signal.aborted) cancelInput();
+  const inputTask = (async () => {
+    let acceptingText = true;
+    try {
+      while (!controller.signal.aborted) {
+        const { done, value } = await textReader.read();
+        if (done || controller.signal.aborted) {
+          break;
+        }
+        startTime ??= performance.now() / 1000;
+        const textValue = typeof value === 'string' ? value : value.text;
+        if (acceptingText) {
+          try {
+            await textOnlyWriter.write(textValue);
+          } catch {
+            // Synthesis can close its input before the independent producer reaches
+            // EOF. Drain only after successful synthesis; failures still propagate.
+            await synthesisFinished.await;
+            if (genData.error != null) throw genData.error;
+            acceptingText = false;
+          }
+        }
+      }
+      if (acceptingText) {
+        try {
+          await textOnlyWriter.close();
+        } catch {
+          await synthesisFinished.await;
+          if (genData.error != null) throw genData.error;
+        }
+      }
+    } catch (e) {
+      await textOnlyWriter.abort(e as Error).catch(() => {});
+      throw e;
+    } finally {
+      await inputCancellation;
+      textReader.releaseLock();
+    }
+  })();
+  void inputTask.catch((error) => logger.debug({ error }, 'TTS text forwarding failed'));
+
+  let ttfb: number | undefined;
 
   const _performTTSInferenceImpl = async (signal: AbortSignal, span: Span) => {
     if (model) {
@@ -899,6 +984,15 @@ export function performTTSInference(
     let ttsStreamReader: ReadableStreamDefaultReader<AudioFrame> | null = null;
     let ttsStream: ReadableStream<AudioFrame> | null = null;
     let firstByteReceived = false;
+    let audioCancellation: Promise<void> | undefined;
+    const cancelAudio = () => {
+      if (ttsStreamReader) {
+        audioCancellation ??= ttsStreamReader.cancel().catch((error) => {
+          logger.debug({ error }, 'failed to cancel TTS audio reader');
+        });
+      }
+    };
+    signal.addEventListener('abort', cancelAudio, { once: true });
 
     try {
       const ttsInput = textTransforms
@@ -907,8 +1001,6 @@ export function performTTSInference(
       ttsStream = await node(ttsInput, modelSettings);
       if (ttsStream === null) {
         timedTextsFut.resolve(null);
-        await outputWriter.close();
-        await timedTextsWriter.close();
         return;
       }
 
@@ -919,6 +1011,7 @@ export function performTTSInference(
       }
 
       ttsStreamReader = ttsStream.getReader();
+      if (signal.aborted) cancelAudio();
 
       while (true) {
         if (signal.aborted) {
@@ -929,7 +1022,7 @@ export function performTTSInference(
           ttsStreamReader.read(),
           readIdleTimeout,
         );
-        if (done) {
+        if (done || signal.aborted) {
           break;
         }
 
@@ -964,16 +1057,34 @@ export function performTTSInference(
       } else {
         // Set this before closing the audio stream so forwarding knows it was truncated.
         genData.error = error;
+        inputOptions?.onError();
         throw error;
       }
     } finally {
+      // Release a pump waiting for the synthesis outcome before joining it below.
+      synthesisFinished.resolve();
+      // Pipeline inputs have a separate producer that must finish writing normally.
+      // Tee owners can stop their branch as soon as synthesis finishes.
+      if (inputOptions?.cancelOnFinish || signal.aborted || genData.error != null) cancelInput();
+      cancelAudio();
       if (!timedTextsFut.done) {
         timedTextsFut.resolve(null);
       }
+      const cleanup = await Promise.allSettled([
+        audioCancellation,
+        outputWriter.close(),
+        timedTextsWriter.close(),
+        inputTask,
+      ]);
       ttsStreamReader?.releaseLock();
-      await ttsStream?.cancel();
-      await outputWriter.close();
-      await timedTextsWriter.close();
+      signal.removeEventListener('abort', cancelAudio);
+      controller.signal.removeEventListener('abort', cancelInput);
+      // Cancelling the output can reject pending writes/close with an empty
+      // reason. Preserve the inference error that initiated sibling cleanup.
+      if (genData.error == null && !signal.aborted) {
+        const failed = cleanup.find((result) => result.status === 'rejected');
+        if (failed?.status === 'rejected') throw failed.reason;
+      }
     }
   };
 
@@ -1000,17 +1111,26 @@ export interface _TextOut {
 async function forwardText(
   source: ReadableStream<string | TimedString>,
   out: _TextOut,
-  signal: AbortSignal,
+  controller: AbortController,
   textOutput: TextOutput | null,
 ): Promise<void> {
+  const { signal } = controller;
   const reader = source.getReader();
+  let cancellation: Promise<void> | undefined;
+  const cancelReader = () => {
+    cancellation ??= reader.cancel().catch((error) => {
+      log().debug({ error }, 'failed to cancel transcription stream reader');
+    });
+  };
+  signal.addEventListener('abort', cancelReader, { once: true });
+  if (signal.aborted) cancelReader();
   try {
     while (true) {
       if (signal.aborted) {
         break;
       }
       const { done, value: delta } = await reader.read();
-      if (done) break;
+      if (done || signal.aborted) break;
 
       const deltaIsTimedString = isTimedString(delta);
       const textDelta = deltaIsTimedString ? delta.text : delta;
@@ -1024,11 +1144,19 @@ async function forwardText(
         out.firstTextFut.resolve();
       }
     }
+  } catch (error) {
+    // A tee reader cannot finish cancelling until its sibling is released.
+    controller.abort();
+    throw error;
   } finally {
-    if (textOutput !== null) {
-      textOutput.flush();
+    signal.removeEventListener('abort', cancelReader);
+    cancelReader();
+    try {
+      await cancellation;
+    } finally {
+      reader.releaseLock();
+      textOutput?.flush();
     }
-    reader?.releaseLock();
   }
 }
 
@@ -1043,7 +1171,7 @@ export function performTextForwarding(
   };
   return [
     Task.from(
-      (controller) => forwardText(source, out, controller.signal, textOutput),
+      (controller) => forwardText(source, out, controller, textOutput),
       controller,
       'performTextForwarding',
     ),
@@ -1195,9 +1323,6 @@ async function forwardAudio(
       audioOutput._markInputTruncated();
     }
     audioOutput.flush();
-    if (signal?.aborted) {
-      audioOutput.clearBuffer();
-    }
     resampler?.close();
   }
 }
@@ -1433,7 +1558,11 @@ export function performToolExecutions({
         'Executing LLM tool call',
       );
 
-      const _tracableToolExecutionImpl = async (toolExecTask: Promise<unknown>, span: Span) => {
+      const _tracableToolExecutionImpl = async (
+        toolExecTask: Promise<unknown>,
+        runCtx: RunContext,
+        span: Span,
+      ) => {
         span.setAttribute(traceTypes.ATTR_FUNCTION_TOOL_NAME, toolCall.name);
         span.setAttribute(traceTypes.ATTR_FUNCTION_TOOL_ARGS, toolCall.args);
         genAI.setToolAttributes(span, {
@@ -1455,21 +1584,13 @@ export function performToolExecutions({
             toolCall,
             output: result,
           });
-
-          if (toolOutput.toolCallOutput) {
-            span.setAttribute(
-              traceTypes.ATTR_FUNCTION_TOOL_OUTPUT,
-              toolOutput.toolCallOutput.output,
-            );
-            span.setAttribute(
-              traceTypes.ATTR_FUNCTION_TOOL_IS_ERROR,
-              toolOutput.toolCallOutput.isError,
-            );
-            genAI.setToolResult(span, {
-              result: toolOutput.toolCallOutput.output,
-              isError: toolOutput.toolCallOutput.isError,
-            });
+          if (runCtx._suppressReply) {
+            // a silent update() keeps the output item but asks for no speech
+            toolOutput.toolCallOutput.replyRequired = false;
           }
+          // set only when the tool released through update(): the step that answers a report
+          // is bound by what the report asked for
+          toolOutput.replyToolChoice = runCtx._replyToolChoice;
         } catch (rawError) {
           logger.error(
             {
@@ -1483,24 +1604,25 @@ export function performToolExecutions({
             toolCall,
             exception: toError(rawError),
           });
-
-          if (toolOutput.toolCallOutput) {
-            span.setAttribute(
-              traceTypes.ATTR_FUNCTION_TOOL_OUTPUT,
-              toolOutput.toolCallOutput.output,
-            );
-            span.setAttribute(traceTypes.ATTR_FUNCTION_TOOL_IS_ERROR, true);
-            genAI.setToolResult(span, { isError: true });
-          }
         } finally {
-          if (toolOutput) toolCompleted(toolOutput);
+          if (toolOutput) {
+            // read the output, not the branch: a StopResponse throws but is not an error
+            const { output, isError } = toolOutput.toolCallOutput;
+            span.setAttribute(traceTypes.ATTR_FUNCTION_TOOL_OUTPUT, output);
+            span.setAttribute(traceTypes.ATTR_FUNCTION_TOOL_IS_ERROR, isError);
+            genAI.setToolResult(span, { result: output, isError });
+            toolCompleted(toolOutput);
+          }
         }
       };
 
-      const tracableToolExecution = (toolExecTask: Promise<unknown>) =>
-        tracer.startActiveSpan(async (span) => _tracableToolExecutionImpl(toolExecTask, span), {
-          name: 'function_tool',
-        });
+      const tracableToolExecution = (toolExecTask: Promise<unknown>, runCtx: RunContext) =>
+        tracer.startActiveSpan(
+          async (span) => _tracableToolExecutionImpl(toolExecTask, runCtx, span),
+          {
+            name: 'function_tool',
+          },
+        );
 
       const toolTask = Task.from(
         async () => {
@@ -1514,11 +1636,11 @@ export function performToolExecutions({
             });
           }
 
+          const runCtx = new RunContext(session, speechHandle, toolCall, activity);
           const toolExecution = functionCallStorage.run(
             { functionCall: toolCall, speechHandle },
             async () => {
-              const runCtx = new RunContext(session, speechHandle, toolCall, activity);
-              const mock = getMockTool(session.currentAgent, toolCall.name);
+              const mock = getMockTool(session.currentAgent, toolCall.name, session);
               const toolToExecute = mock
                 ? {
                     ...tool,
@@ -1547,7 +1669,7 @@ export function performToolExecutions({
             },
           );
 
-          await tracableToolExecution(toolExecution);
+          await tracableToolExecution(toolExecution, runCtx);
         },
         controller,
         `performToolExecution:${toolCall.name}`,

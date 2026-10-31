@@ -9,6 +9,7 @@ import { AudioResampler } from '@livekit/rtc-node';
 import { Logger } from 'pino';
 import type { ReadableStream as ReadableStream_2 } from 'node:stream/web';
 import type { ReadableStreamDefaultReader as ReadableStreamDefaultReader_2 } from 'node:stream/web';
+import type { Span } from '@opentelemetry/api';
 import { TransformStream as TransformStream_2 } from 'node:stream/web';
 import type { TypedEventEmitter } from '@livekit/typed-emitter';
 import type { VideoFrame as VideoFrame_2 } from '@livekit/rtc-node';
@@ -153,7 +154,7 @@ export class TTS extends tts.TTS {
     // (undocumented)
     synthesize(text: string, connOptions?: APIConnectOptions, abortSignal?: AbortSignal): tts.ChunkedStream;
     // (undocumented)
-    updateOptions(opts: Partial<Pick<TTSOptions, 'model' | 'language' | 'voice' | 'speed'>>): void;
+    updateOptions(opts: Partial<Pick<TTSOptions, 'model' | 'language' | 'voice' | 'speed' | 'reduceSilence'>>): void;
 }
 
 // @public (undocumented)
@@ -167,6 +168,7 @@ export interface TTSOptions {
     language: string;
     // (undocumented)
     model: string;
+    reduceSilence: boolean;
     // (undocumented)
     sampleRate: number;
     speed: number;

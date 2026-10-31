@@ -17,3 +17,5 @@ export type STTModels =
 export type STTEncoding = 'pcm_s16le' | 'pcm_mulaw';
 
 export type VoiceFocus = 'near-field' | 'far-field';
+
+export type PiiRedactionSubstitution = 'entity_name' | 'hash';

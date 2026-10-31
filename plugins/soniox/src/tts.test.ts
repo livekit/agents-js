@@ -48,6 +48,7 @@ const testOptions: TTSOptions = {
   audioFormat: 'pcm_s16le',
   sampleRate: 24000,
   speed: 1,
+  reduceSilence: false,
 };
 
 function createTTS(options: ConstructorParameters<typeof TTS>[0] = {}): TTS {
@@ -266,6 +267,53 @@ describe('Soniox TTS speed options', () => {
     await consume(synthesizer.synthesize('hello'));
 
     expect(messages[0]).toMatchObject({ speed: 1.3 });
+  });
+});
+
+describe('Soniox TTS reduce silence options', () => {
+  it('propagates reduce silence from constructor and updates', async () => {
+    const { url, messages } = await startServer((socket, message) => {
+      if (typeof message.stream_id === 'string' && typeof message.text === 'string') {
+        socket.send(
+          JSON.stringify({
+            stream_id: message.stream_id,
+            audio: Buffer.alloc(480).toString('base64'),
+            audio_end: true,
+            terminated: true,
+          }),
+        );
+      }
+    });
+    const synthesizer = createTTS({ websocketUrl: url, model: 'tts-rt-v2' });
+
+    await consume(synthesizer.synthesize('default'));
+    synthesizer.updateOptions({ reduceSilence: true });
+    await consume(synthesizer.synthesize('updated'));
+    const enabledSynthesizer = createTTS({
+      websocketUrl: url,
+      model: 'tts-rt-v2',
+      reduceSilence: true,
+    });
+    await consume(enabledSynthesizer.synthesize('enabled'));
+
+    const configs = messages.filter((message) => 'model' in message);
+    expect(configs[0]).not.toHaveProperty('reduce_silence');
+    expect(configs[1]).toMatchObject({ reduce_silence: true });
+    expect(configs[2]).toMatchObject({ reduce_silence: true });
+  });
+
+  it('rejects reduce silence on unsupported models without changing options', () => {
+    expect(() => createTTS({ reduceSilence: true })).toThrow(/reduceSilence/);
+    expect(() => createTTS({ model: 'tts-rt-v1', reduceSilence: true })).toThrow(/reduceSilence/);
+
+    const synthesizer = createTTS();
+    expect(() => synthesizer.updateOptions({ reduceSilence: true })).toThrow(/reduceSilence/);
+    synthesizer.updateOptions({ model: 'tts-rt-v2' });
+    expect(() => synthesizer.updateOptions({ model: 'tts-rt-v1' })).not.toThrow();
+
+    const enabledSynthesizer = createTTS({ model: 'tts-rt-v2', reduceSilence: true });
+    expect(() => enabledSynthesizer.updateOptions({ model: 'tts-rt-v1' })).toThrow(/reduceSilence/);
+    expect(enabledSynthesizer.model).toBe('tts-rt-v2');
   });
 });
 

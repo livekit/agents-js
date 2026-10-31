@@ -20,6 +20,7 @@ import {
   createOrderedHappy,
   createOrderedRegular,
 } from './order.js';
+import { onSimulationEnd, setupSimulation } from './simulation.js';
 
 export interface UserData {
   order: OrderState;
@@ -384,11 +385,17 @@ export default defineAgent({
       },
     });
 
+    const simulation = ctx.simulationContext();
+    if (simulation) {
+      setupSimulation(simulation, session, DriveThruAgent);
+    }
+
     await session.start({
       agent: new DriveThruAgent(userdata),
       room: ctx.room,
     });
   },
+  onSimulationEnd,
 });
 
 // Only run CLI when executed directly, not when imported for testing

@@ -1,6 +1,6 @@
 {
   "name": "@livekit/agents-plugin-mistralai",
-  "version": "1.9.2",
+  "version": "1.9.5",
   "description": "Mistral AI plugin for LiveKit Node Agents",
   "main": "dist/index.js",
   "require": "dist/index.cjs",
@@ -43,7 +43,7 @@
     "vitest": "^4.1.11"
   },
   "dependencies": {
-    "@mistralai/mistralai": "^2.2.1"
+    "@mistralai/mistralai": "^3.4.0"
   },
   "peerDependencies": {
     "@livekit/agents": "workspace:*",
