@@ -23,8 +23,17 @@ class Hyphenator {
     }
 
     for (const exception of exceptions.split(/\s+/)) {
-      const points = [0, ...Array.from(exception).map((c) => (c === '-' ? 1 : 0))];
-      this.exceptions[exception.replace(/-/g, '')] = points;
+      const word = exception.replace(/-/g, '');
+      const points = new Array(word.length + 2).fill(0);
+      let index = 1;
+      for (const char of exception) {
+        if (char === '-') {
+          points[index] = 1;
+        } else {
+          index++;
+        }
+      }
+      this.exceptions[word] = points;
     }
   }
 
