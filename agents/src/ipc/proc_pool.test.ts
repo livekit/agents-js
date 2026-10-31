@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { RunningJobInfo } from '../job.js';
 import { type JobExecutor, JobStatus } from './job_executor.js';
 import * as jobProcExecutorModule from './job_proc_executor.js';
+import { monotonicUs } from './job_trace.js';
 import { ProcPool } from './proc_pool.js';
 
 function createMockExecutor() {
@@ -23,7 +24,10 @@ function createMockExecutor() {
   return executor;
 }
 
-function createPool(numIdleProcesses: number): ProcPool {
+function createPool(
+  numIdleProcesses: number,
+  onJobUpdate?: ConstructorParameters<typeof ProcPool>[0]['onJobUpdate'],
+): ProcPool {
   return new ProcPool({
     agent: 'agent',
     numIdleProcesses,
@@ -32,6 +36,7 @@ function createPool(numIdleProcesses: number): ProcPool {
     sessionEndTimeout: 300_000,
     memoryWarnMB: 0,
     memoryLimitMB: 0,
+    onJobUpdate,
   });
 }
 
@@ -164,6 +169,7 @@ describe('ProcPool warmed process lock handling', () => {
         pingInterval: 2500,
         pingTimeout: 60000,
         highPingThreshold: 500,
+        onJoinTiming: expect.any(Function),
       });
       expect(mockProc.initialize).toHaveBeenCalledWith({ sessionEndTimeout: 300_000 });
       // initMutex released while proc.join() is still pending.
@@ -213,5 +219,50 @@ describe('ProcPool warmed process lock handling', () => {
     } finally {
       jobProcExecutorSpy.mockRestore();
     }
+  });
+});
+
+describe('ProcPool job updates', () => {
+  function jobInfo(): RunningJobInfo {
+    return {
+      acceptArguments: { name: 'n', identity: 'i', metadata: '' },
+      job: { id: 'job-id' },
+      url: 'wss://example.com',
+      token: 'token',
+      workerId: 'worker-id',
+    } as unknown as RunningJobInfo;
+  }
+
+  it('stamps the launch, and reports it and the end of the job', async () => {
+    const onJobUpdate = vi.fn();
+    const pool = createPool(1, onJobUpdate);
+    const executor = createMockExecutor();
+    let exit = () => {};
+    executor.join = vi.fn(() => new Promise<void>((resolve) => (exit = resolve)));
+    await pool.warmedProcQueue.put({ proc: executor, unlock: vi.fn() });
+
+    const info = jobInfo();
+    const before = monotonicUs();
+    await pool.launchJob(info);
+
+    expect(info.launchedMonoUs).toBeGreaterThanOrEqual(before);
+    expect(info.launchedWarm, 'an idle process took the job').toBe(true);
+    expect(onJobUpdate).toHaveBeenCalledExactlyOnceWith(executor);
+
+    exit();
+    await flushMicrotasks();
+    expect(onJobUpdate).toHaveBeenCalledTimes(2);
+    expect(onJobUpdate).toHaveBeenLastCalledWith(executor);
+  });
+
+  it('marks a job that waited for a new process as not warm', async () => {
+    const pool = createPool(1);
+    const info = jobInfo();
+    const launch = pool.launchJob(info);
+    await flushMicrotasks();
+    await pool.warmedProcQueue.put({ proc: createMockExecutor(), unlock: vi.fn() });
+    await launch;
+
+    expect(info.launchedWarm).toBe(false);
   });
 });

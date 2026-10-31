@@ -4,11 +4,14 @@
 import type { JobAssignment, JobTermination, TrackSource } from '@livekit/protocol';
 import {
   type AvailabilityRequest,
+  type JobJoinTiming,
   JobState,
   JobType,
   MigrateJobRequest,
   ParticipantPermission,
+  JobStatus as ProtoJobStatus,
   ServerMessage,
+  UpdateJobStatus,
   WorkerMessage,
   WorkerStatus,
 } from '@livekit/protocol';
@@ -27,6 +30,8 @@ import { _getLocalInferenceModule } from './inference/_warmup.js';
 import { EOT_INFERENCE_METHOD } from './inference/eot/runner.js';
 import { InferenceRunner } from './inference_runner.js';
 import { InferenceProcExecutor } from './ipc/inference_proc_executor.js';
+import { type JobExecutor, JobStatus } from './ipc/job_executor.js';
+import { monotonicUs } from './ipc/job_trace.js';
 import { ProcPool } from './ipc/proc_pool.js';
 import type { JobAcceptArguments, JobProcess, RunningJobInfo } from './job.js';
 import { JobRequest } from './job.js';
@@ -415,6 +420,7 @@ export class AgentServer {
       inferenceExecutor: this.#inferenceExecutor,
       memoryWarnMB: opts.jobMemoryWarnMB,
       memoryLimitMB: opts.jobMemoryLimitMB,
+      onJobUpdate: (proc, joinTiming) => this.#updateJobStatus(proc, joinTiming),
     });
 
     this.#opts = opts;
@@ -544,6 +550,28 @@ export class AgentServer {
     return this.#procPool.processes
       .filter((proc) => proc.runningJob)
       .map((proc) => proc.runningJob!);
+  }
+
+  #updateJobStatus(proc: JobExecutor, joinTiming?: JobJoinTiming) {
+    const info = proc.runningJob;
+    if (!info) return;
+
+    let status = ProtoJobStatus.JS_RUNNING;
+    if (proc.status === JobStatus.FAILED) {
+      status = ProtoJobStatus.JS_FAILED;
+    } else if (proc.status === JobStatus.SUCCESS) {
+      status = ProtoJobStatus.JS_SUCCESS;
+    }
+
+    this.event.emit(
+      'worker_msg',
+      new WorkerMessage({
+        message: {
+          case: 'updateJob',
+          value: new UpdateJobStatus({ jobId: info.job.id, status, error: '', joinTiming }),
+        },
+      }),
+    );
   }
 
   // a reconnected worker reports the jobs it still runs, as they were assigned,
@@ -743,7 +771,7 @@ export class AgentServer {
         case 'availability': {
           if (!msg.message.value.job) return;
           // receipt is now, not when the handler gets to run: that delay is dispatch latency
-          const task = this.#availability(msg.message.value, Date.now());
+          const task = this.#availability(msg.message.value, Date.now(), monotonicUs());
           this.#tasks.push(task);
           task.finally(() => {
             const taskIndex = this.#tasks.indexOf(task);
@@ -871,7 +899,11 @@ export class AgentServer {
     }
   }
 
-  async #availability(msg: AvailabilityRequest, receivedAt: number = Date.now()) {
+  async #availability(
+    msg: AvailabilityRequest,
+    receivedAt: number = Date.now(),
+    receivedMonoUs: number = monotonicUs(),
+  ) {
     let answered = false;
 
     const onReject = async () => {
@@ -893,6 +925,7 @@ export class AgentServer {
     const onAccept = async (args: JobAcceptArguments) => {
       answered = true;
       const acceptedAt = Date.now();
+      const acceptedMonoUs = monotonicUs();
 
       this.event.emit(
         'worker_msg',
@@ -941,6 +974,9 @@ export class AgentServer {
             receivedAt,
             acceptedAt,
             assignedAt: Date.now(),
+            receivedMonoUs,
+            acceptedMonoUs,
+            assignedMonoUs: monotonicUs(),
           });
         } catch (e) {
           this.#logger.child({ requestId: req.id }).error(e, 'error launching job');

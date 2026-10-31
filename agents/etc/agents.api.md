@@ -4765,6 +4765,10 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
     // (undocumented)
     get agent(): LocalParticipant | undefined;
     connect(e2ee?: E2EEOptions, autoSubscribe?: AutoSubscribe, rtcConfig?: RtcConfiguration): Promise<void>;
+    // @internal
+    _connectCalledMonoUs: number;
+    // @internal
+    _connectedMonoUs: number;
     deleteRoom(roomName?: string): Promise<void>;
     // (undocumented)
     get inferenceExecutor(): InferenceExecutor;
@@ -6766,6 +6770,11 @@ export type RunningJobInfo = {
     acceptedAt?: number;
     assignedAt?: number;
     launchedAt?: number;
+    receivedMonoUs?: number;
+    acceptedMonoUs?: number;
+    assignedMonoUs?: number;
+    launchedMonoUs?: number;
+    launchedWarm?: boolean;
 };
 
 // @public

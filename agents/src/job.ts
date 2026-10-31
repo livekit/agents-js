@@ -21,6 +21,7 @@ import * as path from 'node:path';
 import type { Logger } from 'pino';
 import { INFERENCE_PRIORITY_HEADER } from './inference/utils.js';
 import type { InferenceExecutor } from './ipc/inference_executor.js';
+import { monotonicUs } from './ipc/job_trace.js';
 import { log } from './log.js';
 import { SimulationContext, SimulationMode, parseSimulationDispatch } from './simulation.js';
 import {
@@ -167,6 +168,14 @@ export type RunningJobInfo = {
   assignedAt?: number;
   /** A process was acquired from the pool and handed the job. */
   launchedAt?: number;
+  // the same instants in microseconds on the host's monotonic clock, which the job processes
+  // share; reported to the server, where a wall clock step would skew the durations
+  receivedMonoUs?: number;
+  acceptedMonoUs?: number;
+  assignedMonoUs?: number;
+  launchedMonoUs?: number;
+  /** An idle warmed process took the job; false when the job waited for a new one. */
+  launchedWarm?: boolean;
 };
 
 /** Attempted to add a function callback, but the function already exists. */
@@ -226,6 +235,12 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
   /** @internal onSimulationEnd callback, injected by the job runner from the
    * agent definition. */
   _simulationEndFnc?: (ctx: SimulationContext) => unknown;
+
+  /** @internal monotonic microseconds of the first connect() call: the end of the entrypoint's
+   * own work before it */
+  _connectCalledMonoUs = 0;
+  /** @internal monotonic microseconds when connect() returned, once the transport connected */
+  _connectedMonoUs = 0;
 
   private connected: boolean = false;
 
@@ -483,6 +498,7 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
     if (this.connected) {
       return;
     }
+    this._connectCalledMonoUs ||= monotonicUs();
 
     if (this.isFakeJob) {
       this.#logger.debug('job_ctx.connect() is a no-op in console mode');
@@ -505,6 +521,7 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
       'room_connect',
       async (span) => {
         await this.#room.connect(this.#info.url, this.#info.token, opts);
+        this._connectedMonoUs = monotonicUs();
         const local = this.#room.localParticipant;
         span.setAttributes({
           ...(local?.sid ? { [traceTypes.ATTR_PARTICIPANT_ID]: local.sid } : {}),
