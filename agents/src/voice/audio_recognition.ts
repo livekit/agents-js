@@ -2643,7 +2643,8 @@ export class AudioRecognition {
       (delayDuration: number = 500) =>
       async (controller: AbortController) => {
         const canFlush = this.sttPipeline?.manualFlush === true;
-        if (canFlush || Date.now() - this.lastFinalTranscriptTime > delayDuration) {
+        // without an STT there is no final transcript to wait for (e.g. a realtime model)
+        if (this.stt && (canFlush || Date.now() - this.lastFinalTranscriptTime > delayDuration)) {
           if (canFlush) {
             // a manual-flush STT finalizes on request instead of on trailing silence
             this.sttFlushRequested = this.sttPipeline?.flush() ?? false;
