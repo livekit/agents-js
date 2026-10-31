@@ -49,12 +49,14 @@ function response({
   continuationToken,
   promptTokens,
   completionTokens,
+  thoughtsTokens,
 }: {
   text?: string;
   finishReason?: FinishReason;
   continuationToken?: string;
   promptTokens?: number;
   completionTokens?: number;
+  thoughtsTokens?: number;
 } = {}): types.GenerateContentResponse {
   return {
     candidates: [
@@ -70,7 +72,8 @@ function response({
         : {
             promptTokenCount: promptTokens,
             candidatesTokenCount: completionTokens,
-            totalTokenCount: (promptTokens ?? 0) + (completionTokens ?? 0),
+            thoughtsTokenCount: thoughtsTokens,
+            totalTokenCount: (promptTokens ?? 0) + (completionTokens ?? 0) + (thoughtsTokens ?? 0),
           },
   } as types.GenerateContentResponse;
 }
@@ -523,6 +526,52 @@ describe('Google Gemini 4 usage across requests', () => {
       completionTokens: 2000,
       promptTokens: 200,
       totalTokens: 2200,
+    });
+  });
+
+  it('counts thinking tokens in the completion and reports them as reasoning tokens', async () => {
+    const streams = new FakeStreams([
+      [
+        response({
+          text: 'hi',
+          finishReason: FinishReason.STOP,
+          promptTokens: 100,
+          completionTokens: 50,
+          thoughtsTokens: 300,
+        }),
+      ],
+    ]);
+    const [, usage] = await collectWithUsage(google(), streams);
+    expect(usage).toMatchObject({
+      promptTokens: 100,
+      completionTokens: 350,
+      reasoningTokens: 300,
+      totalTokens: 450,
+    });
+  });
+
+  it('sums thinking tokens across requests', async () => {
+    const streams = new FakeStreams([
+      [
+        response({ text: 'one', promptTokens: 100, completionTokens: 50, thoughtsTokens: 300 }),
+        response({ finishReason: CONTINUATION, continuationToken: 'tok-1' }),
+      ],
+      [
+        response({
+          text: ' two',
+          finishReason: FinishReason.STOP,
+          promptTokens: 100,
+          completionTokens: 40,
+          thoughtsTokens: 200,
+        }),
+      ],
+    ]);
+    const [, usage] = await collectWithUsage(google(), streams);
+    expect(usage).toMatchObject({
+      promptTokens: 200,
+      completionTokens: 590,
+      reasoningTokens: 500,
+      totalTokens: 790,
     });
   });
 
