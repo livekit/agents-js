@@ -14,7 +14,7 @@ import {
 } from '@livekit/protocol';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
-import { setImmediate } from 'node:timers/promises';
+import { setTimeout as delay, setImmediate } from 'node:timers/promises';
 import { describe, expect, it, vi } from 'vitest';
 import { WebSocketServer } from 'ws';
 import { type JobExecutor, JobStatus } from './ipc/job_executor.js';
@@ -186,6 +186,36 @@ describe('AgentServer reconnect', () => {
 });
 
 describe('AgentServer job status', () => {
+  const runningProc = (): JobExecutor => ({
+    started: true,
+    userArguments: {},
+    runningJob: {
+      job: new Job({ id: 'AJ_running' }),
+      acceptArguments: { name: 'test', identity: 'agent-identity', metadata: '' },
+      url: 'ws://localhost',
+      token: 'test-token',
+      workerId: 'AW_test',
+    },
+    status: JobStatus.RUNNING,
+    start: vi.fn(async () => {}),
+    initialize: vi.fn(async () => {}),
+    launchJob: vi.fn(async () => {}),
+    join: vi.fn(async () => {}),
+    close: vi.fn(async () => {}),
+  });
+
+  const newServer = (wss: WebSocketServer) =>
+    new AgentServer(
+      new ServerOptions({
+        agent: 'test-agent.js',
+        wsURL: `ws://127.0.0.1:${(wss.address() as AddressInfo).port}`,
+        apiKey: 'devkey',
+        apiSecret: 'devsecret',
+        numIdleProcesses: 0,
+        simulation: true,
+      }),
+    );
+
   it('reports a job launched, connected with its join instants, and ended', async () => {
     const wss = new WebSocketServer({ port: 0 });
     await once(wss, 'listening');
@@ -208,33 +238,8 @@ describe('AgentServer job status', () => {
 
     // the pool calls back on launch, on connect and on the end of the job
     const start = vi.spyOn(ProcPool.prototype, 'start').mockImplementation(() => {});
-    const proc: JobExecutor = {
-      started: true,
-      userArguments: {},
-      runningJob: {
-        job: new Job({ id: 'AJ_running' }),
-        acceptArguments: { name: 'test', identity: 'agent-identity', metadata: '' },
-        url: 'ws://localhost',
-        token: 'test-token',
-        workerId: 'AW_test',
-      },
-      status: JobStatus.RUNNING,
-      start: vi.fn(async () => {}),
-      initialize: vi.fn(async () => {}),
-      launchJob: vi.fn(async () => {}),
-      join: vi.fn(async () => {}),
-      close: vi.fn(async () => {}),
-    };
-    const server = new AgentServer(
-      new ServerOptions({
-        agent: 'test-agent.js',
-        wsURL: `ws://127.0.0.1:${(wss.address() as AddressInfo).port}`,
-        apiKey: 'devkey',
-        apiSecret: 'devsecret',
-        numIdleProcesses: 0,
-        simulation: true,
-      }),
-    );
+    const proc = runningProc();
+    const server = newServer(wss);
 
     const run = server.run().catch(() => undefined);
     try {
@@ -254,6 +259,54 @@ describe('AgentServer job status', () => {
         ProtoJobStatus.JS_FAILED,
       ]);
       expect(updates.map((u) => u.joinTiming)).toEqual([undefined, timing, undefined]);
+    } finally {
+      await server.close();
+      await run;
+      start.mockRestore();
+      wss.close();
+    }
+  });
+
+  it('holds a job update until the connection registers, and drops load updates', async () => {
+    const wss = new WebSocketServer({ port: 0 });
+    await once(wss, 'listening');
+    const seen: string[] = [];
+    const respond = new Future<() => void>();
+    const updated = new Future();
+    wss.on('connection', (ws) => {
+      ws.on('message', (data: Buffer) => {
+        const msg = WorkerMessage.fromBinary(new Uint8Array(data));
+        seen.push(msg.message.case!);
+        if (msg.message.case === 'register') {
+          const res = new RegisterWorkerResponse({ workerId: 'AW_test' });
+          respond.resolve(() => {
+            seen.push('registered');
+            ws.send(new ServerMessage({ message: { case: 'register', value: res } }).toBinary());
+          });
+        } else if (msg.message.case === 'updateJob') {
+          updated.resolve();
+        }
+      });
+    });
+
+    const start = vi.spyOn(ProcPool.prototype, 'start').mockImplementation(() => {});
+    const server = newServer(wss);
+
+    const run = server.run().catch(() => undefined);
+    try {
+      const sendRegistered = await respond.await;
+      const pool = start.mock.contexts[0] as ProcPool;
+      pool.onJobUpdate!(runningProc());
+      server.event.emit(
+        'worker_msg',
+        new WorkerMessage({ message: { case: 'updateWorker', value: { load: 0.5 } } }),
+      );
+      // a message sent at once would reach the server in this time
+      await delay(50);
+      sendRegistered();
+      await updated.await;
+
+      expect(seen).toEqual(['register', 'registered', 'updateJob']);
     } finally {
       await server.close();
       await run;
