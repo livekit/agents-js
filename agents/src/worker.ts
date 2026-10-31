@@ -49,6 +49,7 @@ const MAX_RECONNECT_ATTEMPTS = 10;
 const ASSIGNMENT_TIMEOUT = 7.5 * 1000;
 const UPDATE_LOAD_INTERVAL = 2.5 * 1000;
 const DRAIN_TIMEOUT = 60 * 60 * 1000;
+const MAX_QUEUED_MESSAGES = 128;
 const PROJECT_TYPE = 'nodejs';
 // Mirrors CurrentWorkerProtocol in livekit/protocol. LiveKit Cloud reads this off
 // the /worker endpoint to decide whether the SDK supports agent deployments; a
@@ -356,6 +357,9 @@ export class AgentServer {
 
   event = new EventEmitter();
   #session: WebSocket | undefined = undefined;
+  // the connection that registered; until one does, messages wait in the queue
+  #registeredWS: WebSocket | undefined = undefined;
+  #msgQueue: WorkerMessage[] = [];
   #httpServer?: HTTPServer;
   #logger = log().child({ version });
   #inferenceExecutor?: InferenceProcExecutor;
@@ -424,6 +428,7 @@ export class AgentServer {
     });
 
     this.#opts = opts;
+    this.event.on('worker_msg', (msg: WorkerMessage) => this.#sendMsg(msg));
 
     // Simulations run ephemeral workers side by side; a health endpoint on a fixed port would make
     // concurrent runs collide.
@@ -678,21 +683,28 @@ export class AgentServer {
     );
   }
 
+  #sendMsg(msg: WorkerMessage) {
+    if (this.#registeredWS?.readyState === WebSocket.OPEN) {
+      this.#registeredWS.send(msg.toBinary());
+      return;
+    }
+    // the next connection sends its own load
+    const kind = msg.message.case;
+    if (kind === 'updateWorker' || kind === 'ping') return;
+    if (this.#msgQueue.length >= MAX_QUEUED_MESSAGES) {
+      this.#logger.child({ kind }).warn('worker message queue full, dropping message');
+      return;
+    }
+    this.#msgQueue.push(msg);
+  }
+
   async #runWS(ws: WebSocket) {
     let closingWS = false;
-
-    const send = (msg: WorkerMessage) => {
-      if (closingWS) {
-        this.event.off('worker_msg', send);
-        return;
-      }
-      ws.send(msg.toBinary());
-    };
-    this.event.on('worker_msg', send);
 
     const close = new ThrowsPromise<void, APIStatusError>((resolve, reject) => {
       ws.addEventListener('close', (event) => {
         closingWS = true;
+        if (this.#registeredWS === ws) this.#registeredWS = undefined;
         if (!this.#closed) {
           reject(
             new APIStatusError({
@@ -765,7 +777,10 @@ export class AgentServer {
             msg.message.value.serverInfo,
           );
           this.#connecting = false;
+          this.#registeredWS = ws;
+          // the server learns the running jobs before their queued updates
           this.#reportActiveJobs();
+          for (const queued of this.#msgQueue.splice(0)) ws.send(queued.toBinary());
           break;
         }
         case 'availability': {
@@ -811,8 +826,8 @@ export class AgentServer {
       }
     });
 
-    this.event.emit(
-      'worker_msg',
+    // register goes first, ahead of the queue
+    ws.send(
       new WorkerMessage({
         message: {
           case: 'register',
@@ -831,7 +846,7 @@ export class AgentServer {
             version,
           },
         },
-      }),
+      }).toBinary(),
     );
 
     let currentStatus = WorkerStatus.WS_AVAILABLE;
