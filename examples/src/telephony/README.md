@@ -20,6 +20,8 @@ This replaces the one-shot AMD API. `execute()` now returns `AMDCompletedEvent`,
 not the first `AMDPredictionEvent`: the final `category` and `reason`, whether the
 voicemail message played (`voicemailMessagePlayed`), and the last classified
 prediction (`lastPrediction`). Use `amd_prediction` to observe each prediction.
+To return at the first voicemail prediction, as one-shot AMD did, set
+`voicemailInstructions: null` (see [Customer-handled stages](#customer-handled-stages)).
 The application still decides whether to continue or end the call.
 
 The example hides `end_call` while AMD is active. After voicemail playback, it
@@ -291,7 +293,7 @@ Use `screeningInstructions`, `voicemailInstructions`, `ivrInstructions`, and
 `humanInstructions` to customize them. `humanInstructions` applies to the reply to
 the turn whose `human` prediction completes AMD after a machine stage. It is skipped
 if no machine stage preceded the human, including when earlier predictions were only
-`uncertain`.
+`uncertain`. Set `humanInstructions: null` to keep the Agent's own instructions.
 The customer hook runs before AMD adds its instructions.
 `StopResponse` and interruption remain `AgentSession` responsibilities.
 
@@ -319,6 +321,38 @@ This record survives transitions through `uncertain` and IVR, so returning to
 voicemail does not send a second message. An interrupted or failed attempt can be
 retried on a later voicemail turn. An attempt still playing blocks another message.
 
+### Customer-handled stages
+
+Set `screeningInstructions`, `voicemailInstructions`, or `ivrInstructions` to `null`
+to handle that stage yourself. `undefined` keeps the default instructions. A
+prediction that enters the stage, including a stage correction, completes AMD with
+reason `finished` and the stage as the category. AMD completes before the silence
+hold, so `execute()` returns at the first prediction of that stage. AMD also:
+
+- denies the reply to that turn
+- cancels pending speeches, as for `machine-unavailable`
+- skips menu extraction for `machine-ivr`
+
+AMD never stays in a customer-handled stage, so the first-human rule for screening
+and IVR does not apply to it. After completion, `AgentSession` replies to later
+turns as usual. Hang up or take over before the next turn. For example, to hang up
+at the first voicemail prediction:
+
+```ts
+const detector = new voice.AMD(session, { voicemailInstructions: null });
+await detector.start();
+let result: voice.AMDCompletedEvent;
+try {
+  // Create the SIP participant here.
+  result = await detector.execute();
+} finally {
+  await detector.aclose();
+}
+if (result.category === voice.AMDCategory.MACHINE_VM) {
+  ctx.shutdown('voicemail');
+}
+```
+
 ## DTMF and menus
 
 AMD observes the session's `function_tools_executed` event and retains successful
@@ -331,7 +365,8 @@ after a successful send, preserving the result without requesting a follow-up re
 Failed calls can still request a reply. DTMF completion alone neither triggers
 classification nor proves that a person answered.
 
-Menu extraction runs as separate best-effort work. It never holds a reply.
+Menu extraction runs as separate best-effort work. It never holds a reply. It does
+not run when `ivrInstructions` is `null`.
 Each `amd_menu_observed` event identifies the turn and contains a menu description
 and options with `label`, `dtmf`, and `spokenResponse`. AMD does not build a tree
 or execute the observed menu. Extraction has a 5-second deadline and at most
@@ -361,7 +396,8 @@ The overall limit can end AMD during a silence wait. Without speech-end timing,
 the silence wait starts at EOT.
 
 Finishing AMD immediately clears `session.amd`, removes its listeners and turn
-hooks, and releases session audio and reply authorization. Background cleanup
+hooks, and releases session audio and reply authorization. For `machine-unavailable`
+or a customer-handled stage, it also cancels pending speeches. Background cleanup
 then cancels outstanding work and closes owned resources. `execute()` waits for
 that cleanup and returns the final category and reason. Completion does not
 decide the next call action.

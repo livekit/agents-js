@@ -338,6 +338,46 @@ describe('AMD lifecycle', () => {
     },
   );
 
+  it.each([
+    [AMDCategory.MACHINE_SCREENING, 'screeningInstructions'],
+    [AMDCategory.MACHINE_VM, 'voicemailInstructions'],
+    [AMDCategory.MACHINE_IVR, 'ivrInstructions'],
+  ] as const)(
+    'stage without instructions completes without a reply (%s)',
+    async (category, option) => {
+      const { detector, session, classifier, model } = await running({ [option]: null });
+      await commit(detector, session, classifier, { reply: true });
+      classifier.prediction(1, category);
+      const result = await waitFor(detector.execute());
+      expect(result.category).toBe(category);
+      expect(result.reason).toBe(AMDReason.FINISHED);
+      expect(result.lastPrediction?.turnId).toBe(1);
+      expect(result.voicemailMessagePlayed).toBe(false);
+      await eventually(() => noPendingSpeech(session));
+      expect(model.calls.empty).toBe(true);
+      expect(classifier.menuRequests.empty).toBe(true);
+      expect(session._turnHooks).toBeUndefined();
+    },
+  );
+
+  it('human instructions null keeps agent instructions', async () => {
+    const { detector, session, classifier, model } = await running({ humanInstructions: null });
+    const hooks = (await commit(detector, session, classifier))!;
+    // voicemail has no likely-human turn, so the first human prediction completes AMD
+    classifier.prediction(1, AMDCategory.MACHINE_VM);
+    expect(await hooks.shouldReply(new ChatContext())).toBe(true);
+
+    await commit(detector, session, classifier, { reply: true });
+    classifier.prediction(2, AMDCategory.HUMAN);
+    const call = await model.calls.get();
+    const messages = call.chatCtx.items.filter(
+      (item): item is ChatMessage => item instanceof ChatMessage,
+    );
+    expect(messages.some((m) => m.id.startsWith(internals(detector).controlPrefix))).toBe(false);
+    expect((await detector.execute()).category).toBe(AMDCategory.HUMAN);
+    await eventually(() => noPendingSpeech(session));
+  });
+
   it.each([false, true])(
     'late unavailable does not cancel reply (playback started: %s)',
     async (playbackStarted) => {

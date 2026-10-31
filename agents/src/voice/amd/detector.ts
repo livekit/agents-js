@@ -78,6 +78,12 @@ const MACHINE_CATEGORIES: ReadonlySet<AMDCategory> = new Set([
   AMDCategory.MACHINE_IVR,
   AMDCategory.MACHINE_UNAVAILABLE,
 ]);
+/** Machine stages that AMD answers with stage instructions. */
+const REPLY_STAGES: ReadonlySet<AMDCategory> = new Set([
+  AMDCategory.MACHINE_SCREENING,
+  AMDCategory.MACHINE_VM,
+  AMDCategory.MACHINE_IVR,
+]);
 
 const SIP_CALL_STATUS_ATTR = 'sip.callStatus';
 const SIP_CALL_STATUS_ACTIVE = 'active';
@@ -127,20 +133,27 @@ export interface AMDOptions {
    * to subscribed SIP early media. Defaults to `true`.
    */
   waitUntilAnswered?: boolean;
-  /** Instructions for each screening turn. */
-  screeningInstructions?: string;
-  /** Instructions for one successfully played voicemail message. */
-  voicemailInstructions?: string;
+  /**
+   * Instructions for each screening turn. `null` completes AMD when the call enters
+   * screening, without a reply.
+   */
+  screeningInstructions?: string | null;
+  /**
+   * Instructions for one successfully played voicemail message. `null` completes AMD at
+   * the first voicemail prediction, without a message.
+   */
+  voicemailInstructions?: string | null;
   /**
    * Instructions for each IVR turn. The SDK supplies a DTMF tool only to IVR reply
-   * generations.
+   * generations. `null` completes AMD when the call enters IVR, without a reply or menu
+   * extraction.
    */
-  ivrInstructions?: string;
+  ivrInstructions?: string | null;
   /**
    * Temporary instructions for the first human turn after a machine stage. Skipped if no
-   * machine stage preceded the human.
+   * machine stage preceded the human. `null` keeps the Agent's own instructions.
    */
-  humanInstructions?: string;
+  humanInstructions?: string | null;
   /** Silent, inactive time before AMD completes outside voicemail, in ms. Defaults to 10 s. */
   idleTimeout?: number;
   /**
@@ -217,7 +230,7 @@ class AMDTurnHooks implements TurnHooks {
 
   async shouldReply(chatCtx: ChatContext): Promise<boolean> {
     if (this.turnId === undefined) {
-      return this.amd._state !== AMDCategory.MACHINE_UNAVAILABLE && !this.amd._shouldWait;
+      return !this.amd._forbidsReply && !this.amd._shouldWait;
     }
     const decision = await this.amd._shouldReply(this.turnId, chatCtx);
     this.trackVoicemail = decision.trackVoicemail ?? false;
@@ -241,7 +254,8 @@ class AMDTurnHooks implements TurnHooks {
  * Multi-turn answering-machine detection.
  *
  * Start an AgentSession before starting AMD. Start AMD before creating a SIP
- * participant. `execute()` waits for completion, not the first machine prediction.
+ * participant. `execute()` waits for completion, not the first machine prediction,
+ * unless that stage's instructions are `null`.
  * The SDK owns classification and stage control. Models can use any provider.
  *
  * AMD uses the customer's current Agent. Realtime models require client-side
@@ -275,7 +289,7 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
   private stt: STT | undefined;
   private participantIdentity: string | undefined;
   private readonly waitUntilAnswered: boolean;
-  private readonly instructions: ReadonlyMap<AMDCategory, string>;
+  private readonly instructions: ReadonlyMap<AMDCategory, string | null>;
   private readonly options: ResolvedOptions;
   private uncertainTurns = 0;
   private inferenceTimeouts = 0;
@@ -1023,6 +1037,11 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
       this.likelyHuman = false;
     }
     const result = fsm.transition(this._state, category);
+    let effects = result.effects;
+    if (this.returnsEarly(result.nextState)) {
+      // the customer handles this stage: no reply and no menu extraction
+      effects = [fsm.Effect.COMPLETE];
+    }
     const stateChanged = result.nextState !== this._state;
     if (stateChanged) {
       this.previousStage = this._state;
@@ -1035,7 +1054,7 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     this.inferenceTimeouts = 0;
     this.uncertainTurns = category === AMDCategory.UNCERTAIN ? this.uncertainTurns + 1 : 0;
     this.recordPrediction(turn, AMDReason.PREDICTION, {
-      effects: result.effects,
+      effects,
       stateChanged,
       correctsStage: result.correctsStage,
     });
@@ -1122,10 +1141,7 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
         return { allow: false };
       }
     }
-    if (
-      this.lifecycle === AMDLifecycle.FINISHED &&
-      this._state === AMDCategory.MACHINE_UNAVAILABLE
-    ) {
+    if (this.lifecycle === AMDLifecycle.FINISHED && this._forbidsReply) {
       return { allow: false };
     }
     if (!this.turns.has(turnId)) {
@@ -1161,9 +1177,12 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
       return { allow: false };
     }
     if (this.lifecycle === AMDLifecycle.FINISHED) {
-      const humanAfterMachine = category === AMDCategory.HUMAN && this.hadMachineStage;
+      const humanAfterMachine =
+        category === AMDCategory.HUMAN &&
+        this.hadMachineStage &&
+        this.instructions.get(AMDCategory.HUMAN) !== null;
       return {
-        allow: category !== AMDCategory.MACHINE_UNAVAILABLE,
+        allow: !this._forbidsReply,
         instructionsFor: humanAfterMachine ? AMDCategory.HUMAN : undefined,
       };
     }
@@ -1191,9 +1210,26 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     };
   }
 
+  /**
+   * Whether the call is unavailable or in a stage the customer handles.
+   *
+   * @internal
+   */
+  get _forbidsReply(): boolean {
+    return this._state === AMDCategory.MACHINE_UNAVAILABLE || this.returnsEarly(this._state);
+  }
+
+  /** Whether entering this machine stage completes AMD: its instructions are `null`. */
+  private returnsEarly(stage: AMDCategory): boolean {
+    return REPLY_STAGES.has(stage) && this.instructions.get(stage) === null;
+  }
+
   /** @internal */
   _getInstructions(stage: AMDCategory): string {
-    let content = this.instructions.get(stage)!;
+    let content = this.instructions.get(stage);
+    if (content === null || content === undefined) {
+      throw new Error(`amd has no instructions for ${stage}`);
+    }
     if (stage === AMDCategory.MACHINE_IVR && this.voicemailMessagePlayed) {
       content += '\nThe voicemail message already played locally.';
     }
@@ -1443,7 +1479,7 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
       }
       const activity = session._activity;
       if (activity) {
-        if (this._state === AMDCategory.MACHINE_UNAVAILABLE) {
+        if (this._forbidsReply) {
           activity._cancelPendingSpeeches();
         } else {
           activity._cancelPreemptiveGeneration();

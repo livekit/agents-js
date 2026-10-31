@@ -809,6 +809,8 @@ export class AMD extends AMD_base {
     // @internal (undocumented)
     _deadlineAt(now: number): number | undefined;
     execute(): Promise<AMDCompletedEvent>;
+    // @internal
+    get _forbidsReply(): boolean;
     // @internal (undocumented)
     _getInstructions(stage: AMDCategory): string;
     // @internal (undocumented)
@@ -903,20 +905,20 @@ export interface AMDMenuObservedEvent {
 
 // @public (undocumented)
 export interface AMDOptions {
-    humanInstructions?: string;
+    humanInstructions?: string | null;
     idleTimeout?: number;
     inferenceTimeout?: number;
-    ivrInstructions?: string;
+    ivrInstructions?: string | null;
     llm?: LLM | string | null;
     machineSilenceThreshold?: number;
     maxInferenceTimeouts?: number;
     maxUncertainTurns?: number;
     participantIdentity?: string;
-    screeningInstructions?: string;
+    screeningInstructions?: string | null;
     stt?: STT | string | null;
     timeout?: number;
     voicemailIdleTimeout?: number;
-    voicemailInstructions?: string;
+    voicemailInstructions?: string | null;
     waitUntilAnswered?: boolean;
 }
 
