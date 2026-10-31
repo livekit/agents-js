@@ -787,3 +787,35 @@ describe('SpeechStream graceful close', () => {
     }
   });
 });
+
+describe('SpeechStream cancellation', () => {
+  it('closes an idle sender and tolerates repeated close', async () => {
+    const { wss, baseUrl } = await startWebSocketServer();
+    const connected = once(wss, 'connection');
+    const soniox = new STT({ apiKey: 'test-key', baseUrl });
+    const errors: unknown[] = [];
+    soniox.on('error', (event) => errors.push(event.error));
+    const stream = soniox.stream({ connOptions: { maxRetry: 0 } });
+    const consumer = (async () => {
+      for await (const _event of stream) {
+        /* Drain output. */
+      }
+    })();
+    try {
+      const [socket] = await connected;
+      const config = once(socket, 'message');
+      const closed = once(socket, 'close');
+      await config;
+      stream.close();
+      stream.close();
+      await Promise.all([consumer, closed]);
+      expect(errors).toEqual([]);
+    } finally {
+      stream.close();
+      await consumer;
+      await soniox.close();
+      for (const socket of wss.clients) socket.terminate();
+      await closeWebSocketServer(wss);
+    }
+  });
+});

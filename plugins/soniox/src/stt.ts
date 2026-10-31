@@ -307,9 +307,8 @@ export class SpeechStream extends stt.SpeechStream {
   }
 
   async #sendAudio(ws: WebSocket): Promise<void> {
-    const abortPromise = waitForAbort(this.abortSignal);
     while (!this.closed) {
-      const result = await Promise.race([this.input.next(), abortPromise]);
+      const result = await this.input.next({ signal: this.abortSignal });
       if (result === undefined || result.done) {
         break;
       }
