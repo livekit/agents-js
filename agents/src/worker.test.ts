@@ -3,10 +3,13 @@
 // SPDX-License-Identifier: Apache-2.0
 import {
   Job,
+  JobJoinTiming,
   JobState,
   type MigrateJobRequest,
+  JobStatus as ProtoJobStatus,
   RegisterWorkerResponse,
   ServerMessage,
+  type UpdateJobStatus,
   WorkerMessage,
 } from '@livekit/protocol';
 import { once } from 'node:events';
@@ -177,6 +180,84 @@ describe('AgentServer reconnect', () => {
       await server.close();
       await run;
       processes.mockRestore();
+      wss.close();
+    }
+  });
+});
+
+describe('AgentServer job status', () => {
+  it('reports a job launched, connected with its join instants, and ended', async () => {
+    const wss = new WebSocketServer({ port: 0 });
+    await once(wss, 'listening');
+    const registered = new Future();
+    const updates: UpdateJobStatus[] = [];
+    const allUpdates = new Future();
+    wss.on('connection', (ws) => {
+      ws.on('message', (data: Buffer) => {
+        const msg = WorkerMessage.fromBinary(new Uint8Array(data));
+        if (msg.message.case === 'register') {
+          const res = new RegisterWorkerResponse({ workerId: 'AW_test' });
+          ws.send(new ServerMessage({ message: { case: 'register', value: res } }).toBinary());
+          registered.resolve();
+        } else if (msg.message.case === 'updateJob') {
+          updates.push(msg.message.value);
+          if (updates.length === 3) allUpdates.resolve();
+        }
+      });
+    });
+
+    // the pool calls back on launch, on connect and on the end of the job
+    const start = vi.spyOn(ProcPool.prototype, 'start').mockImplementation(() => {});
+    const proc: JobExecutor = {
+      started: true,
+      userArguments: {},
+      runningJob: {
+        job: new Job({ id: 'AJ_running' }),
+        acceptArguments: { name: 'test', identity: 'agent-identity', metadata: '' },
+        url: 'ws://localhost',
+        token: 'test-token',
+        workerId: 'AW_test',
+      },
+      status: JobStatus.RUNNING,
+      start: vi.fn(async () => {}),
+      initialize: vi.fn(async () => {}),
+      launchJob: vi.fn(async () => {}),
+      join: vi.fn(async () => {}),
+      close: vi.fn(async () => {}),
+    };
+    const server = new AgentServer(
+      new ServerOptions({
+        agent: 'test-agent.js',
+        wsURL: `ws://127.0.0.1:${(wss.address() as AddressInfo).port}`,
+        apiKey: 'devkey',
+        apiSecret: 'devsecret',
+        numIdleProcesses: 0,
+        simulation: true,
+      }),
+    );
+
+    const run = server.run().catch(() => undefined);
+    try {
+      await registered.await;
+      const pool = start.mock.contexts[0] as ProcPool;
+      const timing = new JobJoinTiming({ acceptedUs: 7n, connectedUs: 9n });
+      pool.onJobUpdate!(proc);
+      pool.onJobUpdate!(proc, timing);
+      proc.status = JobStatus.FAILED;
+      pool.onJobUpdate!(proc);
+      await allUpdates.await;
+
+      expect(updates.map((u) => u.jobId)).toEqual(['AJ_running', 'AJ_running', 'AJ_running']);
+      expect(updates.map((u) => u.status)).toEqual([
+        ProtoJobStatus.JS_RUNNING,
+        ProtoJobStatus.JS_RUNNING,
+        ProtoJobStatus.JS_FAILED,
+      ]);
+      expect(updates.map((u) => u.joinTiming)).toEqual([undefined, timing, undefined]);
+    } finally {
+      await server.close();
+      await run;
+      start.mockRestore();
       wss.close();
     }
   });

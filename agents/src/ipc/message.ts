@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import type { JsonValue } from '@bufbuild/protobuf';
 import type { RunningJobInfo } from '../job.js';
 import type { LoggerOptions } from '../log.js';
 
@@ -58,4 +59,9 @@ export type IPCMessage =
   | {
       case: 'done';
       value: undefined;
+    }
+  | {
+      // the job connected: its join instants, a JobJoinTiming as JSON, for the worker to report
+      case: 'joinTiming';
+      value: JsonValue;
     };

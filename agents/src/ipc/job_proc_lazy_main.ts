@@ -33,7 +33,7 @@ import { Future, shortuuid } from '../utils.js';
 import { defaultInitializeProcessFunc } from '../worker.js';
 import { preload } from './_preload.js';
 import type { InferenceExecutor } from './inference_executor.js';
-import { startJobSpan } from './job_trace.js';
+import { joinTiming, monotonicUs, startJobSpan } from './job_trace.js';
 import type { IPCMessage } from './message.js';
 
 const ORPHANED_TIMEOUT = 15 * 1000;
@@ -143,8 +143,16 @@ const startJob = (
     }
   });
 
+  let entrypointStartedMonoUs = 0;
   const onConnect = () => {
     connect = true;
+    const timing = joinTiming(
+      info,
+      entrypointStartedMonoUs,
+      ctx._connectCalledMonoUs,
+      ctx._connectedMonoUs,
+    );
+    if (timing) safeSend({ case: 'joinTiming', value: timing.toJson() });
   };
   const onShutdown = (reason: string) => {
     shutdown = true;
@@ -175,6 +183,7 @@ const startJob = (
     // the job's root span, from the availability request to the end of shutdown; the
     // entrypoint returning is an event on it. A close that arrived while the pipeline was
     // being prepared skips the entrypoint (below), so its start is not a stage of this job
+    if (!shutdown) entrypointStartedMonoUs = monotonicUs();
     const jobSpan = startJobSpan(ctx, shutdown ? null : Date.now());
     const jobSpanContext = trace.setSpan(otelContext.active(), jobSpan);
     ctx._jobSpanContext = jobSpanContext;

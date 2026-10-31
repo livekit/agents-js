@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { JobJoinTiming } from '@livekit/protocol';
 import type { Span } from '@opentelemetry/api';
 import type { JobContext, RunningJobInfo } from '../job.js';
 import { traceTypes, tracer } from '../telemetry/index.js';
@@ -73,6 +74,53 @@ export function recordDispatchTimeline(
     // the server's own start time, for lining up with server-side traces
     span.addEvent('job_started_on_server', undefined, serverTimestampMs(serverStarted));
   }
+}
+
+/**
+ * Microseconds on the host's monotonic clock. Unlike `performance.now()`, its origin is shared by
+ * every process on the host, so the worker and its job processes can compare their readings.
+ */
+export function monotonicUs(): number {
+  return Number(process.hrtime.bigint() / 1000n);
+}
+
+/**
+ * The worker-side instants of the join, for the server's job status update. Undefined when one
+ * is unknown (simulation, console): a missing instant would arrive as 0, which the server cannot
+ * tell apart from a real one.
+ */
+export function joinTiming(
+  info: Pick<
+    RunningJobInfo,
+    'receivedMonoUs' | 'acceptedMonoUs' | 'assignedMonoUs' | 'launchedMonoUs' | 'launchedWarm'
+  >,
+  entrypointStartedMonoUs: number,
+  connectCalledMonoUs: number,
+  connectedMonoUs: number,
+): JobJoinTiming | undefined {
+  const stamps = [
+    info.receivedMonoUs,
+    info.acceptedMonoUs,
+    info.assignedMonoUs,
+    info.launchedMonoUs,
+    entrypointStartedMonoUs,
+    connectCalledMonoUs,
+    connectedMonoUs,
+  ];
+  if (!stamps.every((s) => s)) return undefined;
+  const [received, accepted, assigned, launched, entrypoint, connectCalled, connected] = stamps.map(
+    (s) => BigInt(s!),
+  );
+  return new JobJoinTiming({
+    offerReceivedUs: received,
+    acceptedUs: accepted,
+    assignmentReceivedUs: assigned,
+    launchedUs: launched,
+    launchWarm: info.launchedWarm ?? false,
+    entrypointStartedUs: entrypoint,
+    connectCalledUs: connectCalled,
+    connectedUs: connected,
+  });
 }
 
 /**
