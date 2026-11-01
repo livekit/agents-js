@@ -566,3 +566,37 @@ describe('RoomIO participant switch tracing', () => {
     }
   });
 });
+
+describe('RoomIO text input', () => {
+  it('runs the text input callback in the job context', async () => {
+    const job = {} as jobModule.JobContext;
+    const room = createFakeRoom();
+    room.remoteParticipants.set('user', { identity: 'user' });
+    const session = createFakeSession();
+    let resolveCallbackJob!: (job: jobModule.JobContext | undefined) => void;
+    const callbackJob = new Promise<jobModule.JobContext | undefined>((resolve) => {
+      resolveCallbackJob = resolve;
+    });
+    const roomIO = jobModule.runWithJobContext(
+      job,
+      () =>
+        new RoomIO({
+          agentSession: session as unknown as RoomIOArgs['agentSession'],
+          room: room as unknown as RoomIOArgs['room'],
+          inputOptions: {
+            audioEnabled: false,
+            textInputCallback: () => resolveCallbackJob(jobModule.getJobContext(false)),
+          },
+          outputOptions: { audioEnabled: false, transcriptionEnabled: false },
+        }),
+    );
+    roomIO.start();
+
+    // rtc-node calls text stream handlers from its FFI callback, outside the job context
+    const onUserTextInput = room.registerTextStreamHandler.mock.calls[0]![1];
+    onUserTextInput({ readAll: async () => 'hello', info: {} }, { identity: 'user' });
+
+    expect(await callbackJob).toBe(job);
+    await roomIO.close();
+  });
+});

@@ -19,7 +19,7 @@ import {
 import type { Context } from '@opentelemetry/api';
 import type { WritableStreamDefaultWriter } from 'node:stream/web';
 import { ATTRIBUTE_PUBLISH_ON_BEHALF, TOPIC_CHAT } from '../../constants.js';
-import { type JobContext, getJobContext } from '../../job.js';
+import { type JobContext, getJobContext, runWithJobContextAsync } from '../../job.js';
 import { RealtimeModel } from '../../llm/index.js';
 import { log } from '../../log.js';
 import { IdentityTransform } from '../../stream/identity_transform.js';
@@ -406,7 +406,10 @@ export class RoomIO {
       }
     };
 
-    readText().catch((error) => {
+    // rtc-node calls this handler from its FFI callback, which has no job context on Node 24
+    const jobContext = this.jobContext ?? getJobContext(false);
+    const textInput = jobContext ? runWithJobContextAsync(jobContext, readText) : readText();
+    textInput.catch((error) => {
       this.logger.error({ error }, 'Error reading text input');
     });
   };
