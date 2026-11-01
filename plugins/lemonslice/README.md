@@ -75,6 +75,8 @@ lk dispatch create \
 | `agentPrompt` | `string` | A prompt that subtly influences the avatar's movements and expressions while responding. |
 | `agentIdlePrompt` | `string` | A prompt that subtly influences the avatar's movements and expressions while idle. |
 | `idleTimeout` | `number` | The idle timeout, in seconds. |
+| `audioSampleRate` | `number` | Sample rate of the audio sent to the avatar. One of `16000`, `22050`, `24000`, `44100`, or `48000`. Defaults to `24000`. |
+| `model` | `string` | The LemonSlice model to run the avatar on. Uses the default model when not set. |
 | `extraPayload` | `Record<string, unknown>` | Additional LemonSlice session payload fields to forward to LemonSlice. Keys are automatically converted from camelCase to snake_case |
 | `apiUrl` | `string` | The LemonSlice API URL. Defaults to `LEMONSLICE_API_URL` env var or the default LemonSlice API endpoint. |
 | `apiKey` | `string` | The LemonSlice API key. Defaults to `LEMONSLICE_API_KEY` env var. |
