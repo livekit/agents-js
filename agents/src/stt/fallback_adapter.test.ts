@@ -488,7 +488,7 @@ describe('FallbackSpeechStream (streaming path)', () => {
     expect(fallbackStream?.startTimeOffset).toBeGreaterThanOrEqual(30);
   });
 
-  it('preserves child stream timeline across outer SpeechStream retries', async () => {
+  it('does not advance the child timeline across outer retries without new audio', async () => {
     const stt = new RetryTimelineSTT('outer');
     const adapter = new FallbackAdapter({ sttInstances: [stt] });
 
@@ -504,12 +504,10 @@ describe('FallbackSpeechStream (streaming path)', () => {
     expect(events.map((e) => e.alternatives?.[0]?.text)).toEqual(['recovered']);
     expect(stt.mainStreams).toHaveLength(2);
     expect(stt.mainStreams[0]?.startTimeOffset).toBeGreaterThanOrEqual(30);
-    expect(stt.mainStreams[1]?.startTimeOffset).toBeGreaterThan(
-      stt.mainStreams[0]!.startTimeOffset,
-    );
+    expect(stt.mainStreams[1]?.startTimeOffset).toBeCloseTo(30, 1);
   });
 
-  it('preserves child stream timeline across provider retries', async () => {
+  it('does not advance the child timeline across retries without new audio', async () => {
     const stt = new RetryTimelineSTT('child');
     const adapter = new FallbackAdapter({ sttInstances: [stt] });
 
@@ -526,7 +524,7 @@ describe('FallbackSpeechStream (streaming path)', () => {
     expect(stt.mainStreams).toHaveLength(1);
     expect(stt.mainStreams[0]?.runOffsets).toHaveLength(2);
     expect(stt.mainStreams[0]?.runOffsets[0]).toBeGreaterThanOrEqual(30);
-    expect(stt.mainStreams[0]!.runOffsets[1]).toBeGreaterThan(stt.mainStreams[0]!.runOffsets[0]!);
+    expect(stt.mainStreams[0]!.runOffsets[1]).toBe(stt.mainStreams[0]!.runOffsets[0]);
   });
 
   it('stream marks every instance unavailable when all children fail', async () => {

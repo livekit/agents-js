@@ -62,7 +62,7 @@ function makeSpeechStream() {
     speaking: false,
     requestId: 'req-1',
     speechDuration: 0,
-    _startTimeOffset: 0,
+    input: { startTimeOffset: 0 },
     _pendingExtra: undefined,
     opts: { language: 'en' },
   }) as InferenceSpeechStream<STTModels>;
@@ -129,6 +129,44 @@ describe('Inference STT start of speech', () => {
 
     expect(events).toEqual([]);
     expect(stream._speaking).toBe(false);
+  });
+
+  it('does not open a turn for an empty final flush result', () => {
+    const { stream, events } = makeSpeechStream();
+
+    stream['processTranscript'](transcript('', true), SpeechEventType.FINAL_TRANSCRIPT);
+
+    expect(events).toEqual([]);
+    expect(stream._speaking).toBe(false);
+  });
+
+  it('closes an active turn with an empty final without opening another one', () => {
+    const { stream, events } = makeSpeechStream();
+    stream['processStartOfSpeech']();
+    events.length = 0;
+
+    stream['processTranscript'](transcript('', true), SpeechEventType.FINAL_TRANSCRIPT);
+
+    expect(events.map((event) => event.type)).toEqual([
+      SpeechEventType.FINAL_TRANSCRIPT,
+      SpeechEventType.END_OF_SPEECH,
+    ]);
+  });
+
+  it('uses the last word rather than billed duration for speech end timing', () => {
+    const { stream, events } = makeSpeechStream();
+    stream.startTimeOffset = 7;
+    stream['processTranscript'](
+      {
+        ...transcript('hello', true),
+        duration: 12.5,
+        words: [{ word: 'hello', start: 0.1, end: 0.4, confidence: 1 }],
+      },
+      SpeechEventType.FINAL_TRANSCRIPT,
+    );
+
+    const endpoint = events.find((event) => event.type === SpeechEventType.END_OF_SPEECH)!;
+    expect(endpoint.alternatives?.[0]?.endTime).toBeCloseTo(7.4);
   });
 
   it('resets onset after the turn ends', () => {
@@ -625,6 +663,8 @@ describe('STT aligned transcript capability', () => {
     expect(final.alternatives[0]?.words).toEqual([]);
     expect(final.alternatives[0]?.startTime).toBe(0);
     expect(final.alternatives[0]?.endTime).toBe(12.5);
+    const endpoint = events.find((event) => event.type === SpeechEventType.END_OF_SPEECH);
+    expect(endpoint?.alternatives).toBeUndefined();
   });
 });
 

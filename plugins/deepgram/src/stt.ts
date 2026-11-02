@@ -316,6 +316,7 @@ export class SpeechStream extends stt.SpeechStream {
   #speaking = false;
   #resetWS = new Future();
   #requestId = '';
+  #finalAlternatives: stt.SpeechData[] = [];
   // keyterms set while the user is speaking; applied at END_OF_SPEECH (latest wins)
   /** @internal */
   _pendingKeyterm: string[] | null = null;
@@ -377,6 +378,8 @@ export class SpeechStream extends stt.SpeechStream {
           headers: { Authorization: `Token ${this.#opts.apiKey}` },
         });
         await waitForWebSocketOpen(ws, 'Deepgram');
+        this.restartProviderClock();
+        this.#finalAlternatives = [];
       } catch (error) {
         if (error instanceof APIStatusError || error instanceof APIConnectionError) throw error;
         throw new APIConnectionError({
@@ -591,6 +594,9 @@ export class SpeechStream extends stt.SpeechStream {
                   }
 
                   if (isFinal) {
+                    const words = json['channel']['alternatives'][0]?.['words'] ?? [];
+                    this.#finalAlternatives =
+                      words.length > 0 && (words.at(-1)?.['end'] ?? 0) > 0 ? alternatives : [];
                     putMessage({
                       type: stt.SpeechEventType.FINAL_TRANSCRIPT,
                       alternatives: [alternatives[0], ...alternatives.slice(1)],
@@ -608,7 +614,18 @@ export class SpeechStream extends stt.SpeechStream {
                 // a non-empty transcript (deepgram doesn't have a SpeechEnded event)
                 if (isEndpoint && this.#speaking) {
                   this.#speaking = false;
-                  putMessage({ type: stt.SpeechEventType.END_OF_SPEECH });
+                  putMessage({
+                    type: stt.SpeechEventType.END_OF_SPEECH,
+                    ...(this.#finalAlternatives.length > 0
+                      ? {
+                          alternatives: [
+                            this.#finalAlternatives[0]!,
+                            ...this.#finalAlternatives.slice(1),
+                          ],
+                        }
+                      : {}),
+                  });
+                  this.#finalAlternatives = [];
                   this.#onEndOfSpeech();
                 }
 
@@ -618,9 +635,29 @@ export class SpeechStream extends stt.SpeechStream {
                 break;
               }
               case 'UtteranceEnd': {
+                const lastWordEnd = json['last_word_end'] ?? 0;
+                if (lastWordEnd < 0) break;
                 if (this.#speaking) {
                   this.#speaking = false;
-                  putMessage({ type: stt.SpeechEventType.END_OF_SPEECH });
+                  const alternatives =
+                    lastWordEnd > 0
+                      ? [
+                          {
+                            language: normalizeLanguage(this.#opts.language!),
+                            text: '',
+                            startTime: 0,
+                            endTime: this.startTimeOffset + lastWordEnd,
+                            confidence: 0,
+                          },
+                        ]
+                      : this.#finalAlternatives;
+                  putMessage({
+                    type: stt.SpeechEventType.END_OF_SPEECH,
+                    ...(alternatives.length > 0
+                      ? { alternatives: [alternatives[0]!, ...alternatives.slice(1)] }
+                      : {}),
+                  });
+                  this.#finalAlternatives = [];
                   this.#onEndOfSpeech();
                 }
                 break;

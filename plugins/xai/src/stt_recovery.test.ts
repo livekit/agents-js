@@ -9,7 +9,7 @@ import {
   AgentSession,
   AgentSessionEventTypes,
   log,
-  type stt,
+  stt,
 } from '@livekit/agents';
 import { AudioFrame } from '@livekit/rtc-node';
 import { once } from 'node:events';
@@ -84,6 +84,34 @@ describe('xai STT recovery', () => {
     stream.close();
     await vi.waitFor(() => expect(server.clients.size).toBe(0));
     expect(onError).not.toHaveBeenCalled();
+  });
+  it('reports word timing with the stream offset on speech end', async () => {
+    await startServer();
+    server.on('connection', (socket) => {
+      socket.once('pong', () => {
+        socket.send(JSON.stringify({ type: 'transcript.created' }));
+        socket.send(
+          JSON.stringify({
+            type: 'transcript.partial',
+            text: 'hello',
+            is_final: true,
+            speech_final: true,
+            language: 'en',
+            words: [{ text: 'hello', start: 0.1, end: 0.4 }],
+          }),
+        );
+      });
+      socket.ping();
+    });
+    const started = startStream();
+    stream = started.stream;
+    stream.startTimeOffset = 7;
+    for await (const event of stream) {
+      if (event.type === stt.SpeechEventType.END_OF_SPEECH) {
+        expect(event.alternatives?.[0]?.endTime).toBeCloseTo(7.4);
+        break;
+      }
+    }
   });
   it.each([1000, 1006, 1011])(
     'preserves an API error after unexpected closure %i',

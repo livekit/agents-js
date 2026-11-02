@@ -725,9 +725,10 @@ describe('ElevenLabs STT', () => {
       expect(speechEvents[2]?.alternatives?.[0]).toMatchObject({
         text: 'hello',
         language: 'en',
-        startTime: 1.1,
-        endTime: 1.4,
       });
+      expect(speechEvents[2]?.alternatives?.[0]?.startTime).toBeCloseTo(1.1, 1);
+      expect(speechEvents[2]?.alternatives?.[0]?.endTime).toBeCloseTo(1.4, 1);
+      expect(speechEvents[3]?.alternatives?.[0]).toEqual(speechEvents[2]?.alternatives?.[0]);
       expect(speechEvents[2]?.alternatives?.[0]?.words).toBeUndefined();
     } finally {
       await closeWebSocketServer(wss);

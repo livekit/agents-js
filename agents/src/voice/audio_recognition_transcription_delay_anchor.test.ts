@@ -19,6 +19,7 @@ interface RecognitionInternals {
   speaking: boolean;
   sttPipeline: { inputStartedAt: number };
   userTurnCommitted: boolean;
+  sttTurnEnded: boolean;
   onSTTEvent: (event: SpeechEvent) => Promise<void>;
   runEOUDetection: () => void;
 }
@@ -294,6 +295,34 @@ describe('AudioRecognition transcription delay anchor', () => {
 
     expect(internals.lastSpeakingTime).toBe(now);
     expect(internals.userTurnCommitted).toBe(true);
+  });
+
+  it('keeps an ended turn boundary when an untimed final arrives late', async () => {
+    let now = 20_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const { internals } = makeRecognition({ inputStartedAt: 10_000, mode: 'stt' });
+
+    await internals.onSTTEvent(speechEvent(SpeechEventType.END_OF_SPEECH, 9.4, ''));
+    expect(internals.lastSpeakingTime).toBe(19_400);
+    expect(internals.sttTurnEnded).toBe(true);
+
+    now = 25_000;
+    await internals.onSTTEvent(finalTranscript(0));
+    expect(internals.lastSpeakingTime).toBe(19_400);
+  });
+
+  it('lets a new speech start establish a fresh untimed boundary', async () => {
+    let now = 20_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const { internals } = makeRecognition({ inputStartedAt: 10_000, mode: 'stt' });
+    await internals.onSTTEvent({ type: SpeechEventType.END_OF_SPEECH });
+
+    now = 25_000;
+    await internals.onSTTEvent({ type: SpeechEventType.START_OF_SPEECH });
+    await internals.onSTTEvent(finalTranscript(0));
+
+    expect(internals.sttTurnEnded).toBe(false);
+    expect(internals.lastSpeakingTime).toBe(25_000);
   });
 
   it.each(modes)('passes wired VAD speaking state to transcript hooks in %s mode', async (mode) => {

@@ -225,6 +225,8 @@ export class SpeechStream extends stt.SpeechStream {
   _reconnectEvent: _WaitableEvent = new DeferredEvent();
   /** @internal */
   _cancellationError: _CanceledEvent | null = null;
+  /** @internal */
+  _finalAlternatives: stt.SpeechData[] = [];
   #connOptions: APIConnectOptions;
   #audioDuration = 0;
   #lastAudioDurationReportTime = performance.now();
@@ -252,6 +254,7 @@ export class SpeechStream extends stt.SpeechStream {
       this._sessionStartedEvent.clear();
       this._cancellationError = null;
       this._speaking = false;
+      this._finalAlternatives = [];
 
       const pushStream = speechsdk.AudioInputStream.createPushStream(
         speechsdk.AudioStreamFormat.getWaveFormatPCM(
@@ -271,6 +274,7 @@ export class SpeechStream extends stt.SpeechStream {
           );
         });
         await withTimeout(this._sessionStartedEvent.wait(), this.#connOptions.timeoutMs);
+        this.restartProviderClock();
 
         const inputAbortController = new AbortController();
         const inputTask = this.#processInput(pushStream, inputAbortController.signal);
@@ -363,25 +367,29 @@ export class SpeechStream extends stt.SpeechStream {
   /** @internal */
   _onRecognized(evt: speechsdk.SpeechRecognitionEventArgs): void {
     const text = evt.result.text.trim();
-    if (!text) return;
+    if (!text) {
+      this._finalAlternatives = [];
+      return;
+    }
 
     const assessment = this._opts.pronunciationAssessment
       ? pronunciationAssessment(evt.result)
       : undefined;
+    const speechData = {
+      ...this.#speechData(evt, 1),
+      metadata: assessment ? { pronunciationAssessment: assessment } : undefined,
+    };
+    this._finalAlternatives = evt.result.duration > 0 ? [speechData] : [];
     this.queue.put({
       type: stt.SpeechEventType.FINAL_TRANSCRIPT,
-      alternatives: [
-        {
-          ...this.#speechData(evt, 1),
-          metadata: assessment ? { pronunciationAssessment: assessment } : undefined,
-        },
-      ],
+      alternatives: [speechData],
     });
   }
 
   /** @internal */
   _onRecognizing(evt: speechsdk.SpeechRecognitionEventArgs): void {
     const text = evt.result.text.trim();
+    this._finalAlternatives = [];
     if (!text) return;
 
     this.queue.put({
@@ -392,16 +400,33 @@ export class SpeechStream extends stt.SpeechStream {
 
   /** @internal */
   _onSpeechStart(_evt: speechsdk.RecognitionEventArgs): void {
+    this._finalAlternatives = [];
     if (this._speaking) return;
     this._speaking = true;
     this.queue.put({ type: stt.SpeechEventType.START_OF_SPEECH });
   }
 
   /** @internal */
-  _onSpeechEnd(_evt: speechsdk.RecognitionEventArgs): void {
+  _onSpeechEnd(evt: speechsdk.RecognitionEventArgs): void {
     if (!this._speaking) return;
     this._speaking = false;
-    this.queue.put({ type: stt.SpeechEventType.END_OF_SPEECH });
+    const alternatives = this._finalAlternatives;
+    if (alternatives.length === 0 && evt.offset > 0) {
+      alternatives.push({
+        language: asLanguageCode(''),
+        text: '',
+        startTime: 0,
+        endTime: evt.offset / 10 ** 7 + this.startTimeOffset,
+        confidence: 0,
+      });
+    }
+    this._finalAlternatives = [];
+    this.queue.put({
+      type: stt.SpeechEventType.END_OF_SPEECH,
+      ...(alternatives.length > 0
+        ? { alternatives: [alternatives[0]!, ...alternatives.slice(1)] }
+        : {}),
+    });
   }
 
   /** @internal */

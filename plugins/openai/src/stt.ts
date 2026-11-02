@@ -763,6 +763,7 @@ export class SpeechStream extends stt.SpeechStream {
           : undefined
         : undefined;
       const ws = await this.#connect();
+      this.restartProviderClock();
       const attemptController = new AbortController();
       this.#connectionController = attemptController;
       const attemptSignal = AbortSignal.any([this.abortSignal, attemptController.signal]);
@@ -893,7 +894,14 @@ export class SpeechStream extends stt.SpeechStream {
       if (event.type === VADEventType.START_OF_SPEECH) {
         this.#emitStartOfSpeech();
       } else if (event.type === VADEventType.END_OF_SPEECH) {
-        this.#emitEndOfSpeech();
+        const speechEndTime =
+          this.inputStartedAt === undefined
+            ? undefined
+            : this.inputStartedAt +
+              this.startTimeOffset * 1000 +
+              event.timestamp -
+              event.silenceDuration;
+        this.#emitEndOfSpeech({ speechEndTime });
         if (_requiresRealtimeVad(this.#options.model, this.#options.turnDetection)) {
           ws.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
         }
@@ -922,7 +930,18 @@ export class SpeechStream extends stt.SpeechStream {
           timing.endMs = event.audio_end_ms;
           this.#itemAudioTiming.set(itemId, timing);
           if (!hasClientVad) {
-            this.#emitEndOfSpeech();
+            const turnDetection = this.#options.turnDetection;
+            const silenceDuration =
+              turnDetection?.type === 'server_vad'
+                ? turnDetection.silence_duration_ms ?? 500
+                : undefined;
+            const endTime =
+              event.audio_end_ms !== undefined &&
+              event.audio_end_ms > 0 &&
+              silenceDuration !== undefined
+                ? (event.audio_end_ms - silenceDuration) / 1000
+                : 0;
+            this.#emitEndOfSpeech({ endTime });
           }
           break;
         }
@@ -1034,10 +1053,29 @@ export class SpeechStream extends stt.SpeechStream {
     this.queue.put({ type: stt.SpeechEventType.START_OF_SPEECH });
   }
 
-  #emitEndOfSpeech(): void {
+  #emitEndOfSpeech({
+    endTime = 0,
+    speechEndTime,
+  }: { endTime?: number; speechEndTime?: number } = {}): void {
     if (!this.#speaking) return;
     this.#speaking = false;
-    this.queue.put({ type: stt.SpeechEventType.END_OF_SPEECH });
+    this.queue.put({
+      type: stt.SpeechEventType.END_OF_SPEECH,
+      speechEndTime,
+      ...(endTime > 0
+        ? {
+            alternatives: [
+              {
+                text: '',
+                language: transcriptLanguage(this.#options.languages),
+                startTime: 0,
+                endTime: this.startTimeOffset + endTime,
+                confidence: 0,
+              },
+            ] as [stt.SpeechData],
+          }
+        : {}),
+    });
   }
 
   #speechEvent(

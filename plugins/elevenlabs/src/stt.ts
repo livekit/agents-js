@@ -601,6 +601,7 @@ export class SpeechStream extends stt.SpeechStream {
   #reconnectEvent = new Future<void>();
   #speaking = false;
   #lastPartialText = '';
+  #finalAlternatives: stt.SpeechData[] = [];
   #audioDurationCollector: PeriodicCollector<number>;
   #logger = log();
 
@@ -680,7 +681,9 @@ export class SpeechStream extends stt.SpeechStream {
 
       try {
         ws = await this.#connectWs();
+        this.restartProviderClock();
         this.#lastPartialText = '';
+        this.#finalAlternatives = [];
 
         const keepaliveTask = Task.from(async (controller) => {
           while (!controller.signal.aborted) {
@@ -702,8 +705,7 @@ export class SpeechStream extends stt.SpeechStream {
             (this.#opts.sampleRate * this.#opts.audioChunkDuration) / 1000,
           );
           const audioByteStream = new AudioByteStream(this.#opts.sampleRate, 1, samplesPerChunk);
-          const abortPromise = waitForAbort(controller.signal);
-          const streamAbortPromise = waitForAbort(this.abortSignal);
+          const attemptSignal = AbortSignal.any([controller.signal, this.abortSignal]);
           // Scribe closes the session on a commit with less than 300ms of audio since the
           // previous commit or the connect
           const minCommitSamples = (this.#opts.sampleRate * 3) / 10;
@@ -712,12 +714,13 @@ export class SpeechStream extends stt.SpeechStream {
 
           try {
             while (!this.closed) {
-              const result = await Promise.race([
-                this.input.next(),
-                abortPromise,
-                streamAbortPromise,
-              ]);
-              if (result === undefined) return;
+              let result: IteratorResult<AudioFrame | typeof SpeechStream.FLUSH_SENTINEL>;
+              try {
+                result = await this.input.next({ signal: attemptSignal });
+              } catch (error) {
+                if (attemptSignal.aborted) return;
+                throw error;
+              }
               if (result.done) break;
 
               const data = result.value;
@@ -999,12 +1002,19 @@ export class SpeechStream extends stt.SpeechStream {
           type: stt.SpeechEventType.FINAL_TRANSCRIPT,
           alternatives: [speechData],
         });
-        if (this.#opts.serverVad !== undefined && this.#opts.serverVad !== null) {
-          this.queue.put({ type: stt.SpeechEventType.END_OF_SPEECH });
-          this.#speaking = false;
-        }
-      } else if (this.#speaking) {
-        this.queue.put({ type: stt.SpeechEventType.END_OF_SPEECH });
+        this.#finalAlternatives = endTime > 0 ? [speechData] : [];
+      }
+      if (
+        this.#speaking &&
+        (!text || (this.#opts.serverVad !== undefined && this.#opts.serverVad !== null))
+      ) {
+        this.queue.put({
+          type: stt.SpeechEventType.END_OF_SPEECH,
+          ...(this.#finalAlternatives.length > 0
+            ? { alternatives: [this.#finalAlternatives[0]!] as [stt.SpeechData] }
+            : {}),
+        });
+        this.#finalAlternatives = [];
         this.#speaking = false;
       }
     } else if (

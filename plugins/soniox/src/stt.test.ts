@@ -234,6 +234,40 @@ function runProcess(
 }
 
 describe('processMessage', () => {
+  it('reports final source-token timing on translated speech end', () => {
+    const events = runProcess(
+      [
+        {
+          tokens: [
+            { ...finalToken('hola', 'es', 'original'), start_ms: 1000, end_ms: 2400 },
+            finalToken('hello', 'en', 'translation'),
+            END_TOKEN_FINAL,
+          ],
+        },
+      ],
+      { isTranslationMode: true, startTimeOffset: 8.5 },
+    );
+
+    const endpoint = events.find((event) => event.type === stt.SpeechEventType.END_OF_SPEECH)!;
+    expect(endpoint.alternatives?.[0]?.endTime).toBeCloseTo(10.9);
+  });
+
+  it('clears speech-end timing between turns', () => {
+    const events = runProcess([
+      {
+        tokens: [
+          { ...finalToken('hello', 'en'), start_ms: 1000, end_ms: 2400 },
+          END_TOKEN_FINAL,
+          finalToken('again', 'en'),
+          END_TOKEN_FINAL,
+        ],
+      },
+    ]);
+    const endpoints = events.filter((event) => event.type === stt.SpeechEventType.END_OF_SPEECH);
+    expect(endpoints[0]?.alternatives?.[0]?.endTime).toBeCloseTo(2.4);
+    expect(endpoints[1]?.alternatives).toBeUndefined();
+  });
+
   it('two-way translation, code-switched input produces per-run source and target lists', () => {
     const events = runProcess(
       [

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { APIConnectionError, APIStatusError, type stt } from '@livekit/agents';
+import { APIConnectionError, APIStatusError, stt } from '@livekit/agents';
 import { once } from 'node:events';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { WebSocketServer } from 'ws';
@@ -27,6 +27,80 @@ afterEach(async () => {
 });
 
 describe('Deepgram STT error recovery', () => {
+  it('reports the final word boundary on v1 speech end', async () => {
+    const baseUrl = await startServer();
+    server.on('connection', (socket) => {
+      socket.once('pong', () => {
+        socket.send(JSON.stringify({ type: 'SpeechStarted' }));
+        socket.send(
+          JSON.stringify({
+            type: 'Results',
+            is_final: true,
+            speech_final: true,
+            metadata: { request_id: 'one' },
+            channel: {
+              alternatives: [
+                {
+                  transcript: 'hello',
+                  confidence: 1,
+                  words: [{ word: 'hello', start: 0.1, end: 0.4, confidence: 1 }],
+                },
+              ],
+            },
+          }),
+        );
+      });
+      socket.ping();
+    });
+    stream = new STT({ apiKey: 'test', baseUrl }).stream();
+    stream.startTimeOffset = 7;
+    for await (const event of stream) {
+      if (event.type === stt.SpeechEventType.END_OF_SPEECH) {
+        expect(event.alternatives?.[0]?.endTime).toBeCloseTo(7.4);
+        break;
+      }
+    }
+  });
+
+  it('reports the final word rather than the Flux audio window end', async () => {
+    const endpointUrl = await startServer();
+    server.on('connection', (socket) => {
+      socket.once('pong', () => {
+        socket.send(
+          JSON.stringify({
+            type: 'TurnInfo',
+            event: 'StartOfTurn',
+            request_id: 'one',
+            transcript: 'hello',
+            audio_window_start: 0,
+            audio_window_end: 1.5,
+            words: [{ word: 'hello', start: 0.1, end: 0.4, confidence: 1 }],
+          }),
+        );
+        socket.send(
+          JSON.stringify({
+            type: 'TurnInfo',
+            event: 'EndOfTurn',
+            request_id: 'one',
+            transcript: 'hello',
+            audio_window_start: 0,
+            audio_window_end: 1.5,
+            words: [{ word: 'hello', start: 0.1, end: 0.4, confidence: 1 }],
+          }),
+        );
+      });
+      socket.ping();
+    });
+    stream = new STTv2({ apiKey: 'test', endpointUrl }).stream();
+    stream.startTimeOffset = 7;
+    for await (const event of stream) {
+      if (event.type === stt.SpeechEventType.END_OF_SPEECH) {
+        expect(event.alternatives?.[0]?.endTime).toBeCloseTo(7.4);
+        break;
+      }
+    }
+  });
+
   it('preserves API errors when v1 exhausts its reconnect attempts', async () => {
     const schedule = globalThis.setTimeout;
     vi.spyOn(globalThis, 'setTimeout').mockImplementation((callback, ms, ...args) =>
