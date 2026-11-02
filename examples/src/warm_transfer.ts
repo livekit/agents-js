@@ -14,32 +14,49 @@ import {
   workflows,
 } from '@livekit/agents';
 import { BackgroundVoiceCancellation } from '@livekit/noise-cancellation-node';
-import { ParticipantKind } from '@livekit/rtc-node';
+import { ParticipantKind, type RemoteParticipant } from '@livekit/rtc-node';
 import { fileURLToPath } from 'node:url';
 
 const SIP_TRUNK_ID = process.env.LIVEKIT_SIP_OUTBOUND_TRUNK;
 const SUPERVISOR_PHONE_NUMBER = process.env.LIVEKIT_SUPERVISOR_PHONE_NUMBER;
 const SIP_NUMBER = process.env.LIVEKIT_SIP_NUMBER;
 
-// Shows the supervisor the inbound caller's number on Twilio Elastic SIP Trunking. Requires
-// Twilio's CallToken beta and `headers_to_attributes: { "X-Twilio-CallToken": "twilio.call_token" }`
-// on the LiveKit inbound trunk. The token is forwarded as-is with the caller's number from the
-// same call. Without both (the attribute is set asynchronously), the business number is used.
+type CallerId = { sipNumber?: string; sipHeaders?: Record<string, string> };
+
+// Shows the supervisor the inbound caller's number on Twilio Elastic SIP Trunking (Twilio's
+// CallToken beta). Reads X-Twilio-CallToken from the caller's SIP leg and forwards it as-is with
+// the caller's number from the same call. Falls back to the business number when either is
+// unavailable. RPC responses are recorded in traces as PII (`lk.pii.rpc.response`), so keep
+// PII redaction on if you export traces.
 // https://www.twilio.com/en-us/changelog/elastic-sip-trunking---immutable-call-forwarding-with-calltoken-
-function twilioCallerId(): { sipNumber?: string; sipHeaders?: Record<string, string> } {
-  const caller = [...getJobContext().room.remoteParticipants.values()].find(
-    (p) => p.kind === ParticipantKind.SIP,
-  );
-  const callToken = caller?.attributes['twilio.call_token'];
+async function twilioCallerId(caller: RemoteParticipant | undefined): Promise<CallerId> {
+  const fallback: CallerId = { sipNumber: SIP_NUMBER };
   const callerNumber = caller?.attributes['sip.phoneNumber'];
-  if (!callToken || !callerNumber) {
-    return { sipNumber: SIP_NUMBER };
+  const localParticipant = getJobContext().room.localParticipant;
+  if (caller?.kind !== ParticipantKind.SIP || !callerNumber || !localParticipant) {
+    return fallback;
   }
-  return { sipNumber: callerNumber, sipHeaders: { 'X-Twilio-CallToken': callToken } };
+  try {
+    const response = await localParticipant.performRpc({
+      destinationIdentity: caller.identity,
+      method: 'lk.sip.GetRemoteHeaders',
+      payload: JSON.stringify({ include: ['X-Twilio-CallToken'] }),
+    });
+    const headers: Record<string, string> = JSON.parse(response).headers ?? {};
+    const callToken = Object.entries(headers).find(
+      ([name]) => name.toLowerCase() === 'x-twilio-calltoken',
+    )?.[1];
+    return callToken
+      ? { sipNumber: callerNumber, sipHeaders: { 'X-Twilio-CallToken': callToken } }
+      : fallback;
+  } catch {
+    log().warn('could not read SIP headers, using the business number');
+    return fallback;
+  }
 }
 
 class SupportAgent extends voice.Agent {
-  constructor() {
+  constructor(caller: RemoteParticipant | undefined) {
     super({
       instructions: INSTRUCTIONS,
       tools: [
@@ -75,7 +92,7 @@ Examples on when the tool should be called:
               const result = await new workflows.WarmTransferTask({
                 sipCallTo: SUPERVISOR_PHONE_NUMBER,
                 sipTrunkId: SIP_TRUNK_ID,
-                ...twilioCallerId(),
+                ...(await twilioCallerId(caller)),
                 chatCtx: ctx.session.history,
                 // Give up if the supervisor doesn't pick up within 25s with
                 // `ringingTimeout: 25000`.
@@ -129,11 +146,17 @@ export default defineAgent({
       }),
     });
 
+    // Link the session to the caller explicitly so the transfer reads the same participant.
+    // Console mode has no room participant, so the business number is used there.
+    await ctx.connect();
+    const caller = ctx.room.isConnected ? await ctx.waitForParticipant() : undefined;
+
     await session.start({
-      agent: new SupportAgent(),
+      agent: new SupportAgent(caller),
       room: ctx.room,
       inputOptions: {
         noiseCancellation: BackgroundVoiceCancellation(),
+        participantIdentity: caller?.identity,
       },
     });
   },
