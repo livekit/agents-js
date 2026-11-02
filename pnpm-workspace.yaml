@@ -5,6 +5,8 @@ packages:
 
 minimumReleaseAge: 2880
 minimumReleaseAgeExclude:
+  # SDK release required by the OpenSpline avatar plugin.
+  - '@openspline/node@0.1.2'
   # Explicitly approved Rime protocol release.
   - '@rimelabs/api@0.0.1'
   # Voxtral 3 support from the authoritative Mistral port.
