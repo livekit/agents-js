@@ -1539,7 +1539,8 @@ export class AudioRecognition {
       case SpeechEventType.START_OF_SPEECH:
         if (this.turnDetectionMode !== 'stt') break;
         {
-          const speechStartTime = Date.now();
+          const speechStartTime = ev.speechStartTime ?? Date.now();
+          this.speechStartTime = speechStartTime;
           this.endEouWaitSpan('user_resumed', speechStartTime);
           const span = this.ensureUserTurnSpan(speechStartTime);
           const ctx = this.userTurnContext(span);
@@ -1550,7 +1551,7 @@ export class AudioRecognition {
             this.hooks.onStartOfSpeech({
               type: VADEventType.START_OF_SPEECH,
               samplesIndex: 0,
-              timestamp: Date.now(),
+              timestamp: speechStartTime,
               speechDuration: 0,
               silenceDuration: 0,
               frames: [],
