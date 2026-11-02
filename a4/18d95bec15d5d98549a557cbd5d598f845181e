@@ -1,0 +1,877 @@
+plugins/soniox/src/stt.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 171-173
+agents/src/telemetry/utils.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 156-158
+agents/src/tts/provider_format.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 22,1075
+agents/src/voice/testing/run_result_cancellation.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-103
+agents/src/inference/duplex.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-221
+agents/src/voice/testing/remote_session.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-133
+agents/src/worker.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 4-15,17-21,47-260
+plugins/assemblyai/src/index.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 8
+plugins/resemble/CHANGELOG.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 3-32
+plugins/synthesia/tsconfig.json
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-15
+agents/src/llm/async_toolset.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 17
+agents/src/telemetry/recording_upload.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 18-22,24-25,27,33,35,37-40,42-52,238-245,247-277,279-281
+agents/src/inference/interruption/interruption_stream.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 4-5,16-148,179-202
+plugins/silero/package.json
+  s_6975e39c9c92e0::t_7f350a74b7158c 3
+AGENTS.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-232
+agents/src/stt/testing/fake_stt.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 109
+plugins/rime/CHANGELOG.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 3-38
+agents/src/inference/interruption/interruption_stream.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 378-382,390-392
+agents/src/llm/chat_context.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 564-566,576,585,593,603,616
+plugins/protoface/package.json
+  s_6975e39c9c92e0::t_7f350a74b7158c 3
+agents/src/connection_pool.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 41,65,97-99,137,140,170,336,364,367-370
+agents/etc/agents.api.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 13,36,364,381,621-622,705,785,897,941-943,952,954,959,965-969,1017,1722-1723,1971-1976,2076,2359-2369,2382-2397,2604,2619,2832-2919,2933,2948,3061-3074,3103-3146,3205-3222,3722-3723,3986,3998,4010,4056,4072-4073,4214-4217,4302-4318,4344,4346,4361,4700-4702,4732-4734,5019-5031,5060-5075,5121,5149-5151,5404-5569,5637,5709-5713,5805-5813,5827-5834,6081-6103,6179-6191,6196,6228-6251,6290-6327,6375-6413,6503,6650,6655,6733-6734,6739-6740,6791-6792,6798-6799,6836-6865,6924-6933,7055,7080-7085,7088,7111,7115,7118,7575,7705-7706,7898-7899,7949,8196,8201,8265,8437-8438,8464,8476,8607,9010,9017,9094,9108,9120-9121,9155,9175,9180-9181,9593,9759,9871-9873,9896,9898-9902,9904-9908,9913-9915
+agents/src/inference/tts.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 17,437-462
+  s_6975e39c9c92e0::t_c5e0e588333207 463
+.github/workflows/evals.yml
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-47
+agents/src/voice/agent_transcription_node.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-253
+agents/src/voice/testing/run_result.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 19,137-175
+  s_6975e39c9c92e0::t_c035318efc0f9e 176
+plugins/meta/src/stt.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 29,351-375,589,592-594,652
+agents/src/llm/decisions.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-533
+agents/src/telemetry/traces.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 55,64-69,106-111,164,186,235,1169,1176-1184
+agents/src/voice/tool_executor.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 4,7,9-10,13,103-278
+  s_6975e39c9c92e0::t_08ed2f7fea857f 279
+CLAUDE.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 9
+plugins/assemblyai/src/stt-options.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 70-130,158-174
+  s_6975e39c9c92e0::t_5f24182c0f5041 175
+plugins/google/src/realtime/realtime_api.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 12,263-309,349-369,513-536,695-722
+  s_6975e39c9c92e0::t_e0f715bac20143 694
+  s_6975e39c9c92e0::t_dd84b94754730f 537
+agents/src/inference/eot/transports.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 215
+agents/src/ipc/supervised_proc.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 4,12,14-16,18,217,223-226,260-277,295-372
+agents/src/voice/agent_turn_span.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 37,329-331
+plugins/speechify/tsup.config.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-7
+plugins/openai/src/tool_utils.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 41,46,50
+plugins/mistralai/src/llm.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 4,10-26,51-97
+  s_6975e39c9c92e0::t_2a997ec749a888 98-99
+plugins/xai/CHANGELOG.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 3-40
+agents/src/constants.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 21-28
+agents/src/voice/stop_response.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-23
+plugins/krisp/CHANGELOG.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 3-32
+plugins/openai/package.json
+  s_6975e39c9c92e0::t_7f350a74b7158c 3
+plugins/azure/src/stt.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 16,71-78,121-123,143,292-400
+  s_6975e39c9c92e0::t_b0e84a6aee15a1 401-402
+agents/src/voice/agent.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 11,14,34,49,112,139,153,259-261,263,366-376,450-452,498,507-508,512-513,515,518-524,526-543,556,558,561,636-640,651,656-665,668-674,689,693
+plugins/cartesia/src/tts.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 43,90-101,116-117,333,407,439,639-640,945-946,1007-1012
+plugins/mistral/CHANGELOG.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 3-34
+plugins/perplexity/CHANGELOG.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 3-34
+agents/src/ipc/_preload.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-37
+plugins/did/package.json
+  s_6975e39c9c92e0::t_7f350a74b7158c 3
+plugins/openai/src/realtime/api_proto.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1,5
+agents/src/metrics/base.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 15,24-34
+  s_6975e39c9c92e0::t_0d9c35a2f0964b 35
+.changeset/local-eot-failure-default.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-5
+examples/src/gpt_live/README.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 32-33
+plugins/cartesia/src/tts.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 9,16,18,37-51,86-91,98-101,104,144-232
+agents/src/voice/testing/run_result.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 80,176,217,256-304,1097-1102,1106-1109,1111-1127,1146-1147,1165,1167-1181
+plugins/meta/package.json
+  s_6975e39c9c92e0::t_7f350a74b7158c 3
+plugins/openai/src/tts_options.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-88
+plugins/resemble/package.json
+  s_6975e39c9c92e0::t_7f350a74b7158c 3
+plugins/rime/src/websocket.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 107,109,160,164,176,197-207,683-684,717
+plugins/rime/package.json
+  s_6975e39c9c92e0::t_7f350a74b7158c 3
+plugins/soniox/src/tts.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 29,44-45,57,68-77,86-91,94,98-99,119,134-140,158-162,189,191,206-207,237,274,327,370,473-474,476,484,487,489,505-507,543-546,656-658,691,697-705,758,761
+agents/src/inference/eot/runner.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 11,14-25,63-76
+  s_6975e39c9c92e0::t_a3b5f3a8193648 77-78
+plugins/assemblyai/src/stt.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 25,91-103,220-241,279,295,336,342,429,507,545-552,778-782,789,803,818-819,821,830-831,834,856
+plugins/assemblyai/src/stt-metadata.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 228-291
+plugins/speechify/src/index.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-19
+plugins/synthesia/tsup.config.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-9
+plugins/speechify/README.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-47
+plugins/deepgram/src/stt.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 4,10,43-46,141-430
+  s_6975e39c9c92e0::t_c7df981c90ea66 431
+plugins/silero/CHANGELOG.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 3-34
+plugins/xai/etc/agents-plugin-xai.api.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 7,11-12,21,29,44,71-72,80,85,105,108,112,131,135,146-147,152,183,187,208,213,215,249
+plugins/fishaudio/src/tts.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 175-182
+agents/src/voice/agent_activity_wait_for_idle.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-178
+plugins/elevenlabs/src/stt.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 26,452-464,466-467,470,493,707-710,727-730,733,764
+agents/src/inference/duplex.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-197
+plugins/azure/CHANGELOG.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 3-34
+agents/src/voice/agent_activity_say_stream.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-650
+plugins/azure/src/stt.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 40,66-71,177,368-370,373-378,523-526,530-551
+  s_6975e39c9c92e0::t_94e19281de5388 552-553
+plugins/anthropic/package.json
+  s_6975e39c9c92e0::t_7f350a74b7158c 3
+plugins/anthropic/src/llm.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 12,16-22,63,271-285
+plugins/cerebras/src/llm.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 12,108-121
+examples/src/drive-thru/README.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 45-59
+plugins/fishaudio/package.json
+  s_6975e39c9c92e0::t_7f350a74b7158c 3
+plugins/liveavatar/CHANGELOG.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 3-30
+agents/src/metrics/index.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 8
+agents/src/voice/generation_tts_timeout.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 260-282
+.changeset/bright-voxtral-speech.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-5
+agents/src/voice/generation_text_forwarding.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-145
+agents/src/inference/tts_alignment.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 69-131
+agents/src/inference/eot/runner.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 17,37-43,48-52,56,61,63,69
+plugins/cerebras/package.json
+  s_6975e39c9c92e0::t_7f350a74b7158c 3
+plugins/elevenlabs/package.json
+  s_6975e39c9c92e0::t_7f350a74b7158c 3
+plugins/livekit/CHANGELOG.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 3-32
+plugins/speechify/src/sse.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-39
+plugins/soniox/src/stt.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 473-539,560-595,640-644
+  s_6975e39c9c92e0::t_dbc916129e2e10 645
+agents/src/voice/transcription/text_transforms.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 49-55,78-82,90,97
+plugins/speechify/etc/agents-plugin-speechify.api.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-83
+agents/src/voice/realtime_turn_detection.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-133
+plugins/rime/src/options.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 10-15,29-30,36-37,43-71,82,145-149
+plugins/synthesia/src/api.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-249
+agents/src/voice/agent_session_handoff.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 5
+agents/src/tts/provider_format.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 656-658,668-669,690
+agents/src/voice/interrupted_reply_cleanup.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-222
+agents/src/llm/openai_realtime/gpt_live_model.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-1092
+agents/src/voice/chat_item_proto_coverage.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 50-57
+plugins/lemonslice/src/avatar.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 29-30,81-89,171-172,234-241,355,531-536,538-545
+plugins/speechify/CHANGELOG.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-31
+agents/src/voice/agent_activity_wait_for_or_abort.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-72
+examples/src/drive-thru/database.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 26
+agents/src/voice/agent_session_stt_manual_flush.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-173
+agents/src/llm/mcp_http.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-806
+agents/src/ipc/supervised_proc.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 50,68,83,102,118-121,128-133,140,149,155,178-181,198,301
+agents/src/voice/agent_session_text_only.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 6,113-134
+  s_6975e39c9c92e0::t_00c0a8d7df3320 135-137
+agents/src/llm/openai_realtime/realtime_model.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-1616
+agents/src/voice/generation_tools.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 7,11,16,64-136
+  s_6975e39c9c92e0::t_d4f2c1bcc7835d 137
+agents/src/inference/eot/transports.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 22,69,105,196-218
+  s_6975e39c9c92e0::t_944fb202faf644 219-224
+plugins/neuphonic/package.json
+  s_6975e39c9c92e0::t_7f350a74b7158c 3
+plugins/xai/package.json
+  s_6975e39c9c92e0::t_7f350a74b7158c 3
+plugins/openai/src/realtime/gpt_live_model.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 4-15,20,22-25
+agents/src/llm/openai_realtime/api_proto.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-725
+agents/src/voice/events.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 217-223,240-245
+plugins/assemblyai/CHANGELOG.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 3-42
+.cursor/rules/agent-core.mdc
+  s_6975e39c9c92e0::t_7f350a74b7158c 377
+plugins/google/CHANGELOG.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 3-48
+plugins/mistralai/src/stt.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 4-10,12-14,20-22,29-138
+agents/src/inference/utils.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 14-16,49-67,85,89-91,125,128-130
+plugins/openai/src/tts.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 10,20-24,32,62-68,70,127,139,146-147
+plugins/phonic/CHANGELOG.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 3-34
+plugins/speechify/src/tts.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-709
+plugins/synthesia/package.json
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-51
+agents/src/llm/realtime.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 51-52,130
+.changeset/bright-sessions-wait.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-25
+agents/src/inference/vad.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 4,7,18,21-25,30-54,95-152
+  s_6975e39c9c92e0::t_96d74ce61e4363 153-156
+plugins/anam/package.json
+  s_6975e39c9c92e0::t_7f350a74b7158c 3
+agents/src/voice/agent_activity.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 34-41,130,778,1163,1388,1394,1443-1452,1516-1520,1524-1525
+plugins/elevenlabs/CHANGELOG.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 3-38
+.changeset/mistralai-conversation-store.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-5
+plugins/inworld/package.json
+  s_6975e39c9c92e0::t_7f350a74b7158c 3
+plugins/synthesia/etc/agents-plugin-synthesia.api.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-150
+plugins/deepgram/package.json
+  s_6975e39c9c92e0::t_7f350a74b7158c 3
+agents/src/llm/mcp.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-737
+agents/CHANGELOG.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 3-169
+agents/src/voice/parallel_tool_handoff.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-62
+plugins/assemblyai/etc/agents-plugin-assemblyai.api.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 12-13,17,20-24,103,107,121-123,134-211
+  s_6975e39c9c92e0::t_003c87701c2a4b 212
+agents/src/inference/llm.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 16-17,22,26,54,233,721-729
+  s_6975e39c9c92e0::t_1672e7d25de426 730
+.changeset/fuzzy-tools-simulate.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-5
+agents/src/voice/run_context.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 5,28-33,59-63,72-77,176,178-181,187
+agents/src/voice/room_session_transport.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-348
+agents/src/voice/console_io.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 7,107-132
+  s_6975e39c9c92e0::t_72b9208929599a 133
+plugins/fishaudio/src/models.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 6
+plugins/deepgram/src/tts_v2.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 29-46,110-115,177-180,201-210,213,217-223,260,266-268,335-337
+plugins/minimax/package.json
+  s_6975e39c9c92e0::t_7f350a74b7158c 3
+plugins/google/src/llm_long_decode.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-630
+plugins/soniox/package.json
+  s_6975e39c9c92e0::t_7f350a74b7158c 3
+agents/src/voice/report.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 4,21-22,24-25,293-331,354-483,607-657,671-685
+  s_6975e39c9c92e0::t_2f2b798c682625 686
+plugins/runway/package.json
+  s_6975e39c9c92e0::t_7f350a74b7158c 3
+plugins/sarvam/package.json
+  s_6975e39c9c92e0::t_7f350a74b7158c 3
+plugins/fishaudio/CHANGELOG.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 3-34
+plugins/speechify/tsconfig.json
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-16
+plugins/phonic/etc/agents-plugin-phonic.api.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 39,112,167-168
+plugins/google/src/llm.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 33-40,46,49-54,307,309,345-364,374-405,495,520,570-573,576,578-586,588-617,619-687,690-703,706-717,719,722-725,727-728,730-731,733-735,737-751,754-764,766-781
+plugins/trugen/CHANGELOG.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 3-30
+agents/src/voice/io.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 5,14,24-33,255-257
+  s_6975e39c9c92e0::t_a16aae7b5aab73 258-259
+plugins/synthesia/src/api.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-226
+agents/src/ipc/_preload.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 15,21,29-35,40
+plugins/minimax/src/tts.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 165
+plugins/cartesia/src/types.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 37-47,79,97-99,117-120
+  s_6975e39c9c92e0::t_db6a11ef4543f4 121-122
+plugins/silero/src/vad.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 126,140,167,271,274-278,330,335-336,339,346,349,419,423,464-465
+  s_6975e39c9c92e0::t_22157cfe41c644 466
+plugins/tavus/etc/agents-plugin-tavus.api.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 50,99-103
+  s_6975e39c9c92e0::t_a01607f7612706 104
+agents/src/ipc/inference_proc_executor.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 89-92
+plugins/test/package.json
+  s_6975e39c9c92e0::t_7f350a74b7158c 3
+plugins/mistralai/src/tts.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 7,9,11,18-25,30,32-35,37-74,77,80-85,90-108,110,112-117,120,125-130,139,142-145,148-156,167,171-180,190-198,209-294,301-302,307-315,323,326,330,333-338,342-343,347-350,353-354,356-358,361,369-370,373,376-433,435-476,478-479,481-492,494-507,509-565,567-576,578-582,586-591,593-720,723-744,746-748
+agents/src/inference/eot/base.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 181,252,292,319,508-516
+  s_6975e39c9c92e0::t_e6414add88c01d 517
+plugins/assemblyai/package.json
+  s_6975e39c9c92e0::t_7f350a74b7158c 3
+agents/src/voice/session_host_lifecycle.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-746
+agents/src/cli.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 4,263-275
+agents/src/ipc/job_trace.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 28
+plugins/anam/CHANGELOG.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 3-32
+agents/src/voice/room_io/_output.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 12,22,26,405-438,442-444,489-501,507-511,513
+  s_6975e39c9c92e0::t_501d9f2265960c 512,514
+agents/src/voice/remote_session.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 14,17,20,22-33,62-63,74,557-815
+plugins/rime/etc/agents-plugin-rime.api.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 10
+plugins/azure/etc/agents-plugin-azure.api.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 102,132
+  s_6975e39c9c92e0::t_e90ec4980ebceb 133
+plugins/elevenlabs/src/tts.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 873
+agents/src/voice/agent_activity_child_cleanup.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-549
+agents/src/telemetry/loop_monitor.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 444,477-479,481-485,493
+agents/src/ipc/job_proc_executor.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 86,111-116
+agents/src/inference/index.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 4,7,46,49-71,103
+examples/src/hotel-receptionist/suggested_replies.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-158
+plugins/google/etc/agents-plugin-google.api.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 138
+plugins/meta/CHANGELOG.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 3-32
+agents/src/log.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 4-6,8,26-34,255-392
+  s_6975e39c9c92e0::t_038e8b7e9e8a8a 393
+plugins/openai/CHANGELOG.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 3-44
+agents/src/job.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 591
+.github/workflows/release.yml
+  s_6975e39c9c92e0::t_7f350a74b7158c 35,70
+agents/src/llm/tool_context.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 25-36,900
+plugins/speechify/src/models.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-11
+agents/src/inference/tts.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 37,63-64,79,148-153,160-161,170,187-189,204-205,220-225,231,259-276,325,328,392,395,469,472
+.changeset/exit-orphaned-job.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-5
+plugins/tavus/src/avatar.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 21-44,100,135,196-222
+  s_6975e39c9c92e0::t_1fb0d65e3bfc2a 223
+plugins/trugen/package.json
+  s_6975e39c9c92e0::t_7f350a74b7158c 3
+.changeset/bright-voxtral-turns.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-6
+plugins/lemonslice/package.json
+  s_6975e39c9c92e0::t_7f350a74b7158c 3
+plugins/mistralai/CHANGELOG.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 3-36
+agents/src/voice/speech_handle.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 19,21-23,169-170,278,638-641
+plugins/soniox/src/index.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 7
+.gitignore
+  s_6975e39c9c92e0::t_7f350a74b7158c 203
+plugins/runway/CHANGELOG.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 3-30
+agents/src/telemetry/gen_ai.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 168-169
+plugins/phonic/package.json
+  s_6975e39c9c92e0::t_7f350a74b7158c 3,44
+agents/src/voice/tool_executor.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 13,19,23,26,129-130,133-150,183,201,324,430-431,442,448,455,457-460,463-472,541,550-552,558-559,561-563,616,619,621,623,656
+plugins/mistralai/src/models.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 22-24,26,28-31,33,64-104
+plugins/deepgram/src/tts_v2.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 12,14,16-54,67-68,84,91,93,148-158,167-171,177,241-298,339-349
+  s_6975e39c9c92e0::t_ccd2ab5cc712d7 350-351
+agents/src/llm/decisions.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-521
+plugins/rime/README.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 21-23,29-30,35-44
+agents/src/voice/realtime_overlapping_speech.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 5-9,16-17,22,64,79,106,117-118,178-206,308-314,316-328,400-664
+plugins/openai/src/models.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 5-6,98
+agents/src/ipc/job_trace.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 15,179,193,205-215
+  s_6975e39c9c92e0::t_3c41ff269ccf8c 216
+agents/src/llm/mcp_test_helpers.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-50
+agents/src/voice/agent_v2.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 459-517
+plugins/cerebras/etc/agents-plugin-cerebras.api.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 40
+agents/src/inference/_warmup.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 17-18,25-33
+  s_6975e39c9c92e0::t_61105170ab08ea 34
+plugins/deepgram/src/stt.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 30-36,93-109,117,154-155,226-227,280-295,364-369
+plugins/openai/src/realtime/realtime_model.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1,4-7,9-10,13,15-18,21-22,24-26
+examples/src/mcp_agent.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-51
+plugins/livekit/package.json
+  s_6975e39c9c92e0::t_7f350a74b7158c 3
+plugins/meta/src/stt.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 355
+plugins/speechify/package.json
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-49
+agents/src/voice/room_io/_output.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 4-10,13,20-24,1011-1294
+agents/src/inference/utils.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 8,101-111
+  s_6975e39c9c92e0::t_3da1bed84d5b2c 112
+agents/src/telemetry/loop_monitor.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 26,199-216,364-375
+agents/src/inference/llm.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 510-513
+agents/src/telemetry/conversation_id.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-142
+plugins/bey/package.json
+  s_6975e39c9c92e0::t_7f350a74b7158c 3
+agents/src/llm/mcp.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-747
+plugins/bey/CHANGELOG.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 3-32
+agents/src/voice/agent_activity_interrupted_commit.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 231,234-237,340-342
+.changeset/quiet-fallback-turns.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-5
+agents/src/telemetry/recording_disabled.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 42,59
+plugins/lemonslice/src/avatar.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 62,127
+plugins/openai/src/realtime/gpt_live_types.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 5
+plugins/synthesia/README.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-46
+agents/src/_exceptions.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 36,47
+agents/src/inference/realtime.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-403
+agents/src/tokenize/xml_markup.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 8-9,14-15,17-22,46,139-203,206-280,283-346,367-390
+agents/src/voice/agent_session.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 29,32,313,325-329,635-641,774-776,778,802,1406,1520,1543
+agents/src/voice/generation_reader_abort.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-111
+agents/src/llm/openai_realtime/realtime_model.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-2491
+agents/src/voice/tcp_session_transport.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-327
+plugins/inworld/CHANGELOG.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 3-34
+agents/src/tts/fallback_adapter_lifecycle.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-376
+plugins/assemblyai/src/tts.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-1273
+plugins/lemonslice/CHANGELOG.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 3-30
+plugins/synthesia/src/errors.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-59
+plugins/synthesia/src/errors.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-70
+plugins/synthesia/src/types.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-53
+agents/src/inference/eot/detector.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 14,33-35,50-58,74,134-137,144-146,175,198,254,269,286,306,336-340,366,420-427,436
+plugins/lemonslice/README.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 78-79
+plugins/google/package.json
+  s_6975e39c9c92e0::t_7f350a74b7158c 3,47
+plugins/protoface/CHANGELOG.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 3-30
+plugins/lemonslice/etc/agents-plugin-lemonslice.api.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 10,13,28,76,83
+examples/src/hotel-receptionist/hotel_receptionist.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 36,750-754
+  s_6975e39c9c92e0::t_9491bf15969082 755
+plugins/rime/src/options.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 76,103,185-188
+agents/src/voice/audio_recognition.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 14-15,40-46,61,196-197,202,250,252-265,288,300-363,450-451,1685-1693,1739,1849,1965-1984,2259,2556-2557,2645-2651
+plugins/krisp/package.json
+  s_6975e39c9c92e0::t_7f350a74b7158c 3,48
+plugins/synthesia/CHANGELOG.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-31
+plugins/mistral/package.json
+  s_6975e39c9c92e0::t_7f350a74b7158c 3
+agents/src/telemetry/gen_ai.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 74-79
+agents/src/cli_console.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-48
+agents/src/tts/fallback_adapter.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 18,31,49-56,113,115,117,120-127,162-163,175-176,182-194,198-202,206-223,240-358,942
+pnpm-workspace.yaml
+  s_6975e39c9c92e0::t_7f350a74b7158c 10-15,33-34,69
+plugins/fishaudio/etc/agents-plugin-fishaudio.api.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 10,87
+plugins/inworld/src/tts.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 328
+agents/src/voice/agent_activity_tts_input.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-394
+agents/src/voice/tool_executor_reply_choice.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-189
+plugins/synthesia/src/index.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-23
+agents/src/voice/agent_activity_user_away_idle.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-71
+plugins/anthropic/CHANGELOG.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 3-32
+agents/src/worker_load.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-167
+plugins/soniox/src/tts.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 4,8,19,31-32,42-53,105-208,273-318
+  s_6975e39c9c92e0::t_573e03f1b18fa7 319
+agents/src/inference/stt.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 10,12,22,732-1456
+agents/src/tokenize/blingfire.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-113
+agents/src/voice/remote_session.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 5,11,33,103-104,106-189,199-202,216-220,229-233,236,238-257,259,276-277,281,289-290,292-295,305-316,318-323,339-346,368,371,383-389,392-394,397,405-421,423-439,452,454,467-470,482-483,487-500,511-513,515,519-523,530,549,751-752,786-791,794-797,821-822,825-835,838-848,852,854-857,862-866,890-898,900-903,905-908,978-986,1089,1091,1093,1105,1112-1113,1118,1123,1125,1127,1129,1131,1139,1141,1149,1151,1158,1178-1179,1183,1194,1207,1224,1230,1232,1238,1240,1254,1270,1275,1278,1280-1283,1286,1295,1305,1308,1326-1327,1337,1342-1353,1510,1524-1525,1531,1541,1543,1550-1590
+  s_6975e39c9c92e0::t_d8fe8608f4f355 1591
+plugins/synthesia/src/log.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-7
+.github/workflows/build.yml
+  s_6975e39c9c92e0::t_7f350a74b7158c 54
+plugins/assemblyai/README.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 6,9-73
+plugins/google/src/models.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 102
+agents/src/tts/fallback_adapter.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 11,190,413,420-421,429,443-444,453-455,470,474,480-481,493,520,542-547,551,593,598-599,605,612,617,628-631,642,650-651,721-722,754-760,774-779,802,827-828,837
+agents/src/stt/fallback_adapter.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 15,106,125-131,143,151,167-174,359
+agents/src/voice/agent_activity.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 11,153,177,314-315,335-418,572-573,616,619,631-632,765,769,789,796,813,825,966-968,1092,1222-1224,1559,1814-1827,1982,2331,2837,2849,2872-2879,2881-2885,2928-2936,2949-2952,2954-2963,2975-2985,2987,2992-2995,3051-3052,3203,3426,3638-3660,3713-3716,3732-3749,3753,3756-3776,3779-3780,3782-3799,3801-3842,3855-3856,3908-3922,3964,4046-4053,4055,4060,4065-4066,4118-4121,4133,4135-4140,4160-4165,4195,4253,4255-4256,4273-4282,4284,4289-4290,4292-4294,4304,4374-4383,4392-4398,4419,4496,4540,4546-4547,4606,4633,4645-4649,4764,4862-4875,4880,4906,4909,4911,4945-4946,4955-4957,5015-5024,5032-5033,5036-5037,5039,5049-5052,5120-5121,5143-5144,5167,5191,5212-5225,5282-5283,5285,5331,5381,5391-5396,5398-5407,5415,5419,5483-5488,5490,5502,5515-5516,5523-5526,5533-5534,5604-5609,5611-5612,5642,5651,5653,5983-6009,6013-6021,6030,6043-6047,6054,6504-6508,6513-6528,6541-6545
+examples/src/drive-thru/scenarios.yaml
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-186
+agents/src/voice/playout_launch_pause.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 408-409
+plugins/neuphonic/src/tts.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 197
+plugins/speechify/src/tts.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-668
+plugins/synthesia/src/avatar.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-511
+agents/src/inference/realtime.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-542
+plugins/elevenlabs/src/stt.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 4,14-16,623-653,750-752,755,757-758,778,780,782-783,803,806-808,811-864,904
+agents/src/voice/report.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 4,14,23-24,47-48,67,74,79,84-88,183-187,240-299,304-312,346-350,352-353,360,375,380-387
+plugins/tavus/package.json
+  s_6975e39c9c92e0::t_7f350a74b7158c 3
+plugins/test/CHANGELOG.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 3-32
+plugins/hume/CHANGELOG.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 3-30
+plugins/openai/src/realtime/gpt_live_model.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 189,443-482
+  s_6975e39c9c92e0::t_3025513d66d6f0 483
+.changeset/eleven-glasses-mix.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-5
+agents/src/worker.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 7,9,45-48,132-176,179,597-620,788,861-862,864-872,874-876,913,918-920
+agents/src/llm/utils.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 19,73-110,568-608
+plugins/mistralai/src/llm.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 37,58-59,78,114,125,143
+plugins/synthesia/src/avatar.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-408
+plugins/mistralai/README.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 42-85,89,93-121,125-127,131,134-146,149-161
+agents/src/stt/fallback_adapter.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 10,86-109,309-320
+  s_6975e39c9c92e0::t_12a806e994ce49 321
+plugins/rime/src/stream.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 92
+plugins/anthropic/src/llm.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 6,70-109,141-212,393,417,434-438
+plugins/neuphonic/CHANGELOG.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 3-32
+agents/src/voice/generation.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 174-175,192,197,207,210-211,250,256-261,264,269-270,314-320,353-358,369,409-415,435,437-468,483-488,501,509-521,903,917-923,925-935,937-939,944-962,965-966,968-969,972,987-995,1014,1025,1058-1060,1064-1069,1073-1078,1080-1087,1114,1117,1119-1126,1133,1147-1150,1152-1158,1174,1235,1322-1323,1325,1336,1376,1561-1565,1587-1589,1591-1593,1608-1615,1619-1625,1639,1643,1672
+plugins/did/CHANGELOG.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 3-30
+plugins/cerebras/CHANGELOG.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 3-36
+agents/src/voice/transcription/synchronizer.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 167-168,376-377,887-889
+  s_6975e39c9c92e0::t_8d66b7793175e3 890-891
+agents/src/voice/generation_telemetry.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 14,18-24,26,212-254
+  s_6975e39c9c92e0::t_43abb7d7c5c88c 255
+plugins/mistralai/src/stt.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 10-11,16-17,24,30,36-53,56-60,66-77,80-159,161,164-165,169-193,198,200,203,209-217,219-223,234-235,238-364,368,373,375-376,378,380,386-388,390-400,404-405,409-411,414,417-426,430-467,472-473,475-478,480-484,486,492-493,495-496,499-500,502-503,506-510,512-516,518-535,538-545,547-550,553-562,564-565,567-576,581-585,587-591,593-608,610-611,613-615,619-620,622,626-631,634,641-652,654-687,689-696,698-714,716-730,732-765,768-888,890-897,899-903
+plugins/mistralai/etc/agents-plugin-mistralai.api.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 10,13,15,25,28-29,50-53,61-63,97,119,152,157,162-172,179-180,182,185-186,203-204,209-213,216,220,232-234,236,240-242,247-271,276-278,284-285,288-292,296,307,309-310,313,318-333,336
+README.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 86,164-167
+examples/src/expressive-agent/README.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 40-43
+agents/src/llm/tool_context.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 206-208,257,259,681,691-692,728,738-739,796
+plugins/mistralai/package.json
+  s_6975e39c9c92e0::t_7f350a74b7158c 3,46
+agents/src/llm/index.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 94-109,148-165
+agents/src/inference/stt.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 105,109-113,125,127-128,144-152,207,213,447-477,510,758-773,775-787,793,896-899,902-919
+.github/workflows/test.yml
+  s_6975e39c9c92e0::t_7f350a74b7158c 18,41,52-53,63
+agents/src/tokenize/index.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 5,17
+.changeset/faster-worker-status.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-5
+plugins/azure/package.json
+  s_6975e39c9c92e0::t_7f350a74b7158c 3
+plugins/deepgram/src/stt_v2.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 4,7,21-24,62-181
+  s_6975e39c9c92e0::t_17897a40c4e37a 182
+agents/src/ipc/job_proc_lazy_main.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 342-348,350,352-353,373-375
+plugins/phonic/README.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 117
+plugins/xai/src/realtime/realtime_model.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 32-33,35,146
+agents/src/voice/agent.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 4,8,11-15,19,56-129,547-656
+  s_6975e39c9c92e0::t_f686229117fac8 657-658
+agents/src/inference/vad.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 121,167-169,190,195-196,199,206,241,244,316,319-323
+agents/src/tokenize/blingfire.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-143
+plugins/speechify/src/sse.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-33
+agents/src/voice/realtime_tool_output_commit.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 14,19-23,99-100,102-104,119-121,129-130,133,135-138,140-151,156-167,171,177,194-226,393-523
+plugins/cerebras/src/models.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 5
+agents/src/voice/audio_recognition_turn_detection.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 36,77-81,826-1019
+  s_6975e39c9c92e0::t_f9fbfad147a09a 1020
+plugins/google/src/realtime/realtime_tool_reply.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-103
+agents/src/telemetry/traces.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 25-26,95-108,637,650,806-860
+  s_6975e39c9c92e0::t_3da60423f2522b 861
+agents/src/llm/openai_realtime/gpt_live_types.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-140
+plugins/cartesia/etc/agents-plugin-cartesia.api.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 12,91-95,125,155
+agents/src/llm/utils.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 949-950,957-962,999-1049
+  s_6975e39c9c92e0::t_952aa75dc94619 1050
+plugins/soniox/src/_internal.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 200-201,208-209,217-218,257,262-263,267-268,271-272,291-294,347
+agents/package.json
+  s_6975e39c9c92e0::t_7f350a74b7158c 3,9-17,19-27,57,69,72,102,108,110-114
+agents/src/tokenize/token_stream.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 38-40
+plugins/deepgram/etc/agents-plugin-deepgram.api.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 12,138,324,337
+plugins/soniox/CHANGELOG.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 3-38
+agents/src/voice/audio_recognition_manual_flush.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-172
+plugins/speechify/api-extractor.json
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-5
+plugins/tavus/README.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 16-39
+plugins/test/src/tts.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 152
+plugins/synthesia/api-extractor.json
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-8
+plugins/cartesia/package.json
+  s_6975e39c9c92e0::t_7f350a74b7158c 3
+turbo.json
+  s_6975e39c9c92e0::t_7f350a74b7158c 103-105
+plugins/baseten/CHANGELOG.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 3-32
+agents/src/telemetry/recording_upload.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 14,52,58,67,74,76-79,173-181,199-206,208,210-211,256-265
+  s_6975e39c9c92e0::t_9ea3f7ea7e6175 266
+plugins/google/src/utils.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 142-175,185-206
+plugins/openai/etc/agents-plugin-openai.api.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 11-12,26,29,119,139-143,145,509,513,523,526-528,530,545-546,548-550,560,564,566-569,571,574,576,580,582,586,603-613,760,1010,1117-1118,1124,1127,1184,1215,1222,1226-1229,1272,1278,1280,1290,1314-1316,1331,1334-1338,1342-1345,1347,1357-1363,1374,1390-1391,1394,1400,1405,1409,1414,1417,1431,1637,1639,1710,1733,1787-1788,1856-1860,1862,2007,2054-2055,2057,2103,2248
+agents/src/inference/eot/detector.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 27,30-31,41,114,144,211,214,227,243,295-329,336-337,341,343-374,377-389,391-424,860,864,868-890,893-929
+  s_6975e39c9c92e0::t_9ed92d96db7bd7 930
+.changeset/close-speech-stream-adapters.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-6
+agents/src/voice/tool_output_per_call.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-99
+plugins/openai/src/realtime/realtime_model.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1,5
+plugins/deepgram/src/stt_v2.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 54-55,81-88,129,163,215-216,253-269,640-644
+agents/src/llm/mcp_toolset.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-656
+plugins/cartesia/src/models.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 18-20,23,28-72
+plugins/soniox/etc/agents-plugin-soniox.api.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 12,157,171
+plugins/synthesia/src/index.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-28
+plugins/baseten/package.json
+  s_6975e39c9c92e0::t_7f350a74b7158c 3
+examples/src/drive-thru/simulation.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-110
+plugins/sarvam/CHANGELOG.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 3-32
+agents/src/voice/tool_executor_run_result.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-71
+plugins/tavus/CHANGELOG.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 3-34
+agents/src/voice/transcription/text_transforms.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 119-126,161-194,206
+examples/src/drive-thru/drivethru_agent.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 23,388-392,398
+plugins/tavus/src/avatar.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 37-59
+agents/src/stt/stt.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 127-131,141-151,474-478,531-534
+  s_6975e39c9c92e0::t_9db8bd5fef06bb 126,535
+plugins/perplexity/package.json
+  s_6975e39c9c92e0::t_7f350a74b7158c 3
+examples/src/assemblyai_stt_tts.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-110
+plugins/liveavatar/package.json
+  s_6975e39c9c92e0::t_7f350a74b7158c 3
+agents/src/tts/stream_adapter.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 6,33-34,74-77
+plugins/openai/src/realtime/index.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 4-5,10-14
+agents/src/log.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 5,25-73,95
+plugins/hume/package.json
+  s_6975e39c9c92e0::t_7f350a74b7158c 3
+agents/src/voice/testing/index.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 35
+plugins/resemble/src/tts.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 197
+agents/src/proto.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 88
+plugins/silero/src/vad.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 16,23-50,199-289
+  s_6975e39c9c92e0::t_2f04a6844151d1 290
+plugins/deepgram/CHANGELOG.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 3-42
+plugins/cartesia/CHANGELOG.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 3-36
+plugins/fishaudio/src/tts.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 33,242
+plugins/assemblyai/src/tts.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-1264
+plugins/phonic/src/realtime/realtime_model.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 74,86-87,90-93,312-316,408,571-574,1309
+agents/src/stt/stream_adapter.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 7,13,21-28,40-42,44-47
+plugins/assemblyai/src/models.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 20-21
+agents/src/voice/agent_activity_transcription_setup.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 1-635
+plugins/google/src/realtime/realtime_api.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 74-75,82-103,145-150,421,443-445,541,686-687,695,699-704,751,792-794,828-842,954-956,1000,1110
+plugins/google/src/utils.test.ts
+  s_6975e39c9c92e0::t_7f350a74b7158c 41-54,139-176
+plugins/minimax/CHANGELOG.md
+  s_6975e39c9c92e0::t_7f350a74b7158c 3-32
+REVIEW.md
+  s_6975e39c9c92e0::t_c88ca4f36c2fdd 18-20,22-29
+agents/src/llm/__snapshots__/chat_context.test.ts.snap
+  s_6975e39c9c92e0::t_47eccf9ce625d5 44,113,163,207
+agents/src/voice/__snapshots__/report.test.ts.snap
+  s_6975e39c9c92e0::t_8cf81ca8b0819b 33
+pnpm-lock.yaml
+  s_6975e39c9c92e0::t_e92b82f7ddead8 133-135,143-144,233-234,248-250,805-806,906-907,1108-1109,1232-1233,1468-1516,2116-2117,2125-2130,2166-2167,2172-2173,2178-2179,2183-2184,2188-2189,2193-2194,2199-2200,2205-2206,2211-2212,2217-2218,2223-2224,2229-2230,2235-2236,2241-2242,2248-2249,2255-2256,2262-2263,2269-2270,2276-2277,2283-2284,2290-2291,2297-2298,2301-2302,2306-2307,2312-2313,2318-2319,2398-2440,2504-2505,2510-2511,2516-2517,2523-2524,2529-2530,2535-2536,2544-2545,2625-2682,2804,2811,3325-3328,3512-3515,3550-3553,3569-3572,3645-3656,3660-3671,3733-3736,3793-3795,3802-3805,3864-3866,4054-4057,4066-4073,4078-4087,4154-4157,4203-4210,4370-4373,4377-4380,4404-4407,4446-4453,4527-4529,4610-4612,4648-4650,4790-4797,4813-4816,4821-4824,4868-4871,4904-4907,4947-4950,5028-5031,5055-5057,5065-5066,5116-5119,5184-5187,5195-5198,5212-5219,5302-5305,5347-5350,5355-5358,5367-5371,5390-5401,5406-5409,5460-5463,5596-5599,5669-5672,5728-5731,5739-5742,6378,6384-6385,6391-6394,6411,6429,6431,6434,6436,6439,6441,6444,6447,6450,6453,6456,6459,6462,6465,6468,6471,6474,6476,6479,6481,6484,6486,6489,6491,6494,6496,6499,6501,6504,6506,6509,6511,6514,6519,6521,6524,6527,6530,6597-6629,6689,6692,6695,6704-6708,6710,6713,6716,6723,6863,6865-6866,6870-6876,6878,6880,6883-6918,7577-7581,7781-7794,7828-7829,7847-7851,7912-7917,7920-7928,7985-7986,8029-8030,8035-8036,8203-8204,8480-8481,8486-8491,8494-8534,8600-8610,8664-8667,8858-8859,8862-8869,8901-8904,8939-8942,9007-9008,9088-9089,9114-9115,9186,9250-9253,9277-9278,9283-9286,9323-9326,9347-9348,9399-9402,9486-9487,9506-9507,9512,9605-9606,9660-9664,9672-9676,9685-9693,9812-9821,9855-9870,9875-9883,9900-9902,9908-9932,9935,9941-9965,9981-10000,10008-10015,10053-10054,10195-10196,10301-10306,10371-10372,10379-10380
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a418d95bec15d5d98549a557cbd5d598f845181e",
+  "prompts": {},
+  "sessions": {
+    "s_6975e39c9c92e0": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a134e0-d333-7f02-9db0-d7cf887f6bca",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
