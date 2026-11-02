@@ -915,6 +915,9 @@ export class AgentServer {
     try {
       await close;
     } finally {
+      // stop the sampler only after the last status tick, as a tick starts it again
+      clearInterval(loadMonitor);
+      DefaultLoadCalc.stop();
       ws.removeAllListeners();
     }
   }
@@ -1068,7 +1071,6 @@ export class AgentServer {
     this.#logger.debug('shutting down worker');
 
     this.#closed = true;
-    DefaultLoadCalc.stop();
     if (this.#loopMonitor) stopMonitoring(this.#loopMonitor);
     this.#loopMonitor = undefined;
 

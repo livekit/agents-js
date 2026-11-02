@@ -1,7 +1,12 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { RegisterWorkerResponse, ServerMessage, WorkerMessage } from '@livekit/protocol';
+import { once } from 'node:events';
+import type { AddressInfo } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { WebSocketServer } from 'ws';
+import { Future } from './utils.js';
 import type { AgentServer } from './worker.js';
 
 const monitor = vi.hoisted(() => ({
@@ -102,30 +107,61 @@ describe('default load', () => {
     expect(calls).toBe(4);
   });
 
-  it('stops sampling when the worker closes', async () => {
+  it('stops sampling once the worker has closed', async () => {
     monitor.cpuPercent.mockImplementation(sample);
-    const { worker, load } = await loadWorker();
+    const wss = new WebSocketServer({ port: 0 });
+    await once(wss, 'listening');
+    const registered = new Future();
+    wss.on('connection', (ws) => {
+      ws.on('message', (data: Buffer) => {
+        const msg = WorkerMessage.fromBinary(new Uint8Array(data));
+        if (msg.message.case === 'register') {
+          const res = new RegisterWorkerResponse({ workerId: 'AW_test' });
+          ws.send(new ServerMessage({ message: { case: 'register', value: res } }).toBinary());
+          registered.resolve();
+        }
+      });
+    });
+
+    const { worker } = await loadWorker();
+    // keep the worker connected while it closes, so status ticks run during teardown
+    const { ProcPool } = await import('./ipc/proc_pool.js');
+    const poolClosed = new Future();
+    const poolClose = vi
+      .spyOn(ProcPool.prototype, 'close')
+      .mockImplementation(() => poolClosed.await);
     const server = new worker.AgentServer(
       new worker.ServerOptions({
         agent: 'test-agent.js',
-        wsURL: 'ws://127.0.0.1:1',
+        wsURL: `ws://127.0.0.1:${(wss.address() as AddressInfo).port}`,
         apiKey: 'devkey',
         apiSecret: 'devsecret',
-        maxRetry: 0,
         numIdleProcesses: 0,
         simulation: true,
       }),
     );
 
-    void load();
-    await vi.advanceTimersByTimeAsync(1000);
-    await expect(server.run()).rejects.toThrow(/failed to connect/);
-    await server.close();
+    const run = server.run().catch(() => undefined);
+    try {
+      await registered.await;
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(monitor.cpuPercent).toHaveBeenCalled();
 
-    // the sample in progress finishes, then the sampler exits
-    await vi.advanceTimersByTimeAsync(500);
-    const calls = monitor.cpuPercent.mock.calls.length;
-    await vi.advanceTimersByTimeAsync(2000);
-    expect(monitor.cpuPercent.mock.calls.length).toBe(calls);
+      const closing = server.close();
+      await vi.advanceTimersByTimeAsync(3000);
+      poolClosed.resolve();
+      await closing;
+      await run;
+
+      // the samples in progress finish, then the sampler exits
+      await vi.advanceTimersByTimeAsync(500);
+      const calls = monitor.cpuPercent.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(monitor.cpuPercent.mock.calls.length).toBe(calls);
+    } finally {
+      poolClosed.resolve();
+      poolClose.mockRestore();
+      wss.close();
+    }
   });
 });
