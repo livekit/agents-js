@@ -16,19 +16,22 @@ vi.mock('./inference/_warmup.js', () => ({
 
 // the default load calculator is created once per module, so each test loads
 // its own copy of the worker module
-async function defaultLoadFunc() {
+async function loadWorker() {
   vi.resetModules();
-  const { ServerOptions } = await import('./worker.js');
-  const opts = new ServerOptions({ agent: 'test-agent.js' });
-  return () => opts.loadFunc({} as AgentServer);
+  const worker = await import('./worker.js');
+  const opts = new worker.ServerOptions({ agent: 'test-agent.js' });
+  return { worker, load: () => opts.loadFunc({} as AgentServer) };
 }
 
-const sample = (value: number, intervalMs: number) =>
-  new Promise<number>((resolve) => setTimeout(() => resolve(value), intervalMs));
+// resolves after intervalMs with the cpu value at that time
+let cpu = 0;
+const sample = (intervalMs: number) =>
+  new Promise<number>((resolve) => setTimeout(() => resolve(cpu), intervalMs));
 
 describe('default load', () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    cpu = 0;
     monitor.cpuPercent.mockReset();
   });
 
@@ -36,22 +39,48 @@ describe('default load', () => {
     vi.useRealTimers();
   });
 
-  it('averages the last 5 samples of 0.5s', async () => {
-    let n = 0;
-    monitor.cpuPercent.mockImplementation((ms) => sample(++n / 10, ms));
-    const load = await defaultLoadFunc();
+  it('measures at once before the first sample', async () => {
+    monitor.cpuPercent.mockImplementation(sample);
+    const { load } = await loadWorker();
 
-    expect(await load()).toBe(0);
-
+    cpu = 0.9;
+    const first = load();
     await vi.advanceTimersByTimeAsync(500);
-    expect(await load()).toBeCloseTo(0.1);
+    expect(await first).toBeCloseTo(0.9);
+  });
 
-    await vi.advanceTimersByTimeAsync(2000);
+  it('averages the last 5 samples of 0.5s', async () => {
+    monitor.cpuPercent.mockImplementation(sample);
+    const { load } = await loadWorker();
+
+    void load(); // starts the sampler
+    for (const value of [0.1, 0.2, 0.3, 0.4, 0.5]) {
+      cpu = value;
+      await vi.advanceTimersByTimeAsync(500);
+    }
     expect(await load()).toBeCloseTo((0.1 + 0.2 + 0.3 + 0.4 + 0.5) / 5);
 
+    cpu = 0.6;
     await vi.advanceTimersByTimeAsync(500);
     expect(await load()).toBeCloseTo((0.2 + 0.3 + 0.4 + 0.5 + 0.6) / 5);
     expect(monitor.cpuPercent).toHaveBeenCalledWith(500);
+  });
+
+  it('drops old samples and reports the error when cpu stats become unreadable', async () => {
+    let fail = false;
+    monitor.cpuPercent.mockImplementation((ms) =>
+      fail ? Promise.reject(new Error('no cpu stats')) : sample(ms),
+    );
+    const { load } = await loadWorker();
+
+    cpu = 0.2;
+    void load();
+    await vi.advanceTimersByTimeAsync(500);
+    expect(await load()).toBeCloseTo(0.2);
+
+    fail = true;
+    await vi.advanceTimersByTimeAsync(500);
+    await expect(load()).rejects.toThrow('no cpu stats');
   });
 
   it('waits before it samples again when cpu stats are unreadable', async () => {
@@ -60,15 +89,43 @@ describe('default load', () => {
     // rather than hangs it.
     let calls = 0;
     monitor.cpuPercent.mockImplementation((ms) =>
-      ++calls <= 100 ? Promise.reject(new Error('no cpu stats')) : sample(0.5, ms),
+      ++calls <= 100 ? Promise.reject(new Error('no cpu stats')) : sample(ms),
     );
-    const load = await defaultLoadFunc();
+    const { load } = await loadWorker();
 
-    expect(await load()).toBe(0);
+    // one call from the sampler, one from the direct measurement
+    await expect(load()).rejects.toThrow('no cpu stats');
     await vi.advanceTimersByTimeAsync(0);
-    expect(calls).toBe(1);
+    expect(calls).toBe(2);
 
     await vi.advanceTimersByTimeAsync(1000);
-    expect(calls).toBe(3);
+    expect(calls).toBe(4);
+  });
+
+  it('stops sampling when the worker closes', async () => {
+    monitor.cpuPercent.mockImplementation(sample);
+    const { worker, load } = await loadWorker();
+    const server = new worker.AgentServer(
+      new worker.ServerOptions({
+        agent: 'test-agent.js',
+        wsURL: 'ws://127.0.0.1:1',
+        apiKey: 'devkey',
+        apiSecret: 'devsecret',
+        maxRetry: 0,
+        numIdleProcesses: 0,
+        simulation: true,
+      }),
+    );
+
+    void load();
+    await vi.advanceTimersByTimeAsync(1000);
+    await expect(server.run()).rejects.toThrow(/failed to connect/);
+    await server.close();
+
+    // the sample in progress finishes, then the sampler exits
+    await vi.advanceTimersByTimeAsync(500);
+    const calls = monitor.cpuPercent.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(monitor.cpuPercent.mock.calls.length).toBe(calls);
   });
 });

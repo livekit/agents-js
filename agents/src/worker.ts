@@ -136,6 +136,7 @@ const cpuMonitor = getCpuMonitor();
 class DefaultLoadCalc {
   static #instance?: DefaultLoadCalc;
   #samples: number[] = [];
+  #stopped = false;
 
   private constructor() {
     this.#run();
@@ -145,27 +146,37 @@ class DefaultLoadCalc {
     return (DefaultLoadCalc.#instance ??= new DefaultLoadCalc());
   }
 
+  /** Stops sampling. The next get() starts a new sampler. */
+  static stop(): void {
+    if (DefaultLoadCalc.#instance) DefaultLoadCalc.#instance.#stopped = true;
+    DefaultLoadCalc.#instance = undefined;
+  }
+
   async #run(): Promise<void> {
-    while (true) {
+    while (!this.#stopped) {
       try {
         this.#samples.push(await cpuMonitor.cpuPercent(UPDATE_LOAD_INTERVAL));
         if (this.#samples.length > LOAD_AVG_SAMPLES) this.#samples.shift();
       } catch {
-        // cpu stats are unreadable; wait before trying again rather than spin
+        // cpu stats are unreadable; drop old samples so the load does not go stale,
+        // and wait before trying again rather than spin
+        this.#samples = [];
         await new Promise((resolve) => setTimeout(resolve, UPDATE_LOAD_INTERVAL).unref());
       }
     }
   }
 
-  get load(): number {
-    if (this.#samples.length === 0) return 0;
+  async load(): Promise<number> {
+    // no samples yet, or the last read failed: measure now, so the caller gets a
+    // real value or the error
+    if (this.#samples.length === 0) return cpuMonitor.cpuPercent(UPDATE_LOAD_INTERVAL);
     return this.#samples.reduce((a, b) => a + b, 0) / this.#samples.length;
   }
 }
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 const defaultCpuLoad = async (_worker: AgentServer): Promise<number> => {
-  return DefaultLoadCalc.get().load;
+  return DefaultLoadCalc.get().load();
 };
 
 /** Participant permissions to pass to every agent spun up by this worker. */
@@ -1057,6 +1068,7 @@ export class AgentServer {
     this.#logger.debug('shutting down worker');
 
     this.#closed = true;
+    DefaultLoadCalc.stop();
     if (this.#loopMonitor) stopMonitoring(this.#loopMonitor);
     this.#loopMonitor = undefined;
 
