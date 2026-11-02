@@ -37,6 +37,7 @@ export class VAD extends VAD_2 {
 export class VADStream extends VADStream_2 {
     // Warning: (ae-forgotten-export) The symbol "OnnxModel" needs to be exported by the entry point index.d.ts
     constructor(vad: VAD, opts: VADOptions, model: OnnxModel);
+    close(): Promise<void>;
     updateOptions(opts: Partial<VADOptions>): void;
 }
 

@@ -4,7 +4,7 @@
 import { type AudioFrame, AudioResampler } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { EventEmitter } from 'node:events';
-import type { ReadableStream } from 'node:stream/web';
+import type { ReadableStream, ReadableStreamDefaultReader } from 'node:stream/web';
 import { APIConnectionError, APIError } from '../_exceptions.js';
 import { calculateAudioDurationSeconds } from '../audio.js';
 import type { LanguageCode } from '../language.js';
@@ -346,6 +346,7 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
   #stt: STT;
   #terminalError?: Error;
   private deferredInputStream: DeferredReadableStream<AudioFrame>;
+  private inputPumpReader?: ReadableStreamDefaultReader<AudioFrame>;
   private logger = log();
   private _connOptions: APIConnectOptions;
   private _startTimeOffset: number = 0;
@@ -376,6 +377,8 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
         // already surfaced via emitError; swallow to avoid unhandled rejection.
         this.#terminalError = toError(error);
       } finally {
+        this.deferredInputStream.detachSource();
+        await this.inputPumpReader?.cancel().catch(() => {});
         this.queue.close();
       }
     };
@@ -466,6 +469,7 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
     // TODO(AJS-35): Implement STT with webstreams API
     const inputStream = this.deferredInputStream.stream;
     const reader = inputStream.getReader();
+    this.inputPumpReader = reader;
 
     try {
       while (true) {
@@ -478,7 +482,7 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
         }
       }
     } catch (error) {
-      this.logger.error('Error in STTStream mainTask:', error);
+      if (!this.closed) this.logger.error('Error in STTStream mainTask:', error);
     } finally {
       reader.releaseLock();
     }
@@ -624,6 +628,8 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
 
   /** Close both the input and output of the STT stream */
   close() {
+    this.deferredInputStream.detachSource();
+    void this.inputPumpReader?.cancel().catch(() => {});
     if (!this.input.closed) this.input.close();
     if (!this.queue.closed) this.queue.close();
     if (!this.output.closed) this.output.close();

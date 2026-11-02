@@ -94,6 +94,7 @@ describe('StreamAdapter speech timing', () => {
           type: SpeechEventType.END_OF_SPEECH,
           speechEndTime: 9_400,
         });
+        await expect(stream.next()).resolves.toEqual({ done: true, value: undefined });
         expect(finalEvent).toMatchObject({
           type: SpeechEventType.FINAL_TRANSCRIPT,
           speechEndTime: expectedFinalSpeechEndTime,

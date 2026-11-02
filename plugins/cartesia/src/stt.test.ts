@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { APIConnectionError, APIError, DEFAULT_API_CONNECT_OPTIONS, stt } from '@livekit/agents';
+import type { stt } from '@livekit/agents';
+import { APIConnectionError, APIError, DEFAULT_API_CONNECT_OPTIONS } from '@livekit/agents';
 import { VAD } from '@livekit/agents-plugin-silero';
 import { stt as testStt } from '@livekit/agents-plugins-test';
 import { once } from 'node:events';

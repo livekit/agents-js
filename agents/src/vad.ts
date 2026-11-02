@@ -115,6 +115,7 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
   protected lastActivityTime = BigInt(0);
   protected logger;
   protected deferredInputStream: DeferredReadableStream<AudioFrame>;
+  private deferredReader?: ReadableStreamDefaultReader<AudioFrame>;
 
   private metricsStream: ReadableStream<VADEvent>;
   constructor(vad: VAD) {
@@ -143,6 +144,7 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
    */
   private async pumpDeferredStream() {
     const reader = this.deferredInputStream.stream.getReader();
+    this.deferredReader = reader;
     try {
       while (true) {
         const { done, value } = await reader.read();
@@ -150,8 +152,9 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
         await this.inputWriter.write(value);
       }
     } catch (e) {
+      if (this.closed) return;
       this.logger.error(`Error pumping deferred stream: ${e}`);
-      throw e;
+      this.close();
     } finally {
       reader.releaseLock();
     }
@@ -231,7 +234,8 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
     if (this.closed) {
       throw new Error('Stream is closed');
     }
-    this.inputWriter.write(frame);
+    // Cancellation can reject writes already queued behind inference.
+    void this.inputWriter.write(frame).catch(() => {});
   }
 
   /**
@@ -247,7 +251,7 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
     if (this.closed) {
       throw new Error('Stream is closed');
     }
-    this.inputWriter.write(VADStream.FLUSH_SENTINEL);
+    void this.inputWriter.write(VADStream.FLUSH_SENTINEL).catch(() => {});
   }
 
   endInput() {
@@ -258,7 +262,8 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
       throw new Error('Stream is closed');
     }
     this.inputClosed = true;
-    this.input.writable.close();
+    // The writer owns the lock; closing the writable directly rejects.
+    void this.inputWriter.close().catch(() => {});
   }
 
   async next(): Promise<IteratorResult<VADEvent>> {
@@ -271,10 +276,15 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
   }
 
   close() {
-    this.outputWriter.releaseLock();
-    this.outputReader.cancel();
-    this.output.writable.close();
+    if (this.closed) return;
     this.closed = true;
+    this.inputClosed = true;
+    this.deferredInputStream.detachSource();
+    void this.deferredReader?.cancel().catch(() => {});
+    void this.inputReader.cancel().catch(() => {});
+    void this.inputWriter.close().catch(() => {});
+    // Drain queued events and settle both transcript and metrics readers.
+    void this.outputWriter.close().catch(() => {});
   }
 
   [Symbol.asyncIterator](): VADStream {

@@ -40,6 +40,7 @@
     "@livekit/agents-plugins-test": "workspace:*",
     "@livekit/rtc-node": "catalog:",
     "@microsoft/api-extractor": "^7.58.12",
+    "@rimelabs/sdk": "0.1.0-alpha.18",
     "@types/ws": "catalog:",
     "tsup": "^8.3.5",
     "typescript": "^5.0.0"
@@ -51,7 +52,13 @@
     "ws": "catalog:"
   },
   "peerDependencies": {
+    "@rimelabs/sdk": ">=0.1.0-alpha.18 <0.1.0",
     "@livekit/agents": "workspace:*",
     "@livekit/rtc-node": "catalog:"
+  },
+  "peerDependenciesMeta": {
+    "@rimelabs/sdk": {
+      "optional": true
+    }
   }
 }
