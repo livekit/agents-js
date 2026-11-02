@@ -10,10 +10,13 @@ import {
   WorkerMessage,
 } from '@livekit/protocol';
 import { once } from 'node:events';
-import type { AddressInfo } from 'node:net';
+import { type AddressInfo, createServer } from 'node:net';
 import { setImmediate } from 'node:timers/promises';
+import { Worker as ThreadWorker } from 'node:worker_threads';
 import { describe, expect, it, vi } from 'vitest';
 import { WebSocketServer } from 'ws';
+import { HTTPServer } from './http_server.js';
+import { InferenceProcExecutor } from './ipc/inference_proc_executor.js';
 import { type JobExecutor, JobStatus } from './ipc/job_executor.js';
 import { JobProcExecutor } from './ipc/job_proc_executor.js';
 import { ProcPool } from './ipc/proc_pool.js';
@@ -23,6 +26,34 @@ import { AgentServer, ServerOptions } from './worker.js';
 vi.mock('./inference/_warmup.js', () => ({
   _getLocalInferenceModule: () => undefined,
 }));
+
+class FakeInferenceExecutor {
+  started = false;
+  closed = false;
+  #worker?: ThreadWorker;
+
+  async start() {
+    this.started = true;
+    this.#worker = new ThreadWorker('setInterval(() => {}, 1000)', {
+      eval: true,
+      name: 'fake_inference_proc',
+    });
+    await once(this.#worker, 'online');
+  }
+
+  async initialize() {}
+
+  async close() {
+    this.closed = true;
+    this.started = false;
+    await this.#worker?.terminate();
+    this.#worker = undefined;
+  }
+
+  get isAlive() {
+    return this.started && this.#worker !== undefined;
+  }
+}
 
 describe('AgentServer connection failures', () => {
   it('run rejects when connection retries are exhausted', async () => {
@@ -43,6 +74,50 @@ describe('AgentServer connection failures', () => {
     } finally {
       await server.close();
       await server.close();
+    }
+  });
+
+  it('closes resources started before run rejects', async () => {
+    const blocker = createServer();
+    blocker.listen(0, '0.0.0.0');
+    await once(blocker, 'listening');
+    const port = (blocker.address() as AddressInfo).port;
+    const fakeExecutor = new FakeInferenceExecutor();
+    const createExecutor = vi
+      .spyOn(InferenceProcExecutor, 'createIfNeeded')
+      .mockReturnValue(fakeExecutor as unknown as InferenceProcExecutor);
+    const closeHTTPServer = vi.spyOn(HTTPServer.prototype, 'close');
+    const server = new AgentServer(
+      new ServerOptions({
+        agent: 'test-agent.js',
+        wsURL: 'ws://127.0.0.1:1',
+        apiKey: 'devkey',
+        apiSecret: 'devsecret',
+        maxRetry: 0,
+        port,
+        numIdleProcesses: 0,
+      }),
+    );
+
+    try {
+      await expect(server.run()).rejects.toThrow();
+      expect(fakeExecutor.started).toBe(true);
+
+      const startedAt = performance.now();
+      await server.close();
+
+      expect(fakeExecutor.closed, 'close() must close the inference executor').toBe(true);
+      expect(fakeExecutor.isAlive).toBe(false);
+      expect(closeHTTPServer).toHaveBeenCalledOnce();
+      expect(performance.now() - startedAt).toBeLessThan(5000);
+    } finally {
+      if (!fakeExecutor.closed) await fakeExecutor.close();
+      await server.close();
+      await new Promise<void>((resolve, reject) =>
+        blocker.close((error) => (error ? reject(error) : resolve())),
+      );
+      closeHTTPServer.mockRestore();
+      createExecutor.mockRestore();
     }
   });
 });
