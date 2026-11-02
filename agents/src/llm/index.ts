@@ -128,7 +128,6 @@ export {
   createToolOptions,
   executeToolCall,
   formatChatHistory,
-  oaiParams,
   serializeImage,
   toJsonSchema,
   validateChatContextStructure,
