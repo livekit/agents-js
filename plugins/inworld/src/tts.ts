@@ -733,16 +733,23 @@ class SynthesizeStream extends tts.SynthesizeStream {
 
     pool.registerListener(this.#contextId, handleMessage);
 
+    // The context is created with the first sentence so it doesn't sit idle on
+    // the server while the LLM is still generating.
+    let contextCreated = false;
     const sendLoop = async () => {
       for await (const ev of tokenizerStream) {
+        if (!contextCreated) {
+          contextCreated = true;
+          await this.#createContext(ws);
+        }
         await this.#sendText(ws, ev.token);
       }
     };
     const sendPromise = sendLoop();
+    // Observed below once input ends; avoid an unhandled rejection if a send fails first.
+    sendPromise.catch(() => {});
 
     try {
-      await this.#createContext(ws);
-
       for await (const text of this.input) {
         if (text === tts.SynthesizeStream.FLUSH_SENTINEL) {
           tokenizerStream.flush();
@@ -752,6 +759,8 @@ class SynthesizeStream extends tts.SynthesizeStream {
       }
       tokenizerStream.endInput();
       await sendPromise;
+
+      if (!contextCreated) return;
 
       await this.#flushContext(ws);
       await this.#closeContext(ws);
