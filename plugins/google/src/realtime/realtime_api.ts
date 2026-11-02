@@ -597,8 +597,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   #task: Promise<void>;
   #logger = log();
   #closed = false;
-  // An abnormal close of the live socket, rethrown by the main loop so it is
-  // retried on a fresh socket like a failed connect.
+  // A socket failure, rethrown by the main loop so it uses the connection retry budget.
   #sessionError?: Error;
 
   constructor(realtimeModel: RealtimeModel) {
@@ -1143,7 +1142,10 @@ export class RealtimeSession extends llm.RealtimeSession {
             // Application-level errors (e.g., invalid model name) come through onclose with error codes.
             onerror: (error: ErrorEvent) => {
               this.#logger.error('Gemini Live session error:', error);
-              if (!this.sessionShouldClose.isSet) {
+              if (!connected.stale && !this.#closed && !this.sessionShouldClose.isSet) {
+                this.#sessionError = new APIConnectionError({
+                  message: error.message || 'Gemini Live connection error',
+                });
                 this.markRestartNeeded();
               }
             },

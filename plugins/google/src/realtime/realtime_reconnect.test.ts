@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { LiveCallbacks, LiveServerMessage, Session } from '@google/genai';
 import { Live } from '@google/genai';
-import { DEFAULT_API_CONNECT_OPTIONS, llm } from '@livekit/agents';
+import { APIConnectionError, DEFAULT_API_CONNECT_OPTIONS, llm } from '@livekit/agents';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { RealtimeModel, type RealtimeSession } from './realtime_api.js';
 
@@ -91,7 +91,67 @@ describe('Google Realtime dropped connections', () => {
   afterEach(async () => {
     await session?.close();
     session = undefined;
+    vi.clearAllTimers();
+    vi.useRealTimers();
     vi.restoreAllMocks();
+  });
+
+  it.each([0, 2])(
+    'honors the retry budget and delay when an error precedes a late close (maxRetry=%i)',
+    async (maxRetry) => {
+      vi.useFakeTimers();
+      const { sockets, connect } = fakeServer([]);
+      const opened = openSession(maxRetry);
+      session = opened.session;
+      await vi.advanceTimersByTimeAsync(0);
+
+      for (let attempt = 0; attempt <= maxRetry; attempt++) {
+        const socket = sockets[attempt]!;
+        socket.callbacks.onerror?.({ message: 'Connection reset' } as ErrorEvent);
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(connect).toHaveBeenCalledTimes(attempt + 1);
+        expect(opened.errors).toHaveLength(attempt + 1);
+        expect(opened.errors[attempt]!.recoverable).toBe(attempt < maxRetry);
+        expect(opened.errors[attempt]!.error).toBeInstanceOf(APIConnectionError);
+        expect(opened.errors[attempt]!.error.message).toBe('Connection reset');
+
+        if (attempt < maxRetry) {
+          await vi.advanceTimersByTimeAsync(9);
+          expect(connect).toHaveBeenCalledTimes(attempt + 1);
+          await vi.advanceTimersByTimeAsync(1);
+          expect(connect).toHaveBeenCalledTimes(attempt + 2);
+        }
+
+        // The transport's close event can arrive after its replacement is live.
+        dropSocket({ socket, close: { code: 1006, reason: '' } });
+        await vi.advanceTimersByTimeAsync(0);
+        expect(opened.errors).toHaveLength(attempt + 1);
+      }
+
+      await vi.advanceTimersByTimeAsync(100);
+      expect(connect).toHaveBeenCalledTimes(maxRetry + 1);
+      expect(sockets.at(-1)!.closed).toBe(true);
+    },
+  );
+
+  it('ignores a transport error from a socket replaced by a config update', async () => {
+    vi.useFakeTimers();
+    const { sockets, connect } = fakeServer([]);
+    const opened = openSession();
+    session = opened.session;
+    await vi.advanceTimersByTimeAsync(0);
+
+    session.updateOptions({ temperature: 0.5 });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(connect).toHaveBeenCalledTimes(2);
+
+    sockets[0]!.callbacks.onerror?.({ message: 'Late transport error' } as ErrorEvent);
+    await vi.advanceTimersByTimeAsync(100);
+
+    expect(connect).toHaveBeenCalledTimes(2);
+    expect(opened.errors).toEqual([]);
+    expect(sockets[1]!.closed).toBe(false);
   });
 
   it('reconnects after the server drops a live session, replaying the chat context', async () => {
