@@ -16,6 +16,7 @@ import type {
   ConversationUsageInfo,
   FunctionCallEvent,
   MessageOutputEvent,
+  ReasoningEffort,
   ResponseDoneEvent,
   ResponseErrorEvent,
   ResponseStartedEvent,
@@ -35,6 +36,7 @@ interface LLMOpts {
   randomSeed: number | null;
   toolChoice: llm.ToolChoice | null;
   store: boolean | null;
+  reasoningEffort: ReasoningEffort | null;
 }
 
 interface PendingFunctionCall {
@@ -57,6 +59,8 @@ export interface LLMOptions {
   maxCompletionTokens?: number;
   /** Whether Mistral stores each conversation on its servers. Pass false to opt out. */
   store?: boolean;
+  /** How much the model reasons before answering. Left unset, the server default applies. */
+  reasoningEffort?: ReasoningEffort;
 }
 
 export class LLM extends llm.LLM {
@@ -76,6 +80,7 @@ export class LLM extends llm.LLM {
       toolChoice: opts.toolChoice ?? null,
       maxCompletionTokens: opts.maxCompletionTokens ?? null,
       store: opts.store ?? null,
+      reasoningEffort: opts.reasoningEffort ?? null,
     };
 
     const apiKey = opts.apiKey ?? process.env.MISTRAL_API_KEY;
@@ -112,6 +117,7 @@ export class LLM extends llm.LLM {
     randomSeed?: number;
     toolChoice?: llm.ToolChoice;
     store?: boolean;
+    reasoningEffort?: ReasoningEffort;
   }): void {
     if (opts.model !== undefined) this.#opts.model = opts.model;
     if (opts.maxCompletionTokens !== undefined)
@@ -123,6 +129,7 @@ export class LLM extends llm.LLM {
     if (opts.randomSeed !== undefined) this.#opts.randomSeed = opts.randomSeed;
     if (opts.toolChoice !== undefined) this.#opts.toolChoice = opts.toolChoice;
     if (opts.store !== undefined) this.#opts.store = opts.store;
+    if (opts.reasoningEffort !== undefined) this.#opts.reasoningEffort = opts.reasoningEffort;
   }
 
   chat({
@@ -154,6 +161,8 @@ export class LLM extends llm.LLM {
     if (this.#opts.frequencyPenalty !== null)
       completionArgs.frequencyPenalty = this.#opts.frequencyPenalty;
     if (this.#opts.randomSeed !== null) completionArgs.randomSeed = this.#opts.randomSeed;
+    if (this.#opts.reasoningEffort !== null)
+      completionArgs.reasoningEffort = this.#opts.reasoningEffort;
 
     // Resolve tool choice
     const resolvedToolChoice = toolChoice ?? this.#opts.toolChoice;
@@ -163,6 +172,11 @@ export class LLM extends llm.LLM {
       } else if (resolvedToolChoice === 'auto' || resolvedToolChoice === 'none') {
         completionArgs.toolChoice = resolvedToolChoice;
       }
+    }
+
+    const callerCompletionArgs = extra.completionArgs;
+    if (callerCompletionArgs && typeof callerCompletionArgs === 'object') {
+      Object.assign(completionArgs, callerCompletionArgs);
     }
 
     if (Object.keys(completionArgs).length > 0) {
