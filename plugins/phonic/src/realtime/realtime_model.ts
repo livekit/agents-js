@@ -71,6 +71,7 @@ export interface RealtimeModelOptions {
   observabilityIntegrations?: Phonic.ConfigOptions['observability_integrations'];
   configurationEndpoint?: Phonic.ConfigOptions['configuration_endpoint'];
   additionalParams?: NonNullable<Phonic.ConfigOptions['additional_params']>;
+  externalId?: string;
   configsForTools?: PhonicToolConfig[];
   /** @deprecated Use `configsForTools` with `forbid_speech_after_tool_call` per tool instead. */
   forbidSpeechAfterToolCall?: string[];
@@ -82,11 +83,14 @@ export interface RealtimeModelOptions {
 /**
  * Phonic config fields that can be changed mid-session via `RealtimeModel.updateOptions` /
  * `RealtimeSession.updateOptions` — every field is optional so an update carries only what changes.
- * Connection-level fields (`apiKey`, `model`, `connOptions`, `baseUrl`) and `instructions` (managed
- * through the Agent handoff) are excluded.
+ * Connection-level fields (`apiKey`, `model`, `connOptions`, `baseUrl`), `externalId` (fixed for the
+ * conversation) and `instructions` (managed through the Agent handoff) are excluded.
  */
 export type PhonicConfig = Partial<
-  Omit<RealtimeModelOptions, 'apiKey' | 'model' | 'connOptions' | 'baseUrl' | 'instructions'>
+  Omit<
+    RealtimeModelOptions,
+    'apiKey' | 'model' | 'connOptions' | 'baseUrl' | 'externalId' | 'instructions'
+  >
 >;
 
 // Phonic's built-in tools, referenced by name in `phonicTools`. A configsForTools entry for one of
@@ -306,6 +310,11 @@ export class RealtimeModel extends llm.RealtimeModel {
        */
       additionalParams?: NonNullable<Phonic.ConfigOptions['additional_params']>;
       /**
+       * Your own identifier for the conversation (e.g. a call or session ID), stored on the Phonic
+       * conversation so you can look it up later
+       */
+      externalId?: string;
+      /**
        * Per-tool behavior overrides, one `PhonicToolConfig` per tool (keyed by `name`); omitted
        * fields fall back to the plugin defaults. See the README for the available fields.
        */
@@ -396,6 +405,7 @@ export class RealtimeModel extends llm.RealtimeModel {
       observabilityIntegrations: options.observabilityIntegrations,
       configurationEndpoint: options.configurationEndpoint,
       additionalParams: options.additionalParams,
+      externalId: options.externalId,
       configsForTools: options.configsForTools,
       forbidSpeechAfterToolCall: options.forbidSpeechAfterToolCall,
       onConversationCreated: options.onConversationCreated,
@@ -558,7 +568,10 @@ export class RealtimeSession extends llm.RealtimeSession {
           output: item.output,
         });
         sentToolCallOutput = true;
-        if (item.name && this.configsForTools.get(item.name)?.forbid_speech_after_tool_call) {
+        if (
+          !item.replyRequired ||
+          (item.name && this.configsForTools.get(item.name)?.forbid_speech_after_tool_call)
+        ) {
           forbidSpeech = true;
         }
       }
@@ -1293,6 +1306,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       observability_integrations: this.options.observabilityIntegrations,
       configuration_endpoint: this.options.configurationEndpoint,
       additional_params: this.options.additionalParams,
+      external_id: this.options.externalId,
       stream_ahead_of_real_time: true,
     };
   }

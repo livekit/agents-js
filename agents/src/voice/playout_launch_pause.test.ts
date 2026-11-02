@@ -405,6 +405,8 @@ describe('playout launch pause', () => {
       audioOutput,
       new AbortController(),
       () => order.push('reconcile'),
+      undefined,
+      null,
     );
     await task.result;
     audioOut.firstFrameFut.reject(new Error('playout finished before playback started'));

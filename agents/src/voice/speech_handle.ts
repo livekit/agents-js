@@ -16,29 +16,11 @@ import { functionCallStorage } from './agent.js';
 const SPEECH_HANDLE_SYMBOL = Symbol.for('livekit.agents.SpeechHandle');
 
 /**
- * How long a cooperatively cancelled task may take to unwind after its abort signal fires.
+ * Grace period for bounded cancellation waits, in milliseconds.
  *
- * Has no python counterpart: there a cancelled task takes `CancelledError` at its next await point,
- * so `utils.aio.cancel_and_wait` needs no ceiling at all. Nothing here can cancel a pending
- * promise, so tasks are aborted cooperatively and waited on with this bound instead.
- *
- * All it bounds is how long an *aborted task body* takes to reach its own return — not how long
- * the work it started takes. The pipeline's tasks are stream pumps that re-check `signal.aborted`
- * each iteration, and `performToolExecutions` never awaits a user tool promise on this path: it
- * races the abort signal (`_waitForToolExecutionResult`), while `ToolExecutor` abandons a cancelled
- * tool outright and only *logs* if `execute()` is still running after `DRAIN_TOOL_TIMEOUT_MS`.
- * Non-cancellable tools are awaited to completion by `ToolExecutor.drain()` with no ceiling at all,
- * and the shutdown drain is a separate unbounded await that runs *after* this budget — so tool
- * cleanup is governed by the executor's own design, never by this value.
- *
- * Measured `performToolExecutions` settle latency after `abort()`: 0.04–0.33 ms across a tool that
- * observes its abort signal, a 4s tool that ignores it, a non-cancellable 4s tool, three concurrent
- * tools, and a tool body that never settles at all. The one shape that exceeds 2s is a task parked
- * on a tool-call stream that is never closed — it never settles, so no finite ceiling rescues it.
- *
- * 2s is therefore ample, and small enough that the two budgets an interrupted reply spends in
- * sequence (its task group, then its tool-execution task) still fit inside
- * {@link INTERRUPTION_TIMEOUT}; at 5s they would not.
+ * A timeout does not establish that a task or its children have finished cleanup.
+ * Speech wrappers join their owned children before releasing run ownership.
+ * Remote hosts enforce a separate deadline for closing their transport.
  */
 export const REPLY_TASK_CANCEL_TIMEOUT = 2000;
 
@@ -184,8 +166,8 @@ export class SpeechHandle {
   _numSteps = 1;
   /**
    * @internal Generation ids continue another speech's numbering when this speech carries on
-   * its turn (a realtime tool reply, which the framework runs on a new handle): the base id and
-   * the step the other speech had reached.
+   * its turn (a tool reply a realtime model generates itself, which arrives on a new handle):
+   * the base id and the step the other speech had reached.
    */
   _generationBaseId?: string;
   /** @internal */
@@ -293,7 +275,7 @@ export class SpeechHandle {
 
   /**
    * @internal The speech id the turn is filed under: the root speech's when this handle
-   * continues its turn (a realtime tool reply runs on a new handle), else its own.
+   * continues its turn (a model-generated realtime tool reply), else its own.
    */
   get _turnSpeechId(): string {
     return this._generationBaseId ?? this._id;
@@ -653,10 +635,10 @@ export class SpeechHandle {
    * - `preemptive_discarded` (the default): `from` was a preemptive attempt dropped for this
    *   speech; the span records that and takes this speech's id. Generation ids stay this
    *   speech's own, as in Python.
-   * - `tool_reply`: this speech is the realtime tool reply the framework runs on a new handle
-   *   after `from`'s tool calls; Python runs it on the same handle as its next step. The turn
-   *   keeps `from`'s speech id and this speech's generations continue `from`'s numbering, so the
-   *   trace reads as Python's: one turn, the reply's generation parented to the tool call's.
+   * - `tool_reply`: this speech is the tool reply a realtime model generated on its own after
+   *   `from`'s tool calls, which arrives on a new handle. The turn keeps `from`'s speech id
+   *   and this speech's generations continue `from`'s numbering, so the trace shows one turn,
+   *   the reply's generation parented to the tool call's.
    */
   _continueAgentTurn(
     carry: AgentTurnCarry,

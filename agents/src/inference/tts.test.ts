@@ -14,6 +14,7 @@ import { describeLiveKitInference } from './test_utils.js';
 import {
   TTS,
   type TTSFallbackModel,
+  type TTSFallbackModelType,
   hasAlignedTranscript,
   normalizeTTSFallback,
   parseTTSModelString,
@@ -431,6 +432,33 @@ describe('TTS alignedTranscript capability', () => {
       modelOptions: { timestamp_type: 'WORD' },
     });
     expect(tts.capabilities.alignedTranscript).toBe(true);
+  });
+
+  it('reports AssemblyAI aligned transcripts by default unless explicitly disabled', () => {
+    const capabilities = (modelOptions?: Record<string, unknown>) =>
+      makeTts({
+        model: 'assemblyai/assemblyai-tts-1',
+        ...(modelOptions === undefined ? {} : { modelOptions }),
+      }).capabilities.alignedTranscript;
+
+    expect(capabilities()).toBe(true);
+    expect(capabilities({ word_timestamps: true })).toBe(true);
+    expect(capabilities({ word_timestamps: false })).toBe(false);
+    expect(capabilities({ word_timestamps: 'no' })).toBe(true);
+  });
+
+  it('drops alignedTranscript when a server-side fallback cannot emit alignment', () => {
+    const capabilities = (fallback: TTSFallbackModelType | TTSFallbackModelType[]) =>
+      makeTts({ model: 'assemblyai/assemblyai-tts-1', fallback }).capabilities.alignedTranscript;
+
+    expect(capabilities('deepgram/aura-2')).toBe(false);
+    expect(capabilities({ model: 'cartesia/sonic', voice: 'v' })).toBe(false);
+    expect(
+      capabilities([
+        { model: 'cartesia/sonic', voice: 'v', extraKwargs: { add_timestamps: true } },
+        'assemblyai/assemblyai-tts-1',
+      ]),
+    ).toBe(true);
   });
 
   it('recomputes alignedTranscript when updateOptions changes modelOptions', () => {

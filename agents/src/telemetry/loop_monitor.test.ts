@@ -23,6 +23,7 @@ import {
   startMonitoring,
   stopMonitoring,
 } from './loop_monitor.js';
+import { WD_LAST_WAKE, WD_SLOTS } from './loop_stack_sampler.js';
 import * as otelMetrics from './otel_metrics.js';
 import { RateLimiter } from './rate_limiter.js';
 import {
@@ -195,6 +196,24 @@ describe.sequential('event loop monitor', () => {
   });
 
   it('attributes garbage collection pauses inside a block', async () => {
+    // Heavy allocation can exhaust a constrained CI CPU quota and starve the watchdog too,
+    // making this synthetic block look like host contention. This test only covers GC accounting.
+    monitor.stop();
+    reports = [];
+    monitor = new EventLoopMonitor({
+      warnThreshold: WARN,
+      errorThreshold: ERROR,
+      tickInterval: TICK,
+      stacks: 'never',
+      watchdog: false,
+    });
+    monitor.onReport = (report) => reports.push(report);
+    const session = { rootSpanContext: trace.setSpan(ROOT_CONTEXT, sessionRoot) };
+    monitor.setReportContext(trace.setSpan(ROOT_CONTEXT, sessionRoot), (fn) =>
+      runWithJobContext(fakeJob(session), fn),
+    );
+    monitor.start();
+
     blockLoopWithGarbage(200);
     await settle();
     // the longest stall is the block above; a loaded host can add shorter ones around it
@@ -342,6 +361,18 @@ describe.sequential('event loop monitor', () => {
   });
 
   describe('host contention', () => {
+    it('counts a watchdog starved after it woke inside the stall window', () => {
+      monitor.stop();
+      const state = new BigInt64Array(
+        new SharedArrayBuffer(WD_SLOTS * BigInt64Array.BYTES_PER_ELEMENT),
+      );
+      const now = 100_000;
+      const windowStart = now - 500;
+      Atomics.store(state, WD_LAST_WAKE, BigInt(windowStart + 10));
+
+      expect(monitor['consumeWatchdogGap'](windowStart, state, now)).toBeCloseTo(490 - TICK);
+    });
+
     it('is told apart from blocking code by the watchdog and the loop thread CPU', () => {
       monitor.stop();
       expect(monitor['cpuScope']).toBe('thread');

@@ -375,6 +375,11 @@ export class InterruptionStreamBase {
     return this.resampler;
   }
 
+  private resetResampler(): void {
+    this.resampler?.close();
+    this.resampler = undefined;
+  }
+
   stream(): ReadableStream<OverlappingSpeechEvent> {
     return this.eventStream;
   }
@@ -382,6 +387,9 @@ export class InterruptionStreamBase {
   async pushFrame(frame: InterruptionSentinel | AudioFrame): Promise<void> {
     this.ensureStreamsNotEnded();
     if (!(frame instanceof AudioFrame)) {
+      if (frame.type === 'agent-speech-started' || frame.type === 'agent-speech-ended') {
+        this.resetResampler();
+      }
       return this.inputStream.write(frame);
     } else if (this.options.sampleRate !== frame.sampleRate) {
       const resampler = this.getResamplerFor(frame.sampleRate);

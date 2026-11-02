@@ -352,6 +352,7 @@ describe('Meta Muse STT', () => {
     });
     expect(factory.calls[0]!.url).toBe(DEFAULT_URL);
     expect(JSON.stringify(factory.calls[0]!.options)).not.toContain('explicit-secret');
+    expect(factory.calls[0]!.options).toHaveProperty('heartbeat', 30_000);
   });
 
   it('packetizes PCM16 into paced 80 ms chunks and preserves the tail', async () => {

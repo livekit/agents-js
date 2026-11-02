@@ -588,6 +588,7 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
       jobId: this.job.id,
       roomId: this.job.room?.sid || '',
       room: this.job.room?.name || '',
+      agentName: this.job.agentName,
       options: targetSession.sessionOptions,
       events: targetSession._recordedEvents,
       enableRecording: targetSession._enableRecording,
