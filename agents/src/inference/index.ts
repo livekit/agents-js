@@ -1,8 +1,10 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import * as duplex from './duplex.js';
 import * as eot from './eot/index.js';
 import * as llm from './llm.js';
+import * as realtime from './realtime.js';
 import * as stt from './stt.js';
 import * as tts from './tts.js';
 
@@ -37,12 +39,35 @@ export {
   LLMStream,
   type ChatCompletionOptions,
   type GatewayOptions,
-  type InferenceClass,
   type InferenceLLMOptions,
   type LLMModels,
   type XAIModels,
   type ZAIModels,
+  llmFromModelString,
 } from './llm.js';
+
+export { type InferenceClass } from './utils.js';
+
+export {
+  RealtimeModel,
+  RealtimeSession,
+  isRealtimeModel,
+  type OpenAIRealtimeModels,
+  type RealtimeModelOptions,
+  type RealtimeModels,
+  type XAIRealtimeModels,
+} from './realtime.js';
+
+export {
+  DuplexModel,
+  DuplexSession,
+  isDuplexModel,
+  type DuplexModelOptions,
+  type DuplexModels,
+  type DuplexOptions,
+  type OpenAIDuplexOptions,
+  type OpenAIResponsesOptions,
+} from './duplex.js';
 
 export {
   normalizeSTTFallback,
@@ -75,4 +100,4 @@ export {
   type XaiTTSOptions,
 } from './tts.js';
 
-export { llm, stt, tts };
+export { duplex, llm, realtime, stt, tts };

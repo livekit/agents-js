@@ -19,7 +19,7 @@
  * - Gemini: https://ai.google.dev/gemini-api/docs/speech-generation#controllable
  */
 import { ATTRIBUTE_TRANSCRIPTION_EXPRESSION } from '../constants.js';
-import { basic as tokenizeBasic } from '../tokenize/index.js';
+import { blingfire as tokenizeBlingfire } from '../tokenize/index.js';
 import type { SentenceTokenizer } from '../tokenize/tokenizer.js';
 import { type TimedString, createTimedString } from '../voice/io.js';
 import {
@@ -1072,7 +1072,7 @@ export function sentenceTokenizer(
 ): SentenceTokenizer {
   const maxLen = MAX_INPUT_LEN[provider];
   const batching = options.expressive && maxLen !== undefined;
-  return new tokenizeBasic.SentenceTokenizer({
+  return new tokenizeBlingfire.SentenceTokenizer({
     maxTokenLength: maxLen,
     // the batch target is independent of the cap; clamped so it can never exceed it
     minTokenLength: batching ? Math.min(EXPRESSIVE_BATCH_LEN, maxLen!) : undefined,

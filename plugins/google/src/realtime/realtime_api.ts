@@ -52,6 +52,17 @@ const WS_CLOSE_NORMAL = 1000;
 // Gemini Live closes with 1007 when the session's context is exhausted.
 const WS_CLOSE_CONTEXT_EXHAUSTED = 1007;
 
+const GO_AWAY_RESTART_MARGIN_MS = 10_000;
+// A goAway restart is armed only for the last part of the time the server grants.
+const GO_AWAY_RESTART_WINDOW_MS = 30_000;
+const GO_AWAY_IDLE_POLL_MS = 250;
+
+/** `goAway.timeLeft` is a protobuf Duration string such as "300s". */
+export function goAwayTimeLeftMs(timeLeft: string | undefined): number {
+  const seconds = Number.parseFloat((timeLeft ?? '').replace(/s$/, ''));
+  return Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : 0;
+}
+
 const KNOWN_VERTEXAI_MODELS = new Set(['gemini-3.8-live', 'gemini-live-2.5-flash-native-audio']);
 
 const KNOWN_GEMINI_API_MODELS = new Set([
@@ -62,11 +73,34 @@ const KNOWN_GEMINI_API_MODELS = new Set([
 ]);
 
 // generateReply() appends a "." user turn so Gemini sees a completed turn. These models
-// answer that placeholder with an empty turn instead, so they must not get it.
+// answer that placeholder with an empty turn instead, so they must not get it, and take
+// reply instructions as a user turn instead.
 const MODELS_WITHOUT_REPLY_PLACEHOLDER = ['3.1', '3.8'];
 
 function needsReplyPlaceholder(model: string): boolean {
   return !MODELS_WITHOUT_REPLY_PLACEHOLDER.some((tag) => model.includes(tag));
+}
+
+/** The turns generateReply() sends to request a reply, with optional instructions. */
+export function replyTurns(model: string, instructions?: string): types.Content[] {
+  const placeholder = needsReplyPlaceholder(model);
+  const turns: types.Content[] = [];
+  if (instructions !== undefined) {
+    if (placeholder) {
+      turns.push({ parts: [{ text: instructions }], role: 'model' });
+    } else {
+      // A trailing model turn is continued: these models speak their reasoning or
+      // stay silent. Unwrapped, they later quote it back as the user's words.
+      turns.push({
+        parts: [{ text: `<instructions>\n${instructions}\n</instructions>` }],
+        role: 'user',
+      });
+    }
+  }
+  if (placeholder) {
+    turns.push({ parts: [{ text: '.' }], role: 'user' });
+  }
+  return turns;
 }
 
 /**
@@ -108,6 +142,12 @@ function warnModelAPIMismatch(model: string, vertexai: boolean): void {
         `(e.g., 'gemini-2.5-flash-native-audio-preview-12-2025') or set vertexai=true.`,
     );
   }
+}
+
+function warnVertexSchedulingUnsupported(): void {
+  log().warn(
+    'toolResponseScheduling is not supported by Vertex AI and will be ignored; tool responses use the default scheduling there.',
+  );
 }
 
 /**
@@ -380,8 +420,7 @@ export class RealtimeModel extends llm.RealtimeModel {
 
       /**
        * The scheduling for tool responses. Default scheduling is `WHEN_IDLE`.
-       * Note: Vertex AI currently does not support the scheduling parameter; the user is
-       * responsible for avoiding this parameter when using Vertex AI.
+       * Note: Vertex AI currently does not support the scheduling parameter.
        */
       toolResponseScheduling?: types.FunctionResponseScheduling;
     } = {},
@@ -403,6 +442,9 @@ export class RealtimeModel extends llm.RealtimeModel {
       options.vertexai ??
       (process.env.GOOGLE_GENAI_USE_VERTEXAI === 'true' ||
         process.env.GOOGLE_GENAI_USE_VERTEXAI === '1');
+    if (vertexai && options.toolResponseScheduling !== undefined) {
+      warnVertexSchedulingUnsupported();
+    }
 
     // Model selection based on API type
     const defaultModel = vertexai
@@ -498,6 +540,7 @@ export class RealtimeModel extends llm.RealtimeModel {
     }
     if (options.toolResponseScheduling !== undefined) {
       this._options.toolResponseScheduling = options.toolResponseScheduling;
+      if (this._options.vertexai) warnVertexSchedulingUnsupported();
     }
 
     // TODO: Notify active sessions of option changes
@@ -543,6 +586,8 @@ export class RealtimeSession extends llm.RealtimeSession {
   private pendingInterruptText = false;
   private earlyCompletionPending = false;
   private pendingToolCallIds = new Set<string>();
+  // A blocking tool result went out and Gemini has not started its reply yet.
+  private awaitingToolReply = false;
   private syntheticCallIds = new Set<string>();
   private toolCallStatuses = new Map<string, ToolCallStatus>();
   private toolResponseCallIds = new WeakMap<types.FunctionResponse, string>();
@@ -616,6 +661,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.pendingInterruptText = false;
 
     this.pendingToolCallIds.clear();
+    this.awaitingToolReply = false;
     this.syntheticCallIds.clear();
     this.toolCallStatuses.clear();
     if (this.generationPendingTurnComplete) {
@@ -645,6 +691,8 @@ export class RealtimeSession extends llm.RealtimeSession {
     vertexai: boolean,
   ): types.LiveClientToolResponse | undefined {
     const toolResponses: types.FunctionResponse[] = [];
+    const supportsSilentScheduling =
+      !vertexai && this.options.toolBehavior === types.Behavior.NON_BLOCKING;
 
     for (const item of ctx.items) {
       if (item.type === 'function_call_output') {
@@ -652,12 +700,16 @@ export class RealtimeSession extends llm.RealtimeSession {
           // gemini-3.8-live on Vertex AI drops BLOCKING responses without an id
           id: this.syntheticCallIds.has(item.callId) ? undefined : item.callId,
           name: item.name,
-          response: { output: item.output },
+          response: item.isError ? { error: item.output } : { output: item.output },
         };
 
         // Vertex AI does not support scheduling; the Gemini API defaults it to WHEN_IDLE.
-        if (!vertexai && this.options.toolResponseScheduling !== undefined) {
-          response.scheduling = this.options.toolResponseScheduling;
+        const scheduling =
+          supportsSilentScheduling && !item.replyRequired
+            ? types.FunctionResponseScheduling.SILENT
+            : this.options.toolResponseScheduling;
+        if (!vertexai && scheduling !== undefined) {
+          response.scheduling = scheduling;
         }
         this.toolResponseCallIds.set(response, item.callId);
 
@@ -704,6 +756,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       this.options.toolResponseScheduling !== options.toolResponseScheduling
     ) {
       this.options.toolResponseScheduling = options.toolResponseScheduling;
+      if (this.options.vertexai) warnVertexSchedulingUnsupported();
       // no need to restart
     }
 
@@ -744,9 +797,9 @@ export class RealtimeSession extends llm.RealtimeSession {
         turns: [
           {
             parts: [{ text: instructions }],
-            // Both APIs error on role="system". Gemini 2.5 accepted an omitted role as the
-            // system role, but 3.1 and 3.8 reject it. "model" is accepted by all three.
-            role: 'model',
+            // On Vertex AI, role="system" replaces the session's system instruction. The Gemini
+            // API rejects role="system" (and 3.1/3.8 reject an omitted role), so it keeps "model".
+            role: this.options.vertexai ? 'system' : 'model',
           },
         ],
         turnComplete: false,
@@ -780,6 +833,21 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
 
     if (appendCtx.items.length > 0) {
+      const supportsSilentScheduling =
+        !this.options.vertexai && this.options.toolBehavior === types.Behavior.NON_BLOCKING;
+      const silenced = appendCtx.items
+        .filter(
+          (item): item is llm.FunctionCallOutput =>
+            item.type === 'function_call_output' && !item.replyRequired,
+        )
+        .map((item) => item.name);
+      if (!supportsSilentScheduling && silenced.length > 0) {
+        this.#logger.warn(
+          { functions: silenced },
+          'a tool result wants no reply, but Gemini will answer it anyway; declare the tools NON_BLOCKING on the Gemini API to keep it silent. Sending it regardless, since an unanswered call blocks the session.',
+        );
+      }
+
       const [turns] = await appendCtx
         .copy({
           excludeFunctionCall: true,
@@ -937,19 +1005,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       this.inUserActivity = false;
     }
 
-    const turns: types.Content[] = [];
-    if (instructions !== undefined) {
-      turns.push({
-        parts: [{ text: instructions }],
-        role: 'model',
-      });
-    }
-    if (needsReplyPlaceholder(this.options.model)) {
-      turns.push({
-        parts: [{ text: '.' }],
-        role: 'user',
-      });
-    }
+    const turns = replyTurns(this.options.model, instructions);
 
     this.sendClientEvent({
       type: 'content',
@@ -1291,6 +1347,13 @@ export class RealtimeSession extends llm.RealtimeSession {
                 await session.sendToolResponse({
                   functionResponses,
                 });
+                // Blocking calls ignore scheduling, including SILENT.
+                if (
+                  !this.isNonBlockingToolBehavior() &&
+                  functionResponses.some((response) => response.willContinue !== true)
+                ) {
+                  this.awaitingToolReply = true;
+                }
               } finally {
                 this.clearPendingToolCallIdsForResponses(functionResponses);
               }
@@ -1652,6 +1715,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   private startNewGeneration(): void {
+    this.awaitingToolReply = false;
     const previousGen = this.currentGeneration;
     const previousHadOpenFunctionChannel = previousGen && !previousGen.functionChannel.closed;
 
@@ -2020,8 +2084,45 @@ export class RealtimeSession extends llm.RealtimeSession {
 
   private handleGoAway(goAway: types.LiveServerGoAway): void {
     this.#logger.warn({ timeLeft: goAway.timeLeft }, 'Gemini server indicates disconnection soon.');
-    // TODO(brian): this isn't a seamless reconnection just yet
-    this.sessionShouldClose.set();
+    // Most sessions end before the connection does, so a goAway only arms a
+    // restart for the last 30 s of the time the server grants. Inside that
+    // window the restart waits for a gap between turns: restarting
+    // mid-generation cuts the reply the user is hearing. The deadline keeps a
+    // generation that never completes from outliving the connection.
+    const timeLeftMs = goAwayTimeLeftMs(goAway.timeLeft);
+    const windowStart = Date.now() + Math.max(0, timeLeftMs - GO_AWAY_RESTART_WINDOW_MS);
+    const deadline = Date.now() + Math.max(0, timeLeftMs - GO_AWAY_RESTART_MARGIN_MS);
+    // A config update can restart the session before this fires; the notice
+    // belongs to the connection that received it.
+    const session = this.activeSession;
+    const restartWhenIdle = (): void => {
+      if (this.#closed || this.sessionShouldClose.isSet || this.activeSession !== session) {
+        return;
+      }
+      // Idle: no reply being generated, no reply request waiting for its
+      // generation, no blocking tool call waiting for its result or for the
+      // reply to it, no manual user activity. With automatic activity
+      // detection the server owns the speech boundaries and the client has no
+      // signal for an utterance in progress; the poll interval bounds that
+      // window.
+      const idle =
+        (!this.currentGeneration || this.currentGeneration._done) &&
+        !(this.pendingGenerationFut && !this.pendingGenerationFut.done) &&
+        !this.shouldBlockRealtimeInputForPendingTools() &&
+        !this.awaitingToolReply &&
+        !this.inUserActivity;
+      const now = Date.now();
+      if ((idle && now >= windowStart) || now >= deadline) {
+        this.sessionShouldClose.set();
+        return;
+      }
+      // Unref'd: a pending check must not keep a finished job process alive.
+      setTimeout(
+        restartWhenIdle,
+        now < windowStart ? windowStart - now : GO_AWAY_IDLE_POLL_MS,
+      ).unref?.();
+    };
+    restartWhenIdle();
   }
 
   async commitAudio() {}

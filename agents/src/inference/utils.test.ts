@@ -5,7 +5,7 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
 import { APIConnectionError, APIStatusError, APITimeoutError } from '../_exceptions.js';
-import { connectWs } from './utils.js';
+import { buildMetadataHeaders, connectWs, resolveCredentials } from './utils.js';
 
 const servers: http.Server[] = [];
 
@@ -96,5 +96,17 @@ describe('connectWs', () => {
 
     expect(error).toBeInstanceOf(APITimeoutError);
     expect((error as Error).message).toBe('Timeout connecting to LiveKit WebSocket');
+  });
+});
+
+describe('inference public utilities', () => {
+  it('resolves explicit credentials', () => {
+    expect(resolveCredentials('key', 'secret')).toEqual({ apiKey: 'key', apiSecret: 'secret' });
+  });
+
+  it('adds the configured inference class to metadata headers', () => {
+    expect(buildMetadataHeaders('priority')).toMatchObject({
+      'X-LiveKit-Inference-Priority': 'priority',
+    });
   });
 });

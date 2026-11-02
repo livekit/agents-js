@@ -45,16 +45,11 @@ export interface BasetenSttOptions {
   environment?: string;
   encoding?: string;
   sampleRate?: number;
-  bufferSizeSeconds?: number;
   vadThreshold?: number;
   vadMinSilenceDurationMs?: number;
   vadSpeechPadMs?: number;
   enablePartialTranscripts?: boolean;
-  partialTranscriptIntervalS?: number;
-  finalTranscriptMaxDurationS?: number;
   audioLanguage?: string;
-  prompt?: string;
-  languageDetectionOnly?: boolean;
 }
 
 /**

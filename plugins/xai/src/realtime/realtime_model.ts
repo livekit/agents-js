@@ -29,9 +29,10 @@ export type GrokVoices = 'eve' | 'ara' | 'rex' | 'sal' | 'leo';
 
 // Ref: python livekit-plugins/livekit-plugins-xai/livekit/plugins/xai/types.py - 39-42 lines
 export type GrokRealtimeModels =
+  | 'grok-voice-latest'
+  | 'grok-voice-3.0'
   | 'grok-voice-fast-1.0'
-  | 'grok-voice-think-fast-1.0'
-  | 'grok-voice-think-fast-2.0';
+  | 'grok-voice-think-fast-1.0';
 
 export interface RealtimeModelOptions extends Omit<OpenAIRealtimeModelOptions, 'model'> {
   model?: GrokRealtimeModels | string;
@@ -142,7 +143,7 @@ export class RealtimeSession extends OpenAIRealtimeSession {
     if (previousItemId && !this.remoteChatCtx.get(previousItemId)) {
       log().warn(
         { itemId: event.item.id, previousItemId },
-        'xAI anchored an item to one it never announced, appending it instead',
+        'xAI placed a chat history item after an unknown item; appended it instead',
       );
       previousItemId = '';
     }

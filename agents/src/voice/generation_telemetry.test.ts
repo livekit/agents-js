@@ -11,13 +11,19 @@ import { ReadableStream } from 'node:stream/web';
 import { afterEach, describe, expect, it } from 'vitest';
 import { ChatContext, FunctionCall } from '../llm/chat_context.js';
 import type { ChatChunk } from '../llm/llm.js';
-import { ToolContext } from '../llm/tool_context.js';
+import { ToolContext, ToolError, tool } from '../llm/tool_context.js';
 import { initializeLogger } from '../log.js';
 import { setTracerProvider, traceTypes } from '../telemetry/index.js';
 import { isFlushSentinel } from '../types.js';
-import type { ModelSettings } from './agent.js';
-import { type _LLMGenerationData, performLLMInference } from './generation.js';
+import { type ModelSettings, StopResponse } from './agent.js';
+import type { AgentSession } from './agent_session.js';
+import {
+  type _LLMGenerationData,
+  performLLMInference,
+  performToolExecutions,
+} from './generation.js';
 import type { LLMNode } from './io.js';
+import type { SpeechHandle } from './speech_handle.js';
 
 function setupInMemoryTracing() {
   const exporter = new InMemorySpanExporter();
@@ -201,5 +207,49 @@ describe('performLLMInference response telemetry', () => {
     }
 
     expectFunctionCallTelemetry(span);
+  });
+});
+
+describe('performToolExecutions span telemetry', () => {
+  initializeLogger({ pretty: false, level: 'silent' });
+
+  let provider: NodeTracerProvider;
+
+  afterEach(async () => {
+    await provider?.shutdown();
+  });
+
+  it.each([
+    { label: 'StopResponse', exception: () => new StopResponse(), isError: false },
+    { label: 'ToolError', exception: () => new ToolError('out of stock'), isError: true },
+  ])('records the output of a tool that raised $label', async ({ exception, isError }) => {
+    const { exporter, provider: testProvider } = setupInMemoryTracing();
+    provider = testProvider;
+
+    const lookup = tool({
+      name: 'lookup',
+      description: 'Look something up.',
+      execute: async () => {
+        throw exception();
+      },
+    });
+    const [execTask, toolOutput] = performToolExecutions({
+      session: {} as AgentSession,
+      speechHandle: { id: 'speech_test', _itemAdded: () => {} } as unknown as SpeechHandle,
+      toolCtx: new ToolContext([lookup]),
+      toolCallStream: new ReadableStream({
+        start(controller) {
+          controller.enqueue(FunctionCall.create({ callId: 'call_1', name: 'lookup', args: '{}' }));
+          controller.close();
+        },
+      }),
+      controller: new AbortController(),
+    });
+    await execTask.result;
+
+    expect(toolOutput.output[0]?.toolCallOutput.isError).toBe(isError);
+    const span = spanByName(exporter.getFinishedSpans(), 'function_tool');
+    expect(span?.attributes[traceTypes.ATTR_FUNCTION_TOOL_IS_ERROR]).toBe(isError);
+    expect(span?.attributes[traceTypes.ATTR_ERROR_TYPE]).toBe(isError ? 'tool_error' : undefined);
   });
 });

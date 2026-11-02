@@ -5,6 +5,7 @@ import { Plugin } from '@livekit/agents';
 
 export * from './models.js';
 export * from './stt.js';
+export { SynthesizeStream, TTS, type TTSOptions } from './tts.js';
 
 class AssemblyAIPlugin extends Plugin {
   constructor() {
