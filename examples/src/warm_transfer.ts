@@ -6,6 +6,7 @@ import {
   ServerOptions,
   cli,
   defineAgent,
+  getJobContext,
   inference,
   llm,
   log,
@@ -13,11 +14,29 @@ import {
   workflows,
 } from '@livekit/agents';
 import { BackgroundVoiceCancellation } from '@livekit/noise-cancellation-node';
+import { ParticipantKind } from '@livekit/rtc-node';
 import { fileURLToPath } from 'node:url';
 
 const SIP_TRUNK_ID = process.env.LIVEKIT_SIP_OUTBOUND_TRUNK;
 const SUPERVISOR_PHONE_NUMBER = process.env.LIVEKIT_SUPERVISOR_PHONE_NUMBER;
 const SIP_NUMBER = process.env.LIVEKIT_SIP_NUMBER;
+
+// Shows the supervisor the inbound caller's number on Twilio Elastic SIP Trunking. Requires
+// Twilio's CallToken beta and `headers_to_attributes: { "X-Twilio-CallToken": "twilio.call_token" }`
+// on the LiveKit inbound trunk. The token is forwarded as-is with the caller's number from the
+// same call. Without both (the attribute is set asynchronously), the business number is used.
+// https://www.twilio.com/en-us/changelog/elastic-sip-trunking---immutable-call-forwarding-with-calltoken-
+function twilioCallerId(): { sipNumber?: string; sipHeaders?: Record<string, string> } {
+  const caller = [...getJobContext().room.remoteParticipants.values()].find(
+    (p) => p.kind === ParticipantKind.SIP,
+  );
+  const callToken = caller?.attributes['twilio.call_token'];
+  const callerNumber = caller?.attributes['sip.phoneNumber'];
+  if (!callToken || !callerNumber) {
+    return { sipNumber: SIP_NUMBER };
+  }
+  return { sipNumber: callerNumber, sipHeaders: { 'X-Twilio-CallToken': callToken } };
+}
 
 class SupportAgent extends voice.Agent {
   constructor() {
@@ -56,7 +75,7 @@ Examples on when the tool should be called:
               const result = await new workflows.WarmTransferTask({
                 sipCallTo: SUPERVISOR_PHONE_NUMBER,
                 sipTrunkId: SIP_TRUNK_ID,
-                sipNumber: SIP_NUMBER,
+                ...twilioCallerId(),
                 chatCtx: ctx.session.history,
                 // Give up if the supervisor doesn't pick up within 25s with
                 // `ringingTimeout: 25000`.
