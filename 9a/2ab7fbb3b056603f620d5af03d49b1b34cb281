@@ -1,0 +1,24 @@
+plugins/google/etc/agents-plugin-google.api.md
+  s_32130206b01af8::t_573d3e3b2c202d 15,27,35,351-352,362,367,369,401,404,407-408,410,576,581
+plugins/google/src/realtime/realtime_api.ts
+  s_32130206b01af8::t_c4ae6fb1c10772 600,1145-1148
+plugins/google/src/realtime/realtime_reconnect.test.ts
+  s_32130206b01af8::t_85869afa8e9982 6,94-95,99-154
+  s_32130206b01af8::t_0717f11299a4a4 155-156
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9a2ab7fbb3b056603f620d5af03d49b1b34cb281",
+  "prompts": {},
+  "sessions": {
+    "s_32130206b01af8": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13095-c5a9-7d52-b9a8-87dc73de4745",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
