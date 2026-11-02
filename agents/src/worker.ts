@@ -42,7 +42,10 @@ import { version } from './version.js';
 
 const MAX_RECONNECT_ATTEMPTS = 10;
 const ASSIGNMENT_TIMEOUT = 7.5 * 1000;
-const UPDATE_LOAD_INTERVAL = 2.5 * 1000;
+const UPDATE_STATUS_INTERVAL = 1.5 * 1000;
+const UPDATE_LOAD_INTERVAL = 0.5 * 1000;
+// number of load samples averaged by the default load function (2.5s window)
+const LOAD_AVG_SAMPLES = 5;
 const DRAIN_TIMEOUT = 60 * 60 * 1000;
 const PROJECT_TYPE = 'nodejs';
 // Mirrors CurrentWorkerProtocol in livekit/protocol. LiveKit Cloud reads this off
@@ -126,9 +129,54 @@ const defaultRequestFunc = async (ctx: JobRequest) => {
 
 const cpuMonitor = getCpuMonitor();
 
+/**
+ * Samples CPU every UPDATE_LOAD_INTERVAL in the background and averages the last
+ * LOAD_AVG_SAMPLES samples, so the load can be read without waiting for a sample.
+ */
+class DefaultLoadCalc {
+  static #instance?: DefaultLoadCalc;
+  #samples: number[] = [];
+  #stopped = false;
+
+  private constructor() {
+    this.#run();
+  }
+
+  static get(): DefaultLoadCalc {
+    return (DefaultLoadCalc.#instance ??= new DefaultLoadCalc());
+  }
+
+  /** Stops sampling. The next get() starts a new sampler. */
+  static stop(): void {
+    if (DefaultLoadCalc.#instance) DefaultLoadCalc.#instance.#stopped = true;
+    DefaultLoadCalc.#instance = undefined;
+  }
+
+  async #run(): Promise<void> {
+    while (!this.#stopped) {
+      try {
+        this.#samples.push(await cpuMonitor.cpuPercent(UPDATE_LOAD_INTERVAL));
+        if (this.#samples.length > LOAD_AVG_SAMPLES) this.#samples.shift();
+      } catch {
+        // cpu stats are unreadable; drop old samples so the load does not go stale,
+        // and wait before trying again rather than spin
+        this.#samples = [];
+        await new Promise((resolve) => setTimeout(resolve, UPDATE_LOAD_INTERVAL).unref());
+      }
+    }
+  }
+
+  async load(): Promise<number> {
+    // no samples yet, or the last read failed: measure now, so the caller gets a
+    // real value or the error
+    if (this.#samples.length === 0) return cpuMonitor.cpuPercent(UPDATE_LOAD_INTERVAL);
+    return this.#samples.reduce((a, b) => a + b, 0) / this.#samples.length;
+  }
+}
+
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 const defaultCpuLoad = async (_worker: AgentServer): Promise<number> => {
-  return cpuMonitor.cpuPercent(UPDATE_LOAD_INTERVAL);
+  return DefaultLoadCalc.get().load();
 };
 
 /** Participant permissions to pass to every agent spun up by this worker. */
@@ -810,22 +858,22 @@ export class AgentServer {
     const loadMonitor = setInterval(() => {
       if (closingWS) clearInterval(loadMonitor);
 
+      // keep reporting while draining, so the server does not take a silent
+      // worker for a dead one
       if (this.#draining) {
-        if (currentStatus !== WorkerStatus.WS_FULL) {
-          currentStatus = WorkerStatus.WS_FULL;
-          this.event.emit(
-            'worker_msg',
-            new WorkerMessage({
-              message: {
-                case: 'updateWorker',
-                value: {
-                  load: 1,
-                  status: WorkerStatus.WS_FULL,
-                },
+        currentStatus = WorkerStatus.WS_FULL;
+        this.event.emit(
+          'worker_msg',
+          new WorkerMessage({
+            message: {
+              case: 'updateWorker',
+              value: {
+                load: 1,
+                status: WorkerStatus.WS_FULL,
               },
-            }),
-          );
-        }
+            },
+          }),
+        );
         return;
       }
 
@@ -862,11 +910,14 @@ export class AgentServer {
         .catch((e) => {
           this.#logger.warn({ error: e }, 'failed to measure CPU load');
         });
-    }, UPDATE_LOAD_INTERVAL);
+    }, UPDATE_STATUS_INTERVAL);
 
     try {
       await close;
     } finally {
+      // stop the sampler only after the last status tick, as a tick starts it again
+      clearInterval(loadMonitor);
+      DefaultLoadCalc.stop();
       ws.removeAllListeners();
     }
   }

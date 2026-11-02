@@ -8,6 +8,7 @@ import {
   RegisterWorkerResponse,
   ServerMessage,
   WorkerMessage,
+  WorkerStatus,
 } from '@livekit/protocol';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
@@ -111,6 +112,85 @@ describe('AgentServer drain', () => {
       }
     },
   );
+
+  it('keeps reporting status while draining', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    const wss = new WebSocketServer({ port: 0 });
+    await once(wss, 'listening');
+    const registered = new Future();
+    let fullUpdates = 0;
+    let onFullUpdate = () => {};
+    wss.on('connection', (ws) => {
+      ws.on('message', (data: Buffer) => {
+        const msg = WorkerMessage.fromBinary(new Uint8Array(data));
+        if (msg.message.case === 'register') {
+          const res = new RegisterWorkerResponse({ workerId: 'AW_test' });
+          ws.send(new ServerMessage({ message: { case: 'register', value: res } }).toBinary());
+          registered.resolve();
+        } else if (
+          msg.message.case === 'updateWorker' &&
+          msg.message.value.status === WorkerStatus.WS_FULL
+        ) {
+          fullUpdates++;
+          onFullUpdate();
+        }
+      });
+    });
+
+    const jobFinished = new Future();
+    const activeProc: JobExecutor = {
+      started: true,
+      userArguments: {},
+      runningJob: {
+        job: new Job({ id: 'AJ_running' }),
+        acceptArguments: { name: 'test', identity: 'test', metadata: '' },
+        url: 'ws://localhost',
+        token: 'test-token',
+        workerId: 'AW_test',
+      },
+      status: JobStatus.RUNNING,
+      start: vi.fn(async () => {}),
+      initialize: vi.fn(async () => {}),
+      launchJob: vi.fn(async () => {}),
+      join: vi.fn(() => jobFinished.await),
+      close: vi.fn(async () => {}),
+    };
+    const processes = vi
+      .spyOn(ProcPool.prototype, 'processes', 'get')
+      .mockReturnValue([activeProc]);
+    const server = new AgentServer(
+      new ServerOptions({
+        agent: 'test-agent.js',
+        wsURL: `ws://127.0.0.1:${(wss.address() as AddressInfo).port}`,
+        apiKey: 'devkey',
+        apiSecret: 'devsecret',
+        numIdleProcesses: 0,
+        simulation: true,
+      }),
+    );
+
+    const run = server.run().catch(() => undefined);
+    let drain: Promise<void> | undefined;
+    try {
+      await registered.await;
+      drain = server.drain().catch(() => undefined);
+      const ticks = 3;
+      const reported = new Promise<void>((resolve) => {
+        onFullUpdate = () => fullUpdates > ticks && resolve();
+      });
+      await vi.advanceTimersByTimeAsync(ticks * 1500);
+      await reported;
+      expect(fullUpdates).toBeGreaterThan(ticks);
+    } finally {
+      jobFinished.resolve();
+      await drain;
+      await server.close();
+      await run;
+      processes.mockRestore();
+      wss.close();
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe('AgentServer reconnect', () => {
