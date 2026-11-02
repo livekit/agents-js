@@ -56,15 +56,26 @@ export const UPDATE_TEMPLATE =
   "The task is still running, so DON'T make up or give information not included in the message above.";
 
 export const DUPLICATE_REJECT =
+  'Same tool `{functionName}` is already running:\n' + '{functionCallsText}';
+
+export const DUPLICATE_REJECT_WITH_CANCEL =
   'Same tool `{functionName}` is already running:\n' +
   '{functionCallsText}\n' +
-  'If you want to cancel the existing one, call `lk_agents_cancel_task` with call_id.';
+  'If you want to cancel the existing one, call `lk_agents_cancel_task` with call_id.\n' +
+  'Only do this when user explicitly requests it.';
 
 export const DUPLICATE_CONFIRM =
   'Same tool `{functionName}` is already running:\n' +
   '{functionCallsText}\n' +
+  'Re-call with confirm duplicate True to run a duplicate if needed.\n' +
+  'Only run a duplicate when the user explicitly requests it.';
+
+export const DUPLICATE_CONFIRM_WITH_CANCEL =
+  'Same tool `{functionName}` is already running:\n' +
+  '{functionCallsText}\n' +
   'Re-call with confirm duplicate True to run a duplicate if needed,\n' +
-  'or if you want to cancel the existing one, call `lk_agents_cancel_task` with call_id.';
+  'or if you want to cancel the existing one, call `lk_agents_cancel_task` with call_id.\n' +
+  'Only run duplicate or cancel the existing one when user explicitly requests it.';
 
 export const REPLY_INSTRUCTIONS_AT_TAIL =
   'New results arrived from background tool calls (call_ids: {callIds}).\n' +
@@ -601,13 +612,25 @@ export class ToolExecutor {
       functionCallsJson,
       functionCallsText: functionCallsJson.join('\n'),
     };
+    // Only mention cancelTaskTool when it is exposed for an in-flight duplicate.
+    const canCancel = runningFunctionCalls.some(
+      (call) => this.runningTasks.get(call.callId)?.allowCancellation,
+    );
 
     if (onDuplicate === 'reject') {
-      return renderTemplate(this.toolOptions.duplicateRejectTemplate, args);
+      let template = this.toolOptions.duplicateRejectTemplate;
+      if (template === DUPLICATE_REJECT && canCancel) {
+        template = DUPLICATE_REJECT_WITH_CANCEL;
+      }
+      return renderTemplate(template, args);
     }
 
     if (onDuplicate === 'confirm' && !confirmDuplicate) {
-      return renderTemplate(this.toolOptions.duplicateConfirmTemplate, args);
+      let template = this.toolOptions.duplicateConfirmTemplate;
+      if (template === DUPLICATE_CONFIRM && canCancel) {
+        template = DUPLICATE_CONFIRM_WITH_CANCEL;
+      }
+      return renderTemplate(template, args);
     }
 
     return undefined;
