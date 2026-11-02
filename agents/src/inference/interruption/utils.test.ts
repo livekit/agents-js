@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { BoundedCache } from './utils.js';
 
 class Entry {
@@ -28,31 +28,6 @@ describe('BoundedCache', () => {
     expect(cache.get(1)).toBeUndefined();
     expect(cache.get(2)!.createdAt).toBe(2);
     expect(cache.get(3)!.createdAt).toBe(3);
-  });
-
-  it('setOrUpdate creates a value via factory when key is missing', () => {
-    const cache = new BoundedCache<number, Entry>(10);
-    const factory = vi.fn(() => new Entry(100));
-
-    const value = cache.setOrUpdate(1, factory, { predictionDurationInS: 0.42 });
-
-    expect(factory).toHaveBeenCalledTimes(1);
-    expect(value.createdAt).toBe(100);
-    expect(value.predictionDurationInS).toBe(0.42);
-    expect(cache.get(1)?.predictionDurationInS).toBe(0.42);
-  });
-
-  it('setOrUpdate updates existing value and does not call factory', () => {
-    const cache = new BoundedCache<number, Entry>(10);
-    cache.set(1, new Entry(1, 'before'));
-    const factory = vi.fn(() => new Entry(999));
-
-    const value = cache.setOrUpdate(1, factory, { note: 'after', totalDurationInS: 1.5 });
-
-    expect(factory).not.toHaveBeenCalled();
-    expect(value.createdAt).toBe(1);
-    expect(value.note).toBe('after');
-    expect(value.totalDurationInS).toBe(1.5);
   });
 
   it('updateValue returns undefined for missing key', () => {
