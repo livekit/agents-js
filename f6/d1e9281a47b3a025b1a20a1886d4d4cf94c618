@@ -1,0 +1,86 @@
+.changeset/double-noise-cancellation-warning.md
+  h_a827ab16c3c189 1-5
+.changeset/eleven-glasses-mix.md
+  h_a827ab16c3c189 1-5
+.changeset/exit-orphaned-job.md
+  h_a827ab16c3c189 1-5
+.changeset/faster-worker-status.md
+  h_a827ab16c3c189 1-5
+.changeset/gemini-live-goaway-between-turns.md
+  h_a827ab16c3c189 1-5
+.changeset/inworld-cancel-context.md
+  h_a827ab16c3c189 1-5
+.changeset/inworld-sentence-boundary.md
+  h_a827ab16c3c189 1-5
+.changeset/krisp-viva-internal-0-2-3.md
+  h_a827ab16c3c189 1-5
+.changeset/local-eot-failure-default.md
+  h_a827ab16c3c189 1-5
+.changeset/tidy-models-speak.md
+  h_a827ab16c3c189 1-5
+agents/src/inference/eot/detector.test.ts
+  h_a827ab16c3c189 27,31,860-901
+agents/src/inference/eot/detector.ts
+  h_a827ab16c3c189 14,144-146
+agents/src/inference/eot/runner.test.ts
+  h_a827ab16c3c189 63-78
+agents/src/inference/eot/runner.ts
+  h_a827ab16c3c189 61,69
+agents/src/inference/eot/transports.ts
+  h_a827ab16c3c189 215
+agents/src/ipc/job_proc_lazy_main.ts
+  h_a827ab16c3c189 342-348,350,352-353
+agents/src/voice/room_io/_input.test.ts
+  h_a827ab16c3c189 4,247-275
+agents/src/voice/room_io/_input.ts
+  h_a827ab16c3c189 4,341-354
+agents/src/worker.test.ts
+  h_a827ab16c3c189 11,115-193
+agents/src/worker.ts
+  h_a827ab16c3c189 45-48,132-176,179,861-862,864-872,874-876,913,918-920
+agents/src/worker_load.test.ts
+  h_a827ab16c3c189 1-167
+plugins/google/src/realtime/realtime_api.test.ts
+  h_a827ab16c3c189 11,686-694
+plugins/google/src/realtime/realtime_api.ts
+  h_a827ab16c3c189 53-63,587-588,656,1289-1295,1654,2023-2061
+plugins/google/src/realtime/realtime_goaway.test.ts
+  h_a827ab16c3c189 1-166
+plugins/inworld/etc/agents-plugin-inworld.api.md
+  h_a827ab16c3c189 157
+plugins/inworld/src/tts.ts
+  h_a827ab16c3c189 34,47,65-69,73-77,109,116,184-188,584-588,752-758,761,766-768,771,774-781,787-791,794-797,799-806,825-828,832-835,872,884-887,895-897,923-931
+plugins/inworld/src/tts_auto_mode.test.ts
+  h_a827ab16c3c189 1-105
+plugins/inworld/src/tts_context.test.ts
+  h_a827ab16c3c189 1-173
+plugins/krisp/package.json
+  h_a827ab16c3c189 48
+plugins/lemonslice/README.md
+  h_a827ab16c3c189 78-79
+plugins/lemonslice/etc/agents-plugin-lemonslice.api.md
+  h_a827ab16c3c189 10,13,28,76,83
+plugins/lemonslice/src/avatar.test.ts
+  h_a827ab16c3c189 62,127
+plugins/lemonslice/src/avatar.ts
+  h_a827ab16c3c189 29-30,81-89,171-172,234-241,355,531-536,538-545
+plugins/xai/etc/agents-plugin-xai.api.md
+  h_a827ab16c3c189 78
+plugins/xai/src/realtime/realtime_model.ts
+  h_a827ab16c3c189 43-49,55-84
+pnpm-lock.yaml
+  h_a827ab16c3c189 108,120,123,265,422,456,481,515,537,602,639,670,707,732,766,800,843,870,901,909-910,935,966,997,1025,1050,1078,1100,1128,1134,1162,1187,1224,1252,1274,1299,1330,1373,1398,1432,1466,1491,1515,1540,1565,1580,1593,1621,1658,1826-1827,1838-1839,1850-1851,1862-1863,1874-1875,1886-1887,1898-1899,1910-1911,1922-1923,1934-1935,1946-1947,1958-1959,1970-1971,1982-1983,1994-1995,2006-2007,2018-2019,2030-2031,2042-2043,2054-2055,2066-2067,2072-2073,2084-2085,2096-2097,2108-2109,2120-2121,2544-2545,2550-2551,2553,2556-2557,2561,2563-2564,2566,2569-2570,2572,2575-2576,2728-2734,2915-2919,2925-2934,2940-2944,2950-2954,2960-2964,2970-2974,2981-2986,2993-2998,3005-3010,3017-3022,3029-3034,3041-3046,3053-3058,3065-3070,3077-3082,3089-3094,3101-3106,3113-3118,3125-3130,3136-3140,3146-3150,3156-3160,3166-3170,3176-3180,3186-3190,3292-3294,4056-4057,5068-5069,5288-5291,5357-5358,5518-5522,5652-5655,5968-5969,6442,6448,6454,6460,6466,6472,6478,6484,6490,6496,6502,6508,6514,6520,6526,6532,6538,6544,6550,6556,6562,6565,6571,6577,6583,6589,6785,6940,6943,6946,6955-6959,6961,6964,6967,7172-7174,7370-7372,7376-7381,7385-7387,7391-7393,7397-7399,7403-7405,7409-7411,7415-7417,7421-7423,7427-7429,7433-7435,7439-7441,7445-7447,7451-7453,7457-7459,7463-7465,7469-7471,7475-7477,7481-7483,7487-7489,7493-7495,7499-7501,7505-7507,7511-7513,7517-7519,7669-7670,7823,7834,7840,7842,7848,8121,8514,8516-8541,8915-8918,9669,9875-9876,9963,9967,9970,9972,9974,10043,10166-10198,10419-10420,10609,10619,10629,10637,10647,10657,10667,10770,10772-10776,10783,10785-10789,10796,10799,10816,10825,10828,10845
+pnpm-workspace.yaml
+  h_a827ab16c3c189 19-20
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f6d1e9281a47b3a025b1a20a1886d4d4cf94c618",
+  "prompts": {},
+  "humans": {
+    "h_a827ab16c3c189": {
+      "author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
