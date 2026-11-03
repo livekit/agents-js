@@ -796,15 +796,15 @@ class SynthesizeStream extends tts.SynthesizeStream {
         return;
       }
 
-      /// endInput() already flushed the server-segmented stream
-       if (autoModeStrategy === 'CLIENT_SEGMENTED') {
-         await this.#flushContext(ws);
-       }
-       if (this.abortSignal.aborted) {
-         await this.#cancelContext(ws);
-         return;
-       }
-       await this.#closeContext(ws);
+      // endInput() already flushed the server-segmented stream
+      if (autoModeStrategy === 'CLIENT_SEGMENTED') {
+        await this.#flushContext(ws);
+      }
+      if (this.abortSignal.aborted) {
+        await this.#cancelContext(ws);
+        return;
+      }
+      await this.#closeContext(ws);
 
       // Wait for the server to finish the context, but bound it so a stalled
       // server can't hang the turn forever. On timeout, throw a retryable
