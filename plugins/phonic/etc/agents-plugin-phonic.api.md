@@ -36,7 +36,7 @@ import { z } from 'zod';
 // Warning: (ae-missing-release-tag) "PhonicConfig" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
-type PhonicConfig = Partial<Omit<RealtimeModelOptions, 'apiKey' | 'model' | 'connOptions' | 'baseUrl' | 'instructions'>>;
+type PhonicConfig = Partial<Omit<RealtimeModelOptions, 'apiKey' | 'model' | 'connOptions' | 'baseUrl' | 'externalId' | 'instructions'>>;
 
 // Warning: (ae-missing-release-tag) "PhonicToolConfig" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -109,6 +109,7 @@ class RealtimeModel extends llm.RealtimeModel {
         observabilityIntegrations?: Phonic.ConfigOptions['observability_integrations'];
         configurationEndpoint?: Phonic.ConfigOptions['configuration_endpoint'];
         additionalParams?: NonNullable<Phonic.ConfigOptions['additional_params']>;
+        externalId?: string;
         configsForTools?: PhonicToolConfig[];
         forbidSpeechAfterToolCall?: string[];
         onConversationCreated?: (conversationId: string) => void;
@@ -163,6 +164,8 @@ interface RealtimeModelOptions {
     enableAssistantBackchannel?: boolean;
     // (undocumented)
     enableRedaction?: boolean;
+    // (undocumented)
+    externalId?: string;
     // @deprecated (undocumented)
     forbidSpeechAfterToolCall?: string[];
     // (undocumented)

@@ -390,7 +390,7 @@ describe('Anthropic LLM', () => {
     });
   });
 
-  it('sends function tool schemas from a real ToolContext', async () => {
+  it('sends function tool schemas without application metadata', async () => {
     let capturedParams: Anthropic.MessageCreateParamsStreaming | undefined;
     const client = {
       messages: {
@@ -414,6 +414,7 @@ describe('Anthropic LLM', () => {
       getWeather: llm.tool({
         description: 'Get the weather for a given location.',
         parameters: z.object({ location: z.string() }),
+        meta: { guardrails: ['check_location'] },
         execute: async () => 'sunny',
       }),
     });
@@ -430,6 +431,11 @@ describe('Anthropic LLM', () => {
     expect(toolSchema.description).toBe('Get the weather for a given location.');
     expect(toolSchema.input_schema.type).toBe('object');
     expect(Object.keys(toolSchema.input_schema.properties ?? {})).toEqual(['location']);
+    expect(toolCtx.getFunctionTool('getWeather')?.meta).toEqual({
+      guardrails: ['check_location'],
+    });
+    expect(toolSchema).not.toHaveProperty('meta');
+    expect(toolSchema).not.toHaveProperty('_meta');
   });
 
   it('does not emit an empty delta for a fully-filtered thinking block', async () => {

@@ -50,6 +50,17 @@ const LK_GOOGLE_DEBUG = Number(process.env.LK_GOOGLE_DEBUG ?? 0);
 // WebSocket close codes (RFC 6455)
 const WS_CLOSE_NORMAL = 1000;
 
+const GO_AWAY_RESTART_MARGIN_MS = 10_000;
+// A goAway restart is armed only for the last part of the time the server grants.
+const GO_AWAY_RESTART_WINDOW_MS = 30_000;
+const GO_AWAY_IDLE_POLL_MS = 250;
+
+/** `goAway.timeLeft` is a protobuf Duration string such as "300s". */
+export function goAwayTimeLeftMs(timeLeft: string | undefined): number {
+  const seconds = Number.parseFloat((timeLeft ?? '').replace(/s$/, ''));
+  return Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : 0;
+}
+
 const KNOWN_VERTEXAI_MODELS = new Set(['gemini-3.8-live', 'gemini-live-2.5-flash-native-audio']);
 
 const KNOWN_GEMINI_API_MODELS = new Set([
@@ -573,6 +584,8 @@ export class RealtimeSession extends llm.RealtimeSession {
   private pendingInterruptText = false;
   private earlyCompletionPending = false;
   private pendingToolCallIds = new Set<string>();
+  // A blocking tool result went out and Gemini has not started its reply yet.
+  private awaitingToolReply = false;
   private syntheticCallIds = new Set<string>();
   private toolCallStatuses = new Map<string, ToolCallStatus>();
   private toolResponseCallIds = new WeakMap<types.FunctionResponse, string>();
@@ -640,6 +653,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.pendingInterruptText = false;
 
     this.pendingToolCallIds.clear();
+    this.awaitingToolReply = false;
     this.syntheticCallIds.clear();
     this.toolCallStatuses.clear();
     if (this.generationPendingTurnComplete) {
@@ -775,9 +789,9 @@ export class RealtimeSession extends llm.RealtimeSession {
         turns: [
           {
             parts: [{ text: instructions }],
-            // Both APIs error on role="system". Gemini 2.5 accepted an omitted role as the
-            // system role, but 3.1 and 3.8 reject it. "model" is accepted by all three.
-            role: 'model',
+            // On Vertex AI, role="system" replaces the session's system instruction. The Gemini
+            // API rejects role="system" (and 3.1/3.8 reject an omitted role), so it keeps "model".
+            role: this.options.vertexai ? 'system' : 'model',
           },
         ],
         turnComplete: false,
@@ -1272,6 +1286,13 @@ export class RealtimeSession extends llm.RealtimeSession {
                 await session.sendToolResponse({
                   functionResponses,
                 });
+                // Blocking calls ignore scheduling, including SILENT.
+                if (
+                  !this.isNonBlockingToolBehavior() &&
+                  functionResponses.some((response) => response.willContinue !== true)
+                ) {
+                  this.awaitingToolReply = true;
+                }
               } finally {
                 this.clearPendingToolCallIdsForResponses(functionResponses);
               }
@@ -1630,6 +1651,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   private startNewGeneration(): void {
+    this.awaitingToolReply = false;
     const previousGen = this.currentGeneration;
     const previousHadOpenFunctionChannel = previousGen && !previousGen.functionChannel.closed;
 
@@ -1998,8 +2020,45 @@ export class RealtimeSession extends llm.RealtimeSession {
 
   private handleGoAway(goAway: types.LiveServerGoAway): void {
     this.#logger.warn({ timeLeft: goAway.timeLeft }, 'Gemini server indicates disconnection soon.');
-    // TODO(brian): this isn't a seamless reconnection just yet
-    this.sessionShouldClose.set();
+    // Most sessions end before the connection does, so a goAway only arms a
+    // restart for the last 30 s of the time the server grants. Inside that
+    // window the restart waits for a gap between turns: restarting
+    // mid-generation cuts the reply the user is hearing. The deadline keeps a
+    // generation that never completes from outliving the connection.
+    const timeLeftMs = goAwayTimeLeftMs(goAway.timeLeft);
+    const windowStart = Date.now() + Math.max(0, timeLeftMs - GO_AWAY_RESTART_WINDOW_MS);
+    const deadline = Date.now() + Math.max(0, timeLeftMs - GO_AWAY_RESTART_MARGIN_MS);
+    // A config update can restart the session before this fires; the notice
+    // belongs to the connection that received it.
+    const session = this.activeSession;
+    const restartWhenIdle = (): void => {
+      if (this.#closed || this.sessionShouldClose.isSet || this.activeSession !== session) {
+        return;
+      }
+      // Idle: no reply being generated, no reply request waiting for its
+      // generation, no blocking tool call waiting for its result or for the
+      // reply to it, no manual user activity. With automatic activity
+      // detection the server owns the speech boundaries and the client has no
+      // signal for an utterance in progress; the poll interval bounds that
+      // window.
+      const idle =
+        (!this.currentGeneration || this.currentGeneration._done) &&
+        !(this.pendingGenerationFut && !this.pendingGenerationFut.done) &&
+        !this.shouldBlockRealtimeInputForPendingTools() &&
+        !this.awaitingToolReply &&
+        !this.inUserActivity;
+      const now = Date.now();
+      if ((idle && now >= windowStart) || now >= deadline) {
+        this.sessionShouldClose.set();
+        return;
+      }
+      // Unref'd: a pending check must not keep a finished job process alive.
+      setTimeout(
+        restartWhenIdle,
+        now < windowStart ? windowStart - now : GO_AWAY_IDLE_POLL_MS,
+      ).unref?.();
+    };
+    restartWhenIdle();
   }
 
   async commitAudio() {}

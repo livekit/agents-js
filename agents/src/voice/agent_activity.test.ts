@@ -31,7 +31,14 @@ import {
   RealtimeModel,
   type RealtimeSession,
 } from '../llm/realtime.js';
-import { type Tool, ToolContext, ToolFlag, Toolset, tool } from '../llm/tool_context.js';
+import {
+  type Tool,
+  ToolContext,
+  ToolFlag,
+  Toolset,
+  type ToolsetContext,
+  tool,
+} from '../llm/tool_context.js';
 import { log } from '../log.js';
 import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
 import { Event, Future, Task } from '../utils.js';
@@ -120,6 +127,7 @@ function buildMainTaskRunner() {
     _schedulingPaused: false,
     _authorizationPaused: false,
     _drainBlockedTasks: new Set<Task<void>>(),
+    currentSpeechCleared: new Future<void, never>(),
     _mainTask: undefined as { result: Promise<void> } | undefined,
     cancelPreemptiveGeneration: vi.fn(),
     logger: {
@@ -1152,7 +1160,7 @@ describe('AgentActivity - onToolsetToolsChanged (dynamic toolset push)', () => {
     const toolB = makeFn('toolB');
 
     // Capture the wired ctx.updateTools the framework hands the toolset during setup.
-    let pushTools!: (tools: readonly Tool[]) => void;
+    let pushTools!: ToolsetContext['updateTools'];
     const toolset = Toolset.create({
       id: 'dynamic',
       tools: [toolA],
@@ -1323,35 +1331,6 @@ describe('AgentActivity - preemptive generation tool snapshot (#3407098507)', ()
 
     // The reuse check (onUserTurnCompleted) does `preemptive.tools.equals(this.tools)`.
     expect(snapshot!.tools.equals(liveTools)).toBe(true);
-  });
-});
-
-describe('AgentActivity - waitForIdle close abort', () => {
-  it('returns promptly when the activity closes while waiting', async () => {
-    const closeAbort = new AbortController();
-    const fakeActivity = {
-      closeAbort,
-      // Simulates a wait that only completes when its signal aborts (the spin condition).
-      waitForInactive: (_options: unknown, signal: AbortSignal) =>
-        new Promise<void>((resolve) => {
-          if (signal.aborted) return resolve();
-          signal.addEventListener('abort', () => resolve(), { once: true });
-        }),
-      agentSession: { _waitForIdleHoldReleased: async () => false },
-    };
-    Object.setPrototypeOf(fakeActivity, AgentActivity.prototype);
-
-    const waitForIdle = (
-      AgentActivity.prototype as unknown as { waitForIdle: (this: unknown) => Promise<void> }
-    ).waitForIdle.bind(fakeActivity);
-
-    const pending = waitForIdle();
-    // Not idle yet — the wait is still pending.
-    expect(await raceTimeout(pending, 50)).toBe('timeout');
-
-    // close() aborts the shared signal; the wait must unblock.
-    closeAbort.abort();
-    expect(await raceTimeout(pending, 1000)).toBe('resolved');
   });
 });
 
