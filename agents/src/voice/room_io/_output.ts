@@ -709,8 +709,10 @@ export class ParticipantAudioOutput extends AudioOutput {
       }
 
       this.sourcePushedDuration += frameDuration;
+      // Date this at submission: the source plays through the await, which may return after it drains.
+      const dryAt = Date.now() + this.audioSource.queuedDuration + frameDuration * 1000;
       await this.audioSource.captureFrame(frame);
-      this.dryAt = Date.now() + this.audioSource.queuedDuration;
+      this.dryAt = dryAt;
     } finally {
       this.forwardingCount--;
       if (this.forwardingCount === 0) {
