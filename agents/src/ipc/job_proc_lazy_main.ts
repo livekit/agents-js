@@ -339,10 +339,18 @@ const startJob = (
     let job: JobTask | undefined = undefined;
     const closeEvent = new EventEmitter();
 
+    // skip the graceful shutdown when the worker is gone: a job that leaves its room is taken as
+    // done by the server, while a dropped connection lets the server dispatch the job again
+    const exitOrphaned = (reason: string) => {
+      logger.warn(`${reason}, exiting without leaving the room`);
+      process.kill(process.pid, 'SIGKILL');
+    };
+
     const orphanedTimeout = setTimeout(() => {
-      logger.warn('job process orphaned, shutting down.');
-      join.resolve();
+      exitOrphaned('job process orphaned');
     }, ORPHANED_TIMEOUT);
+    // the worker closes the IPC channel only by exiting
+    process.on('disconnect', () => exitOrphaned('worker process closed the IPC channel'));
 
     const messageHandler = (msg: IPCMessage) => {
       switch (msg.case) {
