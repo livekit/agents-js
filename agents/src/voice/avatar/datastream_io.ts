@@ -63,7 +63,7 @@ export class DataStreamAudioOutput extends AudioOutput {
   private firstFrameEmitted: boolean = false;
   private capturing: boolean = false;
   private finishOnFlush: boolean = false;
-  private flushedDurations: number[] = [];
+  private flushedDurationsInS: number[] = [];
   private detached: boolean = false;
   private listeningForDepartures: boolean = false;
 
@@ -214,10 +214,10 @@ export class DataStreamAudioOutput extends AudioOutput {
       if ((this.finishOnFlush || destinationLeft) && this.pendingPlayoutSegments > 0) {
         this.onPlaybackFinished({ playbackPosition: this.pushedDuration, interrupted: true });
       } else {
-        this.flushedDurations.push(this.pushedDuration);
-        this.flushedDurations.splice(
+        this.flushedDurationsInS.push(this.pushedDuration);
+        this.flushedDurationsInS.splice(
           0,
-          Math.max(0, this.flushedDurations.length - this.pendingPlayoutSegments),
+          Math.max(0, this.flushedDurationsInS.length - this.pendingPlayoutSegments),
         );
       }
     }
@@ -265,10 +265,10 @@ export class DataStreamAudioOutput extends AudioOutput {
     }
 
     const flushedSegments = this.pendingPlayoutSegments - (this.capturing ? 1 : 0);
-    const durations = this.flushedDurations.slice(
-      Math.max(0, this.flushedDurations.length - flushedSegments),
+    const durations = this.flushedDurationsInS.slice(
+      Math.max(0, this.flushedDurationsInS.length - flushedSegments),
     );
-    this.flushedDurations = [];
+    this.flushedDurationsInS = [];
     this.finishOnFlush = this.capturing;
     for (let segment = 0; segment < flushedSegments; segment++) {
       this.onPlaybackFinished({
