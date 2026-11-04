@@ -177,7 +177,10 @@ whole recordings through `recognize(audio)`. It downmixes and resamples to mono
 `updateOptions` changes language, mode, and context terms for later requests.
 Session keyterms merge with configured terms without duplicates.
 
-Pass a LiveKit VAD to enable native streaming:
+Pass a LiveKit VAD to enable native streaming. This path is tested with Silero.
+Custom VADs must report inference frames and queue the speech events for each
+inference window together. The plugin uses these events to drain input before
+flush or shutdown:
 
 `new STT({ vad, outputContract: 'append_fragments' })`
 

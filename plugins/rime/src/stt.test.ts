@@ -337,3 +337,82 @@ it('drains a last speech-start window and reuses the detector across flushes', a
   expect(uploads).toEqual([640, 640]);
   expect(output.filter((e) => e.type === stt.SpeechEventType.FINAL_TRANSCRIPT)).toHaveLength(2);
 });
+
+it('drains queued final-window speech events through the real VAD stream interface', async () => {
+  const { VADStream } = await import('@livekit/agents');
+  const end = vi.fn();
+  class Detector extends VADStream {
+    constructor(vad: VAD) {
+      super(vad);
+      void this.process();
+    }
+    private async process() {
+      let pending = 0,
+        speaking = false;
+      while (!this.closed) {
+        const { done, value } = await this.inputReader.read();
+        if (done) return;
+        if (typeof value === 'symbol') {
+          pending = 0;
+          speaking = false;
+          continue;
+        }
+        pending += value.samplesPerChannel;
+        if (pending < 320) continue;
+        pending -= 320;
+        this.sendVADEvent({
+          type: VADEventType.INFERENCE_DONE,
+          frames: [frame()],
+          timestamp: 20,
+        } as VADEvent);
+        if (!speaking) {
+          speaking = true;
+          this.sendVADEvent({
+            type: VADEventType.START_OF_SPEECH,
+            frames: [frame()],
+            timestamp: 20,
+          } as VADEvent);
+        }
+      }
+    }
+    override endInput() {
+      end();
+      throw new Error('Do not close the locked VAD writer');
+    }
+  }
+  const vad = {
+    capabilities: { updateInterval: 20 },
+    stream: vi.fn(() => new Detector(vad as unknown as VAD)),
+  };
+  const uploadBytes: number[] = [];
+  const owner = model(
+    {
+      stt: {
+        stream: (source: AsyncIterable<Uint8Array>) => ({
+          async *[Symbol.asyncIterator]() {
+            let count = 0;
+            for await (const chunk of source) count += chunk.length;
+            uploadBytes.push(count);
+            yield { kind: 'final', text: 'confirmed', language: 'en' };
+          },
+          cancel: async () => undefined,
+        }),
+      },
+    },
+    { vad: vad as unknown as VAD },
+  );
+  const stream = owner.stream();
+  const output: stt.SpeechEvent[] = [];
+  const read = (async () => {
+    for await (const event of stream) output.push(event);
+  })();
+  stream.pushFrame(new AudioFrame(new Int16Array(175), 16000, 1, 175));
+  stream.flush();
+  stream.pushFrame(new AudioFrame(new Int16Array(160), 16000, 1, 160));
+  stream.endInput();
+  await read;
+  expect(end).not.toHaveBeenCalled();
+  expect(vad.stream).toHaveBeenCalledOnce();
+  expect(uploadBytes).toEqual([640, 640]);
+  expect(output.filter((e) => e.type === stt.SpeechEventType.FINAL_TRANSCRIPT)).toHaveLength(2);
+});
