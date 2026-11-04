@@ -247,3 +247,60 @@ it.each([503, 401])(
     }
   },
 );
+
+it('restores tools at acceptance and permits newer automatic responses before completion', async () => {
+  const { peer, session } = await setup();
+  const errors: unknown[] = [];
+  session.on('error', (e) => errors.push(e));
+  await session.updateTools(
+    new llm.ToolContext({ lookup: llm.tool({ description: 'Lookup', execute: async () => '42' }) }),
+  );
+  session.updateOptions({ toolChoice: 'none' });
+  const pending = session.generateReply();
+  await vi.waitFor(() => expect(peer.requests.at(-1)?.type).toBe('response.create'));
+  expect(peer.settings.tools).toEqual([]);
+  const suppressed = peer.revision;
+  peer.accepted(peer.requests.at(-1)!);
+  await pending;
+  expect(peer.settings.tools).toHaveLength(1);
+  expect(peer.revision).toBeGreaterThan(suppressed);
+  const automatic = new Promise<llm.GenerationCreatedEvent>((resolve) =>
+    session.once('generation_created', resolve),
+  );
+  peer.accepted(undefined, 'automatic', peer.revision);
+  peer.tool('automatic', 'new-policy-call');
+  peer.ended('automatic');
+  const event = await automatic;
+  expect((await collect(event.functionStream)).map((call) => call.callId)).toEqual([
+    'new-policy-call',
+  ]);
+  expect(errors).toEqual([]);
+});
+
+it('retains a slow tool reference across more than 128 later responses', async () => {
+  const { peer, session } = await setup();
+  peer.onRequest = (q) => {
+    if (q.type !== 'response.create') return;
+    const count = peer.requests.filter((r) => r.type === 'response.create').length;
+    peer.accepted(q, `response-${count}`);
+    if (count === 1) peer.tool('response-1', 'slow-call');
+    peer.ended(`response-${count}`);
+    return true;
+  };
+  const first = await session.generateReply();
+  await collect(first.functionStream);
+  for (let i = 0; i < 130; i++) {
+    const generation = await session.generateReply();
+    await collect(generation.messageStream);
+  }
+  const ctx = session.chatCtx;
+  ctx.items.push(
+    new llm.FunctionCallOutput({ callId: 'slow-call', output: 'done', isError: false }),
+  );
+  await session.updateChatCtx(ctx);
+  await session.generateReply();
+  expect(peer.requests.filter((q) => q.type === 'response.create').at(-1)?.response).toMatchObject({
+    prism_call_id: 'slow-call',
+  });
+  expect(session.isClosed).toBe(false);
+}, 10000);
