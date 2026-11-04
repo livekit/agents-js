@@ -15,7 +15,7 @@ import {
 import { ChatMessage } from '../llm/chat_context.js';
 import { initializeLogger, log } from '../log.js';
 import type { SimulationContext } from '../simulation.js';
-import { Future } from '../utils.js';
+import { Future, waitUntilTimeout } from '../utils.js';
 import type { AgentSession } from './agent_session.js';
 import { AgentSessionEventTypes, CloseReason, createCloseEvent } from './events.js';
 import { FinalizeSimulationError } from './index.js';
@@ -170,6 +170,26 @@ describe('SessionHost without an attached session', () => {
     const value = (transport.sent[0]!.message.value as pb.SessionResponse).response
       .value as pb.SessionResponse_FinalizeSimulationResponse;
     expect(value.userVerdict?.reason).toBe('verdict after hangup');
+    await host.close();
+  });
+
+  it('ends the finalize wait even when the reply fails to send', async () => {
+    // the job waits on this before it shuts down; a reply the transport can't deliver must
+    // not hold the shutdown for the whole sessionEndTimeout
+    class BrokenTransport extends FakeTransport {
+      override async sendMessage(): Promise<void> {
+        throw new Error('room session transport is closed');
+      }
+    }
+    const ctx = fakeSimJobContext((simCtx) => simCtx.fail('verdict after hangup'));
+    const transport = new BrokenTransport();
+    const host = new SessionHost(transport);
+    await runWithJobContextAsync(ctx, async () => host.start());
+
+    transport.push(finalizeMessage('f1', true, 'ok'));
+    await expect(
+      waitUntilTimeout(host._waitForSimulationFinalized(), 1_000),
+    ).resolves.toBeUndefined();
     await host.close();
   });
 

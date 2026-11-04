@@ -1250,16 +1250,21 @@ export class SessionHost {
         reason: simCtx.userVerdict.reason,
       });
     }
-    await this.sendResponse(
-      signal,
-      requestId,
-      {
-        case: 'finalizeSimulation',
-        value: new pb.SessionResponse_FinalizeSimulationResponse({ userVerdict }),
-      },
-      simError,
-    );
-    this.simulationFinalized.set();
+    try {
+      await this.sendResponse(
+        signal,
+        requestId,
+        {
+          case: 'finalizeSimulation',
+          value: new pb.SessionResponse_FinalizeSimulationResponse({ userVerdict }),
+        },
+        simError,
+      );
+    } finally {
+      // the simulator has had its one answer, delivered or not; the job's shutdown must not
+      // keep waiting for one
+      this.simulationFinalized.set();
+    }
   }
 
   private async handleUpdateIo(
