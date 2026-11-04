@@ -16,7 +16,7 @@ import {
 } from '@livekit/agents';
 import { AudioFrame, AudioResampler } from '@livekit/rtc-node';
 import type * as r from '@rimelabs/sdk';
-import { setTimeout as delay } from 'node:timers/promises';
+import { setTimeout as delay, setImmediate as nextTurn } from 'node:timers/promises';
 
 /** Recognition settings. An injected SDK client and VAD remain caller-owned. */
 export interface STTOptions {
@@ -326,6 +326,9 @@ class RimeSpeechStream extends stt.SpeechStream {
   private active?: Utterance;
   private work = new Set<Promise<void>>();
   private queuedBytes = 0;
+  private inputSamples = 0;
+  private processedSamples = 0;
+  private detectorProgress?: () => void;
   private failure?: Error;
   private uploads = new AbortController();
   private resolveFinished!: () => void;
@@ -452,6 +455,10 @@ class RimeSpeechStream extends stt.SpeechStream {
   private async readDetector(detector: VADStream): Promise<void> {
     for await (const event of detector) {
       if (this.closed || this.abortSignal.aborted) return;
+      if (event.type === VADEventType.INFERENCE_DONE) {
+        this.processedSamples += event.frames.reduce((n, frame) => n + frame.samplesPerChannel, 0);
+        this.detectorProgress?.();
+      }
       if (event.type === VADEventType.START_OF_SPEECH) this.start(event);
       if (
         this.active &&
@@ -471,14 +478,59 @@ class RimeSpeechStream extends stt.SpeechStream {
     }
     this.finish();
   }
+  // Some released VADStream implementations close a locked writer in endInput().
+  // Drain through public inference events, then close the detector instead.
+  private async drainDetector(): Promise<void> {
+    if (!this.inputSamples) return;
+    const window = Math.round(this.vad.capabilities.updateInterval * 16);
+    if (!Number.isSafeInteger(window) || window < 1 || window > 16000)
+      throw new APIError('Invalid Rime VAD inference interval', { retryable: false });
+    const padding = (window - (this.inputSamples % window)) % window;
+    if (padding) {
+      this.inputSamples += padding;
+      this.detector!.pushFrame(new AudioFrame(new Int16Array(padding), 16000, 1, padding));
+    }
+    const signal = AbortSignal.any([this.abortSignal, this.uploads.signal]);
+    const deadline = Date.now() + this.options.timeoutMs;
+    while (this.processedSamples < this.inputSamples) {
+      signal.throwIfAborted();
+      await new Promise<void>((resolve, reject) => {
+        const done = (error?: Error) => {
+          clearTimeout(timer);
+          signal.removeEventListener('abort', cancel);
+          this.detectorProgress = undefined;
+          if (error) reject(error);
+          else resolve();
+        };
+        const cancel = () =>
+          done(this.failure ?? new APIError('Rime VAD drain cancelled', { retryable: false }));
+        const timer = setTimeout(
+          () => done(new APIError('Rime VAD drain timed out', { retryable: false })),
+          Math.max(1, deadline - Date.now()),
+        );
+        this.detectorProgress = () => done();
+        signal.addEventListener('abort', cancel, { once: true });
+      });
+    }
+    // START/END events for the last window follow its INFERENCE_DONE event.
+    await nextTurn();
+    signal.throwIfAborted();
+  }
   private stopDetector(): void {
     const detector = this.detector;
     this.detector = undefined;
-    detector?.close();
+    if (detector) {
+      try {
+        detector.flush();
+      } finally {
+        detector.close();
+      }
+    }
   }
   protected async run(): Promise<void> {
     let reading: Promise<void> | undefined;
     const start = () => {
+      this.inputSamples = this.processedSamples = 0;
       this.detector = this.vad.stream();
       reading = this.readDetector(this.detector);
       void reading.catch((error) => {
@@ -495,13 +547,20 @@ class RimeSpeechStream extends stt.SpeechStream {
       for await (const input of this.input) {
         if (this.closed || this.abortSignal.aborted || this.failure) break;
         if (input === RimeSpeechStream.FLUSH_SENTINEL) {
-          this.detector!.endInput();
-          await reading;
-          this.stopDetector();
-          start();
-        } else this.detector!.pushFrame(input);
+          await this.drainDetector();
+          this.finish();
+          this.detector!.flush();
+          this.inputSamples = this.processedSamples = 0;
+        } else {
+          this.inputSamples += input.samplesPerChannel;
+          this.detector!.pushFrame(input);
+        }
       }
-      if (!this.abortSignal.aborted && !this.failure) this.detector!.endInput();
+      if (!this.abortSignal.aborted && !this.failure) {
+        await this.drainDetector();
+        this.finish();
+      }
+      this.stopDetector();
       await reading;
       await Promise.all([...this.work]);
       if (this.failure) throw this.failure;
