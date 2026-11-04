@@ -507,6 +507,86 @@ describe('GPTLiveModel', () => {
     ]);
   });
 
+  it('supports Decisions delegation and manual evaluation', async () => {
+    const decisionsOptions = {
+      model: 'gpt-6-luna',
+      questions: [
+        {
+          type: 'choice',
+          name: 'mood',
+          instructions: 'Mood?',
+          choices: [{ value: 'happy' }, { value: 'sad' }],
+        },
+      ],
+    };
+    const session = create({ delegation: 'decisions', decisionsOptions });
+    const events: GPTLive.DecisionEventEnvelope[] = [];
+    session.on('decision_event', (event) => events.push(event));
+    await ready(session);
+    const eventId = session.createDecision();
+    await waitCount(2);
+    expect(startConfig().delegation).toEqual({ type: 'decisions', decisions: decisionsOptions });
+    expect(server.events()).toContainEqual({ type: 'decision.create', event_id: eventId });
+    const payload = {
+      type: 'decision.completed',
+      decision: {
+        model: 'gpt-6-luna',
+        answers: [{ name: 'mood', value: 'happy' }],
+        usage: { input_tokens: 10 },
+      },
+    };
+    await server.send(session, {
+      type: 'decision.event',
+      event_id: 'result-1',
+      event: payload,
+    });
+    expect(events).toEqual([{ type: 'decision.event', event_id: 'result-1', event: payload }]);
+    await expect(session._updateTools(tools)).rejects.toThrow('no tool channel');
+  });
+
+  it.each(['client', 'responses'] as const)(
+    'serializes Decisions triggers but rejects manual evaluation under %s delegation',
+    async (delegation) => {
+      const triggers = [
+        {
+          type: 'decisions' as const,
+          eventType: 'session.output_transcript.delta',
+          decisions: {
+            questions: [
+              {
+                name: 'mood',
+                type: 'choice',
+                instructions: 'Mood?',
+                choices: [{ value: 'happy' }],
+              },
+            ],
+          },
+        },
+      ];
+      const session = create({ delegation, triggers });
+      await ready(session);
+      expect(startConfig().triggers).toEqual([
+        {
+          type: 'decisions',
+          event_type: 'session.output_transcript.delta',
+          decisions: triggers[0]!.decisions,
+        },
+      ]);
+      expect(startConfig().delegation?.type).toBe(delegation);
+      expect(() => session.createDecision()).toThrow('Decisions delegation');
+      expect(server.events().some((event) => event.type === 'decision.create')).toBe(false);
+    },
+  );
+
+  it('requires Decisions configuration to match Decisions delegation', () => {
+    expect(() => new GPTLiveModel({ apiKey: 'sk-test', delegation: 'decisions' })).toThrow(
+      'decisionsOptions',
+    );
+    expect(
+      () => new GPTLiveModel({ apiKey: 'sk-test', decisionsOptions: { model: 'gpt-6-luna' } }),
+    ).toThrow('decisionsOptions');
+  });
+
   it('drops old delegation answers during drain, startup, and after reconnect', async () => {
     server.autoClose = false;
     const session = create({ delegation: 'client', maxSessionDuration: 300 });

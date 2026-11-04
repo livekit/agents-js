@@ -164,7 +164,7 @@ type ClientEvent_2 = {
 } | {
     type: 'response.item.create';
     item: OpenAI.Responses.ResponseInputItem;
-});
+} | DecisionCreateEvent);
 
 // Warning: (ae-missing-release-tag) "ClientEventType" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -368,6 +368,60 @@ interface ConversationResource {
 // @public (undocumented)
 export type DalleModels = 'dall-e-2' | 'dall-e-3';
 
+// @public
+interface DecisionCreateEvent {
+    // (undocumented)
+    event_id?: string;
+    // (undocumented)
+    type: 'decision.create';
+}
+
+// @public
+interface DecisionEventEnvelope {
+    // (undocumented)
+    event: Record<string, unknown>;
+    // (undocumented)
+    event_id?: string | null;
+    // (undocumented)
+    type: 'decision.event';
+}
+
+// @public
+interface DecisionsConfig {
+    // (undocumented)
+    model?: string;
+    // (undocumented)
+    questions?: Record<string, unknown>[];
+}
+
+// @public
+interface DecisionsOptions {
+    // (undocumented)
+    model?: string;
+    // (undocumented)
+    questions?: Record<string, unknown>[];
+}
+
+// @public
+interface DecisionsTrigger {
+    // (undocumented)
+    decisions: DecisionsOptions;
+    // (undocumented)
+    eventType: string;
+    // (undocumented)
+    type: 'decisions';
+}
+
+// @public
+interface DecisionsTrigger_2 {
+    // (undocumented)
+    decisions: DecisionsConfig;
+    // (undocumented)
+    event_type: string;
+    // (undocumented)
+    type: 'decisions';
+}
+
 // Warning: (ae-missing-release-tag) "DeepSeekChatModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
@@ -384,10 +438,13 @@ type Delegation = {
 } | {
     type: 'responses';
     responses: ResponsesConfig;
+} | {
+    type: 'decisions';
+    decisions: DecisionsConfig;
 };
 
 // @public
-type DelegationTarget = 'responses' | 'client';
+type DelegationTarget = 'responses' | 'client' | 'decisions';
 
 // @internal (undocumented)
 class DiscardedGeneration {
@@ -504,6 +561,10 @@ declare namespace GPTLive {
         InputRole,
         InputItem,
         ResponsesConfig,
+        DecisionsConfig,
+        DecisionsTrigger_2 as DecisionsTrigger,
+        DecisionEventEnvelope,
+        DecisionCreateEvent,
         Delegation,
         SessionConfig,
         ClientEvent_2 as ClientEvent,
@@ -535,10 +596,12 @@ interface GPTLiveModelOptions {
     apiKey?: string;
     baseURL?: string;
     connOptions?: APIConnectOptions;
+    decisionsOptions?: DecisionsOptions;
     delegation?: DelegationTarget;
     maxSessionDuration?: number | null;
     model?: string;
     responsesOptions?: ResponsesDelegationOptions;
+    triggers?: DecisionsTrigger[];
     voice?: GPTLiveVoices | (string & NonNullable<unknown>) | Record<string, unknown>;
 }
 
@@ -549,6 +612,7 @@ class GPTLiveSession extends llm_2.DuplexSession<{
     openai_server_event_received: (event: ServerEvent_2) => void;
     openai_client_event_queued: (event: ClientEvent_2 | Record<string, unknown>) => void;
     delegation_created: (event: GPTLiveDelegation) => void;
+    decision_event: (event: DecisionEventEnvelope) => void;
 }> {
     constructor(model: GPTLiveModel);
     appendCommentary(text: string, options?: {
@@ -563,6 +627,7 @@ class GPTLiveSession extends llm_2.DuplexSession<{
     }): void;
     get audioStream(): ReadableStream_2<llm_2.DuplexAudioFrame>;
     protected closeConnection(): Promise<void>;
+    createDecision(): string;
     protected createWsUrlAndHeaders(): Promise<{
         url: URL;
         headers: Record<string, string>;
@@ -1221,6 +1286,9 @@ declare namespace realtime {
         DiscardedGeneration,
         RealtimeModel_3 as RealtimeModel,
         RealtimeSession_2 as RealtimeSession,
+        DecisionEventEnvelope,
+        DecisionsOptions,
+        DecisionsTrigger,
         GPTLiveDelegation,
         GPTLiveModelOptions,
         GPTLiveSession,
@@ -1882,7 +1950,7 @@ type ServerEvent_2 = {
     type: 'response.event';
     delegation_id?: string | null;
     event?: ResponsesEvent;
-} | {
+} | DecisionEventEnvelope | {
     type: 'session.usage.updated';
     usage?: {
         seconds?: number;
@@ -1935,6 +2003,8 @@ interface SessionConfig {
     instructions?: string;
     // (undocumented)
     model: string;
+    // (undocumented)
+    triggers?: DecisionsTrigger_2[];
 }
 
 // Warning: (ae-missing-release-tag) "SessionCreatedEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
