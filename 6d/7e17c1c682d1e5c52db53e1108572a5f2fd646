@@ -1,0 +1,25 @@
+plugins/nvidia/src/stt.test.ts
+  s_566be8fa62847a::t_f657972d44eb73 292,294-295,319-326
+plugins/nvidia/src/stt.ts
+  s_566be8fa62847a::t_705ef06fc871a9 314-318
+plugins/nvidia/src/tts.test.ts
+  s_566be8fa62847a::t_d4e0517aa3646c 264-282
+plugins/nvidia/src/tts.ts
+  s_566be8fa62847a::t_a3d36351fc9816 249-250
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6d7e17c1c682d1e5c52db53e1108572a5f2fd646",
+  "prompts": {},
+  "sessions": {
+    "s_566be8fa62847a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_566be8fa62847a",
+        "model": "unknown"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
