@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { ReadableStream } from 'node:stream/web';
-import { tryLog } from '../log.js';
+import { tryLog } from '../log_core.js';
 import { IdentityTransform } from './identity_transform.js';
 
 export interface StreamChannel<T, E extends Error = Error> {
