@@ -1,0 +1,39 @@
+.changeset/green-pandas-listen.md
+  s_38522297c5f081::t_96555cce98257d 5
+plugins/nvidia/README.md
+  s_38522297c5f081::t_8b7bd7f46e7c11 40-42,45-51
+plugins/nvidia/etc/agents-plugin-nvidia.api.md
+  s_38522297c5f081::t_c6ef25e0ec6f7e 18-30,73,76,119
+plugins/nvidia/proto/riva/proto/riva_asr.proto
+  s_38522297c5f081::t_7adff3ae9a5a4c 47-52,65
+plugins/nvidia/src/connection.ts
+  s_38522297c5f081::t_a92ada497fb30a 5,8-25
+plugins/nvidia/src/index.ts
+  s_38522297c5f081::t_9fed1a988bf4b5 7
+plugins/nvidia/src/proto.ts
+  s_38522297c5f081::t_09c2f394bca0b9 32-33,55
+plugins/nvidia/src/stt.test.ts
+  s_38522297c5f081::t_ee682d8fa9ce5f 9,22-25,34-39,115,138-149,151-153,159,201,208-209,279-376
+plugins/nvidia/src/stt.ts
+  s_38522297c5f081::t_5a0f473eed739c 4,10,16,48-51,62-63,92-97,100-105,182-183,200-205,220,226-230,284-287,303-316,334-344
+plugins/nvidia/src/tts.test.ts
+  s_38522297c5f081::t_2364c0ead77016 263-326
+plugins/nvidia/src/tts.ts
+  s_38522297c5f081::t_c8c866756ec2bf 4,9,15,87-93,183,196-197,199-208,210,212-217,225-236,238-239,241-253,255-269,271-306,309-398
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "de8b75fb39a6bb8ecabe2fbcea8f815e94b8b6e2",
+  "prompts": {},
+  "sessions": {
+    "s_38522297c5f081": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_38522297c5f081",
+        "model": "unknown"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
