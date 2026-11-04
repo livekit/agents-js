@@ -233,7 +233,9 @@ describe('ProcPool job updates', () => {
     } as unknown as RunningJobInfo;
   }
 
-  it('stamps the launch, and reports it and the end of the job', async () => {
+  it('stamps the launch, and reports it and the end of the job', async (): Promise<
+    Throws<void, Error>
+  > => {
     const onJobUpdate = vi.fn();
     const pool = createPool(1, onJobUpdate);
     const executor = createMockExecutor();
@@ -255,7 +257,9 @@ describe('ProcPool job updates', () => {
     expect(onJobUpdate).toHaveBeenLastCalledWith(executor);
   });
 
-  it('marks a job that waited for a new process as not warm', async () => {
+  it('marks a job that waited for a new process as not warm', async (): Promise<
+    Throws<void, Error>
+  > => {
     const pool = createPool(1);
     const info = jobInfo();
     const launch = pool.launchJob(info);
