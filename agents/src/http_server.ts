@@ -58,18 +58,27 @@ export class HTTPServer {
 
   async run(): Promise<void> {
     return new ThrowsPromise<void, Error>((resolve, reject) => {
-      this.app.listen(this.port, this.host, (err?: Error) => {
-        if (err) reject(err);
+      const onError = (error: Error) => {
+        this.app.off('listening', onListening);
+        reject(error);
+      };
+      const onListening = () => {
+        this.app.off('error', onError);
         const address = this.app.address();
         if (typeof address! !== 'string') {
           this.#logger.info(`Server is listening on port ${address!.port}`);
         }
         resolve();
-      });
+      };
+      this.app.once('error', onError);
+      this.app.once('listening', onListening);
+      this.app.listen(this.port, this.host);
     });
   }
 
   async close(): Promise<void> {
+    if (!this.app.listening) return;
+
     return new ThrowsPromise<void, Error>((resolve, reject) => {
       this.app.close((err?: Error) => {
         if (err) reject(err);

@@ -395,7 +395,7 @@ export class AgentServer {
   #connecting = false;
   #tasks: Promise<void>[] = [];
   #pending: { [id: string]: PendingAssignment } = {};
-  #close = new Future();
+  #close?: Future;
 
   event = new EventEmitter();
   #session: WebSocket | undefined = undefined;
@@ -510,75 +510,79 @@ export class AgentServer {
       throw new WorkerError('worker is already running');
     }
 
-    if (this.#inferenceExecutor) {
-      await this.#inferenceExecutor.start();
-      await this.#inferenceExecutor.initialize();
-    }
-
-    this.#logger.info('starting worker');
+    // Create before starting resources so close() can clean up a failed startup.
     this.#closed = false;
-    this.#loopMonitor = startMonitoring({ name: 'worker', emitSpans: false });
-    this.#procPool.start();
+    const close = new Future();
+    this.#close = close;
 
-    const workerWS = async () => {
-      let retries = 0;
-      this.#connecting = true;
+    try {
+      if (this.#inferenceExecutor) {
+        await this.#inferenceExecutor.start();
+        await this.#inferenceExecutor.initialize();
+      }
 
-      while (!this.#closed) {
-        const url = new URL(this.#opts.wsURL);
-        url.protocol = url.protocol.replace('http', 'ws');
-        const token = new AccessToken(this.#opts.apiKey, this.#opts.apiSecret);
-        token.addGrant({ agent: true });
-        const jwt = await token.toJwt();
-        const wsUrl = new URL(url + 'agent');
-        if (this.#opts.workerToken) {
-          wsUrl.searchParams.append('worker_token', this.#opts.workerToken);
-        }
-        this.#session = new WebSocket(wsUrl, {
-          headers: { authorization: 'Bearer ' + jwt },
-        });
+      this.#logger.info('starting worker');
+      this.#loopMonitor = startMonitoring({ name: 'worker', emitSpans: false });
+      this.#procPool.start();
 
-        try {
-          await new ThrowsPromise<unknown, Error>((resolve, reject) => {
-            this.#session!.on('open', resolve);
-            this.#session!.on('error', (error) => reject(error));
-            this.#session!.on('close', (code) => reject(new Error(`WebSocket returned ${code}`)));
+      const workerWS = async () => {
+        let retries = 0;
+        this.#connecting = true;
+
+        while (!this.#closed) {
+          const url = new URL(this.#opts.wsURL);
+          url.protocol = url.protocol.replace('http', 'ws');
+          const token = new AccessToken(this.#opts.apiKey, this.#opts.apiSecret);
+          token.addGrant({ agent: true });
+          const jwt = await token.toJwt();
+          const wsUrl = new URL(url + 'agent');
+          if (this.#opts.workerToken) {
+            wsUrl.searchParams.append('worker_token', this.#opts.workerToken);
+          }
+          this.#session = new WebSocket(wsUrl, {
+            headers: { authorization: 'Bearer ' + jwt },
           });
 
-          retries = 0;
-          this.#logger.debug('connected to LiveKit server');
-          await this.#runWS(this.#session);
-        } catch (e: unknown) {
-          if (this.#closed) return;
-          if (retries >= this.#opts.maxRetry) {
-            throw new WorkerError(
-              `failed to connect to LiveKit server (${this.#opts.wsURL}) after ${retries} attempts: ${e}`,
+          try {
+            await new ThrowsPromise<unknown, Error>((resolve, reject) => {
+              this.#session!.on('open', resolve);
+              this.#session!.on('error', (error) => reject(error));
+              this.#session!.on('close', (code) => reject(new Error(`WebSocket returned ${code}`)));
+            });
+
+            retries = 0;
+            this.#logger.debug('connected to LiveKit server');
+            await this.#runWS(this.#session);
+          } catch (e: unknown) {
+            if (this.#closed) return;
+            if (retries >= this.#opts.maxRetry) {
+              throw new WorkerError(
+                `failed to connect to LiveKit server (${this.#opts.wsURL}) after ${retries} attempts: ${e}`,
+              );
+            }
+
+            retries++;
+            const delay = Math.min(retries * 2, 10);
+
+            this.#logger.warn(
+              { error: e, retry_count: retries, max_retry: this.#opts.maxRetry },
+              `failed to connect to LiveKit server (${this.#opts.wsURL}), retrying in ${delay} seconds: (${retries}/${this.#opts.maxRetry})`,
             );
+
+            await new ThrowsPromise<void, never>((resolve) => setTimeout(resolve, delay * 1000));
           }
-
-          retries++;
-          const delay = Math.min(retries * 2, 10);
-
-          this.#logger.warn(
-            { error: e, retry_count: retries, max_retry: this.#opts.maxRetry },
-            `failed to connect to LiveKit server (${this.#opts.wsURL}), retrying in ${delay} seconds: (${retries}/${this.#opts.maxRetry})`,
-          );
-
-          await new ThrowsPromise<void, never>((resolve) => setTimeout(resolve, delay * 1000));
         }
-      }
-    };
+      };
 
-    const tasks = [workerWS()];
-    if (this.#httpServer) {
-      tasks.push(this.#httpServer.run());
-    }
-    try {
+      const tasks = [workerWS()];
+      if (this.#httpServer) {
+        tasks.push(this.#httpServer.run());
+      }
       await ThrowsPromise.all(tasks);
-      this.#close.resolve();
+      if (!close.done) close.resolve();
     } catch (e) {
-      if (!this.#close.done) {
-        this.#close.reject(e instanceof Error ? e : new Error(String(e)));
+      if (!close.done) {
+        close.reject(e instanceof Error ? e : new Error(String(e)));
       }
       throw e;
     }
@@ -1063,8 +1067,9 @@ export class AgentServer {
   }
 
   async close() {
+    const close = this.#close;
     if (this.#closed) {
-      await this.#close.await.catch(() => undefined);
+      await close?.await.catch(() => undefined);
       return;
     }
 
@@ -1080,7 +1085,7 @@ export class AgentServer {
     await ThrowsPromise.allSettled(this.#tasks);
 
     this.#session?.close();
-    await this.#close.await.catch(() => undefined);
+    await close?.await.catch(() => undefined);
   }
 }
 
