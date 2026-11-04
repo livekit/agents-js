@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { SpanStatusCode } from '@opentelemetry/api';
+import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base';
+import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import type { Logger } from 'pino';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { type JobContext, getJobContext } from './job.js';
@@ -12,7 +15,13 @@ import {
   runShutdownCallbacks,
   waitForEntrypointShutdown,
 } from './job_lifecycle.js';
-import { flushCloudMetrics, flushCloudTraces, flushOtelLogs } from './telemetry/index.js';
+import {
+  flushCloudMetrics,
+  flushCloudTraces,
+  flushOtelLogs,
+  setTracerProvider,
+  tracer,
+} from './telemetry/index.js';
 import type { AgentSession } from './voice/agent_session.js';
 
 vi.mock('./telemetry/index.js', async (importOriginal) => ({
@@ -297,20 +306,35 @@ describe('finalizeSession', () => {
 });
 
 describe('runShutdownCallbacks', () => {
-  it('logs callback errors', async () => {
+  it('logs callback errors and records each exception once', async () => {
     const error = new TypeError('shutdown callback failed');
     const logger = createLogger();
+    const previousProvider = tracer.getProvider();
+    const exporter = new InMemorySpanExporter();
+    const provider = new NodeTracerProvider({
+      spanProcessors: [new SimpleSpanProcessor(exporter)],
+    });
+    setTracerProvider(provider);
 
-    await runShutdownCallbacks(
-      [
-        async () => {
-          throw error;
-        },
-      ],
-      logger,
-    );
+    try {
+      await runShutdownCallbacks(
+        [
+          async () => {
+            throw error;
+          },
+        ],
+        logger,
+      );
 
-    expect(logger.error).toHaveBeenCalledWith({ error }, 'error while running shutdown callback');
+      expect(logger.error).toHaveBeenCalledWith({ error }, 'error while running shutdown callback');
+      const [span] = exporter.getFinishedSpans();
+      expect(span!.name).toBe('shutdown_callback');
+      expect(span!.status.code).toBe(SpanStatusCode.ERROR);
+      expect(span!.events.filter((event) => event.name === 'exception')).toHaveLength(1);
+    } finally {
+      setTracerProvider(previousProvider);
+      await provider.shutdown();
+    }
   });
 });
 

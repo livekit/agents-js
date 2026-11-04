@@ -2,10 +2,14 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { AudioFrame } from '@livekit/rtc-node';
+import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base';
+import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { APIConnectionError } from '../_exceptions.js';
+import { type JobContext, runWithJobContext } from '../job.js';
 import { initializeLogger } from '../log.js';
 import type { TTSMetrics } from '../metrics/base.js';
+import { REDACTED_EXCEPTION_MESSAGE, setTracerProvider, traceTypes } from '../telemetry/index.js';
 import type { APIConnectOptions } from '../types.js';
 import { AsyncIterableQueue } from '../utils.js';
 import { ChunkedStream, SynthesizeStream, TTS } from './tts.js';
@@ -260,6 +264,18 @@ class RetryChunkedStream extends ChunkedStream {
   }
 }
 
+class FailingChunkedStream extends ChunkedStream {
+  label = 'test.FailingChunkedStream';
+  attempts = 0;
+
+  protected async run(): Promise<void> {
+    this.attempts++;
+    if (this.attempts <= 2) {
+      throw new APIConnectionError({ message: 'private failure details' });
+    }
+  }
+}
+
 class CloseDuringPutQueue extends AsyncIterableQueue<SynthesizedAudio> {
   readonly putStarted: Promise<void>;
   closedAfterClose = false;
@@ -351,5 +367,52 @@ describe('ChunkedStream', () => {
 
     expect(stream.outputClosedDuringMetricsPut).toBe(false);
     await metricsCollected;
+  });
+});
+
+describe('TTS retry exception telemetry', () => {
+  it.each([
+    ['streaming', false],
+    ['streaming', true],
+    ['chunked', false],
+    ['chunked', true],
+  ] as const)('records each %s attempt once when redacted=%s', async (kind, redacted) => {
+    const exporter = new InMemorySpanExporter();
+    const provider = new NodeTracerProvider({
+      spanProcessors: [new SimpleSpanProcessor(exporter)],
+    });
+    setTracerProvider(provider);
+    const tts = new TestTTS();
+    tts.on('error', () => {});
+    const context = { _redactionEnabled: redacted } as unknown as JobContext;
+    const options = { ...RETRY_OPTIONS, maxRetry: 2 };
+
+    try {
+      await runWithJobContext(context, async () => {
+        const stream =
+          kind === 'streaming'
+            ? new HookStream(tts, ['retryable-error', 'retryable-error', 'success'], options)
+            : new FailingChunkedStream('hello', tts, options);
+        await consume(stream);
+      });
+
+      const attempts = exporter
+        .getFinishedSpans()
+        .filter((span) => span.name === 'tts_request_run');
+      expect(attempts).toHaveLength(3);
+      const expected = redacted
+        ? REDACTED_EXCEPTION_MESSAGE
+        : kind === 'streaming'
+          ? 'retryable failure'
+          : 'private failure details';
+      for (const attempt of attempts.slice(0, 2)) {
+        const events = attempt.events.filter((event) => event.name === 'exception');
+        expect(events).toHaveLength(1);
+        expect(events[0]!.attributes?.[traceTypes.ATTR_EXCEPTION_MESSAGE]).toBe(expected);
+      }
+      expect(attempts[2]!.events.filter((event) => event.name === 'exception')).toHaveLength(0);
+    } finally {
+      await provider.shutdown();
+    }
   });
 });

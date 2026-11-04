@@ -79,6 +79,10 @@ export interface StartSpanOptions {
   attributes?: Attributes;
   /** Whether to end the span when the function exits (default: true) */
   endOnExit?: boolean;
+  /** Whether to record an exception event when the function throws (default: true) */
+  recordException?: boolean;
+  /** Whether to set the span status to error when the function throws (default: true) */
+  setStatusOnException?: boolean;
   /** Optional start time for the span in milliseconds (Date.now() format) */
   startTime?: number;
   /** The span's kind (client, server, ...); defaults to INTERNAL */
@@ -192,6 +196,14 @@ class DynamicTracer {
     return await this.tracer.startActiveSpan(options.name, opts, ctx, async (span) => {
       try {
         return await fn(span);
+      } catch (error) {
+        if (!(error instanceof Error && error.name === 'AbortError')) {
+          recordException(span, error instanceof Error ? error : new Error(String(error)), {
+            recordEvent: options.recordException,
+            setStatus: options.setStatusOnException,
+          });
+        }
+        throw error;
       } finally {
         if (endOnExit) {
           span.end();
@@ -240,6 +252,14 @@ class DynamicTracer {
     return this.tracer.startActiveSpan(options.name, opts, ctx, (span) => {
       try {
         return fn(span);
+      } catch (error) {
+        if (!(error instanceof Error && error.name === 'AbortError')) {
+          recordException(span, error instanceof Error ? error : new Error(String(error)), {
+            recordEvent: options.recordException,
+            setStatus: options.setStatusOnException,
+          });
+        }
+        throw error;
       } finally {
         if (endOnExit) {
           span.end();

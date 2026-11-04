@@ -124,7 +124,7 @@ describe.sequential('rpc tracing', () => {
       RpcError.ErrorCode.RECIPIENT_NOT_FOUND,
     );
     expect(span!.status.code).toBe(SpanStatusCode.ERROR);
-    expect(span!.events.some((event) => event.name === 'exception')).toBe(true);
+    expect(span!.events.filter((event) => event.name === 'exception')).toHaveLength(1);
   });
 
   it('truncates the payload and keeps its size', async () => {
@@ -225,6 +225,7 @@ describe.sequential('rpc tracing', () => {
       RpcError.ErrorCode.APPLICATION_ERROR,
     );
     expect(span!.status.code).toBe(SpanStatusCode.ERROR);
+    expect(span!.events.filter((event) => event.name === 'exception')).toHaveLength(1);
   });
 
   it('records a handler exception', async () => {
@@ -238,6 +239,7 @@ describe.sequential('rpc tracing', () => {
     const [span] = spans('rpc_handler');
     expect(span!.status.code).toBe(SpanStatusCode.ERROR);
     expect(span!.attributes).not.toHaveProperty(traceTypes.ATTR_RPC_ERROR_CODE);
+    expect(span!.events.filter((event) => event.name === 'exception')).toHaveLength(1);
   });
 
   it('restores the installed job for invocations dispatched outside its context', async () => {
