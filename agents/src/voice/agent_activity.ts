@@ -24,7 +24,6 @@ import {
   ChatMessage,
   type Instructions,
   type MetricsReport,
-  concatInstructions,
   instructionsEqual,
   renderInstructions,
 } from '../llm/chat_context.js';
@@ -3194,7 +3193,7 @@ export class AgentActivity implements RecognitionHooks {
       continueTurnFrom,
     } = options;
 
-    let instructions: string | Instructions | undefined = defaultInstructions;
+    const instructions: string | Instructions | undefined = defaultInstructions;
     let toolChoice = defaultToolChoice;
     let allowInterruptions = defaultAllowInterruptions;
 
@@ -3266,10 +3265,6 @@ export class AgentActivity implements RecognitionHooks {
       // instructions used inside generateReply are "extra" instructions.
       // this matches the behavior of the Realtime API:
       // https://platform.openai.com/docs/api-reference/realtime-client-events/response/create
-      if (instructions) {
-        instructions = concatInstructions(this.agent.instructions, '\n', instructions);
-      }
-
       const tools = this.tools;
       tools._exclude(this._onEnterIgnoredTools(tools));
 
@@ -3992,15 +3987,10 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     if (instructions) {
-      try {
-        updateInstructions({
-          chatCtx,
-          instructions,
-          addIfMissing: true,
-        });
-      } catch (e) {
-        this.logger.error({ error: e }, 'error occurred during updateInstructions');
-      }
+      chatCtx.addMessage({
+        role: 'system',
+        content: [renderInstructions(instructions, speechHandle.inputDetails.modality)],
+      });
     }
 
     // apply the correct variant of the instructions for the turn's input modality
@@ -4658,7 +4648,7 @@ export class AgentActivity implements RecognitionHooks {
             toolCtx,
             { toolChoice: respondToolChoice },
             replyAbortController,
-            instructions,
+            undefined,
             undefined,
             hasSpeechMessage ? undefined : userMetrics,
           ),
