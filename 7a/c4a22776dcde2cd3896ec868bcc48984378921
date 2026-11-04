@@ -1,0 +1,26 @@
+plugins/google/src/realtime/realtime_api.ts
+  s_32130206b01af8::t_4c42a5ddc4e257 600,1389,1512
+plugins/google/src/realtime/realtime_reconnect.test.ts
+  s_32130206b01af8::t_4ce941a99f58b1 6,8,34,58,66-67,69,103-128,133-183,187-226,233-237,241-252
+  s_32130206b01af8::t_bdbee3a9093686 129-132,227-230
+  s_32130206b01af8::t_47d718e430b9a2 184-186,231-232,238-240
+  s_32130206b01af8::t_6bf1943aa4f075 253
+.changeset/google-realtime-recover-closes.md
+  s_32130206b01af8::t_4c42a5ddc4e257 6-7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7ac4a22776dcde2cd3896ec868bcc48984378921",
+  "prompts": {},
+  "sessions": {
+    "s_32130206b01af8": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13095-c5a9-7d52-b9a8-87dc73de4745",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
