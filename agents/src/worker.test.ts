@@ -172,10 +172,13 @@ describe('AgentServer drain', () => {
       }),
     );
 
+    // the worker sends status only once it has the register response
+    const workerRegistered = once(server.event, 'worker_registered');
     const run = server.run().catch(() => undefined);
     let drain: Promise<void> | undefined;
     try {
       await registered.await;
+      await workerRegistered;
       drain = server.drain().catch(() => undefined);
       const ticks = 3;
       const reported = new Promise<void>((resolve) => {
