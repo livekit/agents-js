@@ -15,12 +15,24 @@ import type { TypedEventEmitter } from '@livekit/typed-emitter';
 import type { VideoFrame as VideoFrame_2 } from '@livekit/rtc-node';
 import type { WritableStreamDefaultWriter as WritableStreamDefaultWriter_2 } from 'node:stream/web';
 
+// Warning: (ae-forgotten-export) The symbol "tts" needs to be exported by the entry point index.d.ts
+// Warning: (ae-missing-release-tag) "ChunkedStream" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export class ChunkedStream extends tts.ChunkedStream {
+    // Warning: (ae-forgotten-export) The symbol "APIConnectOptions" needs to be exported by the entry point index.d.ts
+    constructor(instance: TTS, text: string, opts: TTSOptions, connOptions?: APIConnectOptions, abortSignal?: AbortSignal);
+    // (undocumented)
+    label: string;
+    // (undocumented)
+    protected run(): Promise<void>;
+}
+
 // Warning: (ae-forgotten-export) The symbol "stt" needs to be exported by the entry point index.d.ts
 // Warning: (ae-missing-release-tag) "SpeechStream" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
 export class SpeechStream extends stt.SpeechStream {
-    // Warning: (ae-forgotten-export) The symbol "APIConnectOptions" needs to be exported by the entry point index.d.ts
     constructor(instance: STT, opts: STTOptions, connOptions?: APIConnectOptions);
     // (undocumented)
     label: string;
@@ -58,8 +70,10 @@ export class STT extends stt.STT {
 // @public
 export interface STTOptions {
     apiKey?: string;
+    enableDiarization: boolean;
     functionId: string;
     languageCode: string;
+    maxSpeakerCount: number;
     model: string;
     punctuate: boolean;
     sampleRate: number;
@@ -67,7 +81,6 @@ export interface STTOptions {
     useSsl: boolean;
 }
 
-// Warning: (ae-forgotten-export) The symbol "tts" needs to be exported by the entry point index.d.ts
 // Warning: (ae-missing-release-tag) "SynthesizeStream" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
@@ -103,7 +116,7 @@ export class TTS extends tts.TTS {
     stream(options?: {
         connOptions?: APIConnectOptions;
     }): SynthesizeStream;
-    synthesize(_text: string, _connOptions?: APIConnectOptions): tts.ChunkedStream;
+    synthesize(text: string, connOptions?: APIConnectOptions, abortSignal?: AbortSignal): ChunkedStream;
 }
 
 // Warning: (ae-missing-release-tag) "TTSOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)

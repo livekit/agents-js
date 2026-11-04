@@ -2,4 +2,4 @@
 '@livekit/agents-plugin-nvidia': patch
 ---
 
-Add NVIDIA Riva streaming STT and TTS support.
+Add NVIDIA Riva STT and TTS support, including word timestamps and speaker diarization.

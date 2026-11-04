@@ -4,7 +4,7 @@
 import { Plugin } from '@livekit/agents';
 
 export { SpeechStream, STT, type STTOptions } from './stt.js';
-export { SynthesizeStream, TTS, type TTSOptions } from './tts.js';
+export { ChunkedStream, SynthesizeStream, TTS, type TTSOptions } from './tts.js';
 
 class NVIDIAPlugin extends Plugin {
   constructor() {

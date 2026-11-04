@@ -260,4 +260,68 @@ describe('NVIDIA TTS', () => {
     await vi.waitFor(() => expect(collected).toHaveLength(1));
     expect(collected[0]).toMatchObject({ charactersCount: text.length, cancelled: true });
   });
+
+  it('synthesizes complete text one sentence per request', async () => {
+    const first = 'This is the first sentence of the reply.';
+    const second = 'This is the second sentence of the reply.';
+    const texts: string[] = [];
+    const provider = await startServer((call) => {
+      texts.push(call.request['text'] as string);
+      call.write({ audio: Buffer.alloc(1700 * 2, texts.length) });
+      call.end();
+    });
+    const collected: metrics.TTSMetrics[] = [];
+    provider.on('metrics_collected', (value) => collected.push(value));
+
+    const audio: tts.SynthesizedAudio[] = [];
+    for await (const item of provider.synthesize(`${first} ${second}`)) audio.push(item);
+
+    expect(texts).toEqual([first, second]);
+    expect(new Set(audio.map((item) => item.requestId)).size).toBe(1);
+    expect(audio.map((item) => item.frame.samplesPerChannel)).toEqual([1600, 1600, 200]);
+    expect(audio.map((item) => item.final)).toEqual([false, false, true]);
+    expect(collected.map((value) => value.audioDurationMs)).toEqual([213]);
+  });
+
+  it('retries a chunked request only when no audio was produced', async () => {
+    let calls = 0;
+    const provider = await startServer((call) => {
+      calls++;
+      if (calls === 1) {
+        call.emit('error', { code: grpc.status.UNAVAILABLE, details: 'unavailable' });
+        return;
+      }
+      call.write({ audio: Buffer.alloc(3200) });
+      call.end();
+    });
+    const errors: unknown[] = [];
+    provider.on('error', (error) => errors.push(error));
+    const connOptions = { maxRetry: 1, retryIntervalMs: 1, timeoutMs: 1000 };
+
+    const audio: tts.SynthesizedAudio[] = [];
+    for await (const item of provider.synthesize('Hello there.', connOptions)) audio.push(item);
+
+    expect(calls).toBe(2);
+    expect(audio).toHaveLength(1);
+    expect(errors).toEqual([]);
+  });
+
+  it('does not retry a chunked request rejected by the provider', async () => {
+    let calls = 0;
+    const provider = await startServer((call) => {
+      calls++;
+      call.emit('error', { code: grpc.status.UNAUTHENTICATED, details: 'bad key' });
+    });
+    const errors: { recoverable: boolean; error: Error }[] = [];
+    provider.on('error', (error) => errors.push(error));
+    const connOptions = { maxRetry: 3, retryIntervalMs: 1, timeoutMs: 1000 };
+
+    const audio: tts.SynthesizedAudio[] = [];
+    for await (const item of provider.synthesize('Hello there.', connOptions)) audio.push(item);
+
+    expect(calls).toBe(1);
+    expect(audio).toEqual([]);
+    expect(errors).toMatchObject([{ recoverable: false }]);
+    expect(errors[0]!.error.message).toContain('bad key');
+  });
 });

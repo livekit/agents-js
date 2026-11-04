@@ -6,7 +6,7 @@ import { initializeLogger, type metrics, stt } from '@livekit/agents';
 import { AudioFrame } from '@livekit/rtc-node';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { RivaSpeechRecognition } from './proto.js';
-import { STT } from './stt.js';
+import { STT, type STTOptions } from './stt.js';
 
 type ProtoRecord = Record<string, unknown>;
 
@@ -19,7 +19,10 @@ let server: grpc.Server | undefined;
 let instance: STT | undefined;
 let stream: stt.SpeechStream | undefined;
 
-async function startServer(streamingRecognize: (call: RecognizeCall) => void): Promise<STT> {
+async function startServer(
+  streamingRecognize: (call: RecognizeCall) => void,
+  options: Partial<STTOptions> = {},
+): Promise<STT> {
   server = new grpc.Server();
   const { service } = RivaSpeechRecognition as unknown as grpc.ServiceClientConstructor;
   server.addService(service, { StreamingRecognize: streamingRecognize });
@@ -28,7 +31,12 @@ async function startServer(streamingRecognize: (call: RecognizeCall) => void): P
       error ? reject(error) : resolve(port),
     ),
   );
-  instance = new STT({ server: `127.0.0.1:${port}`, useSsl: false, apiKey: 'test-key' });
+  instance = new STT({
+    server: `127.0.0.1:${port}`,
+    useSsl: false,
+    apiKey: 'test-key',
+    ...options,
+  });
   return instance;
 }
 
@@ -104,6 +112,7 @@ describe('NVIDIA STT', () => {
             enableWordTimeOffsets: true,
             enableAutomaticPunctuation: true,
             model: 'parakeet-1.1b-en-US-asr-streaming-silero-vad-sortformer',
+            diarizationConfig: null, // not sent unless diarization is enabled
           },
           interimResults: true,
         },
@@ -126,14 +135,28 @@ describe('NVIDIA STT', () => {
     ]);
     expect(speech[2]).toMatchObject({
       requestId: 'riva-1',
-      alternatives: [{ text: 'hello world', startTime: 0.1, endTime: 0.9, language: 'fr-FR' }],
+      alternatives: [
+        {
+          text: 'hello world',
+          startTime: 0.1,
+          endTime: 0.9,
+          language: 'fr-FR',
+          words: [
+            { text: 'hello', startTime: 0.1, endTime: 0.4 },
+            { text: 'world', startTime: 0.5, endTime: 0.9 },
+          ],
+        },
+      ],
     });
+    expect(speech[2]!.alternatives![0]!.speakerId).toBeUndefined();
+    expect(speech[5]!.alternatives![0]!.words).toBeUndefined();
+    expect(provider.capabilities).toMatchObject({ alignedTranscript: 'word', diarization: false });
     expect(speech[5]!.requestId).not.toBe(speech[2]!.requestId);
     expect(speech[2]!.alternatives![0]!.confidence).toBeCloseTo(0.9);
     expect(collected.map((value) => value.audioDurationMs)).toEqual([5000, 1200]);
   });
 
-  it('starts a fresh utterance on reconnect and keeps timestamps on the stream clock', async () => {
+  it('continues the open utterance across a reconnect and keeps the stream clock', async () => {
     const calls: { configs: number; frames: number }[] = [];
     const provider = await startServer((call) => {
       const received = { configs: 0, frames: 0 };
@@ -175,16 +198,15 @@ describe('NVIDIA STT', () => {
     ]);
     expect(recoverable).toEqual([]);
     const speech = events.filter((e) => e.type !== stt.SpeechEventType.RECOGNITION_USAGE);
+    // as in the Python plugin, the next call's final closes the utterance the failed call opened
     expect(speech.map((e) => e.type)).toEqual([
       stt.SpeechEventType.START_OF_SPEECH,
       stt.SpeechEventType.INTERIM_TRANSCRIPT,
-      stt.SpeechEventType.START_OF_SPEECH,
       stt.SpeechEventType.FINAL_TRANSCRIPT,
       stt.SpeechEventType.END_OF_SPEECH,
     ]);
-    expect(speech[1]!.requestId).not.toBe(speech[3]!.requestId);
-    expect(speech[3]!.requestId).toBe('riva-2');
-    expect(speech[3]!.alternatives![0]!.startTime).toBeGreaterThan(0.1);
+    expect(speech[2]!.requestId).toBe('riva-2');
+    expect(speech[2]!.alternatives![0]!.startTime).toBeGreaterThan(0.1);
     const usage = events.filter((e) => e.type === stt.SpeechEventType.RECOGNITION_USAGE);
     expect(usage.map((e) => e.recognitionUsage!.audioDuration)).toEqual([0.1, 0.3]);
   });
@@ -253,5 +275,103 @@ describe('NVIDIA STT', () => {
     ).toMatchObject({
       alternatives: [{ text: 'after reconnect' }],
     });
+  });
+
+  it('requests diarization and labels finals with the dominant speaker', async () => {
+    let config: ProtoRecord | undefined;
+    const provider = await startServer(
+      (call) => {
+        call.on('data', (request: ProtoRecord) => {
+          if (request['streamingConfig']) config = request['streamingConfig'] as ProtoRecord;
+        });
+        call.on('end', () => {
+          const words = [
+            { word: 'a', startTime: 0, endTime: 100, speakerTag: 2 },
+            { word: 'b', startTime: 100, endTime: 200, speakerTag: 1 },
+            { word: 'c', startTime: 200, endTime: 300, speakerTag: 2 },
+          ];
+          call.write(result('a b c', false, words));
+          call.write(result('a b c', true, words));
+          call.end();
+        });
+      },
+      { enableDiarization: true, maxSpeakerCount: 3 },
+    );
+
+    stream = provider.stream();
+    stream.pushFrame(frame());
+    stream.endInput();
+    const events = await collect(stream);
+
+    expect(provider.capabilities.diarization).toBe(true);
+    expect((config!['config'] as ProtoRecord)['diarizationConfig']).toEqual({
+      enableSpeakerDiarization: true,
+      maxSpeakerCount: 3,
+    });
+    const transcripts = events.filter(
+      (e) =>
+        e.type === stt.SpeechEventType.INTERIM_TRANSCRIPT ||
+        e.type === stt.SpeechEventType.FINAL_TRANSCRIPT,
+    );
+    // only finals carry a speaker, as in the Python plugin
+    expect(transcripts.map((e) => e.alternatives![0]!.speakerId)).toEqual([undefined, 'S2']);
+  });
+
+  it('counts results without a transcript as provider progress', async () => {
+    let calls = 0;
+    const provider = await startServer((call) => {
+      calls++;
+      const attempt = calls;
+      call.on('data', (request: ProtoRecord) => {
+        if (!request['audioContent']) return;
+        // a result with an empty transcript proves the provider is alive
+        call.write(result('', false));
+        if (attempt < 3) setTimeout(() => call.emit('error', { code: grpc.status.UNAVAILABLE }), 5);
+      });
+      call.on('end', () => {
+        call.write(result('done', true));
+        call.end();
+      });
+    });
+    const errors: boolean[] = [];
+    provider.on('error', (error) => errors.push(error.recoverable));
+
+    // two failures with maxRetry 1 survive only if each attempt's progress resets the budget
+    stream = provider.stream({ connOptions: { maxRetry: 1, retryIntervalMs: 1, timeoutMs: 1000 } });
+    stream.pushFrame(frame());
+    await vi.waitFor(() => expect(calls).toBe(2));
+    stream.pushFrame(frame());
+    await vi.waitFor(() => expect(calls).toBe(3));
+    stream.pushFrame(frame());
+    stream.endInput();
+    const events = await collect(stream);
+
+    expect(errors).toEqual([]);
+    expect(events.find((e) => e.type === stt.SpeechEventType.FINAL_TRANSCRIPT)).toMatchObject({
+      alternatives: [{ text: 'done' }],
+    });
+  });
+
+  it('sends whole frames when the sample rate is not a multiple of 10', async () => {
+    let audioBytes = 0;
+    const provider = await startServer(
+      (call) => {
+        call.on('data', (request: ProtoRecord) => {
+          if (request['audioContent']) audioBytes += (request['audioContent'] as Buffer).length;
+        });
+        call.on('end', () => call.end());
+      },
+      { sampleRate: 11025 },
+    );
+    const errors: unknown[] = [];
+    provider.on('error', (error) => errors.push(error));
+
+    stream = provider.stream();
+    stream.pushFrame(new AudioFrame(new Int16Array(11025), 11025, 1, 11025));
+    stream.endInput();
+    await collect(stream);
+
+    expect(errors).toEqual([]);
+    expect(audioBytes).toBe(11025 * 2);
   });
 });

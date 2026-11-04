@@ -44,6 +44,12 @@ message RecognitionConfig {
   bool enable_word_time_offsets = 8;
   bool enable_automatic_punctuation = 11;
   string model = 13;
+  SpeakerDiarizationConfig diarization_config = 19;
+}
+
+message SpeakerDiarizationConfig {
+  bool enable_speaker_diarization = 1;
+  int32 max_speaker_count = 2;
 }
 
 message StreamingRecognitionConfig {
@@ -56,6 +62,7 @@ message WordInfo {
   int32 end_time = 2;
   string word = 3;
   float confidence = 4;
+  int32 speaker_tag = 5;
 }
 
 message SpeechRecognitionAlternative {

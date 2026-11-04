@@ -1,16 +1,18 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import type * as grpc from '@grpc/grpc-js';
 import {
   type APIConnectOptions,
   APIConnectionError,
   AudioByteStream,
+  DEFAULT_API_CONNECT_OPTIONS,
   shortuuid,
   tokenize,
   tts,
 } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
-import { RivaConnection } from './connection.js';
+import { RivaConnection, toAPIConnectionError } from './connection.js';
 import { log } from './log.js';
 import {
   type ModelConfigResponse,
@@ -82,9 +84,13 @@ export class TTS extends tts.TTS {
     this.#opts = resolvedOpts;
   }
 
-  /** Not supported: Riva synthesis is streaming only. Use {@link TTS.stream}. */
-  synthesize(_text: string, _connOptions?: APIConnectOptions): tts.ChunkedStream {
-    throw new Error('Chunked synthesis is not supported by NVIDIA TTS');
+  /** Synthesize complete text, one Riva request per sentence. */
+  synthesize(
+    text: string,
+    connOptions?: APIConnectOptions,
+    abortSignal?: AbortSignal,
+  ): ChunkedStream {
+    return new ChunkedStream(this, text, { ...this.#opts }, connOptions, abortSignal);
   }
 
   /** Open a stream that synthesizes each sentence of the pushed text. */
@@ -174,30 +180,9 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
   async #run(client: RivaSpeechSynthesisClient): Promise<void> {
     const tokenizer = new tokenize.blingfire.SentenceTokenizer().stream();
-    const requestId = shortuuid();
-    const audio = new AudioByteStream(this.#opts.sampleRate, NUM_CHANNELS);
-    let receivedAudio = false;
-    let synthesisError: APIConnectionError | undefined;
-    let lastFrame: AudioFrame | undefined;
-
-    const sendLastFrame = (final: boolean) => {
-      if (!lastFrame) return;
-      this.queue.put({ requestId, segmentId: requestId, frame: lastFrame, final });
-      lastFrame = undefined;
-    };
-    const pushFrames = (frames: AudioFrame[]) => {
-      for (const frame of frames) {
-        sendLastFrame(false);
-        lastFrame = frame;
-      }
-    };
-    const endSegment = () => {
-      pushFrames(audio.flush());
-      sendLastFrame(true);
-    };
+    const output = new SegmentWriter(this.#opts.sampleRate, (audio) => this.queue.put(audio));
 
     const attempt = new AbortController();
-    const signal = AbortSignal.any([this.abortSignal, attempt.signal]);
     const inputTask = async () => {
       while (true) {
         const item = await this.input.next({ signal: attempt.signal });
@@ -208,30 +193,28 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       }
       tokenizer.endInput();
     };
-    const synthesizeTask = async () => {
-      for await (const event of tokenizer) {
-        if (!event.token.trim()) continue;
-        // Text still buffered when the stream closes must not start new requests.
-        if (this.abortSignal.aborted) break;
-        this.markStarted();
-        try {
-          await this.#synthesizeText(client, event.token, signal, (chunk) => {
-            receivedAudio = true;
-            pushFrames(audio.write(chunk));
-          });
-        } catch (error) {
-          if (!(error instanceof APIConnectionError)) throw error;
-          synthesisError = error;
-          log().error({ error }, 'NVIDIA TTS sentence failed');
-        }
-      }
+    const sentences = async function* () {
+      for await (const event of tokenizer) yield event.token;
     };
+    const synthesizeTask = synthesizeSentences(sentences(), {
+      client,
+      metadata: this.#connection.metadata,
+      opts: this.#opts,
+      output,
+      // Text still buffered when the stream closes must not start new requests.
+      stopSignal: this.abortSignal,
+      callSignal: AbortSignal.any([this.abortSignal, attempt.signal]),
+      onSentence: () => this.markStarted(),
+    });
 
-    const tasks = [inputTask(), synthesizeTask()];
+    const tasks = [inputTask(), synthesizeTask] as const;
     try {
-      await Promise.all(tasks);
-      endSegment();
-      if (synthesisError && !receivedAudio && !this.abortSignal.aborted) throw synthesisError;
+      const [, error] = await Promise.all(tasks);
+      output.end();
+      if (error && !this.abortSignal.aborted) {
+        // The stream already consumed its input, so a retry would have no text to send.
+        throw new APIConnectionError({ message: error.message, options: { retryable: false } });
+      }
       this.queue.put(SynthesizeStream.END_OF_STREAM);
     } finally {
       attempt.abort();
@@ -239,45 +222,178 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       await Promise.allSettled(tasks);
     }
   }
+}
 
-  async #synthesizeText(
-    client: RivaSpeechSynthesisClient,
+/**
+ * Synthesizes complete text, one Riva request per sentence. Like the stream, a failed sentence is
+ * logged and skipped; the request fails only when no audio was produced, so a retry replays
+ * nothing the caller already received.
+ */
+export class ChunkedStream extends tts.ChunkedStream {
+  #opts: TTSOptions;
+  #connection: RivaConnection<RivaSpeechSynthesisClient>;
+  #connOptions: APIConnectOptions;
+  label = 'nvidia.ChunkedStream';
+
+  constructor(
+    instance: TTS,
     text: string,
-    signal: AbortSignal,
-    onAudio: (audio: Buffer) => void,
-  ): Promise<void> {
-    const call = client.SynthesizeOnline(
-      {
-        text,
-        languageCode: this.#opts.languageCode,
-        encoding: 'LINEAR_PCM',
-        sampleRateHz: this.#opts.sampleRate,
-        voiceName: this.#opts.voice,
-      },
-      this.#connection.metadata,
-    );
-    const cancel = () => call.cancel();
-    signal.addEventListener('abort', cancel, { once: true });
+    opts: TTSOptions,
+    connOptions: APIConnectOptions = DEFAULT_API_CONNECT_OPTIONS,
+    abortSignal?: AbortSignal,
+  ) {
+    super(text, instance, connOptions, abortSignal);
+    this.#opts = opts;
+    this.#connection = connections.get(instance)!;
+    this.#connOptions = connOptions;
+  }
+
+  protected async run(): Promise<void> {
+    if (this.abortSignal.aborted) return;
+    const client = await this.#connection.pool.get(this.#connOptions.timeoutMs);
     try {
-      await new Promise<void>((resolve, reject) => {
-        call.on('data', (response: SynthesizeSpeechResponse) => {
-          if (!signal.aborted && response.audio.length > 0) onAudio(response.audio);
-        });
-        call.on('end', resolve);
-        call.on('error', (error) => {
-          if (signal.aborted) resolve();
-          // The text came off the input queue, so the base retry loop could not replay it.
-          else
-            reject(
-              new APIConnectionError({
-                message: `NVIDIA TTS failed: ${error.message}`,
-                options: { retryable: false },
-              }),
-            );
-        });
-      });
+      const output = new SegmentWriter(this.#opts.sampleRate, (audio) => this.queue.put(audio));
+      const error = await synthesizeSentences(
+        new tokenize.blingfire.SentenceTokenizer().tokenize(this.inputText),
+        {
+          client,
+          metadata: this.#connection.metadata,
+          opts: this.#opts,
+          output,
+          stopSignal: this.abortSignal,
+          callSignal: this.abortSignal,
+        },
+      );
+      output.end();
+      // Nothing reached the caller, so the error's own status decides whether to retry.
+      if (error && !this.abortSignal.aborted) throw error;
     } finally {
-      signal.removeEventListener('abort', cancel);
+      this.#connection.pool.put(client);
     }
+  }
+}
+
+/**
+ * Splits PCM into frames of one segment, holding back the newest frame so the segment's last
+ * frame can be marked final.
+ */
+class SegmentWriter {
+  #audio: AudioByteStream;
+  #requestId = shortuuid();
+  #lastFrame: AudioFrame | undefined;
+  #put: (audio: tts.SynthesizedAudio) => void;
+  /** Whether any provider audio has been written to this segment. */
+  wroteAudio = false;
+
+  constructor(sampleRate: number, put: (audio: tts.SynthesizedAudio) => void) {
+    this.#audio = new AudioByteStream(sampleRate, NUM_CHANNELS);
+    this.#put = put;
+  }
+
+  write(chunk: Buffer): void {
+    this.wroteAudio = true;
+    this.#push(this.#audio.write(chunk));
+  }
+
+  end(): void {
+    this.#push(this.#audio.flush());
+    this.#send(true);
+  }
+
+  #push(frames: AudioFrame[]): void {
+    for (const frame of frames) {
+      this.#send(false);
+      this.#lastFrame = frame;
+    }
+  }
+
+  #send(final: boolean): void {
+    if (!this.#lastFrame) return;
+    const requestId = this.#requestId;
+    this.#put({ requestId, segmentId: requestId, frame: this.#lastFrame, final });
+    this.#lastFrame = undefined;
+  }
+}
+
+/** Shared state for synthesizing a sequence of sentences into one segment. */
+interface SentenceContext {
+  client: RivaSpeechSynthesisClient;
+  metadata: grpc.Metadata;
+  opts: TTSOptions;
+  output: SegmentWriter;
+  /** Once aborted, no further sentence starts. */
+  stopSignal: AbortSignal;
+  /** Cancels the in-flight Riva call. */
+  callSignal: AbortSignal;
+  /** Called before each sentence request starts. */
+  onSentence?: () => void;
+}
+
+/**
+ * Synthesize sentences in order, one Riva request each. A failed sentence is logged and skipped,
+ * matching the Python plugin. Returns the last failure only when no audio was produced, so the
+ * caller decides whether the request fails.
+ */
+async function synthesizeSentences(
+  sentences: AsyncIterable<string> | Iterable<string>,
+  ctx: SentenceContext,
+): Promise<APIConnectionError | undefined> {
+  let failure: APIConnectionError | undefined;
+  for await (const sentence of sentences) {
+    if (!sentence.trim()) continue;
+    if (ctx.stopSignal.aborted) break;
+    ctx.onSentence?.();
+    try {
+      await synthesizeSentence(
+        ctx.client,
+        ctx.metadata,
+        ctx.opts,
+        sentence,
+        ctx.callSignal,
+        (chunk) => ctx.output.write(chunk),
+      );
+    } catch (error) {
+      if (!(error instanceof APIConnectionError)) throw error;
+      failure = error;
+      log().error({ error }, 'NVIDIA TTS sentence failed');
+    }
+  }
+  return ctx.output.wroteAudio ? undefined : failure;
+}
+
+/** Synthesize one sentence, forwarding its PCM chunks until the call ends. */
+async function synthesizeSentence(
+  client: RivaSpeechSynthesisClient,
+  metadata: grpc.Metadata,
+  opts: TTSOptions,
+  text: string,
+  signal: AbortSignal,
+  onAudio: (audio: Buffer) => void,
+): Promise<void> {
+  const call = client.SynthesizeOnline(
+    {
+      text,
+      languageCode: opts.languageCode,
+      encoding: 'LINEAR_PCM',
+      sampleRateHz: opts.sampleRate,
+      voiceName: opts.voice,
+    },
+    metadata,
+  );
+  const cancel = () => call.cancel();
+  signal.addEventListener('abort', cancel, { once: true });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      call.on('data', (response: SynthesizeSpeechResponse) => {
+        if (!signal.aborted && response.audio.length > 0) onAudio(response.audio);
+      });
+      call.on('end', resolve);
+      call.on('error', (error: grpc.ServiceError) => {
+        if (signal.aborted) resolve();
+        else reject(toAPIConnectionError(error, 'NVIDIA TTS failed'));
+      });
+    });
+  } finally {
+    signal.removeEventListener('abort', cancel);
   }
 }

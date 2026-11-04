@@ -1,18 +1,19 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { type ServiceError, status } from '@grpc/grpc-js';
+import type { ServiceError } from '@grpc/grpc-js';
 import {
   type APIConnectOptions,
   APIConnectionError,
   type AudioBuffer,
   AudioByteStream,
+  createTimedString,
   normalizeLanguage,
   shortuuid,
   stt,
 } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
-import { RivaConnection } from './connection.js';
+import { RivaConnection, toAPIConnectionError } from './connection.js';
 import { log } from './log.js';
 import {
   type ModelConfigResponse,
@@ -44,6 +45,10 @@ export interface STTOptions {
   server: string;
   /** Whether to connect with TLS. Disable for a locally hosted Riva NIM service. */
   useSsl: boolean;
+  /** Label final transcripts with a speaker ID. Requires a Sortformer-based model. */
+  enableDiarization: boolean;
+  /** Upper bound on distinct speakers for diarization; 0 lets Riva decide. */
+  maxSpeakerCount: number;
 }
 
 const defaultSTTOptions: STTOptions = {
@@ -54,6 +59,8 @@ const defaultSTTOptions: STTOptions = {
   sampleRate: 16000,
   server: DEFAULT_SERVER,
   useSsl: true,
+  enableDiarization: false,
+  maxSpeakerCount: 0,
 };
 
 const connections = new WeakMap<STT, RivaConnection<RivaSpeechRecognitionClient>>();
@@ -82,9 +89,20 @@ export class STT extends stt.STT {
       ...opts,
       apiKey: opts.apiKey || process.env.NVIDIA_API_KEY,
     };
-    super({ streaming: true, interimResults: true });
+    super({
+      streaming: true,
+      interimResults: true,
+      alignedTranscript: 'word',
+      diarization: resolvedOpts.enableDiarization,
+    });
     connections.set(this, new RivaConnection(resolvedOpts, RivaSpeechRecognition));
     this.#opts = resolvedOpts;
+    if (resolvedOpts.enableDiarization && !resolvedOpts.model.includes('sortformer')) {
+      log().warn(
+        { model: resolvedOpts.model },
+        'Speaker diarization is enabled but the model may not support it; diarization requires a Sortformer-based model',
+      );
+    }
     log().debug({ model: this.#opts.model, server: this.#opts.server }, 'Initializing NVIDIA STT');
   }
 
@@ -161,9 +179,8 @@ export class SpeechStream extends stt.SpeechStream {
 
   async #run(client: RivaSpeechRecognitionClient): Promise<void> {
     if (this.abortSignal.aborted) return;
-    // A new call has no recognition context from a failed one: start the next utterance fresh.
-    this.#speaking = false;
-    this.#requestId = '';
+    // Like the Python plugin, an utterance open when a call fails stays open: the next call's
+    // final transcript ends it, so START_OF_SPEECH is never emitted twice in a row.
     const call = client.StreamingRecognize(this.#connection.metadata);
     let inputEnded = false;
     const cancel = () => call.cancel();
@@ -180,6 +197,12 @@ export class SpeechStream extends stt.SpeechStream {
           audioChannelCount: 1,
           enableWordTimeOffsets: true,
           model: this.#opts.model,
+          ...(this.#opts.enableDiarization && {
+            diarizationConfig: {
+              enableSpeakerDiarization: true,
+              maxSpeakerCount: this.#opts.maxSpeakerCount,
+            },
+          }),
         },
         interimResults: true,
       },
@@ -194,25 +217,17 @@ export class SpeechStream extends stt.SpeechStream {
       });
       call.on('error', (error: ServiceError) => {
         if (this.abortSignal.aborted) resolve();
-        else
-          reject(
-            new APIConnectionError({
-              message: `NVIDIA STT stream failed: ${error.message}`,
-              options: {
-                retryable: ![
-                  status.INVALID_ARGUMENT,
-                  status.PERMISSION_DENIED,
-                  status.UNAUTHENTICATED,
-                ].includes(error.code),
-              },
-            }),
-          );
+        else reject(toAPIConnectionError(error, 'NVIDIA STT stream failed'));
       });
     });
 
     const attempt = new AbortController();
     const send = async () => {
-      const stream = new AudioByteStream(this.#opts.sampleRate, 1, this.#opts.sampleRate / 10);
+      const stream = new AudioByteStream(
+        this.#opts.sampleRate,
+        1,
+        Math.floor(this.#opts.sampleRate / 10),
+      );
       while (true) {
         const item = await this.input.next({ signal: attempt.signal });
         if (item.done) break;
@@ -266,8 +281,10 @@ export class SpeechStream extends stt.SpeechStream {
   #handleResponse(response: StreamingRecognizeResponse): void {
     for (const result of response.results) {
       const alternative = result.alternatives[0];
-      const transcript = alternative?.transcript?.trim();
-      if (!alternative || !transcript) continue;
+      if (!alternative) continue;
+      this.markProviderProgress();
+      const transcript = alternative.transcript?.trim();
+      if (!transcript) continue;
 
       if (!this.#speaking) {
         this.#speaking = true;
@@ -283,6 +300,20 @@ export class SpeechStream extends stt.SpeechStream {
         endTime: (words.at(-1)?.endTime ?? 0) / 1000 + this.startTimeOffset,
         confidence: alternative.confidence,
         text: transcript,
+        speakerId:
+          this.#opts.enableDiarization && result.isFinal ? dominantSpeaker(words) : undefined,
+        words: words.length
+          ? words.map((word) =>
+              createTimedString({
+                text: word.word,
+                // Riva word offsets are milliseconds; transcript times are seconds.
+                startTime: word.startTime / 1000 + this.startTimeOffset,
+                endTime: word.endTime / 1000 + this.startTimeOffset,
+                confidence: word.confidence,
+                startTimeOffset: this.startTimeOffset,
+              }),
+            )
+          : undefined,
       };
 
       this.queue.put({
@@ -299,4 +330,15 @@ export class SpeechStream extends stt.SpeechStream {
       }
     }
   }
+}
+
+/** The speaker tagged on most words, as `S<tag>`, matching the Python plugin. */
+function dominantSpeaker(words: { speakerTag: number }[]): string | undefined {
+  const counts = new Map<number, number>();
+  for (const { speakerTag } of words) counts.set(speakerTag, (counts.get(speakerTag) ?? 0) + 1);
+  let best: number | undefined;
+  for (const [tag, count] of counts) {
+    if (best === undefined || count > counts.get(best)!) best = tag;
+  }
+  return best === undefined ? undefined : `S${best}`;
 }

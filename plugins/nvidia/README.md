@@ -37,10 +37,17 @@ after each recognition attempt. For standalone use, call `close()` after all str
 TTS keeps one logical audio segment per stream. `flush()` sends pending text;
 `endInput()` ends the segment. A failed sentence is logged and skipped so later
 sentences can still play. If every sentence fails, the stream emits a nonrecoverable
-error so a fallback provider can take over.
+error so a fallback provider can take over. `synthesize()` sends one request per
+sentence of the complete text. It retries only when no audio was produced, and never
+retries a request rejected for bad input or credentials.
 
 STT reconnects after transport failures and unexpected server closure. Audio already
-sent to the failed connection is not replayed. Word timestamps remain on the stream
-clock, and usage metrics count the audio sent on each connection.
+sent to the failed connection is not replayed. An utterance open when a connection
+fails stays open until the next connection's final transcript ends it. Word timestamps
+remain on the stream clock, and usage metrics count the audio sent on each connection.
+
+Transcripts include word-level timestamps. Set `enableDiarization: true` with a
+Sortformer-based model, such as the default model, to label final transcripts with a
+speaker ID (`S<tag>`). `maxSpeakerCount` limits the number of speakers.
 
 Authentication metadata is sent only over TLS, matching the Python Riva client.

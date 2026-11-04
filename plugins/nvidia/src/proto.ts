@@ -29,6 +29,8 @@ export interface StreamingRecognizeResponse {
         endTime: number;
         word: string;
         confidence: number;
+        /** Diarized speaker index; 0 when diarization is off. */
+        speakerTag: number;
       }[];
     }[];
     isFinal: boolean;
@@ -50,6 +52,7 @@ export type StreamingRecognizeRequest =
           enableWordTimeOffsets: boolean;
           enableAutomaticPunctuation: boolean;
           model: string;
+          diarizationConfig?: { enableSpeakerDiarization: boolean; maxSpeakerCount: number };
         };
         interimResults: boolean;
       };

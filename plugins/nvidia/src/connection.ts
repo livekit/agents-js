@@ -2,8 +2,26 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import * as grpc from '@grpc/grpc-js';
-import { ConnectionPool } from '@livekit/agents';
+import { APIConnectionError, ConnectionPool } from '@livekit/agents';
 import type { RivaClientConstructor } from './proto.js';
+
+/** gRPC statuses that a retry cannot fix: bad requests and rejected credentials. */
+const FATAL_STATUSES: ReadonlySet<grpc.status> = new Set([
+  grpc.status.INVALID_ARGUMENT,
+  grpc.status.PERMISSION_DENIED,
+  grpc.status.UNAUTHENTICATED,
+]);
+
+/** Convert a failed Riva call into an error that is retryable unless its status is fatal. */
+export function toAPIConnectionError(
+  error: grpc.ServiceError,
+  message: string,
+): APIConnectionError {
+  return new APIConnectionError({
+    message: `${message}: ${error.message}`,
+    options: { retryable: !FATAL_STATUSES.has(error.code) },
+  });
+}
 
 /** Endpoint and authentication settings shared by the Riva services. */
 interface ConnectionOptions {
