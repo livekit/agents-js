@@ -597,7 +597,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   #task: Promise<void>;
   #logger = log();
   #closed = false;
-  // A socket failure, rethrown by the main loop so it uses the connection retry budget.
+  // A session failure, rethrown by the main loop so it uses the connection retry budget.
   #sessionError?: Error;
 
   constructor(realtimeModel: RealtimeModel) {
@@ -1237,8 +1237,6 @@ export class RealtimeSession extends llm.RealtimeSession {
 
         await Promise.race([sendTask.result, restartWaitTask.result]);
 
-        // TODO(brian): handle error from tasks
-
         if (!restartWaitTask.done && this.#closed) {
           break;
         }
@@ -1388,6 +1386,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     } catch (e) {
       if (!this.sessionShouldClose.isSet) {
         this.#logger.error(`Error in send task: ${e}`);
+        this.#sessionError = e instanceof Error ? e : new Error(String(e), { cause: e });
         this.markRestartNeeded();
       }
     } finally {
@@ -1510,6 +1509,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     } catch (e) {
       if (!this.sessionShouldClose.isSet) {
         this.#logger.error(`Error in onReceiveMessage: ${e}`);
+        this.#sessionError = e instanceof Error ? e : new Error(String(e), { cause: e });
         this.markRestartNeeded();
       }
     }

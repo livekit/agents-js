@@ -3,8 +3,9 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { LiveCallbacks, LiveServerMessage, Session } from '@google/genai';
 import { Live } from '@google/genai';
-import { APIConnectionError, DEFAULT_API_CONNECT_OPTIONS, llm } from '@livekit/agents';
+import { APIConnectionError, DEFAULT_API_CONNECT_OPTIONS, llm, voice } from '@livekit/agents';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { ClientEvents } from './api_proto.js';
 import { RealtimeModel, type RealtimeSession } from './realtime_api.js';
 
 type Close = { code: number; reason: string };
@@ -30,6 +31,7 @@ const CONTEXT_EXHAUSTED: Close = { code: 1007, reason: 'Request contains an inva
  */
 function fakeServer(plans: Plan[]) {
   const sockets: FakeSocket[] = [];
+  const sessions: Session[] = [];
   const connect = vi
     .spyOn(Live.prototype, 'connect')
     .mockImplementation(async ({ callbacks }: { callbacks: LiveCallbacks }) => {
@@ -53,7 +55,7 @@ function fakeServer(plans: Plan[]) {
       const send = (payload: unknown): void => {
         if (!socket.closed) socket.sent.push(payload);
       };
-      return {
+      const session = {
         sendClientContent: send,
         sendRealtimeInput: send,
         sendToolResponse: send,
@@ -61,8 +63,10 @@ function fakeServer(plans: Plan[]) {
           socket.closed = true;
         },
       } as unknown as Session;
+      sessions.push(session);
+      return session;
     });
-  return { sockets, connect };
+  return { sockets, sessions, connect };
 }
 
 function dropSocket({ socket, close }: { socket: FakeSocket; close: Close }): void {
@@ -95,6 +99,157 @@ describe('Google Realtime dropped connections', () => {
     vi.useRealTimers();
     vi.restoreAllMocks();
   });
+
+  describe.each([0, 2])('task failures with maxRetry=%i', (maxRetry) => {
+    it.each(['send throw', 'send rejection', 'receive handler'] as const)(
+      'applies the retry budget and delay to a %s failure',
+      async (source) => {
+        vi.useFakeTimers();
+        const { sockets, sessions, connect } = fakeServer([]);
+        const opened = openSession(maxRetry);
+        session = opened.session;
+        const failure = new Error(`${source} failed`);
+        const internals = session as unknown as {
+          sendClientEvent(event: ClientEvents): void;
+          handleServerContent(): void;
+        };
+        if (source === 'receive handler') {
+          vi.spyOn(internals, 'handleServerContent').mockImplementation(() => {
+            throw failure;
+          });
+        }
+        await vi.advanceTimersByTimeAsync(0);
+
+        for (let attempt = 0; attempt <= maxRetry; attempt++) {
+          if (source === 'receive handler') {
+            sockets[attempt]!.callbacks.onmessage({
+              serverContent: { turnComplete: true },
+            } as LiveServerMessage);
+          } else {
+            const sdkSession = sessions[attempt]! as unknown as {
+              sendRealtimeInput(): void | Promise<void>;
+            };
+            vi.spyOn(sdkSession, 'sendRealtimeInput').mockImplementation(() => {
+              if (source === 'send rejection') return Promise.reject(failure);
+              throw failure;
+            });
+            internals.sendClientEvent({ type: 'realtime_input', value: { text: 'Hello' } });
+          }
+          await vi.advanceTimersByTimeAsync(0);
+
+          expect(opened.errors).toHaveLength(attempt + 1);
+          expect(opened.errors[attempt]!.error).toBe(failure);
+          expect(opened.errors[attempt]!.recoverable).toBe(attempt < maxRetry);
+          expect(connect).toHaveBeenCalledTimes(attempt + 1);
+
+          if (attempt < maxRetry) {
+            await vi.advanceTimersByTimeAsync(9);
+            expect(connect).toHaveBeenCalledTimes(attempt + 1);
+            await vi.advanceTimersByTimeAsync(1);
+            expect(connect).toHaveBeenCalledTimes(attempt + 2);
+            expect(sockets[attempt]!.closed).toBe(true);
+          }
+        }
+
+        await vi.advanceTimersByTimeAsync(100);
+        expect(connect).toHaveBeenCalledTimes(maxRetry + 1);
+        expect(opened.errors).toHaveLength(maxRetry + 1);
+        expect(sockets.every((socket) => socket.closed)).toBe(true);
+      },
+    );
+  });
+
+  it.each(['send', 'receive'] as const)(
+    'normalizes a non-Error %s failure without losing its cause',
+    async (source) => {
+      vi.useFakeTimers();
+      const { sockets, sessions } = fakeServer([]);
+      const opened = openSession(0);
+      session = opened.session;
+      await vi.advanceTimersByTimeAsync(0);
+      const failure = 'provider failed';
+      const internals = session as unknown as {
+        sendClientEvent(event: ClientEvents): void;
+        handleServerContent(): void;
+      };
+      if (source === 'send') {
+        vi.spyOn(sessions[0]!, 'sendRealtimeInput').mockImplementation(() => {
+          throw failure;
+        });
+        internals.sendClientEvent({ type: 'realtime_input', value: { text: 'Hello' } });
+      } else {
+        vi.spyOn(internals, 'handleServerContent').mockImplementation(() => {
+          throw failure;
+        });
+        sockets[0]!.callbacks.onmessage({
+          serverContent: { turnComplete: true },
+        } as LiveServerMessage);
+      }
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(opened.errors).toHaveLength(1);
+      expect(opened.errors[0]!.recoverable).toBe(false);
+      expect(opened.errors[0]!.error).toBeInstanceOf(Error);
+      expect(opened.errors[0]!.error.message).toBe(failure);
+      expect(opened.errors[0]!.error.cause).toBe(failure);
+    },
+  );
+
+  it.each(['send', 'receive'] as const)(
+    'closes the AgentSession after a terminal %s failure',
+    async (source) => {
+      const { sockets, sessions, connect } = fakeServer([]);
+      const model = new RealtimeModel({
+        apiKey: 'fake-key',
+        connOptions: { ...DEFAULT_API_CONNECT_OPTIONS, maxRetry: 0 },
+      });
+      const createSession = vi.spyOn(model, 'session');
+      const agentSession = new voice.AgentSession({
+        llm: model,
+        vad: null,
+        turnHandling: { turnDetection: 'manual' },
+      });
+      const error = vi.fn();
+      const close = vi.fn();
+      agentSession.on(voice.AgentSessionEventTypes.Error, error);
+      agentSession.on(voice.AgentSessionEventTypes.Close, close);
+      try {
+        await agentSession.start({ agent: new voice.Agent({ instructions: 'Be helpful.' }) });
+        await vi.waitFor(() => expect(sockets.at(-1)?.closed).toBe(false));
+        session = createSession.mock.results[0]!.value as RealtimeSession;
+        const internals = session as unknown as {
+          sendClientEvent(event: ClientEvents): void;
+          handleServerContent(): void;
+        };
+        const failure = new Error(`${source} failed`);
+        const connectionCount = connect.mock.calls.length;
+        if (source === 'send') {
+          const sdkSession = sessions.at(-1)! as unknown as {
+            sendRealtimeInput(): void | Promise<void>;
+          };
+          vi.spyOn(sdkSession, 'sendRealtimeInput').mockImplementation(() =>
+            Promise.reject(failure),
+          );
+          internals.sendClientEvent({ type: 'realtime_input', value: { text: 'Hello' } });
+        } else {
+          vi.spyOn(internals, 'handleServerContent').mockImplementation(() => {
+            throw failure;
+          });
+          sockets
+            .at(-1)!
+            .callbacks.onmessage({ serverContent: { turnComplete: true } } as LiveServerMessage);
+        }
+
+        await vi.waitFor(() => expect(close).toHaveBeenCalledOnce());
+        expect(error).toHaveBeenCalledOnce();
+        expect(error.mock.calls[0]![0].error).toMatchObject({ error: failure, recoverable: false });
+        expect(connect).toHaveBeenCalledTimes(connectionCount);
+        expect(sockets.every((socket) => socket.closed)).toBe(true);
+      } finally {
+        await agentSession.close();
+      }
+    },
+  );
 
   it.each([0, 2])(
     'honors the retry budget and delay when an error precedes a late close (maxRetry=%i)',
