@@ -5,6 +5,7 @@ import { Plugin } from '@livekit/agents';
 
 export * from './models.js';
 export * from './tts.js';
+export { STT, type STTOptions } from './stt.js';
 export * as realtime from './realtime/index.js';
 
 class RimePlugin extends Plugin {

@@ -23,7 +23,12 @@ import {
 } from './options.js';
 import { SynthesizeStream } from './stream.js';
 
-export type { TTSOptions, RimeAudioFormat, WebSocketProtocol } from './options.js';
+export type {
+  CustomLexiconEntry,
+  TTSOptions,
+  RimeAudioFormat,
+  WebSocketProtocol,
+} from './options.js';
 export { SynthesizeStream } from './stream.js';
 
 export class TTS extends tts.TTS {

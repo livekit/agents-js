@@ -5,15 +5,37 @@ import { llm } from '@livekit/agents';
 import type * as r from '@rimelabs/sdk';
 import { SerialQueue } from './streams.js';
 
-export class HistoryUpdateError extends llm.RealtimeError {
+/** A confirmed refusal or an uncertain provider write. This stops dependent LiveKit replies. */
+export class PrismHistoryUpdateError extends Error {
+  readonly code: string;
+  readonly recoverable: boolean;
+  needsReconciliation = true;
   constructor(
     message: string,
-    readonly partial = false,
-    cause?: unknown,
+    readonly status: 'rejected' | 'partial' | 'uncertain' = 'rejected',
+    readonly confirmedChatCtx: llm.ChatContext | null = null,
   ) {
     super(message);
-    this.cause = cause;
+    this.name = 'PrismHistoryUpdateError';
+    this.code = 'history_update_' + status;
+    this.recoverable = status !== 'uncertain';
   }
+}
+export { PrismHistoryUpdateError as HistoryUpdateError };
+const HistoryUpdateError = PrismHistoryUpdateError;
+export interface HistoryUpdateNotice {
+  sessionId: string;
+  status: PrismHistoryUpdateError['status'];
+  recoverable: boolean;
+  confirmedChatCtx: llm.ChatContext | null;
+  needsReconciliation: boolean;
+}
+interface SyncResult {
+  submitted: { ref: r.ToolCallRef; output: llm.FunctionCallOutput }[];
+  failure?: PrismHistoryUpdateError;
+  committed: boolean;
+  created: Set<string>;
+  historyRead: boolean;
 }
 
 type Item = llm.ChatMessage | llm.FunctionCall | llm.FunctionCallOutput;
@@ -63,7 +85,6 @@ function wire(item: Item, validateText = true): r.HistoryItem {
           ? JSON.stringify({
               status: 'failed',
               reason: 'tool_error',
-              retryable: false,
               message: item.output,
               result: null,
             })
@@ -89,10 +110,12 @@ export class PrismHistory {
   private ids = new Map<string, string>();
   private calls = new Map<string, { ref: r.ToolCallRef; item: llm.FunctionCall }>();
   private active = new Map<string, Set<string>>();
-  private revision = 0;
-  private failure?: HistoryUpdateError;
-  private rejectedResults = new Set<string>();
-  private submitted: { ref: r.ToolCallRef; output: llm.FunctionCallOutput }[] = [];
+  private responseRevision = 0;
+  revision = 0;
+  private failure?: PrismHistoryUpdateError;
+  private variants = new Map<string, Set<string>>();
+  private played = new Map<string, string>();
+  private holds = new Map<string, r.ResponseHold>();
   private edits = new SerialQueue();
 
   constructor(
@@ -110,9 +133,33 @@ export class PrismHistory {
     await this.edits.idle();
     if (this.failure) throw this.failure;
   }
-  checkReply(): void {
-    if (this.rejectedResults.size)
-      throw new HistoryUpdateError('Submit the rejected tool results before requesting a reply');
+  projection(local: llm.ChatContext): llm.ChatContext {
+    const ctx = this.chatCtx;
+    for (const item of ctx.items)
+      if (item.type === 'message' && this.played.has(item.id))
+        item.content = [this.played.get(item.id)!];
+    ctx.items.push(
+      ...local.items.filter((i) => i.type === 'agent_handoff' || i.type === 'agent_config_update'),
+    );
+    return ctx;
+  }
+  reconcile(target: llm.ChatContext, revision: number): Promise<void> {
+    return this.edits.run(async () => {
+      if (this.failure) throw this.failure;
+      if (
+        revision !== this.revision ||
+        JSON.stringify(items(target).map((i) => wire(i, false))) !==
+          JSON.stringify(items(this.projection(target)).map((i) => wire(i, false)))
+      )
+        throw new HistoryUpdateError('History changed during reconciliation');
+    });
+  }
+  releaseResponse(responseId: string): void {
+    this.holds.get(responseId)?.release();
+    this.holds.delete(responseId);
+  }
+  close(): void {
+    for (const id of this.holds.keys()) this.releaseResponse(id);
   }
   lastCall(response: r.ResponseRef): r.ToolCallRef | undefined {
     return [...this.calls.values()]
@@ -138,7 +185,9 @@ export class PrismHistory {
           .filter((item) => item.type === 'function_call_output')
           .map((item) => item.callId),
       );
-      const evict = [...this.calls.keys()].find((key) => completed.has(key));
+      const evict = [...this.calls.keys()].find(
+        (key) => completed.has(key) && !this.holds.has(this.calls.get(key)!.ref.responseId),
+      );
       if (!evict) throw new HistoryUpdateError('Too many pending Prism tool calls');
       this.calls.delete(evict);
     }
@@ -148,14 +197,26 @@ export class PrismHistory {
       name: payload.name,
       args: JSON.stringify(payload.arguments),
     });
+    if (!this.holds.has(payload.call.responseId))
+      this.holds.set(payload.call.responseId, this.sdk.holdResponse(payload.call));
     this.calls.set(item.callId, { ref: payload.call, item });
     this.chat.items.push(item);
+    this.revision++;
     return clone(item) as llm.FunctionCall;
   }
-  recordAssistant(id: string, text: string): void {
+  recordAssistant(id: string, text: string, played = false): void {
+    this.revision++;
+    const variants = this.variants.get(id) ?? new Set<string>();
+    variants.add(text);
+    this.variants.set(id, variants);
+    if (played) {
+      this.played.set(id, text);
+      return;
+    }
     this.upsert(new llm.ChatMessage({ id, role: 'assistant', content: text }));
   }
   private upsert(item: Item): void {
+    this.revision++;
     const index = this.chat.indexById(item.id);
     if (index === undefined) this.chat.items.push(item);
     else this.chat.items[index] = item;
@@ -163,7 +224,7 @@ export class PrismHistory {
   observe(payload: r.SessionEvent['payload'], turnStartedAt?: number): void {
     switch (payload.kind) {
       case 'response.started':
-        this.revision++;
+        this.responseRevision++;
         this.active.set(
           payload.response.responseId,
           new Set([...payload.inputItemIds, ...(payload.inputItemId ? [payload.inputItemId] : [])]),
@@ -200,34 +261,121 @@ export class PrismHistory {
         for (const [localId, serverId] of this.ids) {
           if (serverId !== payload.itemId) continue;
           const item = this.chat.getById(localId);
-          if (item?.type === 'message' && item.role === 'assistant')
+          if (item?.type === 'message' && item.role === 'assistant') {
+            const variants = this.variants.get(localId) ?? new Set<string>();
+            variants.add(item.textContent ?? '');
+            variants.add(payload.keptText);
+            this.variants.set(localId, variants);
             item.content = [payload.keptText];
+            this.revision++;
+          }
           break;
         }
         break;
     }
   }
-  sync(ctx: llm.ChatContext): Promise<{ ref: r.ToolCallRef; output: llm.FunctionCallOutput }[]> {
-    // Copy at the public call boundary, before waiting for another update.
-    const desired = items(ctx).map((item) => {
-      wire(item, false);
-      return clone(item);
-    });
-    return this.edits.run(async () => {
-      if (this.failure) throw this.failure;
-      try {
-        return await this.apply(desired);
-      } catch (error) {
-        if (error instanceof HistoryUpdateError && error.partial) this.failure = error;
-        throw error;
+  private sharedTarget(target: Item[]): Item[] {
+    const old = new Map(items(this.chat).map((item, index) => [item.id, { item, index }]));
+    const additions: Item[] = [],
+      seen = new Set<string>();
+    let last = -1;
+    for (const item of target) {
+      if (seen.has(item.id)) throw new HistoryUpdateError('Prism history item IDs must be unique');
+      seen.add(item.id);
+      if (item.type === 'function_call' && item.extra.__livekit_agents_tool_non_blocking)
+        throw new HistoryUpdateError('Prism does not support tool progress updates');
+      const previous = old.get(item.id);
+      if (!previous) {
+        additions.push(item);
+        continue;
       }
+      if (additions.length || previous.index < last)
+        throw new HistoryUpdateError('Shared history requires append order; use replaceChatCtx');
+      last = previous.index;
+      if (JSON.stringify(wire(previous.item, false)) === JSON.stringify(wire(item, false)))
+        continue;
+      if (
+        item.type === 'message' &&
+        previous.item.type === 'message' &&
+        item.role === previous.item.role &&
+        item.content.every((p) => typeof p === 'string') &&
+        this.variants.get(item.id)?.has(item.textContent ?? '')
+      )
+        continue;
+      throw new HistoryUpdateError(
+        'Shared history conflicts with confirmed content; use replaceChatCtx',
+      );
+    }
+    return [...items(this.chat), ...additions];
+  }
+  sync(ctx: llm.ChatContext, shared = false): Promise<SyncResult> {
+    const target = items(ctx).map(clone);
+    return this.edits.run(async () => {
+      const result: SyncResult = {
+        submitted: [],
+        committed: false,
+        created: new Set(),
+        historyRead: false,
+      };
+      const baseline = new Set(this.chat.items.map((i) => i.id));
+      let failure: unknown;
+      try {
+        if (this.failure) throw this.failure;
+        await this.apply(shared ? this.sharedTarget(target) : target, result);
+      } catch (error) {
+        failure = error;
+      }
+      let known =
+        !failure ||
+        (failure instanceof HistoryUpdateError && failure.recoverable) ||
+        this.isEventRefusal(failure);
+      const arrived = this.chat.items.some((i) => !baseline.has(i.id) && !result.created.has(i.id));
+      if (known && result.created.size && arrived) {
+        try {
+          await this.repairOrder(baseline, result);
+        } catch {
+          known = false;
+          failure = new HistoryUpdateError('Prism history order is uncertain', 'uncertain');
+        }
+      }
+      if (failure) {
+        const status = known ? (result.committed ? 'partial' : 'rejected') : 'uncertain';
+        result.failure = new HistoryUpdateError(
+          failure instanceof HistoryUpdateError
+            ? failure.message
+            : 'Prism history update ' + status,
+          status,
+          known ? this.projection(llm.ChatContext.empty()) : null,
+        );
+        if (!known) this.failure = result.failure;
+      }
+      return result;
     });
   }
-
-  private async apply(
-    desired: Item[],
-  ): Promise<{ ref: r.ToolCallRef; output: llm.FunctionCallOutput }[]> {
-    const revision = this.revision;
+  private async repairOrder(baseline: Set<string>, result: SyncResult): Promise<void> {
+    if (result.historyRead)
+      throw new HistoryUpdateError('History order cannot be confirmed', 'uncertain');
+    result.historyRead = true;
+    const snapshot = await this.sdk.getHistory();
+    for (const item of this.chat.items) {
+      if (item.type === 'function_call_output' && !this.ids.has(item.id)) {
+        const found = snapshot.find(
+          (i) => i.type === 'function_call_output' && i.callId === item.callId,
+        );
+        if (found?.id) this.ids.set(item.id, found.id);
+      }
+    }
+    const local = new Map(this.chat.items.map((i) => [this.ids.get(i.id), i]));
+    const ordered = snapshot.flatMap((i) => (i.id && local.has(i.id) ? [local.get(i.id)!] : []));
+    const covered = new Set(ordered.map((i) => i.id));
+    if (this.chat.items.some((i) => !baseline.has(i.id) && !covered.has(i.id)))
+      throw new HistoryUpdateError('Concurrent history order cannot be confirmed', 'uncertain');
+    let index = 0;
+    this.chat.items = this.chat.items.map((i) => (covered.has(i.id) ? ordered[index++]! : i));
+    this.revision++;
+  }
+  private async apply(desired: Item[], result: SyncResult): Promise<void> {
+    const revision = this.responseRevision;
     const old = items(this.chat);
     const oldById = new Map(old.map((item) => [item.id, item]));
     const newById = new Map(desired.map((item) => [item.id, item]));
@@ -282,7 +430,15 @@ export class PrismHistory {
       !added.length &&
       unchanged.size === desired.length &&
       retained.every((item, index) => desiredRetained[index]?.id === item.id);
-    const rebuild = !appendOnly && !deleteOnly;
+    const insertResults =
+      !removed.length &&
+      unchanged.size === old.length &&
+      retained.every((item, index) => desiredRetained[index]?.id === item.id) &&
+      added.every(
+        (i) =>
+          i.type === 'function_call_output' && pending.has(i.callId) && !this.calls.has(i.callId),
+      );
+    const rebuild = !appendOnly && !insertResults && !deleteOnly;
     if (rebuild && (this.active.size || pending.size))
       throw new HistoryUpdateError('Finish active replies and tools before replacing history');
     const protectedIds = new Set([...this.active.values()].flatMap((ids) => [...ids]));
@@ -306,7 +462,8 @@ export class PrismHistory {
       }
     }
     const deletions = rebuild ? old : removed;
-    if (deletions.length) {
+    if (deletions.some((item) => !this.ids.has(item.id))) {
+      result.historyRead = true;
       const snapshot = await this.sdk.getHistory();
       for (const item of deletions) {
         if (!this.ids.has(item.id) && item.type === 'function_call_output') {
@@ -319,83 +476,55 @@ export class PrismHistory {
           throw new HistoryUpdateError('Prism has not published this history item ID');
       }
     }
-    let committed = false;
     const checkRevision = () => {
-      if (rebuild && revision !== this.revision)
+      if (rebuild && revision !== this.responseRevision)
         throw new HistoryUpdateError('A reply started during history replacement');
     };
-    try {
-      const deletedCalls = new Set<string>();
-      for (const item of deletions) {
-        if (item.type !== 'message') {
-          if (deletedCalls.has(item.callId)) continue;
-          deletedCalls.add(item.callId);
-        }
-        checkRevision();
-        if ([...this.active.values()].some((ids) => ids.has(this.ids.get(item.id)!))) {
-          throw new HistoryUpdateError('A reply started using history scheduled for deletion');
-        }
-        await this.sdk.deleteItem(this.ids.get(item.id)!);
-        committed = true;
-        checkRevision();
+    for (const item of deletions) {
+      if (!this.chat.getById(item.id)) continue;
+      checkRevision();
+      if ([...this.active.values()].some((ids) => ids.has(this.ids.get(item.id)!)))
+        throw new HistoryUpdateError('A reply started using history scheduled for deletion');
+      await this.sdk.deleteItem(this.ids.get(item.id)!);
+      result.committed = true;
+      const retiring = this.chat.items.filter(
+        (i) =>
+          i.id === item.id ||
+          (item.type !== 'message' &&
+            (i.type === 'function_call' || i.type === 'function_call_output') &&
+            i.callId === item.callId),
+      );
+      const retiredIds = new Set(retiring.map((i) => i.id));
+      this.chat.items = this.chat.items.filter((i) => !retiredIds.has(i.id));
+      for (const retired of retiring) {
+        this.ids.delete(retired.id);
+        this.variants.delete(retired.id);
+        this.played.delete(retired.id);
+        if (retired.type === 'function_call') this.calls.delete(retired.callId);
       }
-      for (const [index, item] of toCreate.entries()) {
-        checkRevision();
-        if (!rebuild && item.type === 'function_call_output' && this.calls.has(item.callId)) {
-          const ref = this.calls.get(item.callId)!.ref;
-          const output = wire(item) as Extract<r.HistoryItem, { type: 'function_call_output' }>;
-          await this.sdk.submitToolResult(ref, output.output);
-          this.submitted.push({ ref, output: clone(item) as llm.FunctionCallOutput });
-        } else {
-          const ref = await this.sdk.createItem(wire(item));
-          this.ids.set(item.id, ref.itemId);
-        }
-        committed = true;
-        if (appendOnly) this.chat.items.splice(old.length + index, 0, clone(item));
-        if (item.type === 'function_call_output') this.rejectedResults.delete(item.callId);
-        checkRevision();
-      }
-    } catch (error) {
-      if (appendOnly && this.isEventRefusal(error)) {
-        const accepted = new Set(
-          this.chat.items
-            .filter((item) => item.type === 'function_call_output')
-            .map((item) => item.callId),
-        );
-        const knownCalls = new Set(
-          this.chat.items
-            .filter((item) => item.type === 'function_call')
-            .map((item) => item.callId),
-        );
-        for (const item of toCreate)
-          if (
-            item.type === 'function_call_output' &&
-            knownCalls.has(item.callId) &&
-            !accepted.has(item.callId)
-          )
-            this.rejectedResults.add(item.callId);
-        throw error;
-      }
-      if (committed)
-        throw new HistoryUpdateError(
-          'Prism history update partially applied; restart required',
-          true,
-          error,
-        );
-      throw error;
+      this.revision++;
+      checkRevision();
     }
-    const arrived = items(this.chat).filter(
-      (item) => !oldById.has(item.id) && !newById.has(item.id),
-    );
-    const current = new Map(items(this.chat).map((item) => [item.id, item]));
-    this.chat.items = desired
-      .map((item) => (unchanged.has(item.id) ? current.get(item.id)! : clone(item)))
-      .concat(arrived);
-    for (const item of deletions) if (item.type === 'function_call') this.calls.delete(item.callId);
-    for (const item of removed) this.ids.delete(item.id);
-    if (this.rejectedResults.size) return [];
-    const submitted = this.submitted;
-    this.submitted = [];
-    return submitted.filter(({ output }) => newById.has(output.id));
+    for (const item of toCreate) {
+      checkRevision();
+      if (!rebuild && item.type === 'function_call_output' && this.calls.has(item.callId)) {
+        const ref = this.calls.get(item.callId)!.ref;
+        const output = wire(item) as Extract<r.HistoryItem, { type: 'function_call_output' }>;
+        await this.sdk.submitToolResult(ref, output.output);
+        result.submitted.push({ ref, output: clone(item) as llm.FunctionCallOutput });
+      } else {
+        const ref = await this.sdk.createItem(wire(item));
+        this.ids.set(item.id, ref.itemId);
+      }
+      result.committed = true;
+      result.created.add(item.id);
+      this.revision++;
+      this.chat.items.splice(
+        Math.min(desired.indexOf(item), this.chat.items.length),
+        0,
+        clone(item),
+      );
+      checkRevision();
+    }
   }
 }

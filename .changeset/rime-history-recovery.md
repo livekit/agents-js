@@ -2,7 +2,8 @@
 '@livekit/agents-plugin-rime': patch
 ---
 
-Preserve acknowledged history appends after an explicit request refusal and report
-the original error. Block requested replies until rejected tool results are supplied,
-without resending accepted results or executing tools again. Keep session shutdown
-for unknown outcomes and unsafe partial replacements.
+Add shared history, explicit replacement and reconciliation helpers, and recoverable
+known partial edits. Preserve accepted tool results and provider references. Add
+measured or discarded playback, initial connection retries, and realtime metrics.
+Add recording and VAD streaming speech recognition, Coda custom lexicons, and the
+current model-specific default voices. Keep all runtime changes within the Rime plugin.

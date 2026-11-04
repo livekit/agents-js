@@ -32,6 +32,7 @@ async function setup(timeouts: { requestTimeout?: number; readyTimeout?: number 
   cleanup.push(() => peer.close());
   const model = new RealtimeModel({
     apiKey: 'test',
+    contextMode: 'strict',
     endpoint: peer.endpoint,
     requestTimeout: 300,
     readyTimeout: 500,
@@ -223,12 +224,14 @@ describe('Prism SDK adapter', () => {
             return true;
           }
         };
-        await expect(session.updateChatCtx(ctx)).rejects.toThrow('invalid_item');
+        await expect(session.updateChatCtx(ctx)).rejects.toMatchObject({ recoverable: true });
       }
       await session.updateChatCtx(ctx);
       const next = session.generateReply();
       const q = await request(peer, 2);
-      expect(q.response?.metadata?.prism_parent_response_id).toBe('reply-1');
+      expect(q.response).toMatchObject(
+        refuse ? { prism_call_id: 'one' } : { metadata: { prism_parent_response_id: 'reply-1' } },
+      );
       peer.reply(q, 'next');
       await next;
       expect(peer.requests.filter((q) => q.item?.type === 'function_call_output')).toHaveLength(
@@ -671,7 +674,7 @@ describe('standard AgentSession', () => {
     expect(peer.requests.some((q) => q.item?.text === 'Check my order')).toBe(true);
     expect(output.frames.length).toBeGreaterThan(0);
   });
-  it('recovers a rejected tool result without reexecuting tools or sending an incomplete reply', async () => {
+  it('keeps an automatic reply tied to accepted results after a partial tool update', async () => {
     const { peer, session, execute, realtime } = await start();
     const errors: llm.RealtimeModelError[] = [];
     realtime.on('error', (error) => errors.push(error));
@@ -687,6 +690,9 @@ describe('standard AgentSession', () => {
     peer.tool('reply-1', 'one');
     peer.tool('reply-1', 'two');
     peer.ended();
+    const acceptedResultReply = await request(peer, 2);
+    expect(acceptedResultReply.response).toMatchObject({ prism_call_id: 'one' });
+    peer.reply(acceptedResultReply, 'accepted-result');
     await handle.waitForPlayout();
     expect(execute).toHaveBeenCalledTimes(2);
     expect(results).toBe(2);
@@ -695,12 +701,17 @@ describe('standard AgentSession', () => {
       realtime.chatCtx.items.filter((item) => item.type === 'function_call_output'),
     ).toHaveLength(1);
     await realtime.updateChatCtx(realtime.chatCtx);
-    await expect(realtime.generateReply()).rejects.toThrow('tool results');
-    expect(peer.requests.filter((q) => q.type === 'response.create')).toHaveLength(1);
-    await session.currentAgent.updateChatCtx(session.currentAgent.chatCtx.copy());
+    expect(peer.requests.filter((q) => q.type === 'response.create')).toHaveLength(2);
+    const retry = realtime.chatCtx;
+    retry.items.push(
+      ...session.currentAgent.chatCtx.items.filter(
+        (i) => i.type === 'function_call_output' && i.callId === 'two',
+      ),
+    );
+    await realtime.updateChatCtx(retry);
     const reply = session.generateReply();
-    const continuation = await request(peer, 2);
-    expect(continuation.response?.metadata?.prism_parent_response_id).toBe('reply-1');
+    const continuation = await request(peer, 3);
+    expect(continuation.response).toMatchObject({ prism_call_id: 'two' });
     peer.reply(continuation, 'recovered');
     await reply.waitForPlayout();
     expect(results).toBe(3);
@@ -891,8 +902,8 @@ describe('Prism history', () => {
     ctx.addMessage({ role: 'user', content: 'First' });
     ctx.addMessage({ role: 'user', content: 'Second' });
     await expect(session.updateChatCtx(ctx)).rejects.toMatchObject({
-      code: 'invalid_item',
-      scope: 'event',
+      code: 'history_update_partial',
+      recoverable: true,
     });
     expect(session.chatCtx.items.at(-1)).toMatchObject({ content: ['First'] });
     expect(errors.filter((error) => !error.recoverable)).toHaveLength(0);
@@ -915,11 +926,10 @@ describe('Prism history', () => {
         return true;
       }
     };
-    await expect(session.updateChatCtx(target)).rejects.toThrow('invalid_item');
+    await expect(session.updateChatCtx(target)).rejects.toMatchObject({ recoverable: true });
     expect(session.chatCtx.items).toHaveLength(refusedAt - 1);
     await session.updateChatCtx(session.chatCtx);
-    if (refusedAt === 2) await expect(session.generateReply()).rejects.toThrow('tool results');
-    else {
+    {
       const reply = session.generateReply();
       peer.accepted(await request(peer));
       peer.ended();
@@ -929,11 +939,11 @@ describe('Prism history', () => {
     expect(peer.history).toHaveLength(2);
     expect(mutations).toBe(3);
     const next = session.generateReply();
-    peer.reply(await request(peer, refusedAt === 1 ? 2 : 1), 'recovered-import');
+    peer.reply(await request(peer, 2), 'recovered-import');
     await next;
   });
   it.each(['replacement', 'session', 'disconnect'])(
-    'keeps %s failures fatal after a mutation',
+    'distinguishes known %s failures from uncertain outcomes',
     async (failure) => {
       const { peer, session, errors } = await setupHistory();
       let mutations = 0;
@@ -952,14 +962,11 @@ describe('Prism history', () => {
       target.addMessage({ role: 'user', content: 'Second' });
       const failed = session.updateChatCtx(target);
       if (failure === 'replacement') {
-        await expect(failed).rejects.toMatchObject({
-          cause: {
-            code: 'invalid_item',
-            scope: 'event',
-            message: 'Prism operation failed (invalid_item)',
-          },
-        });
-      } else await expect(failed).rejects.toThrow();
+        await expect(failed).rejects.toMatchObject({ status: 'partial', recoverable: true });
+        await session.updateInstructions('can continue');
+        expect(errors.filter((e) => !e.recoverable)).toEqual([]);
+        return;
+      } else await expect(failed).rejects.toMatchObject({ recoverable: false });
       await vi.waitFor(() => expect(errors.some((error) => !error.recoverable)).toBe(true));
       await expect(session.updateInstructions('must not continue')).rejects.toThrow();
     },
@@ -969,6 +976,12 @@ describe('Prism history', () => {
     const { peer, session } = await setupHistory();
     peer.onRequest = (q) => {
       if (q.type !== 'conversation.item.create') return;
+      peer.history.push({
+        id: 'spoken',
+        type: 'message',
+        role: 'user',
+        text: 'Spoken during update',
+      });
       peer.emit('input_audio_buffer.committed', { item_id: 'spoken' });
       peer.emit('conversation.item.input_audio_transcription.completed', {
         item_id: 'spoken',

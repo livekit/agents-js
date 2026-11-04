@@ -222,6 +222,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
             if (v1) {
               const start = create(SynthesisRequestSchema, {
                 text: '',
+                customLexicon: this.opts.customLexicon?.map((entry) => ({ ...entry })),
                 speaker: this.opts.speaker,
                 language: this.opts.lang,
                 audioParameters: {

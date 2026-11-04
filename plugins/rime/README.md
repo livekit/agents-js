@@ -10,7 +10,7 @@ The Agents Framework is designed for building realtime, programmable
 participants that run on servers. Use it to create conversational, multi-modal
 voice agents that can see, hear, and understand.
 
-Rime provides text-to-speech and Prism realtime speech-to-speech through this plugin.
+Rime provides text-to-speech, speech recognition, and Prism realtime speech-to-speech.
 See the [LiveKit documentation](https://docs.livekit.io/agents/overview/),
 [API reference](https://docs.livekit.io/agents-js/modules/plugins_agents_plugin_rime.html),
 and [framework source](https://github.com/livekit/agents-js).
@@ -65,15 +65,37 @@ cancellation. An automatic speech reply can start during that gap with no tools.
 This also applies when LiveKit reaches `maxToolSteps`. Failed tool restoration closes
 the session.
 
-An explicit event-scoped refusal during an append preserves acknowledged history
-items and reports the original provider error code and request IDs. Keep the
-requested context to retry or correct the unaccepted items. Preserve newer
-conversation items and accepted item IDs when retrying. The plugin does not retry
-automatically or execute tools again.
-Replies requested through the plugin are blocked until rejected tool results have
-been submitted. Server-initiated speech replies are still controlled by Prism.
-Unknown request outcomes, session failures, and partially applied deletions or
-replacements still close the session.
+### Shared history and recovery
+
+History defaults to `contextMode: 'shared'`. Updates preserve omitted provider items,
+accept new items at the end, and reject conflicting edits. Known generated, played,
+and retained transcript variants do not overwrite provider text. Use
+`contextMode: 'strict'` for exact replacement through ordinary updates.
+
+Use these model methods for explicit edits to an active agent:
+
+`await model.replaceChatCtx(agent, target)`
+`await model.clearChatCtx(agent)`
+`await model.reconcileChatCtx(agent)`
+
+Pause competing edits and agent handoffs first. Reconciliation copies confirmed
+history into the agent without provider writes. Replacement attempts reconciliation
+if a known failure leaves the local context different. Pending calls cannot be removed.
+The helpers preserve parent tool calls even if the current agent has fewer tools.
+
+A failed edit raises `realtime.PrismHistoryUpdateError`. Its `status` is
+`rejected`, `partial`, or `uncertain`. Inspect `recoverable`,
+`confirmedChatCtx`, and `needsReconciliation`. The optional synchronous
+`onHistoryUpdate` callback receives these facts before automatic repair.
+A known refusal or partial edit preserves accepted writes and permits later work.
+An unknown write outcome closes the session. The plugin never retries history writes.
+To retry missing tool results, append them to the latest confirmed context.
+
+A refused typed input stops its reply. The current JavaScript core catches tool-result
+update failures and can still request a reply. Such a reply uses an accepted tool result
+when one is available. Unlike the Python core, the JavaScript core does not stop that
+dependent step. Applications that require this behavior must handle the history notice
+and stop the affected speech. No shared core code is changed by this plugin.
 
 ### Interruption and limits
 
@@ -83,9 +105,18 @@ response before the first message, during audio, and clears queued playback afte
 generation ends. Published core 1.9.4 does not notify the provider between response
 creation and the first message.
 
-Prism estimates playback completion because the standard interface cannot measure it
-reliably. The plugin reports interrupted playback, but sends no normal completion
-receipt. Early speech hints do not lower the volume.
+The default `playback: 'auto'` uses measured playback when you install the wrapper:
+
+`session.output.audio = model.wrapAudioOutput(session.output.audio!)`
+
+Install it after the output exists and before generating speech. It reads frame identity
+before resampling and reports completion only when all generated audio has confirmed
+playback. Missing frames, changed frame identity, interrupted output, and ambiguous
+completion retain server estimates. SDK response holds expire after a bounded wait.
+Use `playback: 'estimated'` to keep estimates, or `playback: 'discard'` for
+text and tool workflows that discard audio and report zero played duration.
+Interrupted playback reports still use the requested cut position. Early speech hints
+do not lower the volume.
 
 These limits apply:
 
@@ -99,6 +130,9 @@ These limits apply:
   Queues are bounded; overflow closes the session.
 
 The realtime session emits SDK payloads as `item_truncated` and `response_ended`.
+`rime_server_event_received` exposes each SDK event before plugin processing.
+`metrics_collected` emits one final usage record per response, including cancelled
+responses. Time to first audio uses the first nonempty provider audio chunk.
 `response_ended.usage` reports token counts when Prism provides them.
 Available `keptText` updates the plugin's history while the server item ID still
 matches. An empty string means no words remain; `null` means unavailable and leaves
@@ -126,13 +160,35 @@ Constructor options include turn detection, history truncation, request IDs, res
 metadata, and tool fillers. Timeouts use milliseconds. See
 [`RealtimeModelOptions`](src/realtime/realtime_model.ts) for defaults.
 
-Both local protocol tests and standard-session tests passed with the repository core
-at `f03a68ef` and published `@livekit/agents@1.9.4`, using Node.js 24.18.0. Earlier
-versions were not tested. The peer dependency remains the repository's release version.
+Initial connection retries use `connOptions` and the overall `startupTimeout`
+budget. Only explicit transient upgrade statuses are retried. Cancellation,
+acknowledgment uncertainty, and established-session failures are not retried.
+The plugin does not provide a custom fallback session.
 
-The plugin pins `@rimelabs/sdk` to `0.1.0-alpha.25` from public npm. If your machine
+The plugin pins `@rimelabs/sdk` to `0.1.0-alpha.28` from public npm. If your machine
 routes `@rimelabs` to GitHub Packages, install with
 `pnpm install --@rimelabs:registry=https://registry.npmjs.org`.
+
+## Speech recognition
+
+`new STT({ language: 'en', mode: 'written', contextTerms: ['Rime'] })` supports
+whole recordings through `recognize(audio)`. It downmixes and resamples to mono
+16 kHz WAV. Recordings have a 16 MiB limit. `mode: 'verbatim'` is also supported.
+`updateOptions` changes language, mode, and context terms for later requests.
+Session keyterms merge with configured terms without duplicates.
+
+Pass a LiveKit VAD to enable native streaming:
+
+`new STT({ vad, outputContract: 'append_fragments' })`
+
+The default output contract is `revised_hypotheses`. Append fragments preserve
+whitespace and produce cumulative interim transcripts. Each VAD utterance uses one
+SDK stream. Final transcripts require provider confirmation and retain utterance
+order. Streaming input must be mono. A stream permits eight pending utterances and
+ten seconds of queued upload audio. Overflow fails without replaying audio.
+Whole-recording requests can retry transport failures through `connOptions`;
+streaming requests never replay. Closing STT cancels active work. Injected SDK clients
+and VADs remain caller-owned.
 
 ## WebSocket v1 streaming
 
@@ -201,6 +257,11 @@ its subdomains. Set `allowCustomEndpoint: true` to use another trusted host.
 Remote endpoints must use HTTPS or WSS. Loopback IP addresses can use HTTP or WS.
 Provider messages, response bodies, close reasons, and transport errors are not
 included in returned errors. Safe status codes and provider request IDs remain available.
+
+Coda accepts `customLexicon: [{ spelling: 'Rime', pronunciation: 'raɪm' }]`
+on HTTP and WebSocket v1. The plugin copies entries when it snapshots options.
+Mist and legacy WS3 reject this option. The default speakers are `lyra` for Coda
+and `cove` for Mist; an explicit speaker takes precedence.
 
 ## Existing HTTP and WS3 interfaces
 
