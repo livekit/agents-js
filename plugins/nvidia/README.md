@@ -48,6 +48,26 @@ remain on the stream clock, and usage metrics count the audio sent on each conne
 
 Transcripts include word-level timestamps. Set `enableDiarization: true` with a
 Sortformer-based model, such as the default model, to label final transcripts with a
-speaker ID (`S<tag>`). `maxSpeakerCount` limits the number of speakers.
+speaker ID (`S<tag>`). Each word also carries its own speaker ID, so mixed-speaker
+transcripts keep word-level attribution. `maxSpeakerCount` limits the number of speakers.
 
 Authentication metadata is sent only over TLS, matching the Python Riva client.
+
+## Protocol definitions
+
+NVIDIA does not publish a Node.js Riva client. This plugin calls the Riva gRPC API
+directly. `@grpc/proto-loader` loads the protocol files at runtime; there is no
+code-generation step.
+
+The files in `proto/riva/proto/` are trimmed copies of NVIDIA's MIT-licensed definitions
+from [`nvidia-riva/common`](https://github.com/nvidia-riva/common). They keep only the
+messages, fields and RPCs this plugin uses. The field numbers match
+`nvidia-riva-client` 2.16.0, the client used by the Python plugin.
+
+To use a new Riva field:
+
+1. Copy the field from the upstream `.proto` file. Keep its field number exactly.
+2. Add the field to the matching type in `src/proto.ts`.
+
+A wrong field number does not cause an error. The server ignores the field or reads it
+as a different field.
