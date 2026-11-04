@@ -728,7 +728,7 @@ describe('standard AgentSession', () => {
     },
   );
   it.each(['session', 'handle'] as const)(
-    'checks %s interruption before the first message',
+    'cancels provider output using %s interruption before the first message',
     async (mode) => {
       const { peer, session } = await start();
       const handle = session.generateReply();
@@ -737,16 +737,9 @@ describe('standard AgentSession', () => {
       await new Promise((resolve) => setTimeout(resolve, 30));
       if (mode === 'session') session.interrupt();
       else handle.interrupt();
-      if (mode === 'session') {
-        await vi.waitFor(() =>
-          expect(peer.requests.some((q) => q.type === 'response.cancel')).toBe(true),
-        );
-      } else {
-        await new Promise((resolve) => setTimeout(resolve, 100));
-        // Exact core limitation: there is no cancellation callback while waiting for the first message.
-        expect(peer.requests.some((q) => q.type === 'response.cancel')).toBe(false);
-        peer.ended();
-      }
+      await vi.waitFor(() =>
+        expect(peer.requests.some((q) => q.type === 'response.cancel')).toBe(true),
+      );
       await handle.waitForPlayout();
     },
   );

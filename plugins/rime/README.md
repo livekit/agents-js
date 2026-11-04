@@ -78,9 +78,10 @@ replacements still close the session.
 ### Interruption and limits
 
 For application stop, use `session.interrupt()` to cancel the provider response.
-In core 1.9.4, `SpeechHandle.interrupt()` does not notify the provider between response
-creation and the first message. It works during audio and clears queued playback
-after generation ends.
+With the repository core, `SpeechHandle.interrupt()` also cancels the provider
+response before the first message, during audio, and clears queued playback after
+generation ends. Published core 1.9.4 does not notify the provider between response
+creation and the first message.
 
 Prism estimates playback completion because the standard interface cannot measure it
 reliably. The plugin reports interrupted playback, but sends no normal completion
