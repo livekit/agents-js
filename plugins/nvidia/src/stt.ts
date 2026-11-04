@@ -311,6 +311,11 @@ export class SpeechStream extends stt.SpeechStream {
                 endTime: word.endTime / 1000 + this.startTimeOffset,
                 confidence: word.confidence,
                 startTimeOffset: this.startTimeOffset,
+                // Riva leaves speakerTag at 0 for words it did not assign to a speaker.
+                speakerId:
+                  this.#opts.enableDiarization && word.speakerTag > 0
+                    ? `S${word.speakerTag}`
+                    : undefined,
               }),
             )
           : undefined,

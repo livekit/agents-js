@@ -246,6 +246,8 @@ export class ChunkedStream extends tts.ChunkedStream {
     this.#opts = opts;
     this.#connection = connections.get(instance)!;
     this.#connOptions = connOptions;
+    // The base class only listens for a later abort, so honor one that already happened.
+    if (abortSignal?.aborted) this.close();
   }
 
   protected async run(): Promise<void> {

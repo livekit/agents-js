@@ -289,9 +289,10 @@ describe('NVIDIA STT', () => {
             { word: 'a', startTime: 0, endTime: 100, speakerTag: 2 },
             { word: 'b', startTime: 100, endTime: 200, speakerTag: 1 },
             { word: 'c', startTime: 200, endTime: 300, speakerTag: 2 },
+            { word: 'd', startTime: 300, endTime: 400, speakerTag: 0 },
           ];
-          call.write(result('a b c', false, words));
-          call.write(result('a b c', true, words));
+          call.write(result('a b c d', false, words));
+          call.write(result('a b c d', true, words));
           call.end();
         });
       },
@@ -315,6 +316,14 @@ describe('NVIDIA STT', () => {
     );
     // only finals carry a speaker, as in the Python plugin
     expect(transcripts.map((e) => e.alternatives![0]!.speakerId)).toEqual([undefined, 'S2']);
+    for (const event of transcripts) {
+      expect(event.alternatives![0]!.words!.map((word) => word.speakerId)).toEqual([
+        'S2',
+        'S1',
+        'S2',
+        null,
+      ]);
+    }
   });
 
   it('counts results without a transcript as provider progress', async () => {

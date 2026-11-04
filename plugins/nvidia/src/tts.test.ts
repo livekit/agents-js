@@ -261,6 +261,25 @@ describe('NVIDIA TTS', () => {
     expect(collected[0]).toMatchObject({ charactersCount: text.length, cancelled: true });
   });
 
+  it('does not send text for a chunked request that was already aborted', async () => {
+    let calls = 0;
+    const provider = await startServer((call) => {
+      calls++;
+      call.write({ audio: Buffer.alloc(3200) });
+      call.end();
+    });
+    const controller = new AbortController();
+    controller.abort();
+
+    const audio: tts.SynthesizedAudio[] = [];
+    for await (const item of provider.synthesize('Hello there.', undefined, controller.signal)) {
+      audio.push(item);
+    }
+
+    expect(calls).toBe(0);
+    expect(audio).toEqual([]);
+  });
+
   it('synthesizes complete text one sentence per request', async () => {
     const first = 'This is the first sentence of the reply.';
     const second = 'This is the second sentence of the reply.';
