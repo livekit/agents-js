@@ -1,5 +1,48 @@
 # @livekit/agents
 
+## 1.9.6
+
+### Patch Changes
+
+- Drain accepted session responses and ordered events before shutdown, cancel expired remote runs, and surface transport send failures. Add `RemoteSession.waitForReady()` to retry startup pings. - [#2259](https://github.com/livekit/agents-js/pull/2259) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+  Cancel pending transcription reads and join reply cleanup while preserving interrupted text. Release Room stream writers after cancelled sends and close TCP connections on oversized frames.
+
+  Release unused speech text branches and join synthesis input cleanup so streaming `say()` finishes on interruption or output failure.
+
+  Keep transcription input available during deferred hook setup. Drain independent pipeline text after early TTS completion and always release segment queues when writer closure fails.
+
+  Release pending SDK input readers before joining public async-generator transcription hooks, so cooperative session close and remote-run cancellation join their history updates.
+
+  Cancel activity-owned transcription inputs while public hook setup is pending, including setup that reads input before returning its output.
+
+  Bound remote-host cancellation cleanup to a shared three-second grace after the response drain, so a stalled custom speech hook cannot keep the transport open indefinitely.
+
+  Keep cancelled runs busy through reentrant callbacks until speech cleanup settles. Release transcription abort listeners between segments and close outputs interrupted during setup handoff.
+
+  Join generated and realtime speech children, including pending audio captures, before admitting another run. Cancel pending realtime input reads and preserve interrupted text after child cleanup.
+
+  Stop Room intake before reader cleanup and close readers delivered after shutdown starts. Enforce readiness deadlines during blocked sends and discard obsolete send errors after retrying.
+
+  Dispose native RTC resources after console cleanup so the CLI can exit normally.
+
+- Add Voxtral 3 transcription, server-side turn detection, diarization, and voice-pipeline flushing for manually endpointed STT streams. - [#2901](https://github.com/livekit/agents-js/pull/2901) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Close temporary speech stream adapters when their owning pipeline or fallback lifecycle ends. - [#2449](https://github.com/livekit/agents-js/pull/2449) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+  Keep TTS cancellation from marking providers unavailable, and propagate synthesis failures to TTS node consumers while closing audio and timed-text outputs.
+
+- Warn when the agent applies noise cancellation to a participant track that already has client-side enhanced noise cancellation enabled. - [#2745](https://github.com/livekit/agents-js/pull/2745) ([@lukasIO](https://github.com/lukasIO))
+
+- A job process whose worker is gone now exits at once, without leaving the room, so the server dispatches the job again. Before, it shut down gracefully after 15s, and the server took the job as done. - [#2867](https://github.com/livekit/agents-js/pull/2867) ([@davidzhao](https://github.com/davidzhao))
+
+- Report worker status every 1.5s and keep reporting it while draining. The default load is now a moving average of CPU samples over 2.5s, as in the Python SDK. - [#2867](https://github.com/livekit/agents-js/pull/2867) ([@davidzhao](https://github.com/davidzhao))
+
+- Add session-scoped tool mocks for concurrent agent simulations. - [#2905](https://github.com/livekit/agents-js/pull/2905) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Resolve a failed local turn-detector prediction to 1.0, and skip the executor when the native binding is missing, so turns commit after `minDelay` instead of waiting for the maximum delay. - [#2875](https://github.com/livekit/agents-js/pull/2875) ([@chenghao-mou](https://github.com/chenghao-mou))
+
+- Keep TTS fallback providers available when synthesis is cancelled or the input is empty or whitespace-only. Close active provider streams on cancellation, preserve the serving provider's trace attribution after partial audio, and preserve prompt failover when a provider fails while text is still arriving. - [#2906](https://github.com/livekit/agents-js/pull/2906) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
 ## 1.9.5
 
 ### Patch Changes
