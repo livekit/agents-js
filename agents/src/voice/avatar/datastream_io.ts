@@ -19,7 +19,7 @@ import {
   waitForParticipant,
   waitForTrackPublication,
 } from '../../utils.js';
-import { AudioOutput } from '../io.js';
+import { AudioOutput, type PlaybackFinishedEvent } from '../io.js';
 import { parsePlaybackFinishedPayload } from './playback_payload.js';
 
 const RPC_CLEAR_BUFFER = 'lk.clear_buffer';
@@ -63,6 +63,9 @@ export class DataStreamAudioOutput extends AudioOutput {
   private firstFrameEmitted: boolean = false;
   private capturing: boolean = false;
   private finishOnFlush: boolean = false;
+  private flushedDurations: number[] = [];
+  private detached: boolean = false;
+  private listeningForDepartures: boolean = false;
 
   #logger = log();
 
@@ -111,7 +114,7 @@ export class DataStreamAudioOutput extends AudioOutput {
       this.roomConnectedFuture.resolve(undefined);
     }
 
-    this.room.on(RoomEvent.ParticipantDisconnected, this.onParticipantDisconnected);
+    this.listenForDepartures();
 
     onRoomConnected();
   }
@@ -202,13 +205,23 @@ export class DataStreamAudioOutput extends AudioOutput {
   }
 
   flush(): void {
+    const endsSegment = this.capturing;
     super.flush();
     this.capturing = false;
 
-    if (this.finishOnFlush) {
-      this.finishOnFlush = false;
-      this.onPlaybackFinished({ playbackPosition: this.pushedDuration, interrupted: true });
+    if (endsSegment) {
+      const destinationLeft = !this.room.remoteParticipants.has(this.destinationIdentity);
+      if ((this.finishOnFlush || destinationLeft) && this.pendingPlayoutSegments > 0) {
+        this.onPlaybackFinished({ playbackPosition: this.pushedDuration, interrupted: true });
+      } else {
+        this.flushedDurations.push(this.pushedDuration);
+        this.flushedDurations.splice(
+          0,
+          Math.max(0, this.flushedDurations.length - this.pendingPlayoutSegments),
+        );
+      }
     }
+    this.finishOnFlush = false;
 
     if (this.streamWriter === undefined || !this.started) {
       return;
@@ -252,11 +265,47 @@ export class DataStreamAudioOutput extends AudioOutput {
     }
 
     const flushedSegments = this.pendingPlayoutSegments - (this.capturing ? 1 : 0);
-    for (let segment = 0; segment < flushedSegments; segment++) {
-      this.onPlaybackFinished({ playbackPosition: this.pushedDuration, interrupted: true });
-    }
+    const durations = this.flushedDurations.slice(
+      Math.max(0, this.flushedDurations.length - flushedSegments),
+    );
+    this.flushedDurations = [];
     this.finishOnFlush = this.capturing;
+    for (let segment = 0; segment < flushedSegments; segment++) {
+      this.onPlaybackFinished({
+        playbackPosition: durations[segment] ?? this.pushedDuration,
+        interrupted: true,
+      });
+    }
   };
+
+  onPlaybackFinished(options: PlaybackFinishedEvent): void {
+    super.onPlaybackFinished(options);
+    this.stopListeningIfSettled();
+  }
+
+  onAttached(): void {
+    super.onAttached();
+    this.detached = false;
+    this.listenForDepartures();
+  }
+
+  onDetached(): void {
+    super.onDetached();
+    this.detached = true;
+    this.stopListeningIfSettled();
+  }
+
+  private listenForDepartures(): void {
+    if (this.listeningForDepartures) return;
+    this.listeningForDepartures = true;
+    this.room.on(RoomEvent.ParticipantDisconnected, this.onParticipantDisconnected);
+  }
+
+  private stopListeningIfSettled(): void {
+    if (!this.detached || !this.listeningForDepartures || this.pendingPlayoutSegments > 0) return;
+    this.listeningForDepartures = false;
+    this.room.off(RoomEvent.ParticipantDisconnected, this.onParticipantDisconnected);
+  }
 
   private handlePlaybackFinished(data: RpcInvocationData): string {
     if (data.callerIdentity !== this.destinationIdentity) {
