@@ -1,0 +1,21 @@
+agents/src/stream/stream_channel.ts
+  s_32130206b01af8::t_f38e4da19a8f5d 5
+agents/src/log.ts
+  s_32130206b01af8::t_f38e4da19a8f5d 8,22
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "97ade10477c2092c41e83c63a2fb2a8f1ff98a7f",
+  "prompts": {},
+  "sessions": {
+    "s_32130206b01af8": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13095-c5a9-7d52-b9a8-87dc73de4745",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
