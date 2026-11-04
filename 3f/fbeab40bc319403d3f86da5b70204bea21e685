@@ -1,0 +1,19 @@
+plugins/nvidia/README.md
+  s_be2be2b830fedb::t_962a5fecb7c20a 51-52,55-73
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3ffbeab40bc319403d3f86da5b70204bea21e685",
+  "prompts": {},
+  "sessions": {
+    "s_be2be2b830fedb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_be2be2b830fedb",
+        "model": "unknown"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
