@@ -731,6 +731,7 @@ export class AgentServer {
     );
   }
 
+  /** Sends a message on the registered connection, or queues it until a connection registers. */
   #sendMsg(msg: WorkerMessage) {
     if (this.#registeredWS?.readyState === WebSocket.OPEN) {
       this.#registeredWS.send(msg.toBinary());
