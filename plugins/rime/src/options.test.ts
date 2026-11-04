@@ -194,10 +194,10 @@ it.each(['status', 'fetch', 'body'])('sanitizes HTTP %s failures', async (mode) 
 });
 
 it('copies Coda HTTP lexicons and rejects unsupported transports', () => {
-  const lexicon = [{ spelling: 'Rime', pronunciation: 'raɪm' }];
+  const lexicon = [{ spelling: 'Rime', pronunciation: '" r aI m' }];
   const options = resolveOptions({ apiKey: 'test', customLexicon: lexicon });
   lexicon[0]!.pronunciation = 'changed';
-  expect(options.customLexicon).toEqual([{ spelling: 'Rime', pronunciation: 'raɪm' }]);
+  expect(options.customLexicon).toEqual([{ spelling: 'Rime', pronunciation: '" r aI m' }]);
   expect(() =>
     resolveOptions({ apiKey: 'test', modelId: 'mistv3', customLexicon: lexicon }),
   ).toThrow('coda');

@@ -76,7 +76,7 @@ export class STT extends stt.STT {
     if (!options.vad && this.settings.outputContract === 'append_fragments')
       throw new Error('append_fragments requires a VAD');
     this.initialized = import('@rimelabs/sdk').then((sdk) => {
-      this.client = options.client ?? new sdk.Rime({ apiKey: options.apiKey });
+      this.client = this.options.client ?? new sdk.Rime({ apiKey: this.options.apiKey });
       return sdk;
     });
     void this.initialized.catch(() => undefined);

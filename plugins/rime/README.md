@@ -258,8 +258,8 @@ Remote endpoints must use HTTPS or WSS. Loopback IP addresses can use HTTP or WS
 Provider messages, response bodies, close reasons, and transport errors are not
 included in returned errors. Safe status codes and provider request IDs remain available.
 
-Coda accepts `customLexicon: [{ spelling: 'Rime', pronunciation: 'raɪm' }]`
-on HTTP and WebSocket v1. The plugin copies entries when it snapshots options.
+Coda accepts `customLexicon: [{ spelling: 'Rime', pronunciation: '" r aI m' }]`
+on HTTP and WebSocket v1. Pronunciations use space-separated X-SAMPA. The plugin copies entries when it snapshots options.
 Mist and legacy WS3 reject this option. The default speakers are `lyra` for Coda
 and `cove` for Mist; an explicit speaker takes precedence.
 

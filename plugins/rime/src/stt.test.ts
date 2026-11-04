@@ -253,3 +253,21 @@ it('uses wall-clock speech times even when VAD timestamps are stream-relative', 
     events.find((e) => e.type === stt.SpeechEventType.FINAL_TRANSCRIPT)?.speechEndTime,
   ).toBeGreaterThanOrEqual(before);
 });
+
+it('snapshots client ownership before loading the SDK', async () => {
+  const first = {
+    stt: { transcribe: vi.fn(async () => ({ text: 'first', language: 'en' })) },
+    close: vi.fn(),
+  };
+  const second = { stt: { transcribe: vi.fn() }, close: vi.fn() };
+  const options = { client: first as unknown as r.Rime };
+  const owner = new STT(options);
+  owners.push(owner);
+  options.client = second as unknown as r.Rime;
+  const result = await owner.recognize(frame());
+  expect(result.alternatives?.[0]?.text).toBe('first');
+  expect(second.stt.transcribe).not.toHaveBeenCalled();
+  await owner.close();
+  expect(first.close).not.toHaveBeenCalled();
+  expect(second.close).not.toHaveBeenCalled();
+});
