@@ -56,7 +56,7 @@ function detector() {
       }),
     } as unknown as VAD,
     emit(type: VADEventType, frames: AudioFrame[] = []) {
-      events.push({ type, frames, timestamp: Date.now(), silenceDuration: 0 } as VADEvent);
+      events.push({ type, frames, timestamp: 37, silenceDuration: 0 } as VADEvent);
     },
   };
 }
@@ -190,4 +190,66 @@ it('closes immediately created streams without closing the caller VAD', async ()
   const stream = owner.stream();
   stream.close();
   await owner.close();
+});
+
+it.each(['audio', 'utterances'] as const)(
+  'reports %s overflow once and cancels requests without replay',
+  async (limit) => {
+    const d = detector();
+    const cancel = vi.fn(async () => undefined);
+    const start = vi.fn((_source: AsyncIterable<Uint8Array>, options: r.TranscriptionOptions) => {
+      const events = new Queue<r.TranscriptionUpdate>();
+      if (options.signal?.aborted) events.close();
+      else options.signal?.addEventListener('abort', () => events.close(), { once: true });
+      return { [Symbol.asyncIterator]: () => events[Symbol.asyncIterator](), cancel };
+    });
+    const owner = model({ stt: { stream: start } }, { vad: d.vad });
+    const errors: unknown[] = [];
+    owner.on('error', (error) => errors.push(error));
+    const stream = owner.stream();
+    const events: stt.SpeechEvent[] = [];
+    const reading = (async () => {
+      for await (const event of stream) events.push(event);
+    })();
+    if (limit === 'audio')
+      d.emit(VADEventType.START_OF_SPEECH, [
+        new AudioFrame(new Int16Array(160001), 16000, 1, 160001),
+      ]);
+    else
+      for (let i = 0; i < 9; i++) {
+        d.emit(VADEventType.START_OF_SPEECH, [frame()]);
+        d.emit(VADEventType.END_OF_SPEECH);
+      }
+    await reading;
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toMatchObject({ recoverable: false, error: { retryable: false } });
+    expect(events.filter((e) => e.type === stt.SpeechEventType.FINAL_TRANSCRIPT)).toEqual([]);
+    expect(start).toHaveBeenCalledTimes(limit === 'audio' ? 1 : 8);
+    expect(cancel).toHaveBeenCalledTimes(start.mock.calls.length);
+    await owner.close();
+  },
+);
+it('uses wall-clock speech times even when VAD timestamps are stream-relative', async () => {
+  const d = detector(),
+    api = streamingClient();
+  const owner = model(api.client, { vad: d.vad });
+  const before = Date.now();
+  const stream = owner.stream();
+  const events: stt.SpeechEvent[] = [];
+  const reading = (async () => {
+    for await (const event of stream) events.push(event);
+  })();
+  d.emit(VADEventType.START_OF_SPEECH, [frame()]);
+  d.emit(VADEventType.END_OF_SPEECH);
+  await vi.waitFor(() => expect(api.stream).toHaveBeenCalledOnce());
+  api.updates[0]!.push({ kind: 'final', text: 'done', language: 'en' });
+  api.updates[0]!.close();
+  stream.endInput();
+  await reading;
+  expect(
+    events.find((e) => e.type === stt.SpeechEventType.START_OF_SPEECH)?.createdAt,
+  ).toBeGreaterThanOrEqual(before);
+  expect(
+    events.find((e) => e.type === stt.SpeechEventType.FINAL_TRANSCRIPT)?.speechEndTime,
+  ).toBeGreaterThanOrEqual(before);
 });

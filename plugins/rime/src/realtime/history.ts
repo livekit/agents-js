@@ -5,7 +5,7 @@ import { llm } from '@livekit/agents';
 import type * as r from '@rimelabs/sdk';
 import { SerialQueue } from './streams.js';
 
-/** A confirmed refusal or an uncertain provider write. This stops dependent LiveKit replies. */
+/** A confirmed refusal or an uncertain provider write. This stops rejected typed-input replies. */
 export class PrismHistoryUpdateError extends Error {
   readonly code: string;
   readonly recoverable: boolean;

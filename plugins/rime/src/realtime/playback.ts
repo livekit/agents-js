@@ -296,6 +296,9 @@ export class PrismAudioOutput extends voice.AudioOutput {
     })();
   }
   override clearBuffer(): void {
+    // Clearing an open segment is a segment boundary, just like flush.
+    // The next capture must create a new base AudioOutput playout counter.
+    super.flush();
     this.epoch++;
     for (const segment of this.segments) {
       segment.invalid = true;

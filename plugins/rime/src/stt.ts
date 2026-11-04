@@ -346,6 +346,7 @@ class RimeSpeechStream extends stt.SpeechStream {
     super.pushFrame(frame);
   }
   private publish(): void {
+    if (this.failure) return;
     while (this.utterances.length && !this.closed && !this.abortSignal.aborted) {
       const u = this.utterances[0]!;
       if (u.error) {
@@ -386,7 +387,7 @@ class RimeSpeechStream extends stt.SpeechStream {
         this.queuedBytes += bytes;
       }),
       settings: this.owner.snapshot(),
-      started: event.timestamp,
+      started: Date.now() - (event.speechDuration ?? 0) - (event.inferenceDuration ?? 0),
       emittedStart: false,
       duration: 0,
     };
@@ -466,7 +467,7 @@ class RimeSpeechStream extends stt.SpeechStream {
         }
       }
       if (event.type === VADEventType.END_OF_SPEECH)
-        this.finish(event.timestamp - event.silenceDuration);
+        this.finish(Date.now() - (event.silenceDuration ?? 0) - (event.inferenceDuration ?? 0));
     }
     this.finish();
   }
@@ -482,7 +483,9 @@ class RimeSpeechStream extends stt.SpeechStream {
       reading = this.readDetector(this.detector);
       void reading.catch((error) => {
         this.failure = error;
-        this.abortController.abort();
+        // Abort provider uploads, but leave the base stream able to emit this failure.
+        this.uploads.abort();
+        this.stopDetector();
         this.input.close();
       });
     };
