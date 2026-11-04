@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { AudioFrame, ByteStreamWriter, Room } from '@livekit/rtc-node';
+import { AudioFrame, ByteStreamWriter, Room, RoomEvent } from '@livekit/rtc-node';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AudioOutput, type PlaybackFinishedEvent } from '../io.js';
 import { DataStreamAudioOutput } from './datastream_io.js';
@@ -144,5 +144,63 @@ describe('DataStreamAudioOutput.clearBuffer', () => {
       { playbackPosition: 0, interrupted: true },
       { playbackPosition: 0, interrupted: true },
     ]);
+  });
+});
+
+describe('DataStreamAudioOutput when the destination participant leaves', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    DataStreamAudioOutput._playbackFinishedRpcRegistered = false;
+    DataStreamAudioOutput._playbackFinishedHandlers = {};
+  });
+
+  function leave(room: Room, identity: string): void {
+    room.emit(RoomEvent.ParticipantDisconnected, { identity } as never);
+  }
+
+  it('settles a flushed segment as interrupted at the pushed duration', async () => {
+    const { room } = createRoom(() => Promise.resolve(''));
+    const output = new DataStreamAudioOutput({ room, destinationIdentity: 'avatar' });
+
+    await output.captureFrame(createFrame());
+    output.flush();
+    const playout = output.waitForPlayout();
+
+    leave(room, 'avatar');
+
+    await expect(playout).resolves.toEqual({ playbackPosition: 0.02, interrupted: true });
+  });
+
+  it('ignores other participants leaving', async () => {
+    const { room } = createRoom(() => Promise.resolve(''));
+    const output = new DataStreamAudioOutput({ room, destinationIdentity: 'avatar' });
+
+    await output.captureFrame(createFrame());
+    output.flush();
+    let settled = false;
+    void output.waitForPlayout().then(() => {
+      settled = true;
+    });
+
+    leave(room, 'someone-else');
+    await nextTick();
+
+    expect(settled).toBe(false);
+  });
+
+  it('finishes a segment that was still being captured when it is flushed', async () => {
+    const { room } = createRoom(() => Promise.resolve(''));
+    const output = new DataStreamAudioOutput({ room, destinationIdentity: 'avatar' });
+    const playbackEvents: PlaybackFinishedEvent[] = [];
+    output.on(AudioOutput.EVENT_PLAYBACK_FINISHED, (event) => playbackEvents.push(event));
+
+    await output.captureFrame(createFrame());
+    leave(room, 'avatar');
+    expect(playbackEvents).toEqual([]);
+
+    await output.captureFrame(createFrame());
+    output.flush();
+
+    expect(playbackEvents).toEqual([{ playbackPosition: 0.04, interrupted: true }]);
   });
 });

@@ -5,6 +5,7 @@ import { Mutex } from '@livekit/mutex';
 import {
   type AudioFrame,
   type ByteStreamWriter,
+  type RemoteParticipant,
   type Room,
   RoomEvent,
   type RpcInvocationData,
@@ -60,6 +61,8 @@ export class DataStreamAudioOutput extends AudioOutput {
   private lock = new Mutex();
   private startTask?: Task<void>;
   private firstFrameEmitted: boolean = false;
+  private capturing: boolean = false;
+  private finishOnFlush: boolean = false;
 
   #logger = log();
 
@@ -107,6 +110,8 @@ export class DataStreamAudioOutput extends AudioOutput {
     if (this.room.isConnected) {
       this.roomConnectedFuture.resolve(undefined);
     }
+
+    this.room.on(RoomEvent.ParticipantDisconnected, this.onParticipantDisconnected);
 
     onRoomConnected();
   }
@@ -167,6 +172,7 @@ export class DataStreamAudioOutput extends AudioOutput {
 
     await this.startTask.result;
     await super.captureFrame(frame);
+    this.capturing = true;
 
     if (!this.firstFrameEmitted) {
       this.firstFrameEmitted = true;
@@ -197,6 +203,12 @@ export class DataStreamAudioOutput extends AudioOutput {
 
   flush(): void {
     super.flush();
+    this.capturing = false;
+
+    if (this.finishOnFlush) {
+      this.finishOnFlush = false;
+      this.onPlaybackFinished({ playbackPosition: this.pushedDuration, interrupted: true });
+    }
 
     if (this.streamWriter === undefined || !this.started) {
       return;
@@ -233,6 +245,18 @@ export class DataStreamAudioOutput extends AudioOutput {
         }
       });
   }
+
+  private onParticipantDisconnected = (participant: RemoteParticipant): void => {
+    if (participant.identity !== this.destinationIdentity || this.pendingPlayoutSegments === 0) {
+      return;
+    }
+
+    const flushedSegments = this.pendingPlayoutSegments - (this.capturing ? 1 : 0);
+    for (let segment = 0; segment < flushedSegments; segment++) {
+      this.onPlaybackFinished({ playbackPosition: this.pushedDuration, interrupted: true });
+    }
+    this.finishOnFlush = this.capturing;
+  };
 
   private handlePlaybackFinished(data: RpcInvocationData): string {
     if (data.callerIdentity !== this.destinationIdentity) {
