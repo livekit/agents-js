@@ -50,6 +50,16 @@ export class PeriodicCollector<T> {
   }
 }
 
+/** Deepgram rejects usage tags longer than 128 characters. */
+export function validateTags(tags: string[]): string[] {
+  for (const tag of tags) {
+    if (tag.length > 128) {
+      throw new Error('tag must be no more than 128 characters');
+    }
+  }
+  return tags;
+}
+
 /** How often to ping an idle socket. Matches `heartbeat=30.0` in the Python plugin. */
 export const HEARTBEAT_INTERVAL_MS = 30_000;
 

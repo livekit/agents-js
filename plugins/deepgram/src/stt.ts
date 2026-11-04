@@ -21,7 +21,7 @@ import {
 } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { WebSocket } from 'ws';
-import { PeriodicCollector, startWebSocketHeartbeat } from './_utils.js';
+import { PeriodicCollector, startWebSocketHeartbeat, validateTags } from './_utils.js';
 import type { STTLanguages, STTModels } from './models.js';
 
 export interface STTOptions {
@@ -60,6 +60,11 @@ export interface STTOptions {
   diarize: boolean;
   numerals: boolean;
   mipOptOut: boolean;
+  /**
+   * Usage tags, sent as repeated `tag` query params. Each tag is at most 128 characters.
+   * See https://developers.deepgram.com/guides/fundamentals/tagging-your-usage-data
+   */
+  tags?: string[];
   baseUrl: string;
 }
 
@@ -151,6 +156,8 @@ export class STT extends stt.STT {
       this.#opts.model = this.#validateModel(this.#opts.model, this.#opts.language);
     }
 
+    if (this.#opts.tags) this.#opts.tags = validateTags(this.#opts.tags);
+
     this.#warnLanguageHintIgnored();
 
     this.#userKeyterm = [...this.#opts.keyterm];
@@ -171,6 +178,7 @@ export class STT extends stt.STT {
       language: this.#opts.language,
       ...(this.#opts.keyterm.length > 0 ? { keyterm: this.#opts.keyterm } : {}),
       ...(this.#opts.redact.length > 0 ? { redact: this.#opts.redact } : {}),
+      ...(this.#opts.tags && this.#opts.tags.length > 0 ? { tag: this.#opts.tags } : {}),
     };
 
     appendSearchParams(listenURL, params);
@@ -210,6 +218,8 @@ export class STT extends stt.STT {
       opts.model !== undefined || opts.language !== undefined
         ? this.#validateModel(opts.model ?? this.#opts.model, language)
         : this.#opts.model;
+
+    if (opts.tags) validateTags(opts.tags);
 
     const nextOpts = { ...opts };
     if (nextOpts.keyterm !== undefined) {
@@ -369,6 +379,7 @@ export class SpeechStream extends stt.SpeechStream {
           : undefined,
         mip_opt_out: this.#opts.mipOptOut,
         ...(this.#opts.redact.length > 0 ? { redact: this.#opts.redact } : {}),
+        ...(this.#opts.tags && this.#opts.tags.length > 0 ? { tag: this.#opts.tags } : {}),
       };
       appendSearchParams(streamURL, params);
 
@@ -416,6 +427,7 @@ export class SpeechStream extends stt.SpeechStream {
   }
 
   updateOptions(opts: Partial<STTOptions>) {
+    if (opts.tags) validateTags(opts.tags);
     this.#opts = { ...this.#opts, ...opts };
     if (opts.keyterm !== undefined) {
       this._pendingKeyterm = null;

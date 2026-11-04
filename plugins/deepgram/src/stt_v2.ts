@@ -18,7 +18,7 @@ import {
 import type { AudioFrame } from '@livekit/rtc-node';
 import * as queryString from 'node:querystring';
 import { WebSocket } from 'ws';
-import { PeriodicCollector, startWebSocketHeartbeat } from './_utils.js';
+import { PeriodicCollector, startWebSocketHeartbeat, validateTags } from './_utils.js';
 import type { V2Models } from './models.js';
 
 const _CLOSE_MSG = JSON.stringify({ type: 'CloseStream' });
@@ -68,15 +68,6 @@ const defaultSTTv2Options: Omit<STTv2Options, 'apiKey'> = {
   numerals: false,
   profanityFilter: false,
 };
-
-function validateTags(tags: string[]): string[] {
-  for (const tag of tags) {
-    if (tag.length > 128) {
-      throw new Error('tag must be no more than 128 characters');
-    }
-  }
-  return tags;
-}
 
 // Deepgram answers `language_hint` with a 400 on every model but this one.
 const FLUX_MULTI_MODEL = 'flux-general-multi';

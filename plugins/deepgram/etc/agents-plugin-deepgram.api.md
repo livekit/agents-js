@@ -159,6 +159,7 @@ export interface STTOptions {
     search?: string[] | null;
     // (undocumented)
     smartFormat: boolean;
+    tags?: string[];
     // (undocumented)
     utteranceEndMs?: number | null;
 }
