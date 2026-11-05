@@ -1348,7 +1348,8 @@ export class SessionHost {
       }
 
       signal.throwIfAborted();
-      const result = session.run({ userInput: text });
+      // the line stands in for a spoken turn, so it runs a spoken turn's hooks
+      const result = session._runTypedUserTurn(text);
       try {
         await abortable(result.wait(), signal);
       } catch (e) {

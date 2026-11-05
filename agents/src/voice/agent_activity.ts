@@ -3396,6 +3396,34 @@ export class AgentActivity implements RecognitionHooks {
     this.agentSession._conversationItemAdded(userMessage);
   }
 
+  /**
+   * A typed line standing in for a spoken turn: the hook a spoken turn runs, then the reply,
+   * so an agent that hands work off from `onUserTurnCompleted` acts the same typed as on a call.
+   * @internal
+   */
+  _typedUserTurn(userMessage: ChatMessage): Task<void> {
+    return this.createSpeechTask({
+      taskFn: async () => {
+        const chatCtx = this.agent.chatCtx.copy();
+        try {
+          await this.agent.onUserTurnCompleted(chatCtx, userMessage);
+        } catch (e) {
+          if (e instanceof StopResponse) return;
+          // as on a spoken turn: a failing hook loses the reply, not the session
+          this.logger.error({ error: e }, 'error occurred during onUserTurnCompleted');
+          return;
+        }
+
+        const handle = this.generateReply({ userMessage, chatCtx });
+        const runState = this.agentSession._globalRunState;
+        if (runState && !runState.done()) {
+          runState._watchHandle(handle);
+        }
+      },
+      name: 'AgentActivity.typedUserTurn',
+    });
+  }
+
   private async userTurnCompleted(info: EndOfTurnInfo, oldTask?: Task<void>): Promise<void> {
     try {
       await this.userTurnCompletedImpl(info, oldTask);

@@ -118,6 +118,7 @@ import {
   createAgentStateChangedEvent,
   createCloseEvent,
   createConversationItemAddedEvent,
+  createUserInputTranscribedEvent,
   createUserStateChangedEvent,
 } from './events.js';
 import { AgentInput, AgentOutput } from './io.js';
@@ -1540,6 +1541,49 @@ export class AgentSession<
         unlock();
         if (runState.done()) return;
         this.generateReply({ userInput, inputModality });
+      } catch (e) {
+        runState._reject(asError(e));
+      }
+    })();
+
+    return runState;
+  }
+
+  /**
+   * Run a typed line as the user's spoken turn (`lk console` text mode, text simulations).
+   *
+   * Unlike {@link run}, which answers `userInput` directly, this emits the final transcript
+   * and calls `onUserTurnCompleted` before the reply, as a spoken turn does.
+   * @internal
+   */
+  _runTypedUserTurn(text: string): RunResult {
+    if (this._globalRunState?._isActive()) {
+      throw new Error('nested runs are not supported');
+    }
+
+    const runState = new RunResult({ userInput: text, session: this });
+    this._globalRunState = runState;
+
+    // after any in-progress activity transition, as in run()
+    (async () => {
+      try {
+        const unlock = await this.activityLock.lock();
+        unlock();
+        if (runState.done()) return;
+        if (!this.activity) {
+          throw new Error('AgentSession is not running');
+        }
+        const activity = this.activity.schedulingPaused ? this.nextActivity : this.activity;
+        if (!activity) {
+          throw new Error('AgentSession is closing, cannot run a user turn');
+        }
+        this.emit(
+          AgentSessionEventTypes.UserInputTranscribed,
+          createUserInputTranscribedEvent({ transcript: text, isFinal: true }),
+        );
+        runState._watchHandle(
+          activity._typedUserTurn(new ChatMessage({ role: 'user', content: text })),
+        );
       } catch (e) {
         runState._reject(asError(e));
       }

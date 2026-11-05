@@ -16,7 +16,7 @@ import { Agent } from './agent.js';
 import { AgentSession } from './agent_session.js';
 import { AudioOutput, TextOutput } from './io.js';
 import { RemoteSession, SessionHost } from './remote_session.js';
-import type { SpeechHandle } from './speech_handle.js';
+import { type SpeechHandle, isSpeechHandle } from './speech_handle.js';
 import { FakeLLM } from './testing/fake_llm.js';
 import {
   InMemoryTransport as Transport,
@@ -154,7 +154,7 @@ it.each(['updateIo', 'runInput'] as const)(
     const session = await realSession();
     const f = createRoomTransport();
     cleanup.push(() => f.transport.close());
-    const run = vi.spyOn(session, 'run');
+    const run = vi.spyOn(session, '_runTypedUserTurn');
     const update = vi.spyOn(session.output, 'setAudioEnabled');
     const gate = new Future<void>();
     const entered = new Future<void>();
@@ -203,7 +203,7 @@ it('cancels the real run and releases its handles when the drain deadline expire
   const llm = new GatedLLM();
   const session = await realSession(llm);
   const transport = new Transport();
-  const run = vi.spyOn(session, 'run');
+  const run = vi.spyOn(session, '_runTypedUserTurn');
   const host = new SessionHost(transport);
   host.registerSession(session);
   await host.start();
@@ -213,7 +213,9 @@ it('cancels the real run and releases its handles when the drain deadline expire
   await llm.started.await;
   const result = run.mock.results[0]!.value as RunResult;
   const tasks = [...internals(host).tasks];
-  const speeches = [...(result as unknown as { handles: Set<SpeechHandle> }).handles];
+  const speeches = [
+    ...(result as unknown as { handles: Set<SpeechHandle | Task<void>> }).handles,
+  ].filter(isSpeechHandle);
   const start = performance.now();
   await host.close();
   expect(performance.now() - start).toBeLessThan(4000);
@@ -497,7 +499,7 @@ it.each(['interrupt', 'session close', 'host close'] as const)(
     const host = new SessionHost(transport);
     host.registerSession(session);
     await host.start();
-    const run = vi.spyOn(session, 'run');
+    const run = vi.spyOn(session, '_runTypedUserTurn');
     transport.push(
       request('held', {
         case: 'runInput',
@@ -508,7 +510,9 @@ it.each(['interrupt', 'session close', 'host close'] as const)(
       await first.await;
       await tick();
       const result = run.mock.results[0]!.value as RunResult;
-      const handles = [...(result as unknown as { handles: Set<SpeechHandle> }).handles];
+      const handles = [
+        ...(result as unknown as { handles: Set<SpeechHandle | Task<void>> }).handles,
+      ].filter(isSpeechHandle);
       if (ending === 'interrupt') {
         await session.interrupt({ force: true }).await;
         await Promise.all(handles.map((h) => h.waitForPlayout()));
@@ -658,7 +662,7 @@ it('does not start a cancelled run after the activity transition unlocks', async
   const lock = (session as unknown as { activityLock: Mutex }).activityLock;
   const unlock = await lock.lock();
   const generate = vi.spyOn(session, 'generateReply');
-  const run = vi.spyOn(session, 'run');
+  const run = vi.spyOn(session, '_runTypedUserTurn');
   const transport = new Transport();
   const host = new SessionHost(transport);
   host.registerSession(session);

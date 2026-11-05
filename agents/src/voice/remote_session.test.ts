@@ -249,7 +249,7 @@ describe('SessionHost send order', () => {
     });
     const session = Object.assign(new EventEmitter(), {
       interrupt: () => ({ await: Promise.resolve() }),
-      run: () => ({ wait: () => run, events: [] }),
+      _runTypedUserTurn: () => ({ wait: () => run, events: [] }),
     });
     const host = new SessionHost(transport);
     host.registerSession(session as unknown as AgentSession);
@@ -715,7 +715,7 @@ describe('session response delivery', () => {
       on: () => {},
       off: () => {},
       interrupt: () => ({ await: Promise.resolve() }),
-      run: vi.fn(() => ({
+      _runTypedUserTurn: vi.fn(() => ({
         wait: () => waiting,
         events: [
           {
@@ -739,7 +739,7 @@ describe('session response delivery', () => {
     await client.start();
 
     const response = client.sendMessage('order a big mac', 1000);
-    await vi.waitFor(() => expect(session.run).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(session._runTypedUserTurn).toHaveBeenCalledOnce());
     const close = host.close();
     setTimeout(release, 50);
     await close;
@@ -840,7 +840,7 @@ describe('session response delivery', () => {
       on: () => {},
       off: () => {},
       interrupt: () => ({ await: Promise.resolve() }),
-      run: () => ({ wait: () => never, _cancel: cancel, events: [] }),
+      _runTypedUserTurn: () => ({ wait: () => never, _cancel: cancel, events: [] }),
     } as unknown as AgentSession;
     const host = new SessionHost(hostTransport);
     host.registerSession(session);
