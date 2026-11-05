@@ -361,6 +361,49 @@ export class PrismHistory {
       return target;
     return [...items(this.chat).map((item) => requested.get(item.id) ?? item), ...added];
   }
+  /** Preserve progress accepted while this append waited for another history write. */
+  private includeQueuedProgress(target: Item[], captured: Set<string>): Item[] {
+    const requested = new Map(target.map((item) => [item.id, item]));
+    if (requested.size !== target.length) return target;
+    const old = items(this.chat);
+    const oldIds = new Set(old.map((item) => item.id));
+    const added = target.filter((item) => !oldIds.has(item.id));
+    if (!added.length || target.slice(-added.length).some((item, i) => item !== added[i]))
+      return target;
+    // Only tool-result appends can race progress writes. Ordinary strict edits retain
+    // their deletion semantics, including deletion of already observed progress.
+    for (let index = 0; index < added.length; index++) {
+      const item = added[index]!;
+      if (item.type === 'function_call_output' && this.calls.has(item.callId)) continue;
+      const output = added[++index];
+      if (
+        item.type !== 'function_call' ||
+        !item.extra.__livekit_agents_tool_non_blocking ||
+        output?.type !== 'function_call_output' ||
+        output.callId !== item.callId
+      )
+        return target;
+    }
+    const missing = old.filter((item) => !requested.has(item.id));
+    if (!missing.length || missing.some((item) => captured.has(item.id))) return target;
+    for (let index = 0; index < missing.length; index++) {
+      const item = missing[index]!;
+      if (item.type === 'message' && item.role === 'assistant' && this.variants.has(item.id))
+        continue;
+      const output = missing[++index];
+      if (
+        item.type !== 'function_call' ||
+        !item.extra.__livekit_agents_tool_non_blocking ||
+        output?.type !== 'function_call_output' ||
+        output.callId !== item.callId
+      )
+        return target;
+    }
+    const retained = old.filter((item) => requested.has(item.id));
+    if (target.slice(0, -added.length).some((item, index) => item.id !== retained[index]?.id))
+      return target;
+    return [...old.map((item) => requested.get(item.id) ?? item), ...added];
+  }
   private sharedTarget(target: Item[]): Item[] {
     const old = new Map(items(this.chat).map((item, index) => [item.id, { item, index }]));
     const additions: Item[] = [],
@@ -397,6 +440,7 @@ export class PrismHistory {
   }
   sync(ctx: llm.ChatContext, shared = false): Promise<SyncResult> {
     const target = items(ctx).map(clone);
+    const captured = new Set(this.chat.items.map((item) => item.id));
     return this.edits.run(async () => {
       const result: SyncResult = {
         submitted: [],
@@ -408,7 +452,7 @@ export class PrismHistory {
       let failure: unknown;
       try {
         if (this.failure) throw this.failure;
-        const progress = this.progressTarget(target);
+        const progress = this.progressTarget(this.includeQueuedProgress(target, captured));
         await this.apply(shared ? this.sharedTarget(progress) : progress, result);
       } catch (error) {
         failure = error;
