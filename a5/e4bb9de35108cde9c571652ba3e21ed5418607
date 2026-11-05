@@ -1,0 +1,34 @@
+agents/src/voice/amd/client_feature.test.ts
+  s_d522e117d394a7::t_18dcc1cde2f50c 1-182
+  s_d522e117d394a7::t_84a02a1c8de4d6 183-184
+.changeset/amd-client-feature-header.md
+  s_d522e117d394a7::t_310a91df1ad79e 1-5
+agents/etc/agents.api.md
+  s_d522e117d394a7::t_bca871098bfe63 7740,8004,8022
+agents/src/inference/llm.ts
+  s_d522e117d394a7::t_2ca2c6d5c2ea1f 342-345,347-350
+agents/src/inference/stt.ts
+  s_d522e117d394a7::t_365d8e4dacc743 31-37,747-752,756,758-762,768,790,844-848,869,878,884,1238
+agents/src/inference/utils.ts
+  s_d522e117d394a7::t_47b9345bc85bca 26-30
+agents/src/voice/amd/inference.ts
+  s_d522e117d394a7::t_9b5b2cb67d83b1 7-8,11,192-204,233-235
+agents/src/voice/amd/stt.ts
+  s_d522e117d394a7::t_6a42bfb4090800 7-8,14,121-128
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a5e4bb9de35108cde9c571652ba3e21ed5418607",
+  "prompts": {},
+  "sessions": {
+    "s_d522e117d394a7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ab7b825d-534b-4b3c-ad23-6c61601aa7fe",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
