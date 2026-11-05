@@ -36,7 +36,13 @@ export type GoogleRealtimeModels =
 
 export type XAIRealtimeModels = 'xai/grok-voice' | 'xai/grok-voice-latest' | 'xai/grok-voice-3.0';
 
-export type RealtimeModels = OpenAIRealtimeModels | GoogleRealtimeModels | XAIRealtimeModels;
+export type RimeRealtimeModels = 'rime/prism';
+
+export type RealtimeModels =
+  | OpenAIRealtimeModels
+  | GoogleRealtimeModels
+  | XAIRealtimeModels
+  | RimeRealtimeModels;
 
 // retired ids the gateway still accepts; they stay realtime so `llm: '...'` keeps working
 const DEPRECATED_REALTIME_MODELS: ReadonlyMap<string, RealtimeModels> = new Map([
@@ -57,6 +63,7 @@ const REALTIME_MODEL_IDS: ReadonlySet<string> = new Set<string>([
     'xai/grok-voice',
     'xai/grok-voice-latest',
     'xai/grok-voice-3.0',
+    'rime/prism',
   ] satisfies RealtimeModels[]),
   ...DEPRECATED_REALTIME_MODELS.keys(),
 ]);

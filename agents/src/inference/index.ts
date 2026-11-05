@@ -55,6 +55,7 @@ export {
   type OpenAIRealtimeModels,
   type RealtimeModelOptions,
   type RealtimeModels,
+  type RimeRealtimeModels,
   type XAIRealtimeModels,
 } from './realtime.js';
 
