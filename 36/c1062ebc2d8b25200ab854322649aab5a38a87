@@ -1,0 +1,485 @@
+.changeset/agent-join-timing.md
+  s_9dc60d915e2121::t_dd60055deeca94 1-5
+.changeset/bright-sessions-wait.md
+  s_9dc60d915e2121::t_6b8ca68fe34601 5,7-25
+.changeset/bright-voxtral-speech.md
+  s_9dc60d915e2121::t_44818aa3c56f09 1-5
+.changeset/bright-voxtral-turns.md
+  s_9dc60d915e2121::t_120ca0b25fcc90 3,6
+.changeset/close-speech-stream-adapters.md
+  s_9dc60d915e2121::t_db785821462e0e 5-6
+.changeset/double-noise-cancellation-warning.md
+  s_9dc60d915e2121::t_e97c3e691e7d14 5
+.changeset/eleven-glasses-mix.md
+  s_9dc60d915e2121::t_aa3e6ebda1303f 2,5
+.changeset/exit-orphaned-job.md
+  s_9dc60d915e2121::t_2a2d412c5d686b 1-5
+.changeset/faster-worker-status.md
+  s_9dc60d915e2121::t_2dd9b9e2620b90 5
+.changeset/fuzzy-tools-simulate.md
+  s_9dc60d915e2121::t_586521491eb05e 5
+.changeset/gemini-live-goaway-between-turns.md
+  s_9dc60d915e2121::t_73486d6eba46ca 1-5
+.changeset/google-realtime-recover-closes.md
+  s_9dc60d915e2121::t_845a63c37c2268 1-7
+.changeset/green-pandas-listen.md
+  s_9dc60d915e2121::t_a01693007c17cd 1-5
+.changeset/inworld-cancel-context.md
+  s_9dc60d915e2121::t_500e56d32e4e4e 1-5
+.changeset/inworld-sentence-boundary.md
+  s_9dc60d915e2121::t_03f149b02f43aa 1-5
+.changeset/krisp-viva-internal-0-2-3.md
+  s_9dc60d915e2121::t_77a029fdff4531 5
+.changeset/local-eot-failure-default.md
+  s_9dc60d915e2121::t_b13a514608775b 1-5
+.changeset/mistralai-conversation-store.md
+  s_9dc60d915e2121::t_c46913bc768dce 1-5
+.changeset/quiet-fallback-turns.md
+  s_9dc60d915e2121::t_f9aa11050c222f 1-5
+.changeset/simulation-finalize-after-end-call.md
+  s_9dc60d915e2121::t_d474755a53a582 1-5
+.changeset/stream-channel-downstream-cancel.md
+  s_9dc60d915e2121::t_b59728be0e117d 1-5
+.changeset/tidy-models-speak.md
+  s_9dc60d915e2121::t_d43684635b5860 2,5
+.changeset/worker-msg-queue.md
+  s_9dc60d915e2121::t_a73704d1390ed3 1-5
+.github/workflows/evals.yml
+  s_9dc60d915e2121::t_eb7fbf51524aa7 1-47
+LICENSES/MIT.txt
+  s_9dc60d915e2121::t_c0638febb23cff 1-19
+agents/CHANGELOG.md
+  s_9dc60d915e2121::t_90275900668cce 3-26
+agents/etc/agents.api.md
+  s_9dc60d915e2121::t_81f5c015da2cb2 941-943,965-969,3724-3725,4770-4773,4818-4819,5721-5725,6515,6531,6536,6663,6668,6782-6786,6809-6810,6816-6817,7057,7060,7069-7071,7136,7139,7596,7726-7727,7970,8217,8222,8286,9031,9038,9115,9129,9780,9917,9923,9926-9929,9936
+agents/package.json
+  s_9dc60d915e2121::t_118eda7f34e5b9 3,72
+agents/src/cli.ts
+  s_9dc60d915e2121::t_0257fa14f55b2e 4,263-275
+agents/src/cli_console.test.ts
+  s_9dc60d915e2121::t_a0112a15274149 1-48
+agents/src/inference/eot/detector.test.ts
+  s_9dc60d915e2121::t_505a3ca66b8fa6 27,32,864-905
+agents/src/inference/eot/detector.ts
+  s_9dc60d915e2121::t_cd73087b0e531e 14,144-146
+agents/src/inference/eot/runner.test.ts
+  s_9dc60d915e2121::t_0c099cdbaf2f6e 63-78
+agents/src/inference/eot/runner.ts
+  s_9dc60d915e2121::t_86b43e87309a2f 63,71
+agents/src/inference/eot/transports.ts
+  s_9dc60d915e2121::t_269eb0c6bfe90a 223
+agents/src/inference/tts.test.ts
+  s_9dc60d915e2121::t_1d55c233a029e4 17,437-463
+agents/src/inference/tts.ts
+  s_9dc60d915e2121::t_65e006e5a972d6 63-64,148-153,160-161,170,187-189,204-205,220-225,259-276,325,328,392,395,469,472
+agents/src/inference/tts_alignment.test.ts
+  s_9dc60d915e2121::t_5d1c7f13009817 69-131
+agents/src/ipc/job_proc_executor.test.ts
+  s_9dc60d915e2121::t_053ff706da593c 1-64
+agents/src/ipc/job_proc_executor.ts
+  s_9dc60d915e2121::t_b653032aee49ff 4,25,30,35,40,44,82-84,110-117
+agents/src/ipc/job_proc_lazy_main.ts
+  s_9dc60d915e2121::t_126ae9c2c79339 36,146,149-155,186,351-357,359,361-362
+agents/src/ipc/job_trace.test.ts
+  s_9dc60d915e2121::t_cd1713265d756f 4,21-22,231-269
+agents/src/ipc/job_trace.ts
+  s_9dc60d915e2121::t_c7ab516fa0ceb4 4,79-125
+agents/src/ipc/message.ts
+  s_9dc60d915e2121::t_9c8e71a48bd6ce 4,62-66
+agents/src/ipc/proc_pool.test.ts
+  s_9dc60d915e2121::t_aa2a5722eb1271 9,27-30,39,172,224-272
+agents/src/ipc/proc_pool.ts
+  s_9dc60d915e2121::t_2d5af15ac83541 5,12,23-24,44,55,67,80-81,83,99,107-108,110-111,115,125
+agents/src/job.ts
+  s_9dc60d915e2121::t_1120582a8cb794 24,49,172-179,215-220,246-251,508,531
+agents/src/job_lifecycle.test.ts
+  s_9dc60d915e2121::t_0ef7491f14b42e 4,17,19,302-381
+agents/src/job_lifecycle.ts
+  s_9dc60d915e2121::t_543c5686b39fb4 4,17-19,137-184
+agents/src/log_core.ts
+  s_9dc60d915e2121::t_38a9cf11381e69 37-42
+agents/src/stream/stream_channel.test.ts
+  s_9dc60d915e2121::t_239ab0e6518a43 166-201
+agents/src/stream/stream_channel.ts
+  s_9dc60d915e2121::t_507fc66899aae7 5,22-32,34-44,78,80-83,85-86
+agents/src/stt/fallback_adapter.test.ts
+  s_9dc60d915e2121::t_8a68bcaa33aafe 10,86-109,309-321
+agents/src/stt/fallback_adapter.ts
+  s_9dc60d915e2121::t_53b49565ba2dad 15,106,125-131,143,151,167-174,359
+agents/src/stt/stream_adapter.ts
+  s_9dc60d915e2121::t_613de8321bf3d7 7,13,21-28,40-42,44-47
+agents/src/stt/stt.ts
+  s_9dc60d915e2121::t_269ebe601877b2 126-131,141-151,474-478,531-535
+agents/src/stt/testing/fake_stt.ts
+  s_9dc60d915e2121::t_5901a7678a4404 109
+agents/src/telemetry/loop_monitor.test.ts
+  s_9dc60d915e2121::t_6d2040df21deb0 199-216
+agents/src/tts/fallback_adapter.test.ts
+  s_9dc60d915e2121::t_cbea5c94a22d0b 18,31,49-56,113,115,117,120-127,162-163,175-176,182-194,198-202,206-223,240-358,942
+agents/src/tts/fallback_adapter.ts
+  s_9dc60d915e2121::t_0724193ab7ed3c 413,420-421,429,443-444,453-455,470,474,480-481,493,520,542-547,551,593,598-599,605,612,617,628-631,642,650-651,721-722,754-760,774-779,802,827-828,837
+agents/src/tts/fallback_adapter_lifecycle.test.ts
+  s_9dc60d915e2121::t_42829b6851596d 1-376
+agents/src/voice/agent.test.ts
+  s_9dc60d915e2121::t_2b5dcf466a6684 4,8,11-15,19,56-129,547-658
+agents/src/voice/agent.ts
+  s_9dc60d915e2121::t_9d0730805e4baf 49,366-376,498,507-508,512-513,515,518-524,526-543,556,558,561,651,656-665,668-674,689,693
+agents/src/voice/agent_activity.ts
+  s_9dc60d915e2121::t_d596f2c18e86db 11,335-418,1982,3638-3660,3713-3716,3732-3749,3753,3756-3776,3779-3780,3782-3799,3801-3842,3855-3856,3908-3922,4133,4135-4140,4160-4165,4195,4253,4255-4256,4273-4282,4284,4289-4290,4292-4294,4392-4398,4496,4862-4875,4880,4906,4909,4911,4945-4946,4955-4957,5015-5024,5032-5033,5036-5037,5039,5049-5052,5120-5121,5143-5144,5191
+agents/src/voice/agent_activity_child_cleanup.test.ts
+  s_9dc60d915e2121::t_e4c61b449119a7 1-549
+agents/src/voice/agent_activity_say_stream.test.ts
+  s_9dc60d915e2121::t_527d084b838d57 1-650
+agents/src/voice/agent_activity_transcription_setup.test.ts
+  s_9dc60d915e2121::t_87b4dafe976943 1-635
+agents/src/voice/agent_activity_tts_input.test.ts
+  s_9dc60d915e2121::t_a5b4fdf650a28e 1-394
+agents/src/voice/agent_session.test.ts
+  s_9dc60d915e2121::t_df0c1ff62e90bf 25,40,71,96
+agents/src/voice/agent_session.ts
+  s_9dc60d915e2121::t_d9f80abe3f43f2 556,949-951,993-994,1518,1541,2033-2047,2323-2328,2333
+agents/src/voice/agent_session_stt_manual_flush.test.ts
+  s_9dc60d915e2121::t_18b43a071f4c9f 1-173
+agents/src/voice/agent_transcription_node.test.ts
+  s_9dc60d915e2121::t_502af897cef1f4 1-253
+agents/src/voice/agent_v2.ts
+  s_9dc60d915e2121::t_b75fbaf73f38e5 459-517
+agents/src/voice/audio_recognition.ts
+  s_9dc60d915e2121::t_a772343a3a4e52 14-15,40-46,61,196-197,202,250,252-265,288,300-363,450-451,1695-1703,1749,1859,1975-1994,2269,2568-2569,2657-2663
+agents/src/voice/audio_recognition_manual_flush.test.ts
+  s_9dc60d915e2121::t_907b3d9ce1b75a 1-172
+agents/src/voice/audio_recognition_turn_detection.test.ts
+  s_9dc60d915e2121::t_d3179ac1415032 36,78-82,868-1062
+agents/src/voice/console_io.test.ts
+  s_9dc60d915e2121::t_96a6fa06617dc3 7,107-133
+agents/src/voice/generation.ts
+  s_9dc60d915e2121::t_92809364610141 903,917-923,925-935,937-939,944-962,965-966,968-969,972,987-993,995,1014,1060,1064-1069,1073-1078,1080-1087,1114,1117,1119-1123,1147-1150,1153-1158,1174,1242-1244,1645
+agents/src/voice/generation_text_forwarding.test.ts
+  s_9dc60d915e2121::t_13de75d323be09 1-145
+agents/src/voice/generation_tts_timeout.test.ts
+  s_9dc60d915e2121::t_c9aee06ee4d32a 260-282
+agents/src/voice/interrupted_reply_cleanup.test.ts
+  s_9dc60d915e2121::t_95978c4aed5251 5,49,92-95,103-105,108-109,129,136-144,179-221
+agents/src/voice/io.ts
+  s_9dc60d915e2121::t_6853a952fa2be8 5,14,24-33
+agents/src/voice/realtime_overlapping_speech.test.ts
+  s_9dc60d915e2121::t_8177a14671f845 5-9,16-17,22,64,79,106,178-206,308-314,400-664
+agents/src/voice/remote_session.test.ts
+  s_9dc60d915e2121::t_a1bc07bb173e99 6,15,18,20,23,28-41,47,71-72,83,144-279,702-960
+agents/src/voice/remote_session.ts
+  s_9dc60d915e2121::t_7ceb7d75c221f8 5,11,33,43-44,81,97,107-108,110-193,203-206,220-224,233-237,240-256,258-261,263,280-281,285,293-294,296-299,309-320,322-327,343-350,372,375,387-393,396-398,401,409-425,427-443,456,458,471-474,486-487,491-504,515-517,519,523-527,534,553,563-569,753-764,769,774-778,790-795,797,799-828,835-840,843-851,856,859-860,863-873,876-887,891,893-896,899-906,927-937,939-944,946-949,1067-1079,1143,1145,1147,1159,1166-1176,1180,1185,1187,1189,1191,1193,1201,1203,1211,1218,1238-1239,1243,1253-1267,1271,1274,1290,1296-1302,1308-1314,1326,1329,1345,1350-1351,1353,1355-1358,1361,1370,1380-1387,1390-1391,1394-1398,1405-1410,1413,1420,1425-1426,1433,1437-1443,1580-1582,1600,1614-1615,1621,1631,1633,1640-1681
+agents/src/voice/room_io/_input.test.ts
+  s_9dc60d915e2121::t_bd2ef8cbec34cd 4,247-275
+agents/src/voice/room_io/_input.ts
+  s_9dc60d915e2121::t_7442b41ab7d4f9 4,341-354
+agents/src/voice/room_io/room_io.test.ts
+  s_9dc60d915e2121::t_40619219c99625 407,435,462-490,496,528
+agents/src/voice/room_io/room_io.ts
+  s_9dc60d915e2121::t_0f79b02fcb1906 33,342,354-364
+agents/src/voice/room_session_transport.test.ts
+  s_9dc60d915e2121::t_632d8a68178bbd 1-348
+agents/src/voice/session_host_lifecycle.test.ts
+  s_9dc60d915e2121::t_dde9879617ad33 1-746
+agents/src/voice/speech_handle.ts
+  s_9dc60d915e2121::t_59cd874e72c784 19,21-23
+agents/src/voice/tcp_session_transport.test.ts
+  s_9dc60d915e2121::t_aee70020fee3c7 1-327
+agents/src/voice/testing/index.ts
+  s_9dc60d915e2121::t_902ea31f234b8f 35
+agents/src/voice/testing/remote_session.ts
+  s_9dc60d915e2121::t_5cab94be354e6b 1-133
+agents/src/voice/testing/run_result.test.ts
+  s_9dc60d915e2121::t_8eeb2842d73131 19,137-176
+agents/src/voice/testing/run_result.ts
+  s_9dc60d915e2121::t_46f6966bc6a1cc 80,176,217,256-304,1097-1102,1106-1109,1111-1127,1146-1147,1165,1167-1181
+agents/src/voice/testing/run_result_cancellation.test.ts
+  s_9dc60d915e2121::t_e0a1fd2260a1b5 1-103
+agents/src/worker.test.ts
+  s_9dc60d915e2121::t_184417ae96b9d2 6,9,12,14,18,118-199,267-397
+agents/src/worker.ts
+  s_9dc60d915e2121::t_d53e35b9b30081 7,12,14,33-34,50-53,55,138-182,185,408-410,475,479,608-629,734-749,756,829-830,832,838,878-879,898,905-906,908-916,918-920,957,962-964,969-973,995,1044-1046
+agents/src/worker_load.test.ts
+  s_9dc60d915e2121::t_06ea0cf7467105 1-167
+examples/package.json
+  s_9dc60d915e2121::t_91b9a1b3ac3a6c 46
+examples/src/drive-thru/README.md
+  s_9dc60d915e2121::t_61fe0ce284bbee 45-59
+examples/src/drive-thru/database.ts
+  s_9dc60d915e2121::t_1084123007c14a 26
+examples/src/drive-thru/drivethru_agent.ts
+  s_9dc60d915e2121::t_79cd6767aa075b 23,388-392,398
+examples/src/drive-thru/scenarios.yaml
+  s_9dc60d915e2121::t_a3122b1194a578 1-186
+examples/src/drive-thru/simulation.ts
+  s_9dc60d915e2121::t_2475d97ae20004 1-110
+examples/src/nvidia_agent.ts
+  s_9dc60d915e2121::t_d3a3deeb03fc0e 1-39
+plugins/anam/CHANGELOG.md
+  s_9dc60d915e2121::t_33fba539a0f572 3-9
+plugins/anam/package.json
+  s_9dc60d915e2121::t_7c3ffc24cc1fbe 3
+plugins/anthropic/CHANGELOG.md
+  s_9dc60d915e2121::t_9b081ca68d63be 3-9
+plugins/anthropic/package.json
+  s_9dc60d915e2121::t_5b963365fd9fd0 3
+plugins/assemblyai/CHANGELOG.md
+  s_9dc60d915e2121::t_1a896c75bc7d87 3-11
+plugins/assemblyai/package.json
+  s_9dc60d915e2121::t_0de0c1b314762d 3
+plugins/azure/CHANGELOG.md
+  s_9dc60d915e2121::t_b332703d05d4bd 3-9
+plugins/azure/package.json
+  s_9dc60d915e2121::t_4f29e30ed84e12 3
+plugins/baseten/CHANGELOG.md
+  s_9dc60d915e2121::t_614cb3aa388ab1 3-9
+plugins/baseten/package.json
+  s_9dc60d915e2121::t_54b821b255b592 3
+plugins/bey/CHANGELOG.md
+  s_9dc60d915e2121::t_59e301ef710c51 3-9
+plugins/bey/package.json
+  s_9dc60d915e2121::t_3d395d0ddae97d 3
+plugins/cartesia/CHANGELOG.md
+  s_9dc60d915e2121::t_c19c6ef466b184 3-9
+plugins/cartesia/package.json
+  s_9dc60d915e2121::t_f317e0b739164c 3
+plugins/cerebras/CHANGELOG.md
+  s_9dc60d915e2121::t_e4446061d40b45 3-10
+plugins/cerebras/package.json
+  s_9dc60d915e2121::t_32ce0396ec70a5 3
+plugins/deepgram/CHANGELOG.md
+  s_9dc60d915e2121::t_a9249656cbd503 3-17
+plugins/deepgram/package.json
+  s_9dc60d915e2121::t_3532277cc4e88e 3
+plugins/did/CHANGELOG.md
+  s_9dc60d915e2121::t_f660d54958645e 3-9
+plugins/did/package.json
+  s_9dc60d915e2121::t_76ea638f06ebe7 3
+plugins/elevenlabs/CHANGELOG.md
+  s_9dc60d915e2121::t_74382bf196f464 3-9
+plugins/elevenlabs/package.json
+  s_9dc60d915e2121::t_0a81c42133613b 3
+plugins/fishaudio/CHANGELOG.md
+  s_9dc60d915e2121::t_650c796a959997 3-9
+plugins/fishaudio/package.json
+  s_9dc60d915e2121::t_e99a2c5899bc10 3
+plugins/google/CHANGELOG.md
+  s_9dc60d915e2121::t_3f1d4c5a277f1c 3-9
+plugins/google/etc/agents-plugin-google.api.md
+  s_9dc60d915e2121::t_f388cb4e7da88f 15,27,35,351-352,362,367,369,401,404,407-408,410,576,581
+plugins/google/package.json
+  s_9dc60d915e2121::t_110caf86629848 3
+plugins/google/src/realtime/realtime_api.test.ts
+  s_9dc60d915e2121::t_8acb2d0da3250e 11,686-694
+plugins/google/src/realtime/realtime_api.ts
+  s_9dc60d915e2121::t_5792e4c083b1d8 52-64,589-590,600-601,655-657,663,1115-1122,1125,1129-1132,1145-1148,1164-1181,1184-1199,1205-1208,1245-1250,1256-1257,1259,1261,1265,1267,1270-1285,1300,1350-1356,1389,1503-1506,1512,1720,2089-2127
+plugins/google/src/realtime/realtime_goaway.test.ts
+  s_9dc60d915e2121::t_4bea8081338472 1-166
+plugins/google/src/realtime/realtime_reconnect.test.ts
+  s_9dc60d915e2121::t_b227e212c79184 1-475
+plugins/hume/CHANGELOG.md
+  s_9dc60d915e2121::t_1222089a7234be 3-9
+plugins/hume/package.json
+  s_9dc60d915e2121::t_1312db4decc50e 3
+plugins/inworld/CHANGELOG.md
+  s_9dc60d915e2121::t_41f2459cfb58e4 3-9
+plugins/inworld/etc/agents-plugin-inworld.api.md
+  s_9dc60d915e2121::t_8d9ed426e20c39 157
+plugins/inworld/package.json
+  s_9dc60d915e2121::t_d21291b4b8d854 3
+plugins/inworld/src/tts.ts
+  s_9dc60d915e2121::t_8f7de5a2f0af5f 34,47,65-69,73-77,109,116,184-188,584-588,752-758,761,766-768,771,774-781,787-791,794-797,799-806,825-828,832-835,872,884-887,895-897,923-931
+plugins/inworld/src/tts_auto_mode.test.ts
+  s_9dc60d915e2121::t_e92f2ed35cd119 1-105
+plugins/inworld/src/tts_context.test.ts
+  s_9dc60d915e2121::t_b5fd670e575d01 1-173
+plugins/krisp/CHANGELOG.md
+  s_9dc60d915e2121::t_34983590e92f3e 3-11
+plugins/krisp/package.json
+  s_9dc60d915e2121::t_38be0eb9d66bad 3,48
+plugins/lemonslice/CHANGELOG.md
+  s_9dc60d915e2121::t_12d3c8c59d9077 3-9
+plugins/lemonslice/README.md
+  s_9dc60d915e2121::t_c055f41f5acd7b 78-79
+plugins/lemonslice/etc/agents-plugin-lemonslice.api.md
+  s_9dc60d915e2121::t_b3cf1768f04c35 10,13,28,76,83
+plugins/lemonslice/package.json
+  s_9dc60d915e2121::t_33968894413c35 3
+plugins/lemonslice/src/avatar.test.ts
+  s_9dc60d915e2121::t_8bd87516d21e9a 62,127
+plugins/lemonslice/src/avatar.ts
+  s_9dc60d915e2121::t_c5b894cf1c4837 29-30,81-89,171-172,234-241,355,531-536,538-545
+plugins/liveavatar/CHANGELOG.md
+  s_9dc60d915e2121::t_0ca112ae9c1747 3-9
+plugins/liveavatar/package.json
+  s_9dc60d915e2121::t_4f4bbc7d5a91a2 3
+plugins/livekit/CHANGELOG.md
+  s_9dc60d915e2121::t_c7a271491c1d21 3-9
+plugins/livekit/package.json
+  s_9dc60d915e2121::t_bb641e9a71f42c 3
+plugins/meta/CHANGELOG.md
+  s_9dc60d915e2121::t_81ecc58d6eed78 3-9
+plugins/meta/package.json
+  s_9dc60d915e2121::t_fe4ce80cb4fc3b 3
+plugins/minimax/CHANGELOG.md
+  s_9dc60d915e2121::t_5e86c1421c3971 3-9
+plugins/minimax/package.json
+  s_9dc60d915e2121::t_ab85613e996791 3
+plugins/mistral/CHANGELOG.md
+  s_9dc60d915e2121::t_4c1244252aedd4 3-10
+plugins/mistral/package.json
+  s_9dc60d915e2121::t_475e1e368935e6 3
+plugins/mistralai/CHANGELOG.md
+  s_9dc60d915e2121::t_d39492aa56ce63 3-10
+plugins/mistralai/README.md
+  s_9dc60d915e2121::t_f6459230ed4344 42-85,89,93-121,125-127,131,134-146,149-161
+plugins/mistralai/etc/agents-plugin-mistralai.api.md
+  s_9dc60d915e2121::t_9cb62d60f653af 10,13,15,25,28-29,50-53,61-63,97,119,152,157,162-172,179-180,182,185-186,203-204,209-213,216,220,232-234,236,240-242,247-271,276-278,284-285,288-292,296,307,309-310,313,318-333,336
+plugins/mistralai/package.json
+  s_9dc60d915e2121::t_474fff57c9013a 3,46
+plugins/mistralai/src/llm.test.ts
+  s_9dc60d915e2121::t_75539e37b1f8fe 4,10-26,51-99
+plugins/mistralai/src/llm.ts
+  s_9dc60d915e2121::t_ef9a71e03cdf1e 37,58-59,78,114,125,143
+plugins/mistralai/src/models.ts
+  s_9dc60d915e2121::t_5853debea4c658 22-24,26,28-31,33,64-104
+plugins/mistralai/src/stt.test.ts
+  s_9dc60d915e2121::t_7ae0436cae4676 4-10,12-14,20-22,29-138
+plugins/mistralai/src/stt.ts
+  s_9dc60d915e2121::t_ee8ca0f95b0d71 10-11,16-17,24,30,36-53,56-60,66-77,80-159,161,164-165,169-193,198,200,203,209-217,219-223,234-235,238-364,368,373,375-376,378,380,386-388,390-400,404-405,409-411,414,417-426,430-467,472-473,475-478,480-484,486,492-493,495-496,499-500,502-503,506-510,512-516,518-535,538-545,547-550,553-562,564-565,567-576,581-585,587-591,593-608,610-611,613-615,619-620,622,626-631,634,641-652,654-687,689-696,698-714,716-730,732-765,768-888,890-897,899-903
+plugins/mistralai/src/tts.ts
+  s_9dc60d915e2121::t_c884770d89c540 7,9,11,18-25,30,32-35,37-74,77,80-85,90-108,110,112-117,120,125-130,139,142-145,148-156,167,171-180,190-198,209-294,301-302,307-315,323,326,330,333-338,342-343,347-350,353-354,356-358,361,369-370,373,376-433,435-476,478-479,481-492,494-507,509-565,567-576,578-582,586-591,593-720,723-744,746-748
+plugins/neuphonic/CHANGELOG.md
+  s_9dc60d915e2121::t_fcc2a35d3bf61d 3-9
+plugins/neuphonic/package.json
+  s_9dc60d915e2121::t_197d3470ae6c0c 3
+plugins/nvidia/NOTICE
+  s_9dc60d915e2121::t_59d27aad1adb8f 1-24
+plugins/nvidia/README.md
+  s_9dc60d915e2121::t_febe8aafa50714 1-73
+plugins/nvidia/api-extractor.json
+  s_9dc60d915e2121::t_1391a9276a0eea 1-5
+plugins/nvidia/etc/agents-plugin-nvidia.api.md
+  s_9dc60d915e2121::t_03335d69817ee8 1-137
+plugins/nvidia/package.json
+  s_9dc60d915e2121::t_b91c7fe1f31b2a 1-53
+plugins/nvidia/proto/riva/proto/riva_asr.proto
+  s_9dc60d915e2121::t_6393735d1eef86 1-82
+plugins/nvidia/proto/riva/proto/riva_audio.proto
+  s_9dc60d915e2121::t_638e5133966141 1-16
+plugins/nvidia/proto/riva/proto/riva_common.proto
+  s_9dc60d915e2121::t_5c16f2a81167ea 1-11
+plugins/nvidia/proto/riva/proto/riva_tts.proto
+  s_9dc60d915e2121::t_e03008c070aed4 1-42
+plugins/nvidia/src/connection.test.ts
+  s_9dc60d915e2121::t_9dc7e5e8e6667b 1-47
+plugins/nvidia/src/connection.ts
+  s_9dc60d915e2121::t_92106a4bb5f41d 1-57
+plugins/nvidia/src/index.ts
+  s_9dc60d915e2121::t_e14e6f6197d0e0 1-19
+plugins/nvidia/src/log.ts
+  s_9dc60d915e2121::t_c960e91c83f25b 1-6
+plugins/nvidia/src/proto.ts
+  s_9dc60d915e2121::t_74a6c1c921480c 1-140
+plugins/nvidia/src/stt.test.ts
+  s_9dc60d915e2121::t_d8b32449bb4d2c 1,4-38,40,43-44,47-49,51-55,57-59,61-68,70-79,81-91,94-117,119-147,149,151-156,159-172,175-179,181-182,184-211,214-218,220-228,230-238,241-242,244-246,248-249,252-258,260-263,265-278,280-285,287-296,298-310,312-326,329-338,340-342,345-360,362,364-369,371-384
+plugins/nvidia/src/stt.ts
+  s_9dc60d915e2121::t_a41c71b20043bd 1-349
+plugins/nvidia/src/tts.test.ts
+  s_9dc60d915e2121::t_564c6ca90f6d03 1-346
+plugins/nvidia/src/tts.ts
+  s_9dc60d915e2121::t_1d28b02bb9d8e9 1-401
+plugins/nvidia/tsconfig.json
+  s_9dc60d915e2121::t_6182c4db6e854b 1-15
+plugins/nvidia/tsup.config.ts
+  s_9dc60d915e2121::t_b194cbe4925bf5 1-9
+plugins/openai/CHANGELOG.md
+  s_9dc60d915e2121::t_5190140a14cbae 3-11
+plugins/openai/package.json
+  s_9dc60d915e2121::t_c8c792d3456405 3
+plugins/perplexity/CHANGELOG.md
+  s_9dc60d915e2121::t_c1173a95a44d04 3-10
+plugins/perplexity/package.json
+  s_9dc60d915e2121::t_51b4508b0dc13e 3
+plugins/phonic/CHANGELOG.md
+  s_9dc60d915e2121::t_0b1bd5bcbd0d37 3-9
+plugins/phonic/package.json
+  s_9dc60d915e2121::t_95a41621d3196b 3
+plugins/protoface/CHANGELOG.md
+  s_9dc60d915e2121::t_f770560e6e833d 3-9
+plugins/protoface/package.json
+  s_9dc60d915e2121::t_e7db98d97b8820 3
+plugins/resemble/CHANGELOG.md
+  s_9dc60d915e2121::t_63936dfc634da5 3-9
+plugins/resemble/package.json
+  s_9dc60d915e2121::t_78fe126f0deac9 3
+plugins/rime/CHANGELOG.md
+  s_9dc60d915e2121::t_c0b360ed41a408 3-9
+plugins/rime/package.json
+  s_9dc60d915e2121::t_e375577a084419 3
+plugins/runway/CHANGELOG.md
+  s_9dc60d915e2121::t_a630fa919f1f2c 3-9
+plugins/runway/package.json
+  s_9dc60d915e2121::t_365360e7bfa6fc 3
+plugins/sarvam/CHANGELOG.md
+  s_9dc60d915e2121::t_c02e47731e61ae 3-9
+plugins/sarvam/package.json
+  s_9dc60d915e2121::t_f06085829a8df7 3
+plugins/silero/CHANGELOG.md
+  s_9dc60d915e2121::t_e058e180dd83de 3-9
+plugins/silero/package.json
+  s_9dc60d915e2121::t_25ccc55013f4e6 3
+plugins/soniox/CHANGELOG.md
+  s_9dc60d915e2121::t_e07bfff003a7d8 3-9
+plugins/soniox/package.json
+  s_9dc60d915e2121::t_74d914b7bda6ad 3
+plugins/speechify/CHANGELOG.md
+  s_9dc60d915e2121::t_7cffa4e130b18f 3-9
+plugins/speechify/package.json
+  s_9dc60d915e2121::t_a1998570f6681a 3
+plugins/synthesia/CHANGELOG.md
+  s_9dc60d915e2121::t_79fe6ca28700ed 3-9
+plugins/synthesia/package.json
+  s_9dc60d915e2121::t_7abe0b262d7d8f 3
+plugins/tavus/CHANGELOG.md
+  s_9dc60d915e2121::t_5da8106b69d8cd 3-9
+plugins/tavus/package.json
+  s_9dc60d915e2121::t_f20fc95be9aef0 3
+plugins/test/CHANGELOG.md
+  s_9dc60d915e2121::t_cd53049cf4b0c1 3-9
+plugins/test/package.json
+  s_9dc60d915e2121::t_330dc734371951 3
+plugins/trugen/CHANGELOG.md
+  s_9dc60d915e2121::t_996c904fd831a1 3-9
+plugins/trugen/package.json
+  s_9dc60d915e2121::t_8e3f1fec0defcb 3
+plugins/xai/CHANGELOG.md
+  s_9dc60d915e2121::t_3ce8bcafe674b9 3-10
+plugins/xai/etc/agents-plugin-xai.api.md
+  s_9dc60d915e2121::t_e0a9ab5c99f8a4 78
+plugins/xai/package.json
+  s_9dc60d915e2121::t_aabd7fcf4b37d4 3
+plugins/xai/src/realtime/realtime_model.ts
+  s_9dc60d915e2121::t_94a4218b493d36 43-49,55-84
+pnpm-lock.yaml
+  s_9dc60d915e2121::t_87544464c0671a 108,120,123,143-144,265,335-337,422,456,481,515,537,602,639,670,707,732,766,800,809,843,870,901,909-910,935,966,997,1025,1050,1078,1100,1111-1112,1128,1134,1162-1187,1224,1252,1274,1299,1330,1373,1398,1432,1466,1491,1515,1540,1565,1580,1593,1621,1658,1826-1827,1838-1839,1850-1851,1862-1863,1874-1875,1886-1887,1898-1899,1910-1911,1922-1923,1934-1935,1946-1947,1958-1959,1970-1971,1982-1983,1994-1995,2006-2007,2018-2019,2030-2031,2042-2043,2054-2055,2066-2067,2072-2073,2084-2085,2096-2097,2108-2109,2120-2121,2153-2167,2392-2394,2544-2545,2550-2551,2553,2556-2557,2561,2563-2564,2566,2569-2570,2572,2575-2576,2584-2588,2668-2707,2717-2726,2731-2737,2918-2922,2928-2937,2943-2947,2953-2957,2963-2967,2973-2977,2984-2989,2996-3001,3008-3013,3020-3025,3032-3037,3044-3049,3056-3061,3068-3073,3080-3085,3092-3097,3104-3109,3116-3121,3128-3133,3139-3143,3149-3153,3159-3163,3169-3173,3179-3183,3189-3193,3295-3297,3521-3524,3708-3711,3746-3749,3765-3768,3806-3809,3845-3856,3860-3871,3933-3936,3993-3995,4002-4005,4059-4060,4064-4070,4258-4261,4282-4291,4358-4361,4407-4414,4453-4456,4578-4581,4585-4588,4612-4615,4654-4661,4735-4737,4856-4858,4941-4943,5001-5008,5024-5027,5032-5035,5071-5072,5079-5082,5115-5118,5158-5161,5239-5242,5266-5268,5291-5294,5360-5361,5399-5402,5410-5413,5427-5434,5465-5468,5521-5529,5571-5574,5579-5582,5591-5593,5614-5625,5630-5633,5655-5658,5688-5691,5824-5827,5897-5900,5956-5959,5967-5972,6138-6149,6445,6451,6457,6463,6469,6475,6481,6487,6493,6499,6505,6511,6517,6523,6529,6535,6541,6547,6553,6559,6565,6568,6574,6580,6586,6592,6618,6624-6625,6631-6646,6818-6819,6943,6946,6949,6958-6962,6964,6967,6970,6977-6981,7121,7123-7124,7128-7134,7136,7138,7155-7176,7179-7181,7377-7379,7383-7388,7392-7394,7398-7400,7404-7406,7410-7412,7416-7418,7422-7424,7428-7430,7434-7436,7440-7442,7446-7448,7452-7454,7458-7460,7464-7466,7470-7472,7476-7478,7482-7484,7488-7490,7494-7496,7500-7502,7506-7508,7512-7514,7518-7520,7524-7526,7676-7677,7830,7841,7847,7849,7855,7918-7922,8122-8135,8169-8170,8188-8192,8227-8232,8259-8264,8267-8275,8332-8333,8376-8377,8382-8383,8521,8523-8552,8829-8830,8843-8883,8922-8925,8953-8963,9017-9020,9071-9072,9213-9214,9217-9224,9256-9259,9294-9297,9362-9363,9469-9470,9541,9561-9562,9607-9610,9634-9635,9640-9643,9676,9680-9683,9704-9705,9756-9759,9843-9844,9863-9864,9882-9883,9970,9974,9977,9979,9981,10019-10023,10031-10035,10044-10052,10091-10092,10173-10215,10249-10264,10269-10277,10294-10295,10375-10394,10402-10409,10426-10427,10449-10450,10591-10592,10616,10626,10636,10644,10654,10664,10674,10697-10702,10767-10768,10775-10777,10779-10783,10790,10792-10796,10803,10806,10823,10832,10835,10852,10958-10971
+pnpm-workspace.yaml
+  s_9dc60d915e2121::t_8ae342b85d2855 10-13,19-20
+turbo.json
+  s_9dc60d915e2121::t_6f10bb8029eb63 75
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "36c1062ebc2d8b25200ab854322649aab5a38a87",
+  "prompts": {},
+  "sessions": {
+    "s_9dc60d915e2121": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3bb7b518-e716-431d-8b0e-9b5f73deb748",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
