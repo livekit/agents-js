@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { ParticipantKind, type RemoteParticipant } from '@livekit/rtc-node';
+import { ParticipantKind, type RemoteParticipant, type Room } from '@livekit/rtc-node';
 import { describe, expect, it, vi } from 'vitest';
 import { APIConnectionError } from '../_exceptions.js';
 import { type JobContext, runWithJobContext } from '../job.js';
@@ -9,6 +9,7 @@ import type { STTError } from '../stt/stt.js';
 import { Future } from '../utils.js';
 import { AgentSession, resolveRecordingOptions } from './agent_session.js';
 import { AgentSessionEventTypes, CloseReason, createUserInputTranscribedEvent } from './events.js';
+import type { SessionHost } from './remote_session.js';
 import { SpeechHandle } from './speech_handle.js';
 
 type AgentSessionInternals = AgentSession & {
@@ -24,6 +25,42 @@ type AgentSessionCloseInternals = {
   sessionHost?: { close: () => Promise<void> };
   ownsSessionHost: boolean;
 };
+
+type AgentSessionHostInternals = {
+  attachSessionHost: (makeHost: () => SessionHost, room?: Room) => void;
+  sessionHost?: SessionHost;
+  ownsSessionHost: boolean;
+};
+
+describe('AgentSession session host ownership', () => {
+  const fakeHost = () => ({ registerSession: vi.fn() }) as unknown as SessionHost;
+
+  it("shares the job-owned host with a session in the job's room", () => {
+    const jobRoom = {} as Room;
+    const jobHost = fakeHost();
+    const jobContext = { room: jobRoom, _sessionHost: jobHost } as unknown as JobContext;
+    const session = new AgentSession({ vad: null }) as unknown as AgentSessionHostInternals;
+
+    runWithJobContext(jobContext, () => session.attachSessionHost(fakeHost, jobRoom));
+
+    expect(session.sessionHost).toBe(jobHost);
+    expect(session.ownsSessionHost).toBe(false);
+  });
+
+  it('gives a session in another room its own host', () => {
+    // the job's host is bound to the job's room; a session elsewhere can't share it
+    const jobHost = fakeHost();
+    const otherHost = fakeHost();
+    const jobContext = { room: {} as Room, _sessionHost: jobHost } as unknown as JobContext;
+    const session = new AgentSession({ vad: null }) as unknown as AgentSessionHostInternals;
+
+    runWithJobContext(jobContext, () => session.attachSessionHost(() => otherHost, {} as Room));
+
+    expect(session.sessionHost).toBe(otherHost);
+    expect(session.ownsSessionHost).toBe(true);
+    expect(jobContext._sessionHost).toBe(jobHost);
+  });
+});
 
 describe('AgentSession close', () => {
   it('waits for an internal close already in progress', async () => {

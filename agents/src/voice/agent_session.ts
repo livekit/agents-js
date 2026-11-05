@@ -991,7 +991,7 @@ export class AgentSession<
       this._roomIO.start(this.sessionStartContext);
 
       const roomIO = this._roomIO;
-      this.attachSessionHost(() => new SessionHost(new RoomSessionTransport(room, roomIO)));
+      this.attachSessionHost(() => new SessionHost(new RoomSessionTransport(room, roomIO)), room);
     }
 
     const ctx = getJobContext(false);
@@ -2030,11 +2030,12 @@ export class AgentSession<
     }, this.sessionOptions.userAwayTimeout * 1000);
   }
 
-  private attachSessionHost(makeHost: () => SessionHost): void {
-    // under a job, the job owns the host so it outlives this session; without one, the
-    // session is the only owner there is
+  private attachSessionHost(makeHost: () => SessionHost, room?: Room): void {
+    // under a job, the job owns the host so it outlives this session and the simulator can
+    // still finalize over the job's room. A session in any other room, or outside a job,
+    // owns its own host: the job's host is bound to the job's room.
     const jobCtx = getJobContext(false);
-    if (jobCtx) {
+    if (jobCtx && (room === undefined || room === jobCtx.room)) {
       jobCtx._sessionHost ??= makeHost();
       this.sessionHost = jobCtx._sessionHost;
       this.ownsSessionHost = false;
