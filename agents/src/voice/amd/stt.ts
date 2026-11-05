@@ -4,11 +4,14 @@
 
 /** Attribute session and AMD STT transcripts to committed turns without access to AgentSession. */
 import type { AudioFrame } from '@livekit/rtc-node';
+import * as inference from '../../inference/index.js';
+import { CLIENT_FEATURE_HEADER } from '../../inference/utils.js';
 import { log } from '../../log.js';
 import { type STT, SpeechEventType, type SpeechStream } from '../../stt/stt.js';
 import type { APIConnectOptions } from '../../types.js';
 import { Event } from '../../utils.js';
 import { AMDTranscript, type AMDTranscriptSource } from './chat_context.js';
+import { CLIENT_FEATURE } from './inference.js';
 
 /** Buffer a turn's session and AMD transcripts. */
 export class AMDTurnTranscriptAccumulator {
@@ -115,7 +118,14 @@ export class AMDTranscriber {
     }
     try {
       if (this.stream === undefined) {
-        const stream = this.model!.stream({ connOptions: this.connOptions });
+        const model = this.model!;
+        const stream =
+          model instanceof inference.STT
+            ? model.stream({
+                connOptions: this.connOptions,
+                extraHeaders: { [CLIENT_FEATURE_HEADER]: CLIENT_FEATURE },
+              })
+            : model.stream({ connOptions: this.connOptions });
         this.stream = stream;
         this.readTask = this.read(stream);
       }

@@ -7737,7 +7737,7 @@ abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent> {
 
 // @public (undocumented)
 class SpeechStream_2<TModel extends STTModels> extends SpeechStream {
-    constructor(sttImpl: STT_2<TModel>, opts: InferenceSTTOptions<TModel>, connOptions: APIConnectOptions);
+    constructor(sttImpl: STT_2<TModel>, opts: InferenceSTTOptions<TModel>, connOptions: APIConnectOptions, extraHeaders?: Record<string, string>);
     // (undocumented)
     get label(): string;
     // @internal (undocumented)
@@ -8001,7 +8001,7 @@ class STT_2<TModel extends STTModels> extends STT {
         vad?: VAD;
     });
     // (undocumented)
-    connectWs(timeout: number): Promise<WebSocket_2>;
+    connectWs(timeout: number, extraHeaders?: Record<string, string>): Promise<WebSocket_2>;
     // (undocumented)
     static fromModelString(modelString: string): STT_2<AnyString>;
     // (undocumented)
@@ -8016,10 +8016,10 @@ class STT_2<TModel extends STTModels> extends STT {
     protected _recognize(_: AudioBuffer_2): Promise<SpeechEvent>;
     // @internal
     _sessionKeyterms: string[];
-    // (undocumented)
     stream(options?: {
         language?: STTLanguages | string;
         connOptions?: APIConnectOptions;
+        extraHeaders?: Record<string, string>;
     }): SpeechStream_2<TModel>;
     // (undocumented)
     updateOptions(opts: Partial<Pick<InferenceSTTOptions<TModel>, 'model' | 'language' | 'modelOptions'>>): void;

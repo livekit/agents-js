@@ -28,7 +28,13 @@ import {
   sttKnownServerEventSchema,
   sttServerEventSchema,
 } from './api_protos.js';
-import { type AnyString, connectWs, createAccessToken, getDefaultInferenceUrl } from './utils.js';
+import {
+  type AnyString,
+  buildMetadataHeaders,
+  connectWs,
+  createAccessToken,
+  getDefaultInferenceUrl,
+} from './utils.js';
 import { VAD as InferenceVAD } from './vad.js';
 
 export type DeepgramModels =
@@ -738,18 +744,28 @@ export class STT<TModel extends STTModels> extends BaseSTT {
     }
   }
 
+  /**
+   * Create a streaming transcription session.
+   *
+   * `extraHeaders` are sent on every connection the stream opens, reconnects included. SDK
+   * identification headers take precedence.
+   */
   stream(options?: {
     language?: STTLanguages | string;
     connOptions?: APIConnectOptions;
+    extraHeaders?: Record<string, string>;
   }): SpeechStream<TModel> {
-    const { language, connOptions = this.opts.connOptions ?? DEFAULT_API_CONNECT_OPTIONS } =
-      options || {};
+    const {
+      language,
+      connOptions = this.opts.connOptions ?? DEFAULT_API_CONNECT_OPTIONS,
+      extraHeaders,
+    } = options || {};
     const streamOpts = {
       ...this.opts,
       language: language !== undefined ? normalizeLanguage(language) : this.opts.language,
     } as InferenceSTTOptions<TModel>;
 
-    const stream = new SpeechStream(this, streamOpts, connOptions);
+    const stream = new SpeechStream(this, streamOpts, connOptions, extraHeaders);
     this.streams.add(stream);
 
     return stream;
@@ -771,7 +787,7 @@ export class STT<TModel extends STTModels> extends BaseSTT {
     );
   }
 
-  async connectWs(timeout: number): Promise<WebSocket> {
+  async connectWs(timeout: number, extraHeaders: Record<string, string> = {}): Promise<WebSocket> {
     // a copy of the caller's options: the hint is gated on this frame, never cleared from them
     const extra = {
       ...this.opts.modelOptions,
@@ -825,7 +841,11 @@ export class STT<TModel extends STTModels> extends BaseSTT {
 
     const token = await createAccessToken(this.opts.apiKey, this.opts.apiSecret);
     const url = `${baseURL}/stt?model=${encodeURIComponent(this.model)}`;
-    const headers = { Authorization: `Bearer ${token}` } as Record<string, string>;
+    const headers: Record<string, string> = {
+      ...extraHeaders,
+      ...buildMetadataHeaders(),
+      Authorization: `Bearer ${token}`,
+    };
 
     const socket = await connectWs(url, headers, timeout);
     const msg = { ...params, type: 'session.create' };
@@ -846,6 +866,7 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
   private speechDuration = 0;
   private stt: STT<TModel>;
   private connOptions: APIConnectOptions;
+  private extraHeaders: Record<string, string>;
   private activeWs?: WebSocket;
 
   #logger = log();
@@ -854,11 +875,13 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
     sttImpl: STT<TModel>,
     opts: InferenceSTTOptions<TModel>,
     connOptions: APIConnectOptions,
+    extraHeaders: Record<string, string> = {},
   ) {
     super(sttImpl, opts.sampleRate, connOptions);
     this.opts = opts;
     this.stt = sttImpl;
     this.connOptions = connOptions;
+    this.extraHeaders = { ...extraHeaders };
   }
 
   get label(): string {
@@ -1212,7 +1235,7 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
       };
 
       try {
-        ws = await this.stt.connectWs(this.connOptions.timeoutMs);
+        ws = await this.stt.connectWs(this.connOptions.timeoutMs, this.extraHeaders);
         // An abort that landed during connectWs has no listener yet: the socket would
         // otherwise idle until the finalization timeout, holding a gateway concurrency slot.
         if (this.abortController.signal.aborted) break;
