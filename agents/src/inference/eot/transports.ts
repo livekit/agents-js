@@ -35,6 +35,7 @@ const AudioEncoding = AgentInference.AudioEncoding;
 const ClientMessageCtor = AgentInference.ClientMessage;
 const ServerMessageCtor = AgentInference.ServerMessage;
 const InferenceStart = AgentInference.InferenceStart;
+const MAX_UINT32 = 2 ** 32 - 1;
 const InputAudio = AgentInference.InputAudio;
 const SessionClose = AgentInference.SessionClose;
 const SessionCreate = AgentInference.SessionCreate;
@@ -279,6 +280,9 @@ export class CloudTransport implements StreamingTurnDetectionTransport {
   protected _ws: CloudWebSocket | undefined;
   protected _numRetries = 0;
   protected _connectCalls = 0;
+  /** The user turn length so far, counted since the last flush as the local
+   * transport counts it; sent with each inferenceStart. */
+  protected _turnSamples = 0;
   /** Outbound FIFO for the active connection; recreated per `_runOnce`. */
   protected _sendChannel: StreamChannel<ClientMsg> | undefined;
   /** Set by `detach()`; stops the retry loop and suppresses the
@@ -325,15 +329,19 @@ export class CloudTransport implements StreamingTurnDetectionTransport {
   }
 
   runInference(requestId: string): void {
+    // the gateway adds the audio that reaches it after this message
+    const turnSamples = Math.min(this._turnSamples, MAX_UINT32);
     this._enqueue(
       new ClientMessageCtor({
-        message: { case: 'inferenceStart', value: new InferenceStart({ requestId }) },
+        message: { case: 'inferenceStart', value: new InferenceStart({ requestId, turnSamples }) },
       }),
     );
   }
 
   async pushFrame(frame: AudioFrame): Promise<void> {
     if (frame.data.byteLength === 0) return;
+    // count the turn even while disconnected: the user keeps speaking
+    this._turnSamples += frame.samplesPerChannel;
     this._enqueue(
       new ClientMessageCtor({
         message: {
@@ -348,9 +356,13 @@ export class CloudTransport implements StreamingTurnDetectionTransport {
     );
   }
 
-  onStartOfTurn(_elapsed: number): void {}
+  onStartOfTurn(elapsed: number): void {
+    const elapsedSamples = Math.floor((elapsed * this._opts.sampleRate) / 1000);
+    this._turnSamples = Math.min(this._turnSamples, elapsedSamples);
+  }
 
   async flush(_sentinel: FlushSentinel): Promise<void> {
+    this._turnSamples = 0;
     this._enqueue(
       new ClientMessageCtor({ message: { case: 'sessionFlush', value: new SessionFlush() } }),
     );

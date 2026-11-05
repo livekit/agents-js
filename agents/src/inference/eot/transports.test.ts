@@ -274,6 +274,34 @@ describe('CloudStreamSendOrdering', () => {
   });
 });
 
+describe('CloudStreamTurnSamples', () => {
+  it('inferenceStart carries the turn length counted from the turn start', async () => {
+    const { stream, fakeWs, transport } = makeStream({ connectScript: [null] });
+    try {
+      await waitUntilConnected(transport);
+      await transport.pushFrame(pcmFrame(8000)); // silence before the user speaks
+      await transport.pushFrame(pcmFrame(4000));
+      transport.onStartOfTurn(250);
+      for (let i = 0; i < 100; i++) await transport.pushFrame(pcmFrame(1600));
+      transport.runInference('past-the-window');
+      await transport.flush({ kind: 'flush' });
+      await transport.pushFrame(pcmFrame(320));
+      transport.runInference('after-flush');
+      await drainSendQueue(transport);
+
+      const starts: Record<string, number> = {};
+      for (const m of fakeWs.sent) {
+        if (m.message.case === 'inferenceStart') {
+          starts[m.message.value.requestId] = m.message.value.turnSamples;
+        }
+      }
+      expect(starts).toEqual({ 'past-the-window': 4000 + 100 * 1600, 'after-flush': 320 });
+    } finally {
+      await stream.aclose();
+    }
+  });
+});
+
 class RecordingExecutor implements InferenceExecutor {
   calls: EotInferenceInput[] = [];
 
