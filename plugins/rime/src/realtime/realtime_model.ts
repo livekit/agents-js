@@ -6,25 +6,21 @@ import {
   DEFAULT_API_CONNECT_OPTIONS,
   type RealtimeModelMetrics,
   llm,
-  type voice,
 } from '@livekit/agents';
 import { AudioFrame, AudioResampler } from '@livekit/rtc-node';
 import type * as r from '@rimelabs/sdk';
-import { AsyncLocalStorage } from 'node:async_hooks';
 import { setTimeout as delay } from 'node:timers/promises';
 import { validateEndpoint } from '../options.js';
-import { HistoryUpdateError, type HistoryUpdateNotice, PrismHistory } from './history.js';
-import { type OutputToken, Playback, type PlaybackMode, PrismAudioOutput } from './playback.js';
+import { HistoryUpdateError, PrismHistory } from './history.js';
+import { Playback, type PlaybackMode } from './playback.js';
 import { OutputQueue, SerialQueue } from './streams.js';
 
 /** Connection settings. A supplied SDK client remains caller-owned. */
 export interface RealtimeModelOptions {
   /** Default shared history preserves omitted items across tasks. Strict mode applies exact edits. */
   contextMode?: 'shared' | 'strict';
-  /** Default auto reports measured output when wrapped, and uses estimates elsewhere. */
+  /** Auto and estimated use provider playback estimates. Discard reports zero playback. */
   playback?: PlaybackMode;
-  /** Called synchronously after a rejected, partial, or uncertain history update. */
-  onHistoryUpdate?: (notice: HistoryUpdateNotice) => void;
   /** Initial connection attempts only. Durations are milliseconds. */
   connOptions?: Partial<APIConnectOptions>;
   /** Overall budget for connection attempts and retry delays. Default 30000 milliseconds. */
@@ -132,34 +128,11 @@ export class PrismIdleTimeoutError extends llm.RealtimeError {
 class InstructionItemError extends llm.RealtimeError {}
 const TOOL_RESULT_INSTRUCTION =
   "Continue according to the agent's instructions, using this tool result. Reply or call a tool as appropriate.";
-interface ContextEdit {
-  session: RealtimeSession;
-  operation: 'replace' | 'reconcile';
-  target: llm.ChatContext;
-  revision: number;
-  consumed: boolean;
-  active: boolean;
-}
-const contextEdit = new AsyncLocalStorage<ContextEdit>();
-// Explicit provider projections preserve calls belonging to a parent task. Only these
-// short-lived context values bypass the core's current-tool filtering.
-class HistoryProjection extends llm.ChatContext {
-  override copy(options: Parameters<llm.ChatContext['copy']>[0] = {}): HistoryProjection {
-    return new HistoryProjection(super.copy({ ...options, toolCtx: undefined }).items);
-  }
-}
-function sameContext(a: llm.ChatContext, b: llm.ChatContext): boolean {
-  const project = (c: llm.ChatContext) =>
-    c.copy({ excludeHandoff: true, excludeConfigUpdate: true }).items;
-  return JSON.stringify(project(a)) === JSON.stringify(project(b));
-}
-
 /** Prism speech-to-speech model. Owns at most one open conversation at a time. */
 export class RealtimeModel extends llm.RealtimeModel {
   private active?: RealtimeSession;
   private closed = false;
   private readonly options: RealtimeModelOptions;
-  private wrapped = false;
 
   /** Copy connection settings. Opening a session starts the connection asynchronously. */
   constructor(options: RealtimeModelOptions = {}) {
@@ -216,77 +189,14 @@ export class RealtimeModel extends llm.RealtimeModel {
       responseMetadata: options.responseMetadata && { ...options.responseMetadata },
     };
   }
-  /** Install the returned output before generating speech. */
-  wrapAudioOutput(output: voice.AudioOutput): voice.AudioOutput {
-    this.wrapped = true;
-    return new PrismAudioOutput(output);
-  }
-  /** @internal */
-  get measuredPlayback(): boolean {
-    return this.wrapped;
-  }
-  /** Apply provider settings and wait for acknowledgment. */
-  updateOptions(options: SessionOptions): Promise<void> {
-    return this.updateSession(options);
-  }
-  /** Apply an exact history edit. Pause competing context edits and handoffs. */
-  replaceChatCtx(agent: voice.Agent, ctx: llm.ChatContext): Promise<void> {
-    return this.editContext(agent, ctx, 'replace');
-  }
-  /** Clear completed history. Pending calls cannot be removed. */
-  clearChatCtx(agent: voice.Agent): Promise<void> {
-    return this.replaceChatCtx(agent, llm.ChatContext.empty());
-  }
-  /** Repair local context from confirmed history without writing to the provider. */
-  reconcileChatCtx(agent: voice.Agent): Promise<void> {
-    return this.editContext(agent, undefined, 'reconcile');
-  }
-  private async editContext(
-    agent: voice.Agent,
-    target: llm.ChatContext | undefined,
-    operation: 'replace' | 'reconcile',
-  ): Promise<void> {
-    const owner = agent.session,
-      session = this.active;
-    if (owner.currentAgent !== agent || (agent.llm ?? owner.llm) !== this || !session)
-      throw new HistoryUpdateError('The active agent must use this Rime model directly');
-    const prepared = await session.prepareContextEdit(target ?? agent.chatCtx, operation);
-    const local = agent.chatCtx.items.filter(
-      (i) => i.type === 'agent_handoff' || i.type === 'agent_config_update',
-    );
-    const ids = new Set(prepared.target.items.map((i) => i.id));
-    prepared.target.items.push(...local.filter((i) => !ids.has(i.id)));
-    const token: ContextEdit = {
-      session,
-      operation,
-      target: prepared.target,
-      revision: prepared.revision,
-      consumed: false,
-      active: true,
-    };
-    try {
-      await contextEdit.run(token, () =>
-        agent.updateChatCtx(new HistoryProjection(prepared.target.items)),
-      );
-      if (!token.consumed || this.active !== session || owner.currentAgent !== agent)
-        throw new HistoryUpdateError('The active provider did not consume the history edit');
-    } catch (error) {
-      if (
-        operation === 'replace' &&
-        error instanceof HistoryUpdateError &&
-        error.recoverable &&
-        token.consumed
-      ) {
-        try {
-          await this.reconcileChatCtx(agent);
-          error.needsReconciliation = false;
-        } catch {
-          /* Preserve the original failure. */
-        }
-      }
-      throw error;
-    } finally {
-      token.active = false;
+  /** Queue copied provider settings. Accepted changes persist for future sessions. */
+  updateOptions(options: SessionOptions): void {
+    if (this.closed) throw new llm.RealtimeError('Rime model is closed');
+    const copy = structuredClone(options);
+    if (this.active && !this.active.isClosed) this.active.updateOptions(copy);
+    else {
+      for (const key of ['voice', 'truncation', 'responseMetadata', 'toolFillers'] as const)
+        if (copy[key] !== undefined) Object.assign(this.options, { [key]: copy[key] });
     }
   }
   /** Provider model name. */
@@ -315,14 +225,6 @@ export class RealtimeModel extends llm.RealtimeModel {
     this.active = new RealtimeSession(this, this.options);
     return this.active;
   }
-  /**
-   * Copy and apply settings to the current session. Each acknowledged change persists for
-   * future sessions, even if a later metadata update fails. The update is not atomic.
-   */
-  async updateSession(options: SessionOptions): Promise<void> {
-    if (!this.active) throw new llm.RealtimeError('Prism session is not open');
-    await this.active.updateSession(options);
-  }
   /** Read completed provider history without replacing the local conversation record. */
   async getHistory(): Promise<readonly r.HistoryItem[]> {
     if (!this.active) throw new llm.RealtimeError('Prism session is not open');
@@ -342,7 +244,6 @@ export class RealtimeModel extends llm.RealtimeModel {
 
 interface Message {
   output: r.OutputRef;
-  token?: OutputToken;
   text: OutputQueue<string>;
   audio: OutputQueue<AudioFrame>;
   transcript: string;
@@ -387,6 +288,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   private failure?: Error;
   private tasks = new Set<Promise<unknown>>();
   private settings = new SerialQueue();
+  private optionsTask: Promise<void> = Promise.resolve();
   private instructionEdits = new SerialQueue();
   private instructionItems = new Map<string, { responseId: string; ended: boolean }>();
   private deletedInstructionIds = new Set<string>();
@@ -462,8 +364,6 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.playback = new Playback(
       sdk,
       this.options.playback ?? 'auto',
-      this.options.requestTimeout ?? 10000,
-      () => (this.realtimeModel as RealtimeModel).measuredPlayback,
       async (report) => {
         try {
           await this.requireSdk().reportPlayback(report);
@@ -598,13 +498,9 @@ export class RealtimeSession extends llm.RealtimeSession {
   updateInstructions(instructions: string): Promise<void> {
     return this.applySettings({ instructions });
   }
-  /** Copy and replace function tools. Remove fillers for tools that are no longer registered. */
+  /** Copy and replace active function tools. Keep fillers for later handoffs. */
   updateTools(tools: llm.ToolContext): Promise<void> {
     return this.applySettings({ tools: tools.copy() });
-  }
-  /** Copy provider settings and save each accepted change for future sessions. */
-  updateSession(options: SessionOptions): Promise<void> {
-    return this.applySettings(structuredClone(options));
   }
   private definitions(tools = this.toolContext, fillers = this.fillers): r.ToolDefinition[] {
     const definitions = tools.flatten().map((tool) => {
@@ -617,65 +513,94 @@ export class RealtimeSession extends llm.RealtimeSession {
         prismFiller: fillers[tool.name],
       };
     });
-    if (Object.keys(fillers).some((name) => !definitions.some((tool) => tool.name === name)))
-      throw new llm.RealtimeError('Prism fillers must name registered tools');
     return definitions;
   }
   private applySettings(
     options: SessionOptions & { instructions?: string; tools?: llm.ToolContext },
   ): Promise<void> {
-    return this.operation(() =>
-      this.settings.run(async () => {
-        const sdk = this.requireSdk();
-        const tools = options.tools ?? this.toolContext;
-        let fillers = options.toolFillers ?? this.fillers;
-        if (options.tools && !options.toolFillers)
-          fillers = Object.fromEntries(
-            Object.entries(fillers).filter(([name]) => tools.hasTool(name)),
-          );
-        const definitions =
-          options.tools || options.toolFillers ? this.definitions(tools, fillers) : undefined;
-        if (
-          options.instructions !== undefined ||
-          definitions ||
-          options.voice !== undefined ||
-          options.truncation !== undefined
-        ) {
-          await sdk.update({
-            instructions: options.instructions,
-            tools: definitions,
-            voice: options.voice,
-            truncation: options.truncation,
-          });
-          this.toolContext = tools;
-          this.fillers = fillers;
-          // The model shares these options with its session. Persist each acknowledged
-          // mutation before the next request, which may fail independently.
-          if (options.voice !== undefined) this.options.voice = options.voice;
-          if (options.truncation !== undefined)
-            this.options.truncation = structuredClone(options.truncation);
-          this.options.toolFillers = structuredClone(fillers);
-          this.emit('session_updated', this.sessionInfo);
-        }
-        if (options.responseMetadata !== undefined) {
-          await sdk.setResponseMetadata(options.responseMetadata);
-          this.options.responseMetadata = { ...options.responseMetadata };
-          this.emit('session_updated', this.sessionInfo);
-        }
-      }),
-    );
+    const pending = this.optionsTask;
+    return this.operation(async () => {
+      await pending;
+      await this.sendSettings(options);
+    });
+  }
+  private sendSettings(
+    options: SessionOptions & { instructions?: string; tools?: llm.ToolContext },
+  ): Promise<void> {
+    return this.settings.run(async () => {
+      const sdk = this.requireSdk();
+      const tools = options.tools ?? this.toolContext;
+      const fillers = options.toolFillers ?? this.fillers;
+      const definitions =
+        options.tools || options.toolFillers ? this.definitions(tools, fillers) : undefined;
+      if (
+        options.instructions !== undefined ||
+        definitions ||
+        options.voice !== undefined ||
+        options.truncation !== undefined
+      ) {
+        await sdk.update({
+          instructions: options.instructions,
+          tools: definitions,
+          voice: options.voice,
+          truncation: options.truncation,
+        });
+        this.toolContext = tools;
+        this.fillers = fillers;
+        // The model shares these options with its session. Persist each acknowledged
+        // mutation before the next request, which may fail independently.
+        if (options.voice !== undefined) this.options.voice = options.voice;
+        if (options.truncation !== undefined)
+          this.options.truncation = structuredClone(options.truncation);
+        this.options.toolFillers = structuredClone(fillers);
+        this.emit('session_updated', this.sessionInfo);
+      }
+      if (options.responseMetadata !== undefined) {
+        await sdk.setResponseMetadata(options.responseMetadata);
+        this.options.responseMetadata = { ...options.responseMetadata };
+        this.emit('session_updated', this.sessionInfo);
+      }
+    });
   }
   /** Set auto or none tool choice for future reply requests. Null restores auto. */
-  updateOptions(options: { toolChoice?: llm.ToolChoice | null }): void {
-    if (options.toolChoice === undefined) return;
+  updateOptions(options: SessionOptions & { toolChoice?: llm.ToolChoice | null }): void {
+    if (this.closed || this.failure)
+      throw this.failure ?? new llm.RealtimeError('Prism session is closed');
     if (
+      options.toolChoice !== undefined &&
       options.toolChoice !== null &&
       options.toolChoice !== 'auto' &&
       options.toolChoice !== 'none'
     ) {
       throw new llm.RealtimeError('Prism supports only auto or none tool choice');
     }
-    this.toolChoice = options.toolChoice ?? 'auto';
+    const copy: SessionOptions = structuredClone(options);
+    delete (copy as SessionOptions & { toolChoice?: unknown }).toolChoice;
+    if (options.toolChoice !== undefined) this.toolChoice = options.toolChoice ?? 'auto';
+    if (!Object.values(copy).some((value) => value !== undefined)) return;
+    const previous = this.optionsTask;
+    this.optionsTask = (async () => {
+      await previous;
+      await this.initialized;
+      this.requireSdk();
+      try {
+        await this.sendSettings(copy);
+      } catch (error) {
+        this.requireSdk();
+        const types = this.sdkTypes!;
+        if (
+          (error instanceof types.RimeRealtimeError && error.fault.scope === 'event') ||
+          error instanceof types.RimeInputError ||
+          error instanceof types.RimeResourceLimitError ||
+          error instanceof types.RealtimeAdmissionTimeout
+        ) {
+          this.emitError(this.normalize(error), true);
+          return;
+        }
+        throw error;
+      }
+    })();
+    this.background(this.optionsTask);
   }
   /** Read completed provider history after pending edits, without changing local history. */
   getHistory(): Promise<readonly r.HistoryItem[]> {
@@ -713,23 +638,8 @@ export class RealtimeSession extends llm.RealtimeSession {
       if (item.type === 'function_call_output') return new llm.FunctionCallOutput({ ...item });
       return item;
     });
-    const edit = contextEdit.getStore();
     return this.operation(async () => {
-      if (edit) {
-        if (
-          !edit.active ||
-          edit.consumed ||
-          edit.session !== this ||
-          !sameContext(edit.target, copy)
-        )
-          throw new HistoryUpdateError('Expired or mismatched history operation');
-        edit.consumed = true;
-        if (edit.operation === 'reconcile') {
-          await this.history!.reconcile(copy, edit.revision);
-          return;
-        }
-      }
-      const result = await this.history!.sync(copy, !edit && this.options.contextMode !== 'strict');
+      const result = await this.history!.sync(copy, this.options.contextMode !== 'strict');
       for (const { ref, output } of result.submitted) {
         if (!output.replyRequired) {
           this.releaseToolResponse(ref);
@@ -744,33 +654,11 @@ export class RealtimeSession extends llm.RealtimeSession {
       }
       if (result.failure) {
         const error = result.failure;
-        try {
-          this.options.onHistoryUpdate?.({
-            sessionId: this.sdk!.info.sessionId,
-            status: error.status,
-            recoverable: error.recoverable,
-            confirmedChatCtx: error.confirmedChatCtx?.copy() ?? null,
-            needsReconciliation: true,
-          });
-        } catch {
-          this.logger.warn('Rime history notice callback failed');
-        }
+        this.logger.warn({ status: error.status }, 'Rime history update failed');
+        if (error.recoverable) this.emitError(error, true);
         throw error;
       }
     });
-  }
-  /** @internal */
-  async prepareContextEdit(
-    target: llm.ChatContext,
-    operation: 'replace' | 'reconcile',
-  ): Promise<{ target: llm.ChatContext; revision: number }> {
-    await this.initialized;
-    this.requireSdk();
-    await this.history!.waitForUpdates();
-    return {
-      target: operation === 'reconcile' ? this.history!.projection(target) : target.copy(),
-      revision: this.history!.revision,
-    };
   }
   private releaseToolResponse(ref: r.ResponseRef | r.ToolCallRef): void {
     if ([this.parent, this.report].some((r) => r?.responseId === ref.responseId)) return;
@@ -863,9 +751,9 @@ export class RealtimeSession extends llm.RealtimeSession {
       this.fatal(error);
     }
   }
-  /** Reject manual commits because Prism requires server turn detection. */
+  /** Ignore manual commits because Prism requires server turn detection. */
   async commitAudio(): Promise<void> {
-    throw new llm.RealtimeError('Prism commits speech through server turn detection');
+    this.logger.warn('Prism commits speech through server turn detection; manual commit ignored');
   }
   /** Clear provider input after previously queued sends and before subsequent sends. */
   clearAudio(): Promise<void> {
@@ -894,6 +782,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     instructions?: string,
     options: { signal?: AbortSignal; metadata?: r.Labels } = {},
   ): Promise<PrismGenerationCreatedEvent> {
+    const pendingOptions = this.optionsTask;
     const metadata = options.metadata && { ...options.metadata };
     // Snapshot before the core resets the session-level option.
     const disableTools = this.toolChoice === 'none';
@@ -908,6 +797,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
     this.setToolReply();
     return this.operation(async () => {
+      await pendingOptions;
       options.signal?.throwIfAborted();
       await this.history!.waitForUpdates();
       await this.playback?.settle();
@@ -1277,7 +1167,6 @@ export class RealtimeSession extends llm.RealtimeSession {
         };
         const message: Message = {
           output: payload.output,
-          token: this.playback!.output(payload.output),
           text: new OutputQueue(256, cancel),
           audio: new OutputQueue(256, cancel),
           transcript: '',
@@ -1324,7 +1213,6 @@ export class RealtimeSession extends llm.RealtimeSession {
             const samples = new Int16Array(data.length / 2);
             for (let i = 0; i < samples.length; i++) samples[i] = view.getInt16(i * 2, true);
             const frame = new AudioFrame(samples, 24000, 1, samples.length);
-            this.playback!.tag(message.token, frame);
             message.audio.push(frame);
           }
         } else message.audio.close();

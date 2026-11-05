@@ -117,16 +117,18 @@ describe('Prism SDK adapter', () => {
   });
 
   it('retains accepted settings when a later metadata update is refused', async () => {
-    const { peer, model, session } = await setup();
+    const { peer, model, session, errors } = await setup();
     peer.onRequest = (request) => {
       if (request.type === 'session.update' && request.session?.prism_response_metadata) {
         peer.fault(request, 'invalid_metadata');
         return true;
       }
     };
-    await expect(
-      model.updateSession({ voice: 'accepted-voice', responseMetadata: { step: '2' } }),
-    ).rejects.toThrow();
+    expect(
+      model.updateOptions({ voice: 'accepted-voice', responseMetadata: { step: '2' } }),
+    ).toBeUndefined();
+    await session.updateInstructions('After options');
+    expect(errors.some((error) => error.recoverable)).toBe(true);
     expect(model.sessionInfo?.voice).toBe('accepted-voice');
     await session.close();
     const before = peer.requests.length;
@@ -141,9 +143,9 @@ describe('Prism SDK adapter', () => {
   it('persists the settings snapshot instead of later caller mutations', async () => {
     const { peer, model, session } = await setup();
     const options = { voice: 'requested-voice' };
-    const update = model.updateSession(options);
+    model.updateOptions(options);
     options.voice = 'mutated-after-call';
-    await update;
+    await session.updateInstructions('After options');
     expect(model.sessionInfo?.voice).toBe('requested-voice');
     await session.close();
     const before = peer.requests.length;
@@ -411,7 +413,7 @@ describe('Prism SDK adapter', () => {
       'server turn detection',
     );
     const { session } = await setup();
-    await expect(session.commitAudio()).rejects.toThrow('server turn detection');
+    await expect(session.commitAudio()).resolves.toBeUndefined();
     expect(() => session.updateOptions({ toolChoice: 'required' })).toThrow('auto or none');
   });
   it('routes requested and automatic generations once and produces PCM audio', async () => {

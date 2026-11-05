@@ -23,13 +23,6 @@ export class PrismHistoryUpdateError extends Error {
 }
 export { PrismHistoryUpdateError as HistoryUpdateError };
 const HistoryUpdateError = PrismHistoryUpdateError;
-export interface HistoryUpdateNotice {
-  sessionId: string;
-  status: PrismHistoryUpdateError['status'];
-  recoverable: boolean;
-  confirmedChatCtx: llm.ChatContext | null;
-  needsReconciliation: boolean;
-}
 interface SyncResult {
   submitted: { ref: r.ToolCallRef; output: llm.FunctionCallOutput }[];
   failure?: PrismHistoryUpdateError;
@@ -142,17 +135,6 @@ export class PrismHistory {
       ...local.items.filter((i) => i.type === 'agent_handoff' || i.type === 'agent_config_update'),
     );
     return ctx;
-  }
-  reconcile(target: llm.ChatContext, revision: number): Promise<void> {
-    return this.edits.run(async () => {
-      if (this.failure) throw this.failure;
-      if (
-        revision !== this.revision ||
-        JSON.stringify(items(target).map((i) => wire(i, false))) !==
-          JSON.stringify(items(this.projection(target)).map((i) => wire(i, false)))
-      )
-        throw new HistoryUpdateError('History changed during reconciliation');
-    });
   }
   releaseResponse(responseId: string): void {
     this.holds.get(responseId)?.release();
@@ -274,6 +256,111 @@ export class PrismHistory {
         break;
     }
   }
+  /** Normalize only unchanged progress results within acknowledged, generated history. */
+  private progressTarget(target: Item[]): Item[] {
+    const requested = new Map(target.map((item) => [item.id, item]));
+    if (requested.size !== target.length) return target;
+    const old = new Map(items(this.chat).map((item) => [item.id, item]));
+    const positions = new Map(target.map((item, index) => [item.id, index]));
+    const equal = (a: Item, b: Item) =>
+      JSON.stringify(wire(a, false)) === JSON.stringify(wire(b, false));
+    const calls = new Map(
+      target.flatMap((item) =>
+        item.type === 'function_call' &&
+        item.extra.__livekit_agents_tool_non_blocking &&
+        old.has(item.id) &&
+        equal(item, old.get(item.id)!)
+          ? [[item.callId, item] as const]
+          : [],
+      ),
+    );
+    const eligible = new Set([...calls.values()].map((item) => item.id));
+    const results = new Set<string>();
+    for (const item of target) {
+      const previous = old.get(item.id);
+      if (!previous) continue;
+      if (item.type === 'function_call_output') {
+        const call = calls.get(item.callId);
+        if (call && positions.get(call.id)! < positions.get(item.id)! && equal(item, previous)) {
+          eligible.add(item.id);
+          results.add(item.id);
+        }
+      } else if (
+        item.type === 'message' &&
+        previous.type === 'message' &&
+        item.role === 'assistant' &&
+        previous.role === 'assistant' &&
+        item.content.every((part) => typeof part === 'string') &&
+        this.variants.get(item.id)?.has(item.textContent ?? '')
+      )
+        eligible.add(item.id);
+    }
+    const blocks = new Map<string, number>();
+    const acknowledged = new Map(this.chat.items.map((item, index) => [item.id, index]));
+    let block = 0;
+    for (const item of this.chat.items) {
+      if (eligible.has(item.id)) blocks.set(item.id, block);
+      else block++;
+    }
+    const normalized = [...target];
+    for (let start = 0; start < normalized.length; ) {
+      const group = blocks.get(normalized[start]!.id);
+      let end = start + 1;
+      if (group !== undefined) {
+        while (end < normalized.length && blocks.get(normalized[end]!.id) === group) end++;
+        const current = normalized.slice(start, end);
+        const ordered = [...current].sort(
+          (a, b) => acknowledged.get(a.id)! - acknowledged.get(b.id)!,
+        );
+        const fixed = (values: Item[]) =>
+          values.filter((item) => !results.has(item.id)).map((item) => item.id);
+        if (JSON.stringify(fixed(current)) === JSON.stringify(fixed(ordered)))
+          normalized.splice(start, end - start, ...ordered);
+      }
+      start = end;
+    }
+    return this.includeLateProgressMessages(normalized);
+  }
+  /** A stale progress-only append must not delete output observed after its capture. */
+  private includeLateProgressMessages(target: Item[]): Item[] {
+    const old = new Set(this.chat.items.map((item) => item.id));
+    const added = target.filter((item) => !old.has(item.id));
+    if (
+      !added.length ||
+      added.length % 2 ||
+      target.slice(-added.length).some((item, index) => item !== added[index])
+    )
+      return target;
+    for (let index = 0; index < added.length; index += 2) {
+      const call = added[index]!,
+        output = added[index + 1]!;
+      if (
+        call.type !== 'function_call' ||
+        !call.extra.__livekit_agents_tool_non_blocking ||
+        output.type !== 'function_call_output' ||
+        call.callId !== output.callId
+      )
+        return target;
+    }
+    const requested = new Map(target.map((item) => [item.id, item]));
+    const missing = this.chat.items.filter((item) => !requested.has(item.id));
+    const capturedAt = Math.max(...added.map((item) => item.createdAt));
+    if (
+      !missing.length ||
+      missing.some(
+        (item) =>
+          item.type !== 'message' ||
+          item.role !== 'assistant' ||
+          !this.variants.has(item.id) ||
+          item.createdAt <= capturedAt,
+      )
+    )
+      return target;
+    const retained = this.chat.items.filter((item) => requested.has(item.id));
+    if (target.slice(0, -added.length).some((item, index) => item.id !== retained[index]?.id))
+      return target;
+    return [...items(this.chat).map((item) => requested.get(item.id) ?? item), ...added];
+  }
   private sharedTarget(target: Item[]): Item[] {
     const old = new Map(items(this.chat).map((item, index) => [item.id, { item, index }]));
     const additions: Item[] = [],
@@ -282,15 +369,15 @@ export class PrismHistory {
     for (const item of target) {
       if (seen.has(item.id)) throw new HistoryUpdateError('Prism history item IDs must be unique');
       seen.add(item.id);
-      if (item.type === 'function_call' && item.extra.__livekit_agents_tool_non_blocking)
-        throw new HistoryUpdateError('Prism does not support tool progress updates');
       const previous = old.get(item.id);
       if (!previous) {
         additions.push(item);
         continue;
       }
       if (additions.length || previous.index < last)
-        throw new HistoryUpdateError('Shared history requires append order; use replaceChatCtx');
+        throw new HistoryUpdateError(
+          'Shared history requires append order; use strict context mode',
+        );
       last = previous.index;
       if (JSON.stringify(wire(previous.item, false)) === JSON.stringify(wire(item, false)))
         continue;
@@ -303,7 +390,7 @@ export class PrismHistory {
       )
         continue;
       throw new HistoryUpdateError(
-        'Shared history conflicts with confirmed content; use replaceChatCtx',
+        'Shared history conflicts with confirmed content; use strict context mode',
       );
     }
     return [...items(this.chat), ...additions];
@@ -321,7 +408,8 @@ export class PrismHistory {
       let failure: unknown;
       try {
         if (this.failure) throw this.failure;
-        await this.apply(shared ? this.sharedTarget(target) : target, result);
+        const progress = this.progressTarget(target);
+        await this.apply(shared ? this.sharedTarget(progress) : progress, result);
       } catch (error) {
         failure = error;
       }
@@ -457,8 +545,6 @@ export class PrismHistory {
         const previous = desired[desired.indexOf(item) - 1];
         if (previous?.type !== 'function_call' || previous.callId !== item.callId)
           throw new HistoryUpdateError('Imported tool results must immediately follow their calls');
-      } else if (callItems.get(item.callId)?.extra.__livekit_agents_tool_non_blocking) {
-        throw new HistoryUpdateError('Prism does not support tool progress updates');
       }
     }
     const deletions = rebuild ? old : removed;

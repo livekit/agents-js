@@ -2,7 +2,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { initializeLogger, llm, voice } from '@livekit/agents';
-import { AudioFrame } from '@livekit/rtc-node';
 import { afterEach, expect, it, vi } from 'vitest';
 import { RealtimeModel, type RealtimeModelOptions } from './realtime_model.js';
 import { PrismPeer, TestAudioOutput } from './test_helpers.js';
@@ -49,7 +48,8 @@ async function reply(
 }
 it('defaults to shared history, preserves omissions, and rejects conflicting edits', async () => {
   const notices: unknown[] = [];
-  const { session, peer } = await setup({ onHistoryUpdate: (n) => notices.push(n) });
+  const { session, peer } = await setup();
+  session.on('error', (error) => notices.push(error));
   const initial = context('first', 'second');
   await session.updateChatCtx(initial);
   await session.updateChatCtx(context('third'));
@@ -68,10 +68,14 @@ it('defaults to shared history, preserves omissions, and rejects conflicting edi
   await session.updateChatCtx(context('fourth'));
   expect(peer.history.map((i) => i.text)).toEqual(['first', 'second', 'third', 'fourth']);
 });
-it('replaces and repairs active agent context through public helpers', async () => {
+it('replaces and clears active agent context through standard strict updates', async () => {
   const peer = await new PrismPeer().start();
   cleanup.push(() => peer.close());
-  const model = new RealtimeModel({ apiKey: 'test', endpoint: peer.endpoint });
+  const model = new RealtimeModel({
+    apiKey: 'test',
+    endpoint: peer.endpoint,
+    contextMode: 'strict',
+  });
   cleanup.push(() => model.close());
   const session = new voice.AgentSession({
     llm: model,
@@ -82,34 +86,18 @@ it('replaces and repairs active agent context through public helpers', async () 
   const agent = new voice.Agent({ instructions: 'Test' });
   await session.start({ agent });
   cleanup.push(() => session.close());
-  await model.replaceChatCtx(agent, context('old'));
-  let creates = 0;
-  peer.onRequest = (q) => {
-    if (q.type === 'conversation.item.create' && ++creates === 2) {
-      peer.fault(q, 'invalid_item');
-      return true;
-    }
-  };
-  await expect(model.replaceChatCtx(agent, context('accepted', 'refused'))).rejects.toMatchObject({
-    status: 'partial',
-    recoverable: true,
-    needsReconciliation: false,
-  });
-  expect(agent.chatCtx.items.filter((i) => i.type === 'message').map((i) => i.textContent)).toEqual(
-    ['accepted'],
-  );
-  const writes = peer.requests.length;
-  await model.reconcileChatCtx(agent);
-  expect(peer.requests).toHaveLength(writes);
-  await model.clearChatCtx(agent);
+  await agent.updateChatCtx(context('old'));
+  await agent.updateChatCtx(context('replacement'));
+  expect(peer.history.map((item) => item.text)).toEqual(['replacement']);
+  await agent.updateChatCtx(llm.ChatContext.empty());
   expect(peer.history).toEqual([]);
 });
 it.each(['auto', 'estimated', 'discard'] as const)(
   'uses %s playback without false receipts',
   async (playback) => {
-    const { peer, model, session } = await setup({ playback });
+    const { peer, session } = await setup({ playback });
     const sink = new TestAudioOutput();
-    const output = model.wrapAudioOutput(sink);
+    const output = sink;
     const generation = await reply(peer, session);
     const messages = await collect(generation.messageStream);
     const frames = await collect(messages[0]!.audioStream);
@@ -119,65 +107,15 @@ it.each(['auto', 'estimated', 'discard'] as const)(
     if (playback !== 'discard') expect(receipts()).toEqual([]);
     for (const frame of frames) await output.captureFrame(frame);
     output.flush();
-    if (playback === 'estimated') {
+    if (playback !== 'discard') {
       await new Promise((resolve) => setTimeout(resolve, 30));
       expect(receipts()).toEqual([]);
     } else {
       await vi.waitFor(() => expect(receipts()).toHaveLength(1));
-      expect(receipts()[0]).toMatchObject({ played_ms: playback === 'discard' ? 0 : 100 });
+      expect(receipts()[0]).toMatchObject({ played_ms: 0 });
     }
   },
 );
-it('keeps server estimates when frames lose identity or playback is interrupted', async () => {
-  const { peer, model, session } = await setup();
-  const sink = new TestAudioOutput();
-  const output = model.wrapAudioOutput(sink);
-  const generation = await reply(peer, session);
-  const [message] = await collect(generation.messageStream);
-  for await (const original of message!.audioStream)
-    await output.captureFrame(
-      new AudioFrame(
-        original.data,
-        original.sampleRate,
-        original.channels,
-        original.samplesPerChannel,
-      ),
-    );
-  output.flush();
-  await new Promise((resolve) => setTimeout(resolve, 30));
-  expect(peer.requests.some((q) => q.type === 'prism.playback.drained')).toBe(false);
-});
-it('measures output before resampling to the sink rate', async () => {
-  class Sink extends voice.AudioOutput {
-    frames: AudioFrame[] = [];
-    constructor() {
-      super(48000);
-    }
-    override async captureFrame(frame: AudioFrame) {
-      await super.captureFrame(frame);
-      this.frames.push(frame);
-    }
-    override flush() {
-      super.flush();
-      this.onPlaybackFinished({
-        playbackPosition: this.frames.reduce((n, f) => n + f.samplesPerChannel / f.sampleRate, 0),
-        interrupted: false,
-      });
-    }
-    override clearBuffer() {}
-  }
-  const { peer, model, session } = await setup();
-  const sink = new Sink();
-  const output = model.wrapAudioOutput(sink);
-  const generation = await reply(peer, session);
-  const [message] = await collect(generation.messageStream);
-  for await (const frame of message!.audioStream) await output.captureFrame(frame);
-  output.flush();
-  await vi.waitFor(() =>
-    expect(peer.requests.some((q) => q.type === 'prism.playback.drained')).toBe(true),
-  );
-  expect(sink.frames.every((f) => f.sampleRate === 48000)).toBe(true);
-});
 it('emits raw events and one usage record when completion follows local interruption', async () => {
   const { peer, session } = await setup({ playback: 'discard' });
   const raw = vi.fn(),

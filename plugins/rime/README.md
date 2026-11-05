@@ -46,7 +46,10 @@ Omit `voice` to use the deployment default. For a trusted host outside `rime.ai`
 
 Use `await agent.updateInstructions()` and `await agent.updateTools()` for agent settings.
 For provider settings, call
-`await model.updateSession({ voice, truncation, responseMetadata, toolFillers })`.
+`model.updateOptions({ voice, truncation, responseMetadata, toolFillers })`.
+This synchronous method copies and queues updates. It also works before opening a session.
+Later requested replies and agent settings wait for queued updates. Recoverable refusals
+emit a standard error event and keep the last accepted values.
 Omitted fields keep their values. `model.sessionInfo` returns confirmed settings;
 `await model.getHistory()` reads provider history without replacing local history.
 On a direct Prism session, `await session.generateReply('Check in', {
@@ -55,8 +58,12 @@ On a direct Prism session, `await session.generateReply('Check in', {
 Replies that Prism starts from caller speech use session labels.
 
 LiveKit executes tools. The plugin submits each result once and requests a continuation.
-To add filler speech, use the registered tool name:
+Long-running tools can use `RunContext.update()` for repeated or silent progress.
+The plugin preserves accepted progress order around generated replies and does not rerun tools.
+To add filler speech, use the tool name:
 `toolFillers: { lookup: { type: 'text', text: 'Checking your order.' } }`.
+The full map survives handoffs and temporary tool removal. Only active tools send fillers.
+An explicit empty map clears all fillers.
 
 Updates are not atomic. Each accepted setting remains applied if a later update fails.
 With `toolChoice: 'none'`, the plugin removes tools until Prism accepts the reply or
@@ -72,21 +79,13 @@ accept new items at the end, and reject conflicting edits. Known generated, play
 and retained transcript variants do not overwrite provider text. Use
 `contextMode: 'strict'` for exact replacement through ordinary updates.
 
-Use these model methods for explicit edits to an active agent:
-
-`await model.replaceChatCtx(agent, target)`
-`await model.clearChatCtx(agent)`
-`await model.reconcileChatCtx(agent)`
-
-Pause competing edits and agent handoffs first. Reconciliation copies confirmed
-history into the agent without provider writes. Replacement attempts reconciliation
-if a known failure leaves the local context different. Pending calls cannot be removed.
-The helpers preserve parent tool calls even if the current agent has fewer tools.
+Use `await agent.updateChatCtx(target)` in strict mode for exact edits, or pass
+`llm.ChatContext.empty()` to clear completed history. Pending calls cannot be removed.
 
 A failed edit raises `realtime.PrismHistoryUpdateError`. Its `status` is
 `rejected`, `partial`, or `uncertain`. Inspect `recoverable`,
-`confirmedChatCtx`, and `needsReconciliation`. The optional synchronous
-`onHistoryUpdate` callback receives these facts before automatic repair.
+`confirmedChatCtx`, and `needsReconciliation`. The plugin logs failures and emits
+standard recoverable error events for known refusals.
 A known refusal or partial edit preserves accepted writes and permits later work.
 An unknown write outcome closes the session. The plugin never retries history writes.
 To retry missing tool results, append them to the latest confirmed context.
@@ -94,7 +93,7 @@ To retry missing tool results, append them to the latest confirmed context.
 A refused typed input stops its reply. The current JavaScript core catches tool-result
 update failures and can still request a reply. Such a reply uses an accepted tool result
 when one is available. Unlike the Python core, the JavaScript core does not stop that
-dependent step. Applications that require this behavior must handle the history notice
+dependent step. Applications that require this behavior must handle the error event
 and stop the affected speech. No shared core code is changed by this plugin.
 
 ### Interruption and limits
@@ -105,16 +104,10 @@ response before the first message, during audio, and clears queued playback afte
 generation ends. Published core 1.9.4 does not notify the provider between response
 creation and the first message.
 
-The default `playback: 'auto'` uses measured playback when you install the wrapper:
-
-`session.output.audio = model.wrapAudioOutput(session.output.audio!)`
-
-Install it after the output exists and before generating speech. It reads frame identity
-before resampling and reports completion only when all generated audio has confirmed
-playback. Missing frames, changed frame identity, interrupted output, and ambiguous
-completion retain server estimates. SDK response holds expire after a bounded wait.
-Use `playback: 'estimated'` to keep estimates, or `playback: 'discard'` for
-text and tool workflows that discard audio and report zero played duration.
+The default `playback: 'auto'` and `playback: 'estimated'` use provider playback estimates.
+Use standard LiveKit audio output. No Rime output wrapper is required.
+Use `playback: 'discard'` for text and tool workflows that discard audio and report
+zero played duration.
 Interrupted playback reports still use the requested cut position. Early speech hints
 do not lower the volume.
 
@@ -122,7 +115,7 @@ These limits apply:
 
 - One open realtime session per model. Close it before starting a fresh conversation.
   Closing the model prevents new sessions. There is no custom fallback session.
-- Server turn detection is required. Manual audio commits are unsupported.
+- Server turn detection is required. Manual audio commits log a warning and return.
 - Tool choice accepts `auto` and `none`. Tools must be functions.
 - History accepts text and completed tool calls/results. Pending calls cannot resume
   in a fresh session. Typed input enters history before the reply request.

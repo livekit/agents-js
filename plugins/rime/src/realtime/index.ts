@@ -15,5 +15,5 @@ export type {
   PrismResponseEndedEvent,
 } from './realtime_model.js';
 
-export { PrismHistoryUpdateError, type HistoryUpdateNotice } from './history.js';
+export { PrismHistoryUpdateError } from './history.js';
 export type { PlaybackMode } from './playback.js';
