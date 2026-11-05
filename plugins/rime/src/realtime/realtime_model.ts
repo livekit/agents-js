@@ -5,6 +5,7 @@ import {
   type APIConnectOptions,
   DEFAULT_API_CONNECT_OPTIONS,
   type RealtimeModelMetrics,
+  Task,
   llm,
 } from '@livekit/agents';
 import { AudioFrame, AudioResampler } from '@livekit/rtc-node';
@@ -628,6 +629,7 @@ export class RealtimeSession extends llm.RealtimeSession {
    * explicitly refused appends preserve accepted items. Uncertain partial edits close the session.
    */
   updateChatCtx(ctx: llm.ChatContext): Promise<void> {
+    const caller = Task.current();
     // Preserve class instances while copying the caller's text/tool context.
     const copy = ctx.copy();
     copy.items = copy.items.map((item) => {
@@ -655,6 +657,15 @@ export class RealtimeSession extends llm.RealtimeSession {
       if (result.failure) {
         const error = result.failure;
         this.logger.warn({ status: error.status }, 'Rime history update failed');
+        // Core catches every tool-result update error and otherwise schedules a
+        // dependent reply. Cancel only its owning task when no usable result was
+        // accepted. A partial result-only batch can still answer accepted results.
+        // Independent tasks and direct session callers have no reply latch to clear.
+        if (
+          result.toolReplyRequired &&
+          !(result.toolResultsOnly && result.submitted.some(({ output }) => output.replyRequired))
+        )
+          caller?.cancel();
         if (error.recoverable) this.emitError(error, true);
         throw error;
       }

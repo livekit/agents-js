@@ -95,11 +95,11 @@ A known refusal or partial edit preserves accepted writes and permits later work
 An unknown write outcome closes the session. The plugin never retries history writes.
 To retry missing tool results, append them to the latest confirmed context.
 
-A refused typed input stops its reply. The current JavaScript core catches tool-result
-update failures and can still request a reply. Such a reply uses an accepted tool result
-when one is available. Unlike the Python core, the JavaScript core does not stop that
-dependent step. Applications that require this behavior must handle the error event
-and stop the affected speech. No shared core code is changed by this plugin.
+A refused typed input stops its reply. If a tool-result update fails without accepting
+a result that requires a reply, the plugin cancels the owning LiveKit task to stop its
+dependent reply. A partially accepted result-only batch can still produce a reply
+from accepted results. Later independent requests remain available, and tools are not
+rerun. No shared core code is changed by this plugin.
 
 ### Interruption and limits
 

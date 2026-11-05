@@ -623,13 +623,14 @@ describe('Prism SDK adapter', () => {
 });
 
 describe('standard AgentSession', () => {
-  async function start(maxToolSteps = 3) {
+  async function start(maxToolSteps = 3, contextMode: 'shared' | 'strict' = 'shared') {
     const peer = await new PrismPeer().start();
     cleanup.push(() => peer.close());
     const model = new RealtimeModel({
       apiKey: 'test',
       endpoint: peer.endpoint,
       requestTimeout: 500,
+      contextMode,
     });
     cleanup.push(() => model.close());
     const session = new voice.AgentSession({
@@ -641,7 +642,7 @@ describe('standard AgentSession', () => {
     });
     const output = new TestAudioOutput();
     session.output.audio = output;
-    const execute = vi.fn(async () => '42');
+    const execute = vi.fn(async (_: unknown, _options: { ctx: voice.RunContext }) => '42');
     const createSession = vi.spyOn(model, 'session');
     await session.start({
       agent: new voice.Agent({
@@ -675,6 +676,118 @@ describe('standard AgentSession', () => {
     expect(count).toBeLessThanOrEqual(3);
     expect(peer.requests.some((q) => q.item?.text === 'Check my order')).toBe(true);
     expect(output.frames.length).toBeGreaterThan(0);
+  });
+  it.each(['shared', 'strict'] as const)(
+    'stops a rejected tool reply but permits independent replies and result recovery in %s mode',
+    async (contextMode) => {
+      const { peer, session, execute, realtime } = await start(3, contextMode);
+      const errors: llm.RealtimeModelError[] = [];
+      realtime.on('error', (error) => errors.push(error));
+      peer.onRequest = (q) => {
+        if (q.item?.type === 'function_call_output') {
+          peer.fault(q, 'invalid_item');
+          return true;
+        }
+        if (
+          q.type === 'response.create' &&
+          peer.requests.filter((request) => request.type === 'response.create').length > 1
+        ) {
+          peer.reply(q, 'unexpected-dependent-reply');
+          return true;
+        }
+      };
+      const failed = session.generateReply();
+      peer.accepted(await request(peer));
+      peer.tool('reply-1', 'one');
+      peer.ended();
+      await failed.waitForPlayout();
+      expect(peer.requests.filter((q) => q.type === 'response.create')).toHaveLength(1);
+      expect(realtime.chatCtx.items.filter((item) => item.type === 'function_call_output')).toEqual(
+        [],
+      );
+      expect(execute).toHaveBeenCalledTimes(1);
+      expect(errors).toHaveLength(1);
+      expect(errors[0]?.recoverable).toBe(true);
+      expect(realtime.isClosed).toBe(false);
+
+      peer.onRequest = undefined;
+      for (const userInput of [undefined, 'An independent question']) {
+        const count = peer.requests.filter((q) => q.type === 'response.create').length;
+        const independent = session.generateReply({ userInput });
+        peer.reply(await request(peer, count + 1), `independent-${count}`);
+        await independent.waitForPlayout();
+      }
+      const retry = realtime.chatCtx;
+      retry.items.push(
+        ...session.currentAgent.chatCtx.items.filter(
+          (item) => item.type === 'function_call_output' && item.callId === 'one',
+        ),
+      );
+      await realtime.updateChatCtx(retry);
+      const recovered = session.generateReply();
+      const reply = await request(peer, 4);
+      expect(reply.response).toMatchObject({ prism_call_id: 'one' });
+      peer.reply(reply, 'recovered');
+      await recovered.waitForPlayout();
+      expect(execute).toHaveBeenCalledTimes(1);
+      expect(peer.history.filter((item) => item.type === 'function_call_output')).toHaveLength(1);
+    },
+  );
+  it('does not cancel an independent reply queued while a tool result is rejected', async () => {
+    const { peer, session, execute } = await start();
+    let reject: (() => void) | undefined;
+    peer.onRequest = (q) => {
+      if (q.item?.type !== 'function_call_output') return;
+      reject = () => peer.fault(q, 'invalid_item');
+      return true;
+    };
+    const failed = session.generateReply();
+    peer.accepted(await request(peer));
+    peer.tool('reply-1', 'one');
+    peer.ended();
+    await vi.waitFor(() => expect(reject).toBeDefined());
+    const independent = session.generateReply();
+    reject!();
+    await failed.waitForPlayout();
+    peer.reply(await request(peer, 2), 'independent');
+    await independent.waitForPlayout();
+    expect(independent.interrupted).toBe(false);
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(peer.requests.filter((q) => q.type === 'response.create')).toHaveLength(2);
+  });
+  it('allows a background tool to finish after its first progress reply is rejected', async () => {
+    const { peer, session, execute } = await start();
+    let finish!: () => void;
+    const released = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    execute.mockImplementationOnce(async (_, { ctx }) => {
+      await ctx.update('Working');
+      await released;
+      return 'Final result';
+    });
+    let refused = false;
+    peer.onRequest = (q) => {
+      if (q.item?.type === 'function_call_output' && !refused) {
+        refused = true;
+        peer.fault(q, 'invalid_item');
+        return true;
+      }
+    };
+    const failed = session.generateReply();
+    peer.accepted(await request(peer));
+    peer.tool('reply-1', 'one');
+    peer.ended();
+    await failed.waitForPlayout();
+    expect(refused).toBe(true);
+    expect(peer.requests.filter((q) => q.type === 'response.create')).toHaveLength(1);
+    finish();
+    peer.reply(await request(peer, 2), 'final-result');
+    await session.waitForIdle();
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(
+      peer.history.some((item) => item.call_id === 'one_final' && item.output === 'Final result'),
+    ).toBe(true);
   });
   it('keeps an automatic reply tied to accepted results after a partial tool update', async () => {
     const { peer, session, execute, realtime } = await start();

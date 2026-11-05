@@ -29,6 +29,8 @@ interface SyncResult {
   committed: boolean;
   created: Set<string>;
   historyRead: boolean;
+  toolReplyRequired: boolean;
+  toolResultsOnly: boolean;
 }
 
 type Item = llm.ChatMessage | llm.FunctionCall | llm.FunctionCallOutput;
@@ -468,13 +470,21 @@ export class PrismHistory {
     const target = items(ctx).map(clone);
     const captured = new Set(this.chat.items.map((item) => item.id));
     return this.edits.run(async () => {
+      const baseline = new Set(this.chat.items.map((i) => i.id));
       const result: SyncResult = {
         submitted: [],
         committed: false,
         created: new Set(),
         historyRead: false,
+        toolReplyRequired: target.some(
+          (item) =>
+            item.type === 'function_call_output' &&
+            item.replyRequired &&
+            !baseline.has(item.id) &&
+            this.calls.has(item.callId),
+        ),
+        toolResultsOnly: false,
       };
-      const baseline = new Set(this.chat.items.map((i) => i.id));
       let failure: unknown;
       try {
         if (this.failure) throw this.failure;
@@ -582,6 +592,9 @@ export class PrismHistory {
       !removed.length &&
       unchanged.size === old.length &&
       old.every((item, index) => desired[index]?.id === item.id);
+    result.toolResultsOnly =
+      appendOnly &&
+      added.every((item) => item.type === 'function_call_output' && this.calls.has(item.callId));
     const retained = old.filter((item) => newById.has(item.id));
     const desiredRetained = desired.filter((item) => oldById.has(item.id));
     const deleteOnly =
