@@ -1539,13 +1539,51 @@ export class AgentSession<
         const unlock = await this.activityLock.lock();
         unlock();
         if (runState.done()) return;
-        this.generateReply({ userInput, inputModality });
+        await this._replyToUserText(userInput, inputModality);
+        // settles the run when the hook dropped the turn and no reply is watched
+        runState._markDoneIfNeeded();
       } catch (e) {
         runState._reject(asError(e));
       }
     })();
 
     return runState;
+  }
+
+  /**
+   * Treat `userInput` as a completed user turn: run `onUserTurnCompleted`, then reply unless
+   * the hook dropped the turn. A text turn has no audio, so its end of turn is always certain;
+   * it goes through the same hook as a spoken turn.
+   *
+   * @internal
+   */
+  async _replyToUserText(userInput: string, inputModality?: 'audio' | 'text'): Promise<void> {
+    if (!this.activity) {
+      throw new Error('AgentSession is not running');
+    }
+
+    const activity = this.activity.schedulingPaused ? this.nextActivity : this.activity;
+    if (!activity) {
+      throw new Error('AgentSession is closing, cannot use generateReply()');
+    }
+
+    const userMessage = ChatMessage.create({ role: 'user', content: userInput });
+    const hookResult = await activity.runUserTurnHook(userMessage, this.rootSpanContext);
+    if (!hookResult) return;
+
+    if (!activity.acceptsUserTurns) {
+      // as on a spoken turn: a handoff started from the hook drops this reply, whose
+      // context belongs to the agent being left
+      this.logger.warn('skipping reply to user input, speech scheduling is paused');
+      return;
+    }
+
+    const handle = activity.generateReply({
+      userMessage,
+      chatCtx: hookResult.chatCtx,
+      inputDetails: { modality: inputModality ?? 'text' },
+    });
+    this._globalRunState?._watchHandle(handle);
   }
 
   /** @internal */
