@@ -1539,15 +1539,9 @@ export class AgentSession<
         const unlock = await this.activityLock.lock();
         unlock();
         if (runState.done()) return;
-        if (this._textOnly) {
-          // a text simulation stands in for a live call, where every user turn runs
-          // onUserTurnCompleted
-          await this.replyToCompletedUserTurn(userInput, inputModality);
-          // settles the run when the hook dropped the turn and no reply is watched
-          runState._markDoneIfNeeded();
-        } else {
-          this.generateReply({ userInput, inputModality });
-        }
+        await this._replyToUserText(userInput, inputModality);
+        // settles the run when the hook dropped the turn and no reply is watched
+        runState._markDoneIfNeeded();
       } catch (e) {
         runState._reject(asError(e));
       }
@@ -1557,12 +1551,13 @@ export class AgentSession<
   }
 
   /**
-   * Run `onUserTurnCompleted` for `userInput`, then reply unless the hook dropped the turn.
+   * Treat `userInput` as a completed user turn: run `onUserTurnCompleted`, then reply unless
+   * the hook dropped the turn. A text turn has no audio, so its end of turn is always certain;
+   * it goes through the same hook as a spoken turn.
+   *
+   * @internal
    */
-  private async replyToCompletedUserTurn(
-    userInput: string,
-    inputModality?: 'audio' | 'text',
-  ): Promise<void> {
+  async _replyToUserText(userInput: string, inputModality?: 'audio' | 'text'): Promise<void> {
     if (!this.activity) {
       throw new Error('AgentSession is not running');
     }
