@@ -502,6 +502,21 @@ describe('AMD lifecycle', () => {
     expect(result.category).toBe(AMDCategory.HUMAN);
   });
 
+  it('completion is forwarded to session observability', async () => {
+    const { detector, session, classifier } = await running();
+    const host = { _onAmdPrediction: vi.fn(), _onAmdCompleted: vi.fn() };
+    const withHost = session as unknown as { sessionHost?: typeof host };
+    withHost.sessionHost = host;
+    try {
+      await commit(detector, session, classifier);
+      classifier.prediction(1, AMDCategory.HUMAN);
+      const result = await waitFor(detector.execute());
+      expect(host._onAmdCompleted).toHaveBeenCalledExactlyOnceWith(result);
+    } finally {
+      withHost.sessionHost = undefined;
+    }
+  });
+
   it('timeout rearms and late result cannot change a newer turn', async () => {
     const classifier = new TrackingClassifier();
     const { detector, session } = await running({ classifier, inferenceTimeout: 20 });

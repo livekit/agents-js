@@ -1553,6 +1553,7 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
       const result = this.completion();
       this.resources.completion.resolve(result);
       this.emitEvent('amd_completed', result);
+      this.session._onAmdCompleted(result);
     }
   }
 

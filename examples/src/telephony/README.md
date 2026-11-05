@@ -402,6 +402,16 @@ then cancels outstanding work and closes owned resources. `execute()` waits for
 that cleanup and returns the final category and reason. Completion does not
 decide the next call action.
 
+## Remote sessions
+
+`AgentSession` forwards each `amd_prediction` and the `amd_completed` result to the
+remote session host. A `RemoteSession` peer receives them as `amd_prediction` and
+`amd_completed` events. Each category maps to its own protocol category. A prediction
+carries its turn ID, stage, and inference duration. The inference duration is unset
+when the turn ran no inference. The completion carries the last prediction, which is
+unset when the run ended before one. These fields need `@livekit/protocol` 1.53.3 or
+later.
+
 ## Run the example
 
 The example requires a LiveKit room. Build first, then run it in `dev` mode:
@@ -421,7 +431,6 @@ To place an outbound call, also set
   warning. `updateAgent()` and inline `AgentTask` switches throw.
   Finish or close AMD before switching agents.
 - No audio-based hold detection.
-- The remote-session protocol maps screening and wait to `AMD_UNKNOWN`. Full v2
-  prediction, menu, and completion fields still need protocol support.
+- The remote-session protocol does not carry `correctsStage` or `amd_menu_observed`.
 - Classification quality needs repeated model evals. Unit tests prove routing,
   transcript ownership, deadlines, and cleanup, not model accuracy.

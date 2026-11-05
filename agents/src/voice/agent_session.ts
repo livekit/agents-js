@@ -92,7 +92,7 @@ import {
   cleanupReusableResources,
   isSchedulingPausedError,
 } from './agent_activity.js';
-import type { AMD, AMDPredictionEvent } from './amd/index.js';
+import type { AMD, AMDCompletedEvent, AMDPredictionEvent } from './amd/index.js';
 import type { _TurnDetector } from './audio_recognition.js';
 import { AgentsConsole } from './console_io.js';
 import {
@@ -1342,6 +1342,15 @@ export class AgentSession<
    */
   _onAmdPrediction(event: AMDPredictionEvent): void {
     this.sessionHost?._onAmdPrediction(event);
+  }
+
+  /**
+   * @internal — forwarded to {@link SessionHost} so a connected
+   * {@link RemoteSession} peer receives an `amd_completed` event once per AMD run.
+   * Mirrors python `AgentSession._on_amd_completed`.
+   */
+  _onAmdCompleted(event: AMDCompletedEvent): void {
+    this.sessionHost?._onAmdCompleted(event);
   }
 
   pauseReplyAuthorization(): void {

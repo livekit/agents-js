@@ -540,6 +540,8 @@ export class AgentSession<UserData = UnknownUserData> extends AgentSession_base 
     // @internal (undocumented)
     _onAecWarmupExpired(): void;
     // @internal
+    _onAmdCompleted(event: AMDCompletedEvent): void;
+    // @internal
     _onAmdPrediction(event: AMDPredictionEvent): void;
     // @internal (undocumented)
     _onError(error: RealtimeModelError | STTError | TTSError | LLMError): void;
@@ -6631,6 +6633,7 @@ export type RemoteSessionCallbacks = {
     function_tools_executed: (ev: AgentSession_2.AgentSessionEvent_FunctionToolsExecuted) => void;
     overlapping_speech: (ev: AgentSession_2.AgentSessionEvent_OverlappingSpeech) => void;
     amd_prediction: (ev: AgentSession_2.AgentSessionEvent_AmdPrediction) => void;
+    amd_completed: (ev: AgentSession_2.AgentSessionEvent_AmdCompleted) => void;
     eot_prediction: (ev: AgentSession_2.AgentSessionEvent_EotPrediction) => void;
     session_usage: (ev: AgentSession_2.AgentSessionEvent_SessionUsageUpdated) => void;
     debug_message: (ev: AgentSession_2.DebugMessage) => void;
@@ -6639,7 +6642,7 @@ export type RemoteSessionCallbacks = {
 };
 
 // @public (undocumented)
-export type RemoteSessionEventTypes = 'agent_false_interruption' | 'agent_state_changed' | 'user_state_changed' | 'conversation_item_added' | 'user_input_transcribed' | 'function_tools_executed' | 'overlapping_speech' | 'amd_prediction' | 'eot_prediction' | 'session_usage' | 'debug_message' | 'session_closed' | 'error';
+export type RemoteSessionEventTypes = 'agent_false_interruption' | 'agent_state_changed' | 'user_state_changed' | 'conversation_item_added' | 'user_input_transcribed' | 'function_tools_executed' | 'overlapping_speech' | 'amd_prediction' | 'amd_completed' | 'eot_prediction' | 'session_usage' | 'debug_message' | 'session_closed' | 'error';
 
 // @public (undocumented)
 function replace(replacements: Record<string, string>, options?: {
@@ -7165,6 +7168,8 @@ export class SessionHost {
     constructor(transport: SessionTransport, audioInput?: TcpAudioInput, audioOutput?: TcpAudioOutput);
     get attachedSession(): AgentSession | undefined;
     close(): Promise<void>;
+    // @internal
+    _onAmdCompleted(event: AMDCompletedEvent): void;
     // @internal
     _onAmdPrediction(event: AMDPredictionEvent): void;
     // @internal
@@ -10047,16 +10052,12 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 // src/metrics/base.ts:230:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsOutputTokenDetails" needs to be exported by the entry point index.d.ts
 // src/stt/stt.ts:395:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "STT"
 // src/utils.ts:468:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "cancelled"
-// src/voice/agent_session.ts:411:3 - (ae-unresolved-link) The @link reference could not be resolved: This type of declaration is not supported yet by the resolver
+// src/voice/agent_session.ts:412:3 - (ae-unresolved-link) The @link reference could not be resolved: This type of declaration is not supported yet by the resolver
 // src/voice/agent_session.ts:1089:5 - (ae-forgotten-export) The symbol "RecordingOptions" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1807:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1807:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1807:5 - (ae-forgotten-export) The symbol "LLMError" needs to be exported by the entry point index.d.ts
-// src/voice/amd.ts:315:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "waitForTrackPublication" has more than one declaration; you need to add a TSDoc member reference selector
-// src/voice/amd.ts:315:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "gateListening"
-// src/voice/amd.ts:323:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "aclose"
-// src/voice/amd.ts:517:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "gateListening"
-// src/voice/events.ts:437:3 - (ae-forgotten-export) The symbol "InterruptionDetectionError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1821:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1821:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1821:5 - (ae-forgotten-export) The symbol "LLMError" needs to be exported by the entry point index.d.ts
+// src/voice/events.ts:461:3 - (ae-forgotten-export) The symbol "InterruptionDetectionError" needs to be exported by the entry point index.d.ts
 // src/voice/room_io/_output.ts:183:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "segmentTags"
 // src/voice/testing/run_result.ts:94:5 - (ae-forgotten-export) The symbol "OutputSchema" needs to be exported by the entry point index.d.ts
 
