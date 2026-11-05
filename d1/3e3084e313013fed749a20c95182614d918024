@@ -1,0 +1,14 @@
+agents/src/voice/amd/models.test.ts
+  h_a827ab16c3c189 414,431-433
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d13e3084e313013fed749a20c95182614d918024",
+  "prompts": {},
+  "humans": {
+    "h_a827ab16c3c189": {
+      "author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
