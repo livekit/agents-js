@@ -1582,7 +1582,7 @@ export class AgentSession<
           createUserInputTranscribedEvent({ transcript: text, isFinal: true }),
         );
         runState._watchHandle(
-          activity._typedUserTurn(new ChatMessage({ role: 'user', content: text })),
+          activity._typedUserTurn(new ChatMessage({ role: 'user', content: text }), runState),
         );
       } catch (e) {
         runState._reject(asError(e));

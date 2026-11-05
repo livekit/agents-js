@@ -172,6 +172,7 @@ import {
   SpeechHandle,
   endCarriedAgentTurn,
 } from './speech_handle.js';
+import type { RunResult } from './testing/run_result.js';
 import {
   ToolExecutor,
   _replyToolChoice,
@@ -3401,7 +3402,7 @@ export class AgentActivity implements RecognitionHooks {
    * so an agent that hands work off from `onUserTurnCompleted` acts the same typed as on a call.
    * @internal
    */
-  _typedUserTurn(userMessage: ChatMessage): Task<void> {
+  _typedUserTurn(userMessage: ChatMessage, runState: RunResult): Task<void> {
     return this.createSpeechTask({
       taskFn: async () => {
         const chatCtx = this.agent.chatCtx.copy();
@@ -3409,16 +3410,33 @@ export class AgentActivity implements RecognitionHooks {
           await this.agent.onUserTurnCompleted(chatCtx, userMessage);
         } catch (e) {
           if (e instanceof StopResponse) return;
-          // as on a spoken turn: a failing hook loses the reply, not the session
+          // as on a spoken turn: a failing hook is logged and the agent still answers
           this.logger.error({ error: e }, 'error occurred during onUserTurnCompleted');
+        }
+
+        // the run was cancelled while the hook ran: nobody is waiting for this reply
+        if (runState.done()) return;
+
+        // as on a spoken turn: a hook that hands off (updateAgent) blocks the outgoing reply
+        if (this.schedulingPaused || this.newTurnsBlocked) {
+          this.logger.warn(
+            { 'lk.pii.user_input': userMessage.textContent },
+            'skipping reply to user input, speech scheduling is paused',
+          );
+          if (this.agentSession._closing) {
+            this.agent._chatCtx.items.push(userMessage);
+            this.agentSession._conversationItemAdded(userMessage);
+          }
           return;
         }
 
-        const handle = this.generateReply({ userMessage, chatCtx });
-        const runState = this.agentSession._globalRunState;
-        if (runState && !runState.done()) {
-          runState._watchHandle(handle);
-        }
+        // typed input: render the agent's text instructions, as run() does
+        const handle = this.generateReply({
+          userMessage,
+          chatCtx,
+          inputDetails: { modality: 'text' },
+        });
+        runState._watchHandle(handle);
       },
       name: 'AgentActivity.typedUserTurn',
     });
