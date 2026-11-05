@@ -67,8 +67,6 @@ export enum Effect {
 export interface Transition {
   readonly nextState: AMDCategory;
   readonly effects: readonly Effect[];
-  /** Whether the prediction left the recommended transitions. */
-  readonly correctsStage: boolean;
 }
 
 /** The recommended next predictions for a stage, sorted like Python's `sorted(...)`. */
@@ -82,17 +80,16 @@ export function transition(state: AMDCategory, prediction: AMDCategory): Transit
   if (recommended === undefined || recommended.size === 0) {
     throw new Error(`invalid AMD transition: ${state} -> ${prediction}`);
   }
-  const correctsStage = !recommended.has(prediction);
   switch (prediction) {
     case AMDCategory.HUMAN:
     case AMDCategory.MACHINE_UNAVAILABLE:
-      return { nextState: prediction, effects: [Effect.COMPLETE], correctsStage };
+      return { nextState: prediction, effects: [Effect.COMPLETE] };
     case AMDCategory.MACHINE_IVR:
-      return { nextState: prediction, effects: [Effect.EXTRACT_MENU], correctsStage };
+      return { nextState: prediction, effects: [Effect.EXTRACT_MENU] };
     case AMDCategory.UNCERTAIN:
     case AMDCategory.WAIT:
-      return { nextState: state, effects: [], correctsStage: false };
+      return { nextState: state, effects: [] };
     default:
-      return { nextState: prediction, effects: [], correctsStage };
+      return { nextState: prediction, effects: [] };
   }
 }

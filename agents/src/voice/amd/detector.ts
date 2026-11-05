@@ -898,18 +898,15 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     {
       effects = [],
       stateChanged = false,
-      correctsStage = false,
     }: {
       effects?: readonly fsm.Effect[];
       stateChanged?: boolean;
-      correctsStage?: boolean;
     } = {},
   ): void {
     const event = createAMDPredictionEvent({
       turnId: turn.turnId,
       category: this.category,
       stage: this._state,
-      correctsStage,
       reason,
       transcript: turn.transcript.transcript,
       speechDuration: turn.speechDuration,
@@ -930,7 +927,6 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
         ...events[events.length - 1]!,
         turnId: later.turnId,
         reason: AMDReason.REUSED,
-        correctsStage: false,
         transcript: later.transcript.transcript,
         speechDuration: later.speechDuration,
         delay: performance.now() - later.committedAt,
@@ -1065,7 +1061,6 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     this.recordPrediction(turn, AMDReason.PREDICTION, {
       effects,
       stateChanged,
-      correctsStage: result.correctsStage,
     });
   }
 

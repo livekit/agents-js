@@ -20,7 +20,7 @@ import {
   waitFor,
 } from './amd_test_utils.js';
 import { DEFAULT_IVR_INSTRUCTIONS, DEFAULT_SCREENING_INSTRUCTIONS } from './detector.js';
-import { AMDCategory, AMDLifecycle, AMDReason } from './events.js';
+import { AMDCategory, AMDReason } from './events.js';
 import { LIKELY_HUMAN_STAGES } from './fsm.js';
 
 function noPendingSpeech(activity: AgentActivity): boolean {
@@ -93,7 +93,6 @@ describe('AMD stage corrections', () => {
         expect(lastText(context)).toBe(instructions);
         const prediction = amd.turns.get(currentTurn)!.prediction!;
         expect(prediction.reason).toBe(AMDReason.PREDICTION);
-        expect(prediction.correctsStage).toBe(true);
         expect(prediction.stage).toBe(corrected);
         expect(amd.previousStage).toBe(initial);
         expect(prediction.inferenceDuration).not.toBeNull();
@@ -117,26 +116,7 @@ describe('AMD stage corrections', () => {
     );
   });
 
-  it.each([{ corrects_stage: false }, { corrects_stage: true }, { correction_evidence: '' }])(
-    'correction ignores model supplied correction fields (%j)',
-    async (extra) => {
-      const { detector, session, classifier } = await running();
-      const amd = internals(detector);
-      const first = (await commit(detector, session, classifier))!;
-      classifier.prediction(1, AMDCategory.MACHINE_VM);
-      expect(await first.shouldReply(new ChatContext())).toBe(true);
-      const hooks = (await commit(detector, session, classifier))!;
-      classifier.respond(2, JSON.stringify({ category: 'machine-screening', ...extra }));
-      expect(await hooks.shouldReply(new ChatContext())).toBe(true);
-      const prediction = amd.turns.get(2)!.prediction!;
-      expect(prediction.reason).toBe(AMDReason.PREDICTION);
-      expect(prediction.stage).toBe(AMDCategory.MACHINE_SCREENING);
-      expect(prediction.correctsStage).toBe(true);
-      expect(detector.lifecycle).toBe(AMDLifecycle.ACTIVE);
-    },
-  );
-
-  it('reused turns do not repeat a correction', async () => {
+  it('reused turns keep the corrected stage', async () => {
     const { detector, session, classifier } = await running();
     const amd = internals(detector);
     const first = (await commit(detector, session, classifier))!;
@@ -147,14 +127,13 @@ describe('AMD stage corrections', () => {
     classifier.prediction(2, AMDCategory.MACHINE_SCREENING);
     expect(await correction.shouldReply(new ChatContext())).toBe(false);
     expect(await empty.shouldReply(new ChatContext())).toBe(true);
-    expect(amd.turns.get(2)!.prediction!.correctsStage).toBe(true);
+    expect(amd.turns.get(2)!.prediction!.stage).toBe(AMDCategory.MACHINE_SCREENING);
     empty = commitTurn(detector, endOfTurn(''));
     expect(await empty.shouldReply(new ChatContext())).toBe(true);
     for (const turnId of [3, 4]) {
       const prediction = amd.turns.get(turnId)!.prediction!;
       expect(prediction.reason).toBe(AMDReason.REUSED);
       expect(prediction.stage).toBe(AMDCategory.MACHINE_SCREENING);
-      expect(prediction.correctsStage).toBe(false);
     }
     expect(classifier.requests.empty).toBe(true);
   });
@@ -186,6 +165,5 @@ describe('AMD stage corrections', () => {
     expect(amd.voicemailMessagePlayed).toBe(true);
     expect(model.calls.empty).toBe(true);
     expect(amd.turns.get(3)!.prediction!.stage).toBe(AMDCategory.MACHINE_VM);
-    expect(amd.turns.get(3)!.prediction!.correctsStage).toBe(false);
   });
 });

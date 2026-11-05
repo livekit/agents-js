@@ -285,15 +285,15 @@ prediction snapshot.
 A prediction outside the recommendations corrects an earlier machine
 classification. For example, after a mistaken voicemail classification, the model
 can return `machine-screening` for "Please state your name and why you are calling."
-AMD accepts it and sets `correctsStage` on the `amd_prediction` event. The initial
-stage recommends every category, so the first classification never corrects a stage.
+AMD accepts it. Events do not mark a correction. The initial stage recommends every
+category, so the first classification never corrects a stage.
 Only output that does not parse as a category uses the inference-error fallback.
 
 Corrections apply to the current accepted turn and persist into later requests.
 They use the same inference deadline, silence wait, and stale-result checks as
 normal predictions. They do not create another turn, wait for late transcripts,
 rewrite earlier events, or reset delivered voicemail and sent DTMF.
-Reused predictions keep the corrected stage without repeating `correctsStage`.
+Reused predictions keep the corrected stage.
 
 `wait` skips the current reply without a silence wait or menu extraction. While
 the latest prediction is `wait`, the idle timer is paused; the overall `timeout`
@@ -446,6 +446,6 @@ To place an outbound call, also set
   warning. `updateAgent()` and inline `AgentTask` switches throw.
   Finish or close AMD before switching agents.
 - No audio-based hold detection.
-- The remote-session protocol does not carry `correctsStage` or `amd_menu_observed`.
+- The remote-session protocol does not carry `amd_menu_observed`.
 - Classification quality needs repeated model evals. Unit tests prove routing,
   transcript ownership, deadlines, and cleanup, not model accuracy.

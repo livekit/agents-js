@@ -71,8 +71,6 @@ export interface AMDPredictionEvent {
   turnId: number;
   /** Stage after this prediction. Never `wait`. */
   stage: AMDCategory;
-  /** Whether this prediction left the recommended transitions to correct an earlier stage. */
-  correctsStage: boolean;
   /** Classification time in milliseconds, or `null` when no model prediction was released. */
   inferenceDuration: number | null;
 }
@@ -85,7 +83,6 @@ export const createAMDPredictionEvent = ({
   delay,
   turnId = 0,
   stage = AMDCategory.UNCERTAIN,
-  correctsStage = false,
   inferenceDuration = null,
 }: {
   speechDuration: number;
@@ -95,7 +92,6 @@ export const createAMDPredictionEvent = ({
   delay: number;
   turnId?: number;
   stage?: AMDCategory;
-  correctsStage?: boolean;
   inferenceDuration?: number | null;
 }): AMDPredictionEvent => ({
   type: 'amd_prediction',
@@ -106,7 +102,6 @@ export const createAMDPredictionEvent = ({
   delay,
   turnId,
   stage,
-  correctsStage,
   inferenceDuration,
 });
 

@@ -191,7 +191,6 @@ describe('AMD inference', () => {
       delay: 100,
       turnId: 2,
       stage: AMDCategory.MACHINE_VM,
-      correctsStage: false,
       inferenceDuration: 50,
     };
     await classify(model, {

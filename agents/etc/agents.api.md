@@ -927,7 +927,6 @@ export interface AMDOptions {
 // @public (undocumented)
 export interface AMDPredictionEvent {
     category: AMDCategory;
-    correctsStage: boolean;
     delay: number;
     inferenceDuration: number | null;
     // (undocumented)

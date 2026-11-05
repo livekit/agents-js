@@ -59,7 +59,6 @@ describe('AMD stage FSM', () => {
         return;
       }
       const result = fsm.transition(current, category);
-      expect(result.correctsStage).toBe(!recommended[current].has(category));
       if (category === Category.UNCERTAIN || category === Category.WAIT) {
         expect(result.nextState).toBe(current);
       } else {
@@ -86,8 +85,7 @@ describe('AMD stage FSM', () => {
       const intermediate = fsm.transition(initial, bridge);
       expect(intermediate.nextState).toBe(initial);
       expect(intermediate.effects).toEqual([]);
-      expect(intermediate.correctsStage).toBe(false);
-      expect(fsm.transition(intermediate.nextState, corrected).correctsStage).toBe(true);
+      expect(fsm.transition(intermediate.nextState, corrected).nextState).toBe(corrected);
     });
   });
 
@@ -103,17 +101,12 @@ describe('AMD stage FSM', () => {
     (initial, corrected) => {
       expect(fsm.RECOMMENDED.get(initial)!.has(corrected)).toBe(false);
       const result = fsm.transition(initial, corrected);
-      expect(result.correctsStage).toBe(true);
       expect(result.nextState).toBe(corrected);
       expect(result.effects).toEqual(
         corrected === Category.MACHINE_IVR ? [fsm.Effect.EXTRACT_MENU] : [],
       );
     },
   );
-
-  it.each(ALL)('initial prediction %s is never a correction', (category) => {
-    expect(fsm.transition(Category.UNCERTAIN, category).correctsStage).toBe(false);
-  });
 
   it.each([Category.HUMAN, Category.MACHINE_UNAVAILABLE])(
     'terminal stage %s cannot reopen detection',
@@ -123,12 +116,6 @@ describe('AMD stage FSM', () => {
       );
     },
   );
-
-  it('normal progression is not a correction', () => {
-    const result = fsm.transition(Category.MACHINE_VM, Category.MACHINE_IVR);
-    expect(result.nextState).toBe(Category.MACHINE_IVR);
-    expect(result.correctsStage).toBe(false);
-  });
 
   it('recommends sorted next categories', () => {
     expect(fsm.recommendedNext(Category.MACHINE_VM)).toEqual([
