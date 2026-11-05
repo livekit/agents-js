@@ -296,9 +296,7 @@ export class BaseStreamingTurnDetectorStream {
     const fut = new Future<TurnDetectionEvent>();
     this._requestId = shortuuid('turn_request_');
     this._requestFut = fut;
-    // Queued behind the audio so far: the transport runs it after the frames captured
-    // before this call, and the turn length it reports covers them. The items are
-    // copied because the caller may add to chatCtx before the transport runs it.
+    // copy the items: the caller may add to chatCtx before the transport runs it
     const sentinel: InferenceSentinel = {
       kind: 'inference',
       requestId: this._requestId,

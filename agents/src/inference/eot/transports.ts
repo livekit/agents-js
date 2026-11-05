@@ -282,8 +282,7 @@ export class CloudTransport implements StreamingTurnDetectionTransport {
   protected _ws: CloudWebSocket | undefined;
   protected _numRetries = 0;
   protected _connectCalls = 0;
-  /** The user turn length so far, counted since the last flush as the local
-   * transport counts it; sent with each inferenceStart. */
+  /** The user turn length so far, since the last flush; sent with each inferenceStart. */
   protected _turnSamples = 0;
   /** Outbound FIFO for the active connection; recreated per `_runOnce`. */
   protected _sendChannel: StreamChannel<ClientMsg> | undefined;
@@ -352,7 +351,6 @@ export class CloudTransport implements StreamingTurnDetectionTransport {
     this._enqueue(
       new ClientMessageCtor({ message: { case: 'eotInputChatContext', value: context } }),
     );
-    // the gateway adds the audio that reaches it after this message
     const turnSamples = Math.min(this._turnSamples, MAX_UINT32);
     this._enqueue(
       new ClientMessageCtor({
