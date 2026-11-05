@@ -2,4 +2,4 @@
 '@livekit/agents': patch
 ---
 
-Feed the local `turn-detector-v1-mini` model its 2.0 s audio window and the turn length, and refit its per-language thresholds. The cloud turn detector also receives the turn length.
+Feed the local `turn-detector-v1-mini` model its 2.0 s audio window and the turn length, and refit its per-language thresholds. The cloud turn detector also receives the turn length, and each prediction runs after the audio captured before it.

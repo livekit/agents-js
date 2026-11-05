@@ -13,7 +13,7 @@ import { AudioResampler, AudioResamplerQuality } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { EventEmitter } from 'node:events';
 import type { LanguageCode } from '../../language.js';
-import type { ChatContext } from '../../llm/chat_context.js';
+import { ChatContext } from '../../llm/chat_context.js';
 import { log } from '../../log.js';
 import type { EOTInferenceMetrics } from '../../metrics/base.js';
 import { type StreamChannel, createStreamChannel } from '../../stream/stream_channel.js';
@@ -79,6 +79,22 @@ export function isStartOfTurnSentinel(value: unknown): value is StartOfTurnSenti
     typeof value === 'object' &&
     value !== null &&
     (value as StartOfTurnSentinel).kind === 'start_of_turn'
+  );
+}
+
+/**
+ * An inference request, queued behind the audio captured before `predict()` so the
+ * transport runs it after those frames. `chatCtx` holds the items as of the call.
+ */
+export interface InferenceSentinel {
+  readonly kind: 'inference';
+  requestId: string;
+  chatCtx?: ChatContext;
+}
+
+export function isInferenceSentinel(value: unknown): value is InferenceSentinel {
+  return (
+    typeof value === 'object' && value !== null && (value as InferenceSentinel).kind === 'inference'
   );
 }
 
@@ -196,8 +212,9 @@ export class BaseStreamingTurnDetectorStream {
   private _audioInputSampleRate: number | undefined;
   private _audioInputNumChannels: number | undefined;
   private _audioResampler: AudioResampler | undefined;
-  private _audioChannel: StreamChannel<AudioFrame | FlushSentinel | StartOfTurnSentinel> =
-    createStreamChannel();
+  private _audioChannel: StreamChannel<
+    AudioFrame | FlushSentinel | StartOfTurnSentinel | InferenceSentinel
+  > = createStreamChannel();
   private _degraded = false;
 
   /** Id of the in-flight inference request, or `undefined` when idle. */
@@ -279,11 +296,15 @@ export class BaseStreamingTurnDetectorStream {
     const fut = new Future<TurnDetectionEvent>();
     this._requestId = shortuuid('turn_request_');
     this._requestFut = fut;
-    // A transport may resolve synchronously (e.g. the local no-executor path
-    // defaults to 1.0 inline), which clears `_requestFut` via
-    // `_resolvePrediction`. Hold a local reference so we still return the
-    // resolved future rather than `undefined`.
-    this._transport.runInference(this._requestId, chatCtx);
+    // Queued behind the audio so far: the transport runs it after the frames captured
+    // before this call, and the turn length it reports covers them. The items are
+    // copied because the caller may add to chatCtx before the transport runs it.
+    const sentinel: InferenceSentinel = {
+      kind: 'inference',
+      requestId: this._requestId,
+      chatCtx: chatCtx === undefined ? undefined : new ChatContext([...chatCtx.items]),
+    };
+    void this._audioChannel.write(sentinel);
     return fut;
   }
 
@@ -520,6 +541,11 @@ export class BaseStreamingTurnDetectorStream {
           await this._transport.flush(value);
         } else if (isStartOfTurnSentinel(value)) {
           this._transport.onStartOfTurn(value.elapsed);
+        } else if (isInferenceSentinel(value)) {
+          // a newer predict, a cancel, or a fallback closed this request while it waited
+          if (value.requestId === this._requestId) {
+            this._transport.runInference(value.requestId, value.chatCtx);
+          }
         } else {
           await this._transport.pushFrame(value);
         }

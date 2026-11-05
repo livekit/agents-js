@@ -265,6 +265,7 @@ describe('CloudStreamSendOrdering', () => {
       chatCtx.addMessage({ role: 'assistant', content: 'First question' });
       stream.predict(chatCtx);
       const firstId = (stream as unknown as { _requestId?: string })._requestId;
+      await drainSendQueue(transport);
       chatCtx.addMessage({ role: 'assistant', content: 'Second question' });
       stream.predict(chatCtx);
       const secondId = (stream as unknown as { _requestId?: string })._requestId;
@@ -373,6 +374,51 @@ describe('CloudStreamChatContext', () => {
       if (context.case !== 'eotInputChatContext') throw new Error('expected chat context');
       expect(context.value.messages).toEqual([]);
       expect(fakeWs.sent.at(-1)?.message.case).toBe('inferenceStart');
+    } finally {
+      await stream.aclose();
+    }
+  });
+});
+
+describe('CloudStreamQueuedInference', () => {
+  it('sends the audio captured before predict ahead of inferenceStart', async () => {
+    const { stream, fakeWs, transport } = makeStream({ connectScript: [null] });
+    try {
+      await waitUntilConnected(transport);
+      stream.pushAudio(pcmFrame(1600));
+      stream.pushAudio(pcmFrame(1600));
+      stream.predict();
+      stream.pushAudio(pcmFrame(1600));
+      await drainSendQueue(transport);
+
+      expect(fakeWs.sent.map((m) => m.message.case)).toEqual([
+        'sessionCreate',
+        'inputAudio',
+        'inputAudio',
+        'eotInputChatContext',
+        'inferenceStart',
+        'inputAudio',
+      ]);
+      const start = fakeWs.sent.find((m) => m.message.case === 'inferenceStart')!;
+      expect(start.message.case === 'inferenceStart' && start.message.value.turnSamples).toBe(3200);
+    } finally {
+      await stream.aclose();
+    }
+  });
+
+  it('does not send a request replaced before it runs', async () => {
+    const { stream, fakeWs, transport } = makeStream({ connectScript: [null] });
+    try {
+      await waitUntilConnected(transport);
+      stream.predict();
+      stream.predict();
+      const secondId = (stream as unknown as { _requestId?: string })._requestId;
+      await drainSendQueue(transport);
+
+      const startIds = fakeWs.sent
+        .filter((m) => m.message.case === 'inferenceStart')
+        .map((m) => (m.message.case === 'inferenceStart' ? m.message.value.requestId : ''));
+      expect(startIds).toEqual([secondId]);
     } finally {
       await stream.aclose();
     }

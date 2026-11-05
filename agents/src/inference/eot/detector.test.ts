@@ -362,7 +362,7 @@ describe('LocalFallbackDisabled', () => {
       }
 
       const prediction = stream.predict();
-      const requestId = transport.events.at(-1)![1] as string;
+      const requestId = (stream as unknown as { _requestId: string })._requestId;
       stream._resolvePrediction(requestId, 0.75);
       expect((await prediction.await).endOfTurnProbability).toBe(0.75);
       expect(stream.model).toBe('turn-detector-v1');
@@ -860,6 +860,11 @@ describe('LocalModelExecutor', () => {
   function pcmFrame(samples = 320): AudioFrame {
     return new AudioFrame(new Int16Array(samples), 16000, 1, samples);
   }
+
+  // these tests need the real drain loop: predict() runs behind the queued audio
+  beforeEach(() => {
+    runSpy.mockRestore();
+  });
 
   async function predictOnce(detector: TurnDetector): Promise<number> {
     const stream = detector.stream();
