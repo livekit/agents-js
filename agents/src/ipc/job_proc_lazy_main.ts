@@ -33,7 +33,7 @@ import { Future, shortuuid } from '../utils.js';
 import { defaultInitializeProcessFunc } from '../worker.js';
 import { preload } from './_preload.js';
 import type { InferenceExecutor } from './inference_executor.js';
-import { startJobSpan } from './job_trace.js';
+import { joinTiming, monotonicUs, startJobSpan } from './job_trace.js';
 import type { IPCMessage } from './message.js';
 
 const ORPHANED_TIMEOUT = 15 * 1000;
@@ -143,8 +143,16 @@ const startJob = (
     }
   });
 
+  let entrypointStartedMonoUs = 0;
   const onConnect = () => {
     connect = true;
+    const timing = joinTiming(
+      info,
+      entrypointStartedMonoUs,
+      ctx._connectCalledMonoUs,
+      ctx._connectedMonoUs,
+    );
+    if (timing) safeSend({ case: 'joinTiming', value: timing.toJson() });
   };
   const onShutdown = (reason: string) => {
     shutdown = true;
@@ -175,6 +183,7 @@ const startJob = (
     // the job's root span, from the availability request to the end of shutdown; the
     // entrypoint returning is an event on it. A close that arrived while the pipeline was
     // being prepared skips the entrypoint (below), so its start is not a stage of this job
+    if (!shutdown) entrypointStartedMonoUs = monotonicUs();
     const jobSpan = startJobSpan(ctx, shutdown ? null : Date.now());
     const jobSpanContext = trace.setSpan(otelContext.active(), jobSpan);
     ctx._jobSpanContext = jobSpanContext;
@@ -339,10 +348,18 @@ const startJob = (
     let job: JobTask | undefined = undefined;
     const closeEvent = new EventEmitter();
 
+    // skip the graceful shutdown when the worker is gone: a job that leaves its room is taken as
+    // done by the server, while a dropped connection lets the server dispatch the job again
+    const exitOrphaned = (reason: string) => {
+      logger.warn(`${reason}, exiting without leaving the room`);
+      process.kill(process.pid, 'SIGKILL');
+    };
+
     const orphanedTimeout = setTimeout(() => {
-      logger.warn('job process orphaned, shutting down.');
-      join.resolve();
+      exitOrphaned('job process orphaned');
     }, ORPHANED_TIMEOUT);
+    // the worker closes the IPC channel only by exiting
+    process.on('disconnect', () => exitOrphaned('worker process closed the IPC channel'));
 
     const messageHandler = (msg: IPCMessage) => {
       switch (msg.case) {

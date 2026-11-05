@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { AudioFrame } from '@livekit/rtc-node';
+import { ReadableStream, type ReadableStreamDefaultController } from 'node:stream/web';
 import { describe, expect, it, vi } from 'vitest';
 import { initializeLogger, tts, voice } from '../index.js';
 
@@ -45,6 +46,7 @@ class TestSynthesis extends tts.SynthesizeStream {
       if (typeof text === 'string') transcript += text;
     }
     this.hasReceivedText = true;
+    if (!transcript.trim()) return;
     if (this.mode !== 'before-audio') {
       this.queue.put({
         requestId: 'test',
@@ -87,7 +89,10 @@ class TestTts extends tts.TTS {
   }
 }
 
-async function startSession(modes: SynthesisMode[]): Promise<{
+async function startSession(
+  modes: SynthesisMode[],
+  fallback = false,
+): Promise<{
   session: voice.AgentSession;
   provider: TestTts;
   output: TestAudioOutput;
@@ -95,9 +100,13 @@ async function startSession(modes: SynthesisMode[]): Promise<{
 }> {
   initializeLogger({ pretty: false, level: 'silent' });
   const provider = new TestTts(modes);
+  const synthesis = fallback
+    ? new tts.FallbackAdapter({ ttsInstances: [provider, new TestTts([])], maxRetryPerTTS: 0 })
+    : provider;
   const output = new TestAudioOutput();
   const session = new voice.AgentSession({
-    tts: provider,
+    tts: synthesis,
+    connOptions: { ttsConnOptions: { maxRetry: 0 }, maxUnrecoverableErrors: 0 },
     llm: new voice.testing.FakeLLM([
       { input: 'first', content: 'The old reply.' },
       { input: 'correction', content: 'The corrected reply.' },
@@ -117,16 +126,22 @@ async function startSession(modes: SynthesisMode[]): Promise<{
     close: async () => {
       for (const stream of provider.streams) stream.close();
       await session.close();
+      await synthesis.close();
       expect(errors).toEqual([]);
     },
   };
 }
 
 describe('interrupted reply cleanup', () => {
-  it.each(['before-audio', 'during-audio'] as const)(
-    'plays the replacement promptly after interruption %s',
-    async (mode) => {
-      const { session, provider, output, close } = await startSession([mode, 'complete']);
+  it.each([
+    { mode: 'before-audio', fallback: false },
+    { mode: 'during-audio', fallback: false },
+    { mode: 'before-audio', fallback: true },
+    { mode: 'during-audio', fallback: true },
+  ] as const)(
+    'plays the replacement promptly after interruption $mode (fallback=$fallback)',
+    async ({ mode, fallback }) => {
+      const { session, provider, output, close } = await startSession([mode, 'complete'], fallback);
       try {
         const first = session.generateReply({ userInput: 'first' });
         await vi.waitFor(() => expect(provider.streams[0]?.hasReceivedText).toBe(true));
@@ -161,18 +176,47 @@ describe('interrupted reply cleanup', () => {
     10000,
   );
 
-  it('releases stalled speech when the session closes', async () => {
-    const { session, provider, output, close } = await startSession(['during-audio']);
-    try {
-      session.generateReply({ userInput: 'first' });
-      await vi.waitFor(() => expect(output.frames).toEqual([1]));
-      const startedAt = performance.now();
-      await session.close();
-      expect(performance.now() - startedAt).toBeLessThan(1000);
-      expect(provider.streams[0]!.abortSignal.aborted).toBe(true);
-      expect(output.frames).toEqual([1]);
-    } finally {
-      await close();
-    }
-  });
+  it.each(['', ' \n\t'])(
+    'continues after blank speech input %j with no TTS error budget',
+    async (text) => {
+      const { session, provider, output, close } = await startSession(['complete'], true);
+      let input!: ReadableStreamDefaultController<string>;
+      try {
+        const empty = session.say(
+          new ReadableStream<string>({
+            start(controller) {
+              input = controller;
+            },
+          }),
+        );
+        await vi.waitFor(() => expect(provider.streams).toHaveLength(1));
+        if (text) input.enqueue(text);
+        input.close();
+        await empty.waitForPlayout();
+        expect(output.frames).toEqual([]);
+        await session.generateReply({ userInput: 'correction' }).waitForPlayout();
+        expect(output.frames).toEqual([2]);
+      } finally {
+        await close();
+      }
+    },
+  );
+
+  it.each([false, true])(
+    'releases stalled speech when the session closes (fallback=%s)',
+    async (fallback) => {
+      const { session, provider, output, close } = await startSession(['during-audio'], fallback);
+      try {
+        session.generateReply({ userInput: 'first' });
+        await vi.waitFor(() => expect(output.frames).toEqual([1]));
+        const startedAt = performance.now();
+        await session.close();
+        expect(performance.now() - startedAt).toBeLessThan(1000);
+        expect(provider.streams[0]!.abortSignal.aborted).toBe(true);
+        expect(output.frames).toEqual([1]);
+      } finally {
+        await close();
+      }
+    },
+  );
 });

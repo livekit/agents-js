@@ -59,6 +59,7 @@ describe('LemonSlice AvatarSession', () => {
             livekit_token: 'livekit-token',
           },
           agent_image_url: 'https://example.com/avatar.png',
+          audio_sample_rate: 24000,
           aspect_ratio: '9x16',
         }),
       }),
@@ -123,6 +124,7 @@ describe('LemonSlice AvatarSession', () => {
         livekit_token: 'livekit-token',
       },
       agent_image_url: 'https://example.com/avatar.png',
+      audio_sample_rate: 24000,
     });
     expect(body).not.toHaveProperty('aspect_ratio');
   });

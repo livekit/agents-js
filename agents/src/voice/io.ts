@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame } from '@livekit/rtc-node';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { EventEmitter } from 'node:events';
 import type { ReadableStream } from 'node:stream/web';
 import type { ChatContext } from '../llm/chat_context.js';
@@ -10,6 +11,7 @@ import type { ToolContext } from '../llm/tool_context.js';
 import { log } from '../log.js';
 import { MultiInputStream } from '../stream/multi_input_stream.js';
 import type { SpeechEvent } from '../stt/stt.js';
+import type { STT, SpeechStream } from '../stt/stt.js';
 import type { FlushSentinel } from '../types.js';
 import { Future } from '../utils.js';
 import type { ModelSettings } from './agent.js';
@@ -18,6 +20,16 @@ export type STTNode = (
   audio: ReadableStream<AudioFrame> | AsyncIterable<AudioFrame>,
   modelSettings: ModelSettings,
 ) => Promise<ReadableStream<SpeechEvent | string> | null>;
+
+/** @internal */
+export interface STTStreamRegistration {
+  /** `audio` is the input the node gave the stream, so the pipeline can tell it is unwrapped. */
+  register(stream: SpeechStream, stt: STT, audio: ReadableStream<AudioFrame>): void;
+  unregister(stream: SpeechStream): void;
+}
+
+/** @internal */
+export const sttStreamRegistration = new AsyncLocalStorage<STTStreamRegistration>();
 
 export type LLMNode = (
   chatCtx: ChatContext,
