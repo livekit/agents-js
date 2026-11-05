@@ -2,6 +2,7 @@ agents/src/voice/amd/detector_lifecycle.test.ts
   s_a76e625a99c445::t_0dbbc47cba7138 505-519
 agents/src/voice/remote_session.test.ts
   s_a76e625a99c445::t_a8e8c0c71d0324 20,282-318,323-369,372-408,410
+  s_a76e625a99c445::t_a0b3bec2633feb 319-322
 agents/src/voice/amd/detector.ts
   s_a76e625a99c445::t_179d62858e42bf 1556
 agents/src/voice/remote_session.ts
@@ -16,6 +17,7 @@ examples/src/telephony/README.md
   s_a76e625a99c445::t_a668cec02d935d 9-10
 agents/etc/agents.api.md
   s_537610c4f1c4c2::t_613b5191207a90 543-544,6636,7172-7173
+  s_a76e625a99c445::t_3e50cb1c7d4e3b 6645
 pnpm-lock.yaml
   s_a76e625a99c445::t_621bea560dd058 144,2587-2588,2854,2861,6981
 ---
