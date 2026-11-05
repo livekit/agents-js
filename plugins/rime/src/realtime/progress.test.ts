@@ -74,6 +74,133 @@ async function liveCall(peer: PrismPeer, session: ReturnType<RealtimeModel['sess
   call.extra.__livekit_agents_tool_non_blocking = true;
   return [call, pair('progress')[1]] as const;
 }
+// A filler ends while the first progress write awaits acknowledgment. The repair
+// read restores Prism's message-before-call order, unlike core's playout order.
+async function repairedFillerProgress(strict = false) {
+  const context = await setup(strict);
+  const { peer, session } = context;
+  peer.accepted(undefined, 'tool-reply');
+  peer.message('tool-reply');
+  peer.text('Working', 'tool-reply', true);
+  peer.history.push({
+    id: 'message-tool-reply',
+    type: 'message',
+    role: 'assistant',
+    text: 'Working',
+  });
+  peer.tool('tool-reply', 'progress');
+  await vi.waitFor(() => expect(session.chatCtx.items).toHaveLength(1));
+  const call = session.chatCtx.items[0]! as llm.FunctionCall;
+  call.extra.__livekit_agents_tool_non_blocking = true;
+  const output = pair('progress')[1];
+  let acknowledge: (() => void) | undefined;
+  peer.onRequest = (request) => {
+    if (request.type !== 'conversation.item.create') return;
+    acknowledge = () => {
+      const item = { ...request.item!, id: 'saved-progress' };
+      peer.history.push(item);
+      peer.emit('conversation.item.created', {
+        prism_request_event_id: request.event_id,
+        item,
+      });
+    };
+    return true;
+  };
+  const pending = session.updateChatCtx(new llm.ChatContext([call, output]));
+  await vi.waitFor(() => expect(acknowledge).toBeDefined());
+  peer.ended('tool-reply');
+  await vi.waitFor(() => expect(session.chatCtx.items).toHaveLength(2));
+  acknowledge!();
+  await pending;
+  peer.onRequest = undefined;
+  expect(session.chatCtx.items.map((item) => item.id)).toEqual([
+    'message-tool-reply',
+    call.id,
+    output.id,
+  ]);
+  const message = session.chatCtx.items[0]! as llm.ChatMessage;
+  return { ...context, call, output, message };
+}
+it('accepts a shared handoff with the same response filler after its tool call', async () => {
+  const { peer, session, call, output, message, errors } = await repairedFillerProgress();
+  const before = session.chatCtx.toJSON();
+  const requests = peer.requests.length;
+  await session.updateChatCtx(new llm.ChatContext([call, output, message]));
+  await session.updateChatCtx(new llm.ChatContext([call, output, message]));
+  expect(session.chatCtx.toJSON()).toEqual(before);
+  expect(peer.requests).toHaveLength(requests);
+  expect(errors).toEqual([]);
+});
+it.each(['message', 'call', 'output'])(
+  'rejects changed %s in a reordered handoff',
+  async (kind) => {
+    const { peer, session, call, output, message } = await repairedFillerProgress();
+    if (kind === 'message') message.content = ['Changed'];
+    if (kind === 'call') call.args = '{"changed":true}';
+    if (kind === 'output') output.output = 'Changed';
+    const requests = peer.requests.length;
+    await expect(
+      session.updateChatCtx(new llm.ChatContext([call, output, message])),
+    ).rejects.toThrow();
+    expect(peer.requests).toHaveLength(requests);
+  },
+);
+it('does not normalize a call across a message from another response', async () => {
+  const { peer, session } = await setup();
+  const [call, output] = await liveCall(peer, session);
+  await generated(peer, session, 'unrelated');
+  const ctx = session.chatCtx;
+  ctx.items.push(output);
+  await session.updateChatCtx(ctx);
+  const message = session.chatCtx.items.find((item) => item.type === 'message')!;
+  const requests = peer.requests.length;
+  await expect(session.updateChatCtx(new llm.ChatContext([message, call, output]))).rejects.toThrow(
+    'append order',
+  );
+  expect(peer.requests).toHaveLength(requests);
+});
+it('does not reorder tool calls within the same response', async () => {
+  const { peer, session } = await setup();
+  peer.accepted(undefined, 'multiple');
+  peer.tool('multiple', 'first');
+  peer.tool('multiple', 'second');
+  peer.ended('multiple');
+  await vi.waitFor(() => expect(session.chatCtx.items).toHaveLength(2));
+  const calls = session.chatCtx.items as llm.FunctionCall[];
+  for (const call of calls) call.extra.__livekit_agents_tool_non_blocking = true;
+  const requests = peer.requests.length;
+  await expect(session.updateChatCtx(new llm.ChatContext(calls.reverse()))).rejects.toThrow(
+    'append order',
+  );
+  expect(peer.requests).toHaveLength(requests);
+});
+it('does not reorder messages within the same response', async () => {
+  const { peer, session } = await setup();
+  peer.accepted(undefined, 'multiple');
+  for (const id of ['first', 'second']) {
+    peer.message('multiple', id);
+    peer.emit('response.text.done', {
+      response_id: 'multiple',
+      item_id: id,
+      output_index: 0,
+      content_index: 0,
+      text: id,
+    });
+  }
+  peer.ended('multiple');
+  await vi.waitFor(() => expect(session.chatCtx.items).toHaveLength(2));
+  const requests = peer.requests.length;
+  await expect(
+    session.updateChatCtx(new llm.ChatContext(session.chatCtx.items.reverse())),
+  ).rejects.toThrow('append order');
+  expect(peer.requests).toHaveLength(requests);
+});
+it('keeps strict edits of same-response filler order explicit', async () => {
+  const { peer, session, call, output, message } = await repairedFillerProgress(true);
+  await session.updateChatCtx(new llm.ChatContext([call, output, message]));
+  expect(session.chatCtx.items.map((item) => item.id)).toEqual([call.id, output.id, message.id]);
+  expect(peer.requests.some((request) => request.type === 'conversation.item.delete')).toBe(true);
+});
 it.each([false, true])('normalizes unchanged interleaved progress in strict=%s', async (strict) => {
   const { peer, session } = await setup(strict);
   const [call, output] = await liveCall(peer, session);

@@ -79,6 +79,11 @@ accept new items at the end, and reject conflicting edits. Known generated, play
 and retained transcript variants do not overwrite provider text. Use
 `contextMode: 'strict'` for exact replacement through ordinary updates.
 
+During shared-history handoffs, an unchanged tool call and its filler may appear in
+playout order instead of provider order. The plugin preserves its acknowledged order
+when both items belong to the same provider response. This does not rewrite server
+history or repeat tool results. Other reorders and content changes remain rejected.
+
 Use `await agent.updateChatCtx(target)` in strict mode for exact edits, or pass
 `llm.ChatContext.empty()` to clear completed history. Pending calls cannot be removed.
 

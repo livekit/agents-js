@@ -107,6 +107,7 @@ export class PrismHistory {
   revision = 0;
   private failure?: PrismHistoryUpdateError;
   private variants = new Map<string, Set<string>>();
+  private messageResponses = new Map<string, string>();
   private played = new Map<string, string>();
   private holds = new Map<string, r.ResponseHold>();
   private edits = new SerialQueue();
@@ -228,6 +229,7 @@ export class PrismHistory {
         break;
       case 'message.started':
         this.ids.set(payload.output.itemId, payload.output.itemId);
+        this.messageResponses.set(payload.output.itemId, payload.output.response.responseId);
         this.active.get(payload.output.response.responseId)?.add(payload.output.itemId);
         break;
       case 'tool.call':
@@ -256,8 +258,8 @@ export class PrismHistory {
         break;
     }
   }
-  /** Normalize only unchanged progress results within acknowledged, generated history. */
-  private progressTarget(target: Item[]): Item[] {
+  /** Normalize unchanged progress results and shared same-response playout order. */
+  private progressTarget(target: Item[], shared: boolean): Item[] {
     const requested = new Map(target.map((item) => [item.id, item]));
     if (requested.size !== target.length) return target;
     const old = new Map(items(this.chat).map((item) => [item.id, item]));
@@ -312,14 +314,38 @@ export class PrismHistory {
         const ordered = [...current].sort(
           (a, b) => acknowledged.get(a.id)! - acknowledged.get(b.id)!,
         );
-        const fixed = (values: Item[]) =>
-          values.filter((item) => !results.has(item.id)).map((item) => item.id);
-        if (JSON.stringify(fixed(current)) === JSON.stringify(fixed(ordered)))
+        const fixed = (values: Item[]) => values.filter((item) => !results.has(item.id));
+        const before = fixed(current),
+          after = fixed(ordered);
+        if (
+          JSON.stringify(before.map((item) => item.id)) ===
+            JSON.stringify(after.map((item) => item.id)) ||
+          (shared && this.sameResponseOrder(before, after))
+        )
           normalized.splice(start, end - start, ...ordered);
       }
       start = end;
     }
     return this.includeLateProgressMessages(normalized);
+  }
+  /** Core timestamps calls at execution and filler at playout. Shared handoffs
+   * may interleave those unchanged items differently within the same response.
+   * Keep call order, message order, and all unrelated items fixed. Strict edits
+   * still apply the requested order. Eligibility and barriers are checked above.
+   */
+  private sameResponseOrder(current: Item[], ordered: Item[]): boolean {
+    const signature = (values: Item[]) => ({
+      responses: values.map((item) => {
+        const response =
+          item.type === 'function_call'
+            ? this.calls.get(item.callId)?.ref.responseId
+            : this.messageResponses.get(item.id);
+        return response === undefined ? ['item', item.id] : ['response', response];
+      }),
+      calls: values.filter((item) => item.type === 'function_call').map((item) => item.id),
+      messages: values.filter((item) => item.type === 'message').map((item) => item.id),
+    });
+    return JSON.stringify(signature(current)) === JSON.stringify(signature(ordered));
   }
   /** A stale progress-only append must not delete output observed after its capture. */
   private includeLateProgressMessages(target: Item[]): Item[] {
@@ -452,7 +478,7 @@ export class PrismHistory {
       let failure: unknown;
       try {
         if (this.failure) throw this.failure;
-        const progress = this.progressTarget(this.includeQueuedProgress(target, captured));
+        const progress = this.progressTarget(this.includeQueuedProgress(target, captured), shared);
         await this.apply(shared ? this.sharedTarget(progress) : progress, result);
       } catch (error) {
         failure = error;
