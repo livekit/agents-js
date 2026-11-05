@@ -110,8 +110,8 @@ class PrismHistoryUpdateError extends Error {
 
 // @public
 class PrismIdleTimeoutError extends llm.RealtimeError {
-    constructor(idleTimeoutS: number);
-    readonly idleTimeoutS: number;
+    constructor(idleTimeoutInS: number);
+    readonly idleTimeoutInS: number;
 }
 
 // Warning: (ae-missing-release-tag) "PrismItemTruncatedEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)

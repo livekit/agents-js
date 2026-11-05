@@ -116,12 +116,12 @@ export class PrismError extends llm.RealtimeError {
  */
 export class PrismIdleTimeoutError extends llm.RealtimeError {
   /** The idle limit that Prism reported, in seconds. */
-  readonly idleTimeoutS: number;
+  readonly idleTimeoutInS: number;
 
-  constructor(idleTimeoutS: number) {
-    super(`Prism session idle for ${idleTimeoutS} seconds`);
+  constructor(idleTimeoutInS: number) {
+    super(`Prism session idle for ${idleTimeoutInS} seconds`);
     this.name = 'PrismIdleTimeoutError';
-    this.idleTimeoutS = idleTimeoutS;
+    this.idleTimeoutInS = idleTimeoutInS;
   }
 }
 

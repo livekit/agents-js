@@ -150,7 +150,7 @@ remove it from later Prism history. The method accepts only IDs observed in
 this session while they remain among the last 128 saved instruction IDs that
 the adapter observed.
 It does not change local LiveKit history. An idle close produces
-`PrismIdleTimeoutError` in the session error event, with `idleTimeoutS` in seconds.
+`PrismIdleTimeoutError` in the session error event, with `idleTimeoutInS` in seconds.
 
 ### Configuration and compatibility
 

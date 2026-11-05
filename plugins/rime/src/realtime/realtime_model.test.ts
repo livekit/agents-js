@@ -100,7 +100,7 @@ describe('Prism SDK adapter', () => {
     peer.emit('session.idle_timeout', { reason: 'idle_timeout', idle_timeout_s: 300 });
     await vi.waitFor(() => expect(errors).toHaveLength(1));
     expect(errors[0]?.error).toBeInstanceOf(PrismIdleTimeoutError);
-    expect((errors[0]?.error as PrismIdleTimeoutError).idleTimeoutS).toBe(300);
+    expect((errors[0]?.error as PrismIdleTimeoutError).idleTimeoutInS).toBe(300);
   });
 
   it('preserves deleted assistant history when closing the session', async () => {
