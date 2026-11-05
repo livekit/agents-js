@@ -339,7 +339,15 @@ export class LLM extends llm.LLM {
     const resolvedInferenceClass =
       inferenceClass !== undefined ? inferenceClass : this.opts.inferenceClass;
 
+    const callHeaders = modelOptions.extra_headers as Record<string, string> | undefined;
+    const modelHeaders = (this.opts.modelOptions as Record<string, unknown>).extra_headers as
+      | Record<string, string>
+      | undefined;
     modelOptions = { ...modelOptions, ...this.opts.modelOptions };
+    // merge, don't replace: a turn's headers survive the model's own
+    if (callHeaders || modelHeaders) {
+      modelOptions.extra_headers = { ...callHeaders, ...modelHeaders };
+    }
 
     return new LLMStream(this, {
       model: this.opts.model,
