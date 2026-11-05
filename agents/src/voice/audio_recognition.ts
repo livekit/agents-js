@@ -2210,7 +2210,9 @@ export class AudioRecognition {
               this.turnDetectorStream !== undefined &&
               this.turnDetectorPredictionFut === undefined
             ) {
-              this.turnDetectorPredictionFut = this.turnDetectorStream.predict();
+              this.turnDetectorPredictionFut = this.turnDetectorStream.predict(
+                this.hooks.retrieveChatCtx(),
+              );
             }
             break;
           case VADEventType.END_OF_SPEECH:

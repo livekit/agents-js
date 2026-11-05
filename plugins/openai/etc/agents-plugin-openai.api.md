@@ -2245,6 +2245,7 @@ export interface TTSOptions {
     instructions?: string;
     // (undocumented)
     model: TTSModels | string;
+    sampleRate?: number;
     // (undocumented)
     speed: number;
     // (undocumented)

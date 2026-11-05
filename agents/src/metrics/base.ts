@@ -12,6 +12,7 @@ export type MetricsMetadata = {
 export type AgentMetrics =
   | STTMetrics
   | LLMMetrics
+  | DecisionMetrics
   | TTSMetrics
   | VADMetrics
   | EOUMetrics
@@ -19,6 +20,18 @@ export type AgentMetrics =
   | RealtimeModelMetrics
   | InterruptionMetrics
   | AvatarMetrics;
+
+export type DecisionMetrics = {
+  type: 'decision_metrics';
+  label: string;
+  requestId: string;
+  timestamp: number;
+  /** Duration of the request in milliseconds. */
+  durationMs: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  metadata?: MetricsMetadata;
+};
 
 export type LLMMetrics = {
   type: 'llm_metrics';
