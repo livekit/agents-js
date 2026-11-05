@@ -1,0 +1,47 @@
+agents/src/voice/amd/detector_lifecycle.test.ts
+  s_a76e625a99c445::t_0dbbc47cba7138 505-519
+agents/src/voice/remote_session.test.ts
+  s_a76e625a99c445::t_a8e8c0c71d0324 18,381-417,422-468,471-507,509
+agents/src/voice/amd/detector.ts
+  s_a76e625a99c445::t_179d62858e42bf 1556
+agents/src/voice/remote_session.ts
+  s_a76e625a99c445::t_179d62858e42bf 34,74,90,392,396,399-412,845-852,854-855,858-860,1255-1256
+  s_a76e625a99c445::t_7a83f7e9d7c8d8 1257
+agents/src/voice/agent_session.ts
+  s_a76e625a99c445::t_179d62858e42bf 95,1349-1355
+  s_a76e625a99c445::t_51afd7f6f43631 1356-1357
+agents/package.json
+  s_a76e625a99c445::t_b8104022083150 72
+examples/src/telephony/README.md
+  s_a76e625a99c445::t_c30e8880ac3b55 405-414,434
+.changeset/multi-turn-amd.md
+  s_a76e625a99c445::t_a668cec02d935d 9-10
+agents/etc/agents.api.md
+  s_537610c4f1c4c2::t_613b5191207a90 544-545,6615,6623,7141-7142,10019-10021
+pnpm-lock.yaml
+  s_a76e625a99c445::t_621bea560dd058 143-144,2538-2539,2750,2757,6455,8756
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d1b83116d2dbe2c2fbb46a39bc1e85c8507afa21",
+  "prompts": {},
+  "sessions": {
+    "s_537610c4f1c4c2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "facb5b5b-e70d-48c2-a084-6889130faaae",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    },
+    "s_a76e625a99c445": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c9702b8a-b660-4f34-bd32-230591d391a0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
