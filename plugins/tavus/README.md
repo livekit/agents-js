@@ -37,3 +37,9 @@ const setEmotion = llm.tool({
   execute: async ({ emotion }) => avatar.setEmotion(emotion),
 });
 ```
+
+## Full Example
+
+Find a complete working example [here](../../examples/src/tavus_avatar.ts). The agent sets the avatar's emotion through a `setEmotion` tool as the mood of the conversation changes.
+
+Set `TAVUS_API_KEY` to get up and running. `TAVUS_FACE_ID` and `TAVUS_PAL_ID` are optional; without them the stock pal is used.
