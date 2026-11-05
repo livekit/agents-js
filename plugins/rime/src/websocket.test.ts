@@ -194,6 +194,21 @@ async function collect(stream: tts.SynthesizeStream, onFrame?: () => void) {
 }
 
 describe.each(['binary', 'json'] as const)('Rime v1 %s', (protocol) => {
+  it('sends a copied Coda custom lexicon', async () => {
+    const peer = await server();
+    const lexicon = [{ spelling: 'Rime', pronunciation: '" r aI m' }];
+    const { value, errors } = client(peer.url, protocol, { customLexicon: lexicon });
+    const stream = value.stream({ connOptions: options });
+    lexicon[0]!.pronunciation = 'changed';
+    stream.pushText('Rime.');
+    stream.endInput();
+    expect((await collect(stream)).length).toBeGreaterThan(0);
+    const start = peer.requests.find((r) => r.payload.case === 'start')!;
+    expect(toJson(WebSocketRequestSchema, start)).toMatchObject({
+      start: { customLexicon: [{ spelling: 'Rime', pronunciation: '" r aI m' }] },
+    });
+    expect(errors).toEqual([]);
+  });
   it('connects to the supplied custom path', async () => {
     const peer = await server();
     const { value, errors } = client(peer.url + '?deployment=custom', protocol);
