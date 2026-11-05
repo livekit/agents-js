@@ -1,0 +1,25 @@
+agents/src/voice/amd/fsm.ts
+  s_a76e625a99c445::t_487dadaf520079 86,88,91,93
+agents/src/voice/amd/corrections.test.ts
+  s_a76e625a99c445::t_487dadaf520079 137,148
+agents/src/voice/amd/fsm.test.ts
+  s_a76e625a99c445::t_487dadaf520079 88
+examples/src/telephony/README.md
+  s_a76e625a99c445::t_487dadaf520079 288-289,296,449
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "37d6bc303d0d464830f6f710e6879736f8e62702",
+  "prompts": {},
+  "sessions": {
+    "s_a76e625a99c445": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c9702b8a-b660-4f34-bd32-230591d391a0",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
