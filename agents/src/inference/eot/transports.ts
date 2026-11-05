@@ -37,6 +37,9 @@ const ClientMessageCtor = AgentInference.ClientMessage;
 const ServerMessageCtor = AgentInference.ServerMessage;
 const InferenceStart = AgentInference.InferenceStart;
 const MAX_UINT32 = 2 ** 32 - 1;
+// The mini model's audio window (2.0 s), for an explicit executor that runs the model in a
+// process with the native binding when this one has none.
+const MINI_WINDOW_SAMPLES = 2 * DEFAULT_SAMPLE_RATE;
 const InputAudio = AgentInference.InputAudio;
 const SessionClose = AgentInference.SessionClose;
 const SessionCreate = AgentInference.SessionCreate;
@@ -161,8 +164,9 @@ export class LocalTransport implements StreamingTurnDetectionTransport {
   }) {
     this._opts = opts.opts;
     this._executor = opts.executor;
-    // without the binding, predictions never reach the model, so the buffer size does not matter
-    this._buf = new PcmRingBuffer(_getLocalInferenceModule()?.EOT_MAX_SAMPLES ?? 1);
+    this._buf = new PcmRingBuffer(
+      _getLocalInferenceModule()?.EOT_MAX_SAMPLES ?? MINI_WINDOW_SAMPLES,
+    );
   }
 
   attach(stream: BaseStreamingTurnDetectorStream): void {

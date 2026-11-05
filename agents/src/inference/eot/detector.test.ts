@@ -908,6 +908,20 @@ describe('LocalModelExecutor', () => {
     expect(await predictOnce(new TurnDetector({ version: 'v1-mini', executor }))).toBe(0.3);
   });
 
+  it('sends an explicit executor the full window without the native binding', async () => {
+    vi.spyOn(warmup, '_getLocalInferenceModule').mockReturnValue(undefined);
+    const doInference = vi.fn(async () => ({ probability: 0.3, inferenceDurationMs: 5 }));
+    const stream = new TurnDetector({ version: 'v1-mini', executor: { doInference } }).stream();
+    try {
+      stream.pushAudio(pcmFrame(40_000));
+      await stream.predict().await;
+      const { pcm } = doInference.mock.calls[0]![1] as { pcm: string };
+      expect(Buffer.from(pcm, 'base64').byteLength / 2).toBe(32_000);
+    } finally {
+      await stream.aclose();
+    }
+  });
+
   it.each([undefined, false])(
     'keeps local inference audio-only (localFallback=%s)',
     async (localFallback) => {
