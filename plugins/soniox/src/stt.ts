@@ -308,6 +308,7 @@ export class SpeechStream extends stt.SpeechStream {
 
   async #sendAudio(ws: WebSocket): Promise<void> {
     const abortPromise = waitForAbort(this.abortSignal);
+    let audioSinceFinalize = false;
     while (!this.closed) {
       const result = await Promise.race([this.input.next(), abortPromise]);
       if (result === undefined || result.done) {
@@ -316,6 +317,16 @@ export class SpeechStream extends stt.SpeechStream {
 
       const data = result.value;
       if (data === SpeechStream.FLUSH_SENTINEL) {
+        // Ask Soniox for the final transcript of the audio so far, instead of waiting for its
+        // own endpoint detection (Soniox replies with a `<fin>` token, see isEndToken). Only
+        // once per stretch of audio: Soniox advises against frequent finalize requests, so a
+        // flush with no new audio since the last one sends nothing. The base flush() does not
+        // drain the resampler, so a few milliseconds of audio held there can arrive after the
+        // finalize; in an agent that is the silence after the VAD's end of speech.
+        if (audioSinceFinalize) {
+          ws.send(JSON.stringify({ type: 'finalize' }));
+          audioSinceFinalize = false;
+        }
         continue;
       }
       // Send only this frame's bytes. `data.data` may be a view into a larger
@@ -323,6 +334,7 @@ export class SpeechStream extends stt.SpeechStream {
       // would transmit the wrong bytes; honor byteOffset/byteLength (mirrors
       // Python's `frame.data.tobytes()`).
       ws.send(Buffer.from(data.data.buffer, data.data.byteOffset, data.data.byteLength));
+      audioSinceFinalize = true;
     }
   }
 
