@@ -1,0 +1,107 @@
+.changeset/eot-assistant-context.md
+  s_9dc60d915e2121::t_9892a77c833ec7 1-5
+agents/etc/agents.api.md
+  s_9dc60d915e2121::t_d56d905145fa7c 365,2352-2362,2375-2390,2523,2827-2914,2928,2943,5012-5024,5294,5634,6073-6095,6823-6852,7043,7068-7073,7076,7099,7885-7886,9576,9883-9884
+agents/src/inference/eot/base.ts
+  s_9dc60d915e2121::t_50a67d6936dfd2 16,94,271,286
+agents/src/inference/eot/detector.test.ts
+  s_9dc60d915e2121::t_143bce17a93022 27,863,875-876,878,880
+agents/src/inference/eot/transports.test.ts
+  s_9dc60d915e2121::t_14168bc367d31a 17,22-27,264-266,268-269,271,281-375
+agents/src/inference/eot/transports.ts
+  s_9dc60d915e2121::t_578710bbac7534 9,18,172,332-353
+agents/src/inference/stt.test.ts
+  s_9dc60d915e2121::t_c9470e7cb0d6f9 10,12,22,779-1452
+agents/src/inference/stt.ts
+  s_9dc60d915e2121::t_7f9f5fb0ddda06 109-113,127-128,447-477,510,758-773,775-787,793,896-899,902-919
+agents/src/ipc/inference_proc_executor.ts
+  s_9dc60d915e2121::t_35916441995a68 89-92
+agents/src/ipc/job_proc_executor.ts
+  s_9dc60d915e2121::t_eeac7b96cdd58e 86,111-116
+agents/src/ipc/job_proc_lazy_main.ts
+  s_9dc60d915e2121::t_fa2324aba2ed57 365-367
+agents/src/ipc/supervised_proc.test.ts
+  s_9dc60d915e2121::t_ca15acb83004be 4,12,14-16,18,217,223-226,295-372
+agents/src/ipc/supervised_proc.ts
+  s_9dc60d915e2121::t_65fe689cd9fce3 50,68,83,102,118-121,128-133,140,149,155,178-181,301
+agents/src/job.ts
+  s_9dc60d915e2121::t_fb5d9d21f36a80 591
+agents/src/llm/decisions.test.ts
+  s_9dc60d915e2121::t_e9ddb849c374d6 1-533
+agents/src/llm/decisions.ts
+  s_9dc60d915e2121::t_c31d2735b480d7 1-521
+agents/src/llm/index.ts
+  s_9dc60d915e2121::t_a1d2e6acc16d11 94-109
+agents/src/log.test.ts
+  s_9dc60d915e2121::t_7d7c3ce9b067ab 4-6,8,26-34,255-393
+agents/src/log.ts
+  s_9dc60d915e2121::t_5b34922e61592d 5,25-73,95
+agents/src/metrics/base.ts
+  s_9dc60d915e2121::t_88aa63c1c3f2b5 15,24-35
+agents/src/metrics/index.ts
+  s_9dc60d915e2121::t_428b845f480cb7 8
+agents/src/proto.ts
+  s_9dc60d915e2121::t_df9766a0e54aea 88
+agents/src/telemetry/traces.test.ts
+  s_9dc60d915e2121::t_27d8c05494c13b 25-26,806-861
+agents/src/telemetry/traces.ts
+  s_9dc60d915e2121::t_21b36a478bc448 1169,1176-1184
+agents/src/voice/audio_recognition.ts
+  s_9dc60d915e2121::t_8b041f286d268d 2213-2215
+agents/src/voice/audio_recognition_turn_detection.test.ts
+  s_9dc60d915e2121::t_65ce0109f9f01e 608,613-615,622
+agents/src/voice/chat_item_proto_coverage.test.ts
+  s_9dc60d915e2121::t_b499871e6fa986 50-57
+agents/src/voice/report.test.ts
+  s_9dc60d915e2121::t_4be14b213ce4ba 4,21-22,24,354-483,607-656
+agents/src/voice/report.ts
+  s_9dc60d915e2121::t_d77a4be2f28e72 4,14,23-24,47-48,74,240-299,304-312,346-350,352-353,360,375,380-387
+agents/src/worker.test.ts
+  s_9dc60d915e2121::t_7cabdd782d268d 4-13,16,116-184
+agents/src/worker.ts
+  s_9dc60d915e2121::t_7fb4d996247ba7 7,9,549-572,740
+examples/src/assemblyai_stt_tts.ts
+  s_9dc60d915e2121::t_a5da6961d8ff84 69
+plugins/assemblyai/README.md
+  s_9dc60d915e2121::t_76890b663bb7ba 37,64
+plugins/assemblyai/src/tts.test.ts
+  s_9dc60d915e2121::t_968ead19ee7293 26,445,742,759
+plugins/assemblyai/src/tts.ts
+  s_9dc60d915e2121::t_afa2925b906e33 31,53
+plugins/deepgram/etc/agents-plugin-deepgram.api.md
+  s_9dc60d915e2121::t_705f252ee76f4d 138
+plugins/deepgram/src/stt.test.ts
+  s_9dc60d915e2121::t_877fa2cb61b81d 4,10,43-46,141-431
+plugins/deepgram/src/stt.ts
+  s_9dc60d915e2121::t_01d9ac0dd042ce 30-36,93-109,117,154-155,226-227,280-295,364-369
+plugins/deepgram/src/stt_v2.test.ts
+  s_9dc60d915e2121::t_1c809a0f3bcb33 4,7,21-24,62-182
+plugins/deepgram/src/stt_v2.ts
+  s_9dc60d915e2121::t_430720fb16bcb2 54-55,81-88,129,163,215-216,253-269,640-644
+plugins/krisp/package.json
+  s_9dc60d915e2121::t_940ba5f70760cd 48
+plugins/openai/etc/agents-plugin-openai.api.md
+  s_9dc60d915e2121::t_a2fdbdf4fe7afb 2248
+plugins/openai/src/tts.ts
+  s_9dc60d915e2121::t_0d913294b5edb3 10,20-24,32,62-68,70,127,139,146-147
+plugins/openai/src/tts_options.test.ts
+  s_9dc60d915e2121::t_68f60d8e57b874 1-88
+pnpm-lock.yaml
+  s_9dc60d915e2121::t_4f0cb26dd333a1 143-144,906-907,2498-2499,2504-2505,2510-2511,2517-2518,2523-2524,2529-2530,2538-2539,2750,2757,6421,6424,6427,6436-6440,6442,6445,6448,6455,8756
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "47fdd7c2ba592e2125efb595d8f37aae04d3d39d",
+  "prompts": {},
+  "sessions": {
+    "s_9dc60d915e2121": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3bb7b518-e716-431d-8b0e-9b5f73deb748",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
