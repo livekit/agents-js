@@ -921,7 +921,10 @@ describe('LocalModelExecutor', () => {
         stream.pushAudio(pcmFrame());
         const ev = await stream.predict(chatCtx).await;
         expect(ev.endOfTurnProbability).toBe(0.7);
-        expect(doInference).toHaveBeenCalledWith(EOT_INFERENCE_METHOD, { pcm: expect.any(String) });
+        expect(doInference).toHaveBeenCalledWith(EOT_INFERENCE_METHOD, {
+          pcm: expect.any(String),
+          turnSamples: expect.any(Number),
+        });
         if (localFallback === false) {
           expect(warnSpy).toHaveBeenCalledWith(
             expect.stringContaining('localFallback=false has no effect'),
