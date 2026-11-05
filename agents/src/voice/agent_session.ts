@@ -1576,7 +1576,19 @@ export class AgentSession<
     const hookResult = await activity.runUserTurnHook(userMessage, this.rootSpanContext);
     if (!hookResult) return;
 
-    this.generateReply({ userInput: userMessage, chatCtx: hookResult.chatCtx, inputModality });
+    if (!activity.acceptsUserTurns) {
+      // as on a spoken turn: a handoff started from the hook drops this reply, whose
+      // context belongs to the agent being left
+      this.logger.warn('skipping reply to user input, speech scheduling is paused');
+      return;
+    }
+
+    const handle = activity.generateReply({
+      userMessage,
+      chatCtx: hookResult.chatCtx,
+      inputDetails: { modality: inputModality ?? 'text' },
+    });
+    this._globalRunState?._watchHandle(handle);
   }
 
   /** @internal */

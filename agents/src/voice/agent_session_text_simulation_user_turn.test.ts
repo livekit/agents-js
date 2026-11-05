@@ -80,4 +80,38 @@ describe('text simulation user turns', () => {
     expect(agent.turns).toEqual([]);
     expect(replies).toEqual(['unedited']);
   });
+
+  it.each([true, false])('sends no reply after the hook hands off (wait=%s)', async (wait) => {
+    // the turn's reply was built from the old agent's context: neither agent may answer it
+    const asked: string[] = [];
+    class RecordingLLM extends FakeLLM {
+      constructor(private readonly owner: string) {
+        super();
+      }
+      override chat(params: Parameters<FakeLLM['chat']>[0]) {
+        asked.push(this.owner);
+        return super.chat(params);
+      }
+    }
+    const next = new Agent({ instructions: 'next agent', llm: new RecordingLLM('next') });
+    class HandoffAgent extends Agent {
+      constructor() {
+        super({ instructions: 'help the user', llm: new RecordingLLM('old') });
+      }
+      async onUserTurnCompleted(): Promise<void> {
+        this.session.updateAgent(next);
+        if (wait) await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+    }
+    vi.spyOn(AgentSession.prototype, '_textOnly', 'get').mockReturnValue(true);
+    const session = new AgentSession({});
+    try {
+      await session.start({ agent: new HandoffAgent() });
+      await session.run({ userInput: 'hello there' }).wait();
+      expect(asked).toEqual([]);
+      expect(session.currentAgent).toBe(next);
+    } finally {
+      await session.close();
+    }
+  });
 });

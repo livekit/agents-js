@@ -1312,6 +1312,11 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   /** @internal */
+  get acceptsUserTurns(): boolean {
+    return !this.schedulingPaused && !this.newTurnsBlocked;
+  }
+
+  /** @internal */
   blockNewTurns(): void {
     this.newTurnsBlocked = true;
   }
