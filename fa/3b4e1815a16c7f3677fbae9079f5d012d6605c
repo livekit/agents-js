@@ -1,0 +1,27 @@
+.changeset/quiet-turns-listen.md
+  s_9dc60d915e2121::t_efae1fbb7dd58c 5
+agents/src/inference/eot/base.test.ts
+  s_9dc60d915e2121::t_2e081c087f1830 46,113-116,149,156-175,187-189,234-235
+agents/src/inference/eot/base.ts
+  s_9dc60d915e2121::t_d418c0435b43ef 16,85-100,215-217,299-307,544-548
+agents/src/inference/eot/detector.test.ts
+  s_9dc60d915e2121::t_03d60e5853f8f3 365,864-868
+agents/src/inference/eot/transports.test.ts
+  s_9dc60d915e2121::t_108998574957c7 268,383-427
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fa3b4e1815a16c7f3677fbae9079f5d012d6605c",
+  "prompts": {},
+  "sessions": {
+    "s_9dc60d915e2121": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3bb7b518-e716-431d-8b0e-9b5f73deb748",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
