@@ -110,9 +110,11 @@ The detection `timeout` starts when listening begins.
 
 ## Model selection and transcripts
 
-- `llm` accepts `string | LLM | null | undefined`. If omitted, AMD auto-selects
-  `google/gemma-4-31b-it`. Pass `null` to use the active Agent's pipeline
+- `llm` accepts `string | LLM | DecisionModel | null | undefined`. If omitted, AMD
+  auto-selects `google/gemma-4-31b-it`. Pass `null` to use the active Agent's pipeline
   LLM. A model instance or string selects a different classification and menu model.
+  A `DecisionModel` must support `choice` decisions, or `start()` throws. It classifies
+  with one choice, and AMD skips menu extraction.
 - `stt` accepts `string | STT | null | undefined`. If omitted, AMD auto-selects
   `cartesia/ink-whisper`. Pass `null` to use only the session transcript.
   A model instance or string selects an STT for AMD only.
@@ -131,6 +133,18 @@ always inherits. AMD resolves `llm` and `stt` independently.
 The LLM must support required function calls. AMD uses a `record_result` tool
 for each prediction or menu result. It validates the tool arguments against the
 result schema. This tool is not added to the active Agent.
+
+A decision model gets the same content as one `choice` decision named `category`:
+
+- the prompt: `CLASSIFY_PROMPT`
+- the options: the seven categories, with empty descriptions, so the prompt alone
+  defines each category
+- the input: `Request: ` and the request state JSON, then `Transcript:` and the
+  classifier history in the decision-model transcript format, including DTMF calls
+  and results (`user:`, `assistant:`, `[function call: ...]`, `[function output: ...]`)
+
+The chosen option is the category. A decision error or a missing answer counts as
+a model error, like a failed LLM call.
 
 When session STT is configured, AMD keeps both transcripts of each turn, and the
 classifier sees both as JSON: `transcript_1` (session) and `transcript_2` (AMD STT).
@@ -366,7 +380,8 @@ Failed calls can still request a reply. DTMF completion alone neither triggers
 classification nor proves that a person answered.
 
 Menu extraction runs as separate best-effort work. It never holds a reply. It does
-not run when `ivrInstructions` is `null`.
+not run when `ivrInstructions` is `null`, or when the classifier is a decision model,
+which cannot write a menu. So `amd_menu_observed` never fires with a decision model.
 Each `amd_menu_observed` event identifies the turn and contains a menu description
 and options with `label`, `dtmf`, and `spokenResponse`. AMD does not build a tree
 or execute the observed menu. Extraction has a 5-second deadline and at most

@@ -5,6 +5,7 @@
 /** Stateless model calls and structured-output validation for AMD classification and menus. */
 import { z } from 'zod';
 import { ChatContext } from '../../llm/chat_context.js';
+import { Choice, ChoiceResult, DecisionModel, formatTranscript } from '../../llm/decisions.js';
 import type { LLM } from '../../llm/llm.js';
 import { tool } from '../../llm/tool_context.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../../types.js';
@@ -239,33 +240,57 @@ async function structuredResponse<T>(
 }
 
 export async function classify(
-  model: LLM,
+  model: LLM | DecisionModel,
   request: AMDRequest,
   {
     connOptions = DEFAULT_API_CONNECT_OPTIONS,
     signal,
   }: { connOptions?: APIConnectOptions; signal?: AbortSignal } = {},
 ): Promise<AMDResponse> {
+  const previous = request.previousPrediction;
+  const state = pythonJsonDumps({
+    stage: request.stage,
+    previous_prediction:
+      previous !== null
+        ? {
+            category: request.likelyHuman ? LIKELY_HUMAN : previous.category,
+            reason: previous.reason,
+            turn_id: previous.turnId,
+          }
+        : null,
+    recommended_next_categories: request.recommendedNextCategories,
+    // seconds, as in Python
+    speech_duration: new PythonFloat(request.speechDuration / 1000),
+  });
+  if (model instanceof DecisionModel) {
+    const transcript = formatTranscript(request.chatCtx, { includeContextEvents: true });
+    const response = await model.evaluate({
+      input: `Request: ${state}\nTranscript:\n${transcript}`,
+      decisions: {
+        // no option descriptions: a short definition next to a choice outweighed
+        // the prompt's conditions, and a virtual assistant read as human
+        category: new Choice(
+          CLASSIFY_PROMPT,
+          Object.fromEntries(Object.values(AMDCategory).map((category) => [category, ''])),
+        ),
+      },
+      connOptions,
+      abortSignal: signal,
+    });
+    const result = response.results.category;
+    if (!(result instanceof ChoiceResult)) {
+      throw new AMDResponseError('amd decision model returned no category');
+    }
+    const parsed = amdResponse.safeParse({ category: result.value });
+    if (!parsed.success) {
+      throw new AMDResponseError('amd decision model returned an unknown category');
+    }
+    return { category: parsed.data.category };
+  }
+
   const chatCtx = new ChatContext();
   chatCtx.addMessage({ role: 'system', content: CLASSIFY_PROMPT });
-  const previous = request.previousPrediction;
-  chatCtx.addMessage({
-    role: 'system',
-    content: pythonJsonDumps({
-      stage: request.stage,
-      previous_prediction:
-        previous !== null
-          ? {
-              category: request.likelyHuman ? LIKELY_HUMAN : previous.category,
-              reason: previous.reason,
-              turn_id: previous.turnId,
-            }
-          : null,
-      recommended_next_categories: request.recommendedNextCategories,
-      // seconds, as in Python
-      speech_duration: new PythonFloat(request.speechDuration / 1000),
-    }),
-  });
+  chatCtx.addMessage({ role: 'system', content: state });
   chatCtx.items.push(...request.chatCtx.items);
   return structuredResponse(
     model,

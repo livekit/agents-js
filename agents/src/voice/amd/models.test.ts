@@ -9,6 +9,14 @@ import { ReadableStream } from 'node:stream/web';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as inference from '../../inference/index.js';
 import { ChatContext } from '../../llm/chat_context.js';
+import {
+  Choice,
+  ChoiceResult,
+  type Decision,
+  type DecisionKind,
+  DecisionModel,
+  DecisionResponse,
+} from '../../llm/decisions.js';
 import { FakeSTT } from '../../stt/testing/fake_stt.js';
 import { Event, Task } from '../../utils.js';
 import { Agent } from '../agent.js';
@@ -18,10 +26,13 @@ import { AgentSessionEventTypes, createSpeechCreatedEvent } from '../events.js';
 import { SpeechHandle } from '../speech_handle.js';
 import { FakeLLM } from '../testing/fake_llm.js';
 import {
+  AsyncQueue,
   ClassifierLLM,
   DrainingSTT,
   type DrainingStream,
   commit,
+  commitTurn,
+  endOfTurn,
   eventually,
   internals,
   pushAudio,
@@ -29,7 +40,14 @@ import {
   waitFor,
 } from './amd_test_utils.js';
 import { AMD } from './detector.js';
-import { AMDCategory, type AMDCompletedEvent, AMDLifecycle, AMDReason } from './events.js';
+import {
+  AMDCategory,
+  type AMDCompletedEvent,
+  AMDLifecycle,
+  type AMDPredictionEvent,
+  AMDReason,
+} from './events.js';
+import { CLASSIFY_PROMPT } from './inference.js';
 
 const INSTRUCTIONS = 'Call about an appointment.';
 const CREDENTIAL_NAMES = [
@@ -47,6 +65,31 @@ const SESSION_EVENTS = [
   AgentSessionEventTypes.AgentStateChanged,
   AgentSessionEventTypes.AgentFalseInterruption,
 ];
+
+/** A decision model that answers each request with the next queued category. */
+class ChoiceModel extends DecisionModel {
+  readonly requests = new AsyncQueue<[string, Readonly<Record<string, Decision>>]>();
+  readonly answers = new AsyncQueue<string | null>();
+
+  constructor(...kinds: DecisionKind[]) {
+    super({ capabilities: { decisionKinds: kinds.length > 0 ? kinds : ['choice'] } });
+  }
+
+  protected async _evaluateImpl({
+    input,
+    decisions,
+  }: {
+    input: string;
+    decisions: Readonly<Record<string, Decision>>;
+  }): Promise<DecisionResponse> {
+    this.requests.put([input, decisions]);
+    const category = await this.answers.get(10_000);
+    if (category === null) {
+      return new DecisionResponse({ results: {}, errors: { category: 'refused' } });
+    }
+    return new DecisionResponse({ results: { category: new ChoiceResult({ value: category }) } });
+  }
+}
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -360,6 +403,65 @@ describe('AMD model selection', () => {
         await waitFor(following.waitForPlayout());
       },
     );
+  });
+
+  it('decision model classifies with one choice and skips menus', async () => {
+    const model = new ChoiceModel();
+    const { detector } = await running({ llm: model });
+    const menus: unknown[] = [];
+    detector.on('amd_menu_observed', (event) => menus.push(event));
+    commitTurn(detector, endOfTurn('Thanks for calling. For billing, press 1.'));
+    const [text, decisions] = await model.requests.get();
+    expect(Object.keys(decisions)).toEqual(['category']);
+    const choice = decisions.category;
+    expect(choice).toBeInstanceOf(Choice);
+    expect((choice as Choice).prompt).toBe(CLASSIFY_PROMPT);
+    expect(Object.keys((choice as Choice).options)).toEqual(Object.values(AMDCategory));
+    expect(Object.values((choice as Choice).options).some(Boolean)).toBe(false);
+    expect(text.startsWith('Request: {"stage": "uncertain"')).toBe(true);
+    expect(text.endsWith('\nTranscript:\nuser: Thanks for calling. For billing, press 1.')).toBe(
+      true,
+    );
+
+    model.answers.put('machine-ivr');
+    await eventually(() => internals(detector)._state === AMDCategory.MACHINE_IVR);
+    expect(internals(detector).menuTask).toBeUndefined();
+
+    commitTurn(detector, endOfTurn('For billing, press 1.'));
+    const [next] = await model.requests.get();
+    expect(next.startsWith('Request: {"stage": "machine-ivr"')).toBe(true);
+    expect(next).toContain('user: Thanks for calling. For billing, press 1.\nuser: For billing');
+    model.answers.put('machine-unavailable');
+    const result = await waitFor(detector.execute());
+    expect(result.category).toBe(AMDCategory.MACHINE_UNAVAILABLE);
+    expect(menus).toEqual([]);
+  });
+
+  it('decision model error is an inference error', async () => {
+    const model = new ChoiceModel();
+    const { detector } = await running({ llm: model });
+    const predictions: AMDPredictionEvent[] = [];
+    detector.on('amd_prediction', (event) => predictions.push(event));
+    commitTurn(detector, endOfTurn('Hello?'));
+    await model.requests.get();
+    model.answers.put(null);
+    await eventually(() => predictions.length === 1);
+    expect(predictions[0]!.reason).toBe(AMDReason.INFERENCE_ERROR);
+    expect(predictions[0]!.category).toBe(AMDCategory.UNCERTAIN);
+  });
+
+  it('decision model without choice is rejected', async () => {
+    const session = new AgentSession({ turnHandling: { turnDetection: 'manual' } });
+    await session.start({ agent: new Agent({ instructions: INSTRUCTIONS }) });
+    try {
+      await expect(
+        new AMD(session, { llm: new ChoiceModel('probability'), stt: null }).start(),
+      ).rejects.toThrow('choice decisions');
+      expect(session.amd).toBeNull();
+      expect(session._turnHooks).toBeUndefined();
+    } finally {
+      await session.close();
+    }
   });
 
   it('missing llm does not install turn hooks', async () => {

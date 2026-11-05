@@ -530,7 +530,7 @@ describe('AMD with realtime models', () => {
     ['auto_tool_reply', 'client-controlled tool replies'],
     ['session_tools_only', 'per-response tools'],
     ['missing_stt', 'session STT'],
-    ['missing_classifier', 'LLM for classification'],
+    ['missing_classifier', 'LLM or a decision model for classification'],
   ])('unsupported configuration does not install AMD (%s)', async (configuration, error) => {
     const model = new FakeRealtimeModel(
       fakeCapabilities({

@@ -10,6 +10,7 @@ import { APIError } from '../../_exceptions.js';
 import * as inference from '../../inference/index.js';
 import type { ChatContext } from '../../llm/chat_context.js';
 import { ChatMessage } from '../../llm/chat_context.js';
+import { DecisionModel } from '../../llm/decisions.js';
 import { LLM } from '../../llm/llm.js';
 import { RealtimeModel } from '../../llm/realtime.js';
 import { ToolContext, type ToolContextEntry } from '../../llm/tool_context.js';
@@ -111,13 +112,14 @@ const DEFAULT_STT_MODEL = 'cartesia/ink-whisper';
 
 export interface AMDOptions {
   /**
-   * Classification and menu model. When omitted, use `google/gemma-4-31b-it` if
-   * LiveKit Cloud credentials are available; otherwise use the current Agent's LLM.
-   * Pass `null` to always use the current Agent's LLM. A string selects a LiveKit
-   * Inference model. Calls use `session.connOptions.llmConnOptions`. Supplied models
-   * stay open when AMD completes.
+   * Classification model, and menu model when it is an LLM. When omitted, use
+   * `google/gemma-4-31b-it` if LiveKit Cloud credentials are available; otherwise use the
+   * current Agent's LLM. Pass `null` to always use the current Agent's LLM. A string
+   * selects a LiveKit Inference model. A `DecisionModel` that supports choice decisions
+   * classifies, but AMD then skips menu extraction. Calls use
+   * `session.connOptions.llmConnOptions`. Supplied models stay open when AMD completes.
    */
-  llm?: LLM | string | null;
+  llm?: LLM | DecisionModel | string | null;
   /**
    * Optional streaming STT model for AMD. When omitted, use `cartesia/ink-whisper` if
    * LiveKit Cloud credentials are available; otherwise use only the session transcript.
@@ -200,7 +202,7 @@ interface ReplyDecision {
 /** Resources and saved settings from `start()` until completion. */
 interface AMDResources {
   agent: Agent;
-  llm: LLM;
+  llm: LLM | DecisionModel;
   completion: Future<AMDCompletedEvent>;
   stt: AMDTranscriber;
   sessionAllowInterruptions: boolean;
@@ -283,7 +285,7 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
   private readonly turnHooks: AMDTurnHooks;
   private readonly ownsLlm: boolean;
   private readonly llmModel: string | undefined;
-  private llm: LLM | undefined;
+  private llm: LLM | DecisionModel | undefined;
   private readonly ownsStt: boolean;
   private readonly sttModel: string | undefined;
   private stt: STT | undefined;
@@ -479,8 +481,11 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     }
 
     let model = this.llm ?? activity.llm;
-    if (this.llmModel === undefined && !(model instanceof LLM)) {
-      throw new Error('amd requires an LLM for classification');
+    if (this.llmModel === undefined && !(model instanceof LLM || model instanceof DecisionModel)) {
+      throw new Error('amd requires an LLM or a decision model for classification');
+    }
+    if (model instanceof DecisionModel && !model.capabilities.decisionKinds.includes('choice')) {
+      throw new Error('amd requires a decision model that supports choice decisions');
     }
 
     if (this.lifecycle !== AMDLifecycle.INITIALIZED) {
@@ -498,8 +503,8 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
         throw new Error('amd requires a streaming STT');
       }
       model = this.llm ?? activity.llm;
-      if (!(model instanceof LLM)) {
-        throw new Error('amd requires an LLM for classification');
+      if (!(model instanceof LLM || model instanceof DecisionModel)) {
+        throw new Error('amd requires an LLM or a decision model for classification');
       }
       this.run = {
         agent: activity.agent,
@@ -515,8 +520,11 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
       // events, but Node throws without a listener, which would stop LLM retries.
       const ignoreError = () => {};
       const llm = model;
-      llm.on('error', ignoreError);
-      this.errorUnsubscribers.push(() => llm.off('error', ignoreError));
+      // a decision model reports errors only by throwing
+      if (llm instanceof LLM) {
+        llm.on('error', ignoreError);
+        this.errorUnsubscribers.push(() => llm.off('error', ignoreError));
+      }
       const stt = this.stt;
       if (stt !== undefined) {
         stt.on('error', ignoreError);
@@ -935,7 +943,8 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     for (const effect of effects) {
       if (effect === fsm.Effect.COMPLETE) {
         this.finish(AMDReason.FINISHED);
-      } else if (effect === fsm.Effect.EXTRACT_MENU) {
+      } else if (effect === fsm.Effect.EXTRACT_MENU && this.resources.llm instanceof LLM) {
+        // a decision model only chooses a category; it cannot read a menu
         const transcript = turn.transcript.transcript;
         this.menuTask = this.spawn(
           (signal) => this.extractMenu(turn.turnId, transcript, signal),
@@ -1065,6 +1074,10 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     transcript: string,
     signal: AbortSignal,
   ): Promise<void> {
+    const model = this.resources.llm;
+    if (!(model instanceof LLM)) {
+      throw new Error('amd menu extraction requires an LLM');
+    }
     const started = performance.now();
     const controller = new AbortController();
     const onAbort = () => controller.abort();
@@ -1076,7 +1089,7 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     }, MENU_TIMEOUT);
     let menu: amdInference.AMDIVRMenuResponse;
     try {
-      menu = await amdInference.extractIvrMenu(this.resources.llm, transcript, {
+      menu = await amdInference.extractIvrMenu(model, transcript, {
         connOptions: this.session.connOptions.llmConnOptions,
         signal: controller.signal,
       });

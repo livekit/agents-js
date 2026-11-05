@@ -911,7 +911,7 @@ export interface AMDOptions {
     idleTimeout?: number;
     inferenceTimeout?: number;
     ivrInstructions?: string | null;
-    llm?: LLM | string | null;
+    llm?: LLM | DecisionModel | string | null;
     machineSilenceThreshold?: number;
     maxInferenceTimeouts?: number;
     maxUncertainTurns?: number;
