@@ -4,11 +4,14 @@
 import type { JobAssignment, JobTermination, TrackSource } from '@livekit/protocol';
 import {
   type AvailabilityRequest,
+  type JobJoinTiming,
   JobState,
   JobType,
   MigrateJobRequest,
   ParticipantPermission,
+  JobStatus as ProtoJobStatus,
   ServerMessage,
+  UpdateJobStatus,
   WorkerMessage,
   WorkerStatus,
 } from '@livekit/protocol';
@@ -27,6 +30,8 @@ import { _getLocalInferenceModule } from './inference/_warmup.js';
 import { EOT_INFERENCE_METHOD } from './inference/eot/runner.js';
 import { InferenceRunner } from './inference_runner.js';
 import { InferenceProcExecutor } from './ipc/inference_proc_executor.js';
+import { type JobExecutor, JobStatus } from './ipc/job_executor.js';
+import { monotonicUs } from './ipc/job_trace.js';
 import { ProcPool } from './ipc/proc_pool.js';
 import type { JobAcceptArguments, JobProcess, RunningJobInfo } from './job.js';
 import { JobRequest } from './job.js';
@@ -47,6 +52,7 @@ const UPDATE_LOAD_INTERVAL = 0.5 * 1000;
 // number of load samples averaged by the default load function (2.5s window)
 const LOAD_AVG_SAMPLES = 5;
 const DRAIN_TIMEOUT = 60 * 60 * 1000;
+const MAX_QUEUED_MESSAGES = 128;
 const PROJECT_TYPE = 'nodejs';
 // Mirrors CurrentWorkerProtocol in livekit/protocol. LiveKit Cloud reads this off
 // the /worker endpoint to decide whether the SDK supports agent deployments; a
@@ -399,6 +405,9 @@ export class AgentServer {
 
   event = new EventEmitter();
   #session: WebSocket | undefined = undefined;
+  // the connection that registered; until one does, messages wait in the queue
+  #registeredWS: WebSocket | undefined = undefined;
+  #msgQueue: WorkerMessage[] = [];
   #httpServer?: HTTPServer;
   #logger = log().child({ version });
   #inferenceExecutor?: InferenceProcExecutor;
@@ -463,9 +472,11 @@ export class AgentServer {
       inferenceExecutor: this.#inferenceExecutor,
       memoryWarnMB: opts.jobMemoryWarnMB,
       memoryLimitMB: opts.jobMemoryLimitMB,
+      onJobUpdate: (proc, joinTiming) => this.#updateJobStatus(proc, joinTiming),
     });
 
     this.#opts = opts;
+    this.event.on('worker_msg', (msg: WorkerMessage) => this.#sendMsg(msg));
 
     // Simulations run ephemeral workers side by side; a health endpoint on a fixed port would make
     // concurrent runs collide.
@@ -594,6 +605,28 @@ export class AgentServer {
       .map((proc) => proc.runningJob!);
   }
 
+  #updateJobStatus(proc: JobExecutor, joinTiming?: JobJoinTiming) {
+    const info = proc.runningJob;
+    if (!info) return;
+
+    let status = ProtoJobStatus.JS_RUNNING;
+    if (proc.status === JobStatus.FAILED) {
+      status = ProtoJobStatus.JS_FAILED;
+    } else if (proc.status === JobStatus.SUCCESS) {
+      status = ProtoJobStatus.JS_SUCCESS;
+    }
+
+    this.event.emit(
+      'worker_msg',
+      new WorkerMessage({
+        message: {
+          case: 'updateJob',
+          value: new UpdateJobStatus({ jobId: info.job.id, status, error: '', joinTiming }),
+        },
+      }),
+    );
+  }
+
   // a reconnected worker reports the jobs it still runs, as they were assigned,
   // so the server tracks them again
   #reportActiveJobs() {
@@ -698,21 +731,29 @@ export class AgentServer {
     );
   }
 
+  /** Sends a message on the registered connection, or queues it until a connection registers. */
+  #sendMsg(msg: WorkerMessage) {
+    if (this.#registeredWS?.readyState === WebSocket.OPEN) {
+      this.#registeredWS.send(msg.toBinary());
+      return;
+    }
+    // the next connection sends its own load
+    const kind = msg.message.case;
+    if (kind === 'updateWorker' || kind === 'ping') return;
+    if (this.#msgQueue.length >= MAX_QUEUED_MESSAGES) {
+      this.#logger.child({ kind }).warn('worker message queue full, dropping message');
+      return;
+    }
+    this.#msgQueue.push(msg);
+  }
+
   async #runWS(ws: WebSocket) {
     let closingWS = false;
-
-    const send = (msg: WorkerMessage) => {
-      if (closingWS) {
-        this.event.off('worker_msg', send);
-        return;
-      }
-      ws.send(msg.toBinary());
-    };
-    this.event.on('worker_msg', send);
 
     const close = new ThrowsPromise<void, APIStatusError>((resolve, reject) => {
       ws.addEventListener('close', (event) => {
         closingWS = true;
+        if (this.#registeredWS === ws) this.#registeredWS = undefined;
         if (!this.#closed) {
           reject(
             new APIStatusError({
@@ -785,13 +826,16 @@ export class AgentServer {
             msg.message.value.serverInfo,
           );
           this.#connecting = false;
+          this.#registeredWS = ws;
+          // the server learns the running jobs before their queued updates
           this.#reportActiveJobs();
+          for (const queued of this.#msgQueue.splice(0)) ws.send(queued.toBinary());
           break;
         }
         case 'availability': {
           if (!msg.message.value.job) return;
           // receipt is now, not when the handler gets to run: that delay is dispatch latency
-          const task = this.#availability(msg.message.value, Date.now());
+          const task = this.#availability(msg.message.value, Date.now(), monotonicUs());
           this.#tasks.push(task);
           task.finally(() => {
             const taskIndex = this.#tasks.indexOf(task);
@@ -831,8 +875,8 @@ export class AgentServer {
       }
     });
 
-    this.event.emit(
-      'worker_msg',
+    // register goes first, ahead of the queue
+    ws.send(
       new WorkerMessage({
         message: {
           case: 'register',
@@ -851,7 +895,7 @@ export class AgentServer {
             version,
           },
         },
-      }),
+      }).toBinary(),
     );
 
     let currentStatus = WorkerStatus.WS_AVAILABLE;
@@ -922,7 +966,11 @@ export class AgentServer {
     }
   }
 
-  async #availability(msg: AvailabilityRequest, receivedAt: number = Date.now()) {
+  async #availability(
+    msg: AvailabilityRequest,
+    receivedAt: number = Date.now(),
+    receivedMonoUs: number = monotonicUs(),
+  ) {
     let answered = false;
 
     const onReject = async () => {
@@ -944,6 +992,7 @@ export class AgentServer {
     const onAccept = async (args: JobAcceptArguments) => {
       answered = true;
       const acceptedAt = Date.now();
+      const acceptedMonoUs = monotonicUs();
 
       this.event.emit(
         'worker_msg',
@@ -992,6 +1041,9 @@ export class AgentServer {
             receivedAt,
             acceptedAt,
             assignedAt: Date.now(),
+            receivedMonoUs,
+            acceptedMonoUs,
+            assignedMonoUs: monotonicUs(),
           });
         } catch (e) {
           this.#logger.child({ requestId: req.id }).error(e, 'error launching job');
