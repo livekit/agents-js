@@ -284,3 +284,101 @@ it.each([false, true])(
       expect(outputs.filter((output) => output?.includes(text))).toHaveLength(1);
   },
 );
+
+it('accepts progress from two concurrent tools without repeating either execution', async () => {
+  const peer = await new PrismPeer().start();
+  cleanup.push(() => peer.close());
+  const model = new RealtimeModel({
+    apiKey: 'test',
+    endpoint: peer.endpoint,
+    contextMode: 'strict',
+  });
+  cleanup.push(() => model.close());
+  const session = new voice.AgentSession({
+    llm: model,
+    vad: null,
+    aecWarmupDuration: null,
+    turnHandling: { turnDetection: 'realtime_llm' },
+  });
+  session.output.audio = new TestAudioOutput();
+  const errors: llm.RealtimeModelError[] = [];
+  const open = model.session.bind(model);
+  vi.spyOn(model, 'session').mockImplementation((...args) => {
+    const provider = open(...args);
+    provider.on('error', (error) => errors.push(error));
+    return provider;
+  });
+  let started = 0;
+  let release!: () => void;
+  const bothStarted = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const executions = new Map<string, number>();
+  const tools = Object.fromEntries(
+    ['one', 'two'].map((name) => [
+      name,
+      llm.tool({
+        description: name,
+        execute: async (_: unknown, { ctx }: { ctx: voice.RunContext }) => {
+          executions.set(name, (executions.get(name) ?? 0) + 1);
+          await ctx.update(`${name} started`);
+          if (++started === 2) release();
+          await bothStarted;
+          await ctx.update(`${name} silent`, { silent: true });
+          return `${name} completed`;
+        },
+      }),
+    ]),
+  );
+  await session.start({ agent: new voice.Agent({ instructions: 'Test', tools }) });
+  cleanup.push(() => session.close());
+  let count = 0;
+  peer.onRequest = (q) => {
+    if (q.type !== 'response.create') return;
+    const id = `concurrent-${++count}`;
+    if (count === 1) {
+      peer.accepted(q, id);
+      peer.tool(id, 'call-one', 'one');
+      peer.tool(id, 'call-two', 'two');
+      peer.ended(id);
+    } else {
+      peer.reply(q, id);
+      peer.history.push({ id: `message-${id}`, type: 'message', role: 'assistant', text: 'Hello' });
+    }
+    return true;
+  };
+  await session.generateReply({ userInput: 'Run both tools' }).waitForPlayout();
+  await vi.waitFor(() =>
+    expect(peer.history.filter((item) => item.type === 'function_call_output')).toHaveLength(6),
+  );
+  expect([...executions.values()]).toEqual([1, 1]);
+  for (const name of ['one', 'two'])
+    for (const stage of ['started', 'silent', 'completed'])
+      expect(peer.history.filter((item) => item.output?.includes(`${name} ${stage}`))).toHaveLength(
+        1,
+      );
+  expect(errors).toEqual([]);
+});
+
+it.each(['resource', 'input', 'admission'] as const)(
+  'keeps the session usable after a local %s option refusal',
+  async (kind) => {
+    const { session, model, errors } = await setup();
+    const types = await import('@rimelabs/sdk');
+    const sdk = (session as unknown as { sdk: import('@rimelabs/sdk').RealtimeSession }).sdk;
+    const error =
+      kind === 'resource'
+        ? new types.RimeResourceLimitError('local limit')
+        : kind === 'input'
+          ? new types.RimeInputError('bad input')
+          : new types.RealtimeAdmissionTimeout('not ready');
+    vi.spyOn(sdk, 'update').mockRejectedValueOnce(error);
+    session.updateOptions({ voice: 'refused' });
+    session.updateOptions({ voice: 'accepted' });
+    await session.updateInstructions('After options');
+    expect(errors).toHaveLength(1);
+    expect(errors[0]?.recoverable).toBe(true);
+    expect(model.sessionInfo?.voice).toBe('accepted');
+    expect(session.isClosed).toBe(false);
+  },
+);
