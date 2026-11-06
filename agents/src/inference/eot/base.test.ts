@@ -14,8 +14,8 @@
  * commits) lives in `AudioRecognition` and is covered by
  * `voice/audio_recognition_turn_detection.test.ts`.
  */
-import type { AudioFrame } from '@livekit/rtc-node';
-import { describe, expect, it } from 'vitest';
+import { AudioFrame } from '@livekit/rtc-node';
+import { describe, expect, it, vi } from 'vitest';
 import type { Future } from '../../utils.js';
 import {
   BaseStreamingTurnDetector,
@@ -29,6 +29,7 @@ import { ThresholdOptions, type TurnDetectorModel } from './languages.js';
 
 class FakeTransport implements StreamingTurnDetectionTransport {
   events: Array<[string, string]> = [];
+  audioEvents: Array<[string, number | undefined]> = [];
   private _stream: BaseStreamingTurnDetectorStream | undefined;
 
   attach(stream: BaseStreamingTurnDetectorStream): void {
@@ -42,12 +43,16 @@ class FakeTransport implements StreamingTurnDetectionTransport {
   }
   runInference(requestId: string): void {
     this.events.push(['run_inference', requestId]);
+    this.audioEvents.push(['run_inference', undefined]);
   }
-  async pushFrame(_frame: AudioFrame): Promise<void> {
-    // no-op
+  async pushFrame(frame: AudioFrame): Promise<void> {
+    this.audioEvents.push(['push_frame', frame.samplesPerChannel]);
+  }
+  onStartOfTurn(elapsed: number): void {
+    this.audioEvents.push(['on_start_of_turn', elapsed]);
   }
   async flush(_sentinel: FlushSentinel): Promise<void> {
-    // no-op
+    this.audioEvents.push(['flush', undefined]);
   }
   detach(): void {
     // no-op
@@ -105,17 +110,64 @@ function makeStream(thresholds: Record<string, number> = {}): FakeBackend {
   return new FakeBackend(makeOpts(thresholds));
 }
 
-const countRunInference = (events: Array<[string, string]>) =>
-  events.filter((e) => e[0] === 'run_inference').length;
+/** Let the stream's drain loop hand the queued items to the transport. */
+async function drain(): Promise<void> {
+  for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
+}
 
 describe('AudioTurnDetectionRequests', () => {
+  it('measures the turn start when queued, in audio order', async () => {
+    const s = makeStream();
+    try {
+      const frame = new AudioFrame(new Int16Array(160), 16000, 1, 160);
+      s.pushAudio(frame);
+      vi.spyOn(Date, 'now').mockReturnValueOnce(1_000_250);
+      s.onStartOfTurn(1_000_000);
+      s.pushAudio(frame);
+      s.flush();
+      for (let i = 0; i < 20 && s.fakeTransport.audioEvents.length < 4; i++) {
+        await new Promise((r) => setImmediate(r));
+      }
+      expect(s.fakeTransport.audioEvents).toEqual([
+        ['push_frame', 160],
+        ['on_start_of_turn', 250],
+        ['push_frame', 160],
+        ['flush', undefined],
+      ]);
+    } finally {
+      vi.restoreAllMocks();
+      await s.aclose();
+    }
+  });
+
   it('predict starts inference', async () => {
     const s = makeStream();
     try {
       const fut = s.predict();
       expect(s.requestId).toBeDefined();
       expect(fut.done).toBe(false);
+      await drain();
       expect(s.events).toEqual([['run_inference', s.requestId!]]);
+    } finally {
+      await s.aclose();
+    }
+  });
+
+  it('predict runs after the audio pushed before it', async () => {
+    const s = makeStream();
+    try {
+      const frame = new AudioFrame(new Int16Array(160), 16000, 1, 160);
+      s.pushAudio(frame);
+      s.pushAudio(frame);
+      s.predict();
+      s.pushAudio(frame);
+      await drain();
+      expect(s.fakeTransport.audioEvents).toEqual([
+        ['push_frame', 160],
+        ['push_frame', 160],
+        ['run_inference', undefined],
+        ['push_frame', 160],
+      ]);
     } finally {
       await s.aclose();
     }
@@ -132,7 +184,9 @@ describe('AudioTurnDetectionRequests', () => {
       expect(s.requestId).not.toBe(oldId);
       expect(oldFut.done).toBe(true);
       expect((await oldFut.await).endOfTurnProbability).toBe(0.0);
-      expect(countRunInference(s.events)).toBe(2);
+      // the old request closed before the transport reached it, so only the new one runs
+      await drain();
+      expect(s.events).toEqual([['run_inference', s.requestId!]]);
     } finally {
       await s.aclose();
     }
@@ -177,7 +231,8 @@ describe('AudioTurnDetectionRequests', () => {
       const nextFut = s.predict();
       expect(nextFut).not.toBe(fut);
       expect(nextFut.done).toBe(false);
-      expect(countRunInference(s.events)).toBe(2);
+      await drain();
+      expect(s.events).toEqual([['run_inference', s.requestId!]]);
     } finally {
       await s.aclose();
     }

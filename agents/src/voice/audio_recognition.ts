@@ -1263,9 +1263,12 @@ export class AudioRecognition {
       return this.userTurnSpan;
     }
 
-    startTime ??= Date.now();
-    if (this.userTurnStart === undefined) {
-      this.userTurnStart = startTime;
+    if (startTime !== undefined) {
+      this.startUserTurn(startTime);
+    } else {
+      startTime = Date.now();
+      // no known speech start: the turn detector keeps counting from its last flush
+      this.userTurnStart ??= startTime;
     }
 
     this.userTurnSpan = tracer.startSpan({
@@ -1282,6 +1285,13 @@ export class AudioRecognition {
     this.stampSttIdentity(this.userTurnSpan);
 
     return this.userTurnSpan;
+  }
+
+  /** Record when the user turn started, once per turn; the turn detector counts from it. */
+  private startUserTurn(startTime: number): void {
+    if (this.userTurnStart !== undefined) return;
+    this.userTurnStart = startTime;
+    this.turnDetectorStream?.onStartOfTurn(startTime);
   }
 
   /** Name the STT on a user turn; read live, so a failover during the turn shows through. */
@@ -2320,7 +2330,9 @@ export class AudioRecognition {
               this.turnDetectorStream !== undefined &&
               this.turnDetectorPredictionFut === undefined
             ) {
-              this.turnDetectorPredictionFut = this.turnDetectorStream.predict();
+              this.turnDetectorPredictionFut = this.turnDetectorStream.predict(
+                this.hooks.retrieveChatCtx(),
+              );
             }
             break;
           case VADEventType.END_OF_SPEECH:

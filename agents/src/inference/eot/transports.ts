@@ -6,7 +6,7 @@
  * Audio EOT transports: cloud (WebSocket) + local (@livekit/local-inference).
  */
 import { type Duration, Timestamp } from '@bufbuild/protobuf';
-import { AgentInference } from '@livekit/protocol';
+import { AgentInference, AgentSession } from '@livekit/protocol';
 import type { AudioFrame } from '@livekit/rtc-node';
 import {
   APIConnectionError,
@@ -15,10 +15,12 @@ import {
   APITimeoutError,
 } from '../../_exceptions.js';
 import type { InferenceExecutor } from '../../ipc/inference_executor.js';
+import type { ChatContext } from '../../llm/chat_context.js';
 import { log } from '../../log.js';
 import { type StreamChannel, createStreamChannel } from '../../stream/stream_channel.js';
 import { type APIConnectOptions, intervalForRetry } from '../../types.js';
 import { Task, delay } from '../../utils.js';
+import { _getLocalInferenceModule } from '../_warmup.js';
 import { buildMetadataHeaders, connectWs, createAccessToken } from '../utils.js';
 import {
   type BaseStreamingTurnDetectorOptions,
@@ -34,6 +36,10 @@ const AudioEncoding = AgentInference.AudioEncoding;
 const ClientMessageCtor = AgentInference.ClientMessage;
 const ServerMessageCtor = AgentInference.ServerMessage;
 const InferenceStart = AgentInference.InferenceStart;
+const MAX_UINT32 = 2 ** 32 - 1;
+// The mini model's audio window (2.0 s), for an explicit executor that runs the model in a
+// process with the native binding when this one has none.
+const MINI_WINDOW_SAMPLES = 2 * DEFAULT_SAMPLE_RATE;
 const InputAudio = AgentInference.InputAudio;
 const SessionClose = AgentInference.SessionClose;
 const SessionCreate = AgentInference.SessionCreate;
@@ -82,13 +88,9 @@ function durationToMs(d?: Duration): number {
   return Number(d.seconds) * 1000 + Math.floor(d.nanos / 1_000_000);
 }
 
-// Native model operates on up to 1.2 s of 16 kHz s16le PCM per predict.
-const CLIENT_BUFFER_SECONDS = 1.2;
-const CLIENT_BUFFER_SAMPLES = Math.floor(CLIENT_BUFFER_SECONDS * DEFAULT_SAMPLE_RATE);
-
 /**
  * Append-only ring buffer of 16-bit PCM samples used by the local transport
- * to keep the last ~1.2 s of audio available for per-window prediction.
+ * to keep the window the native model reads available for per-window prediction.
  */
 class PcmRingBuffer {
   private buf: Int16Array;
@@ -136,10 +138,11 @@ class PcmRingBuffer {
  * Transport for the local `turn-detector-v1-mini` model.
  *
  * The native model runs in the shared `InferenceProcExecutor` (one load per
- * host, ~138 MB) rather than in every job worker. Audio is buffered locally
+ * host) rather than in every job worker. Audio is buffered locally
  * in the job process (no per-frame IPC); on each inference window the last
- * ~1.2 s is snapshotted, base64-encoded, and sent over IPC to the runner
- * (`inference/eot/runner.ts`) via `executor.doInference(...)`.
+ * window is snapshotted, base64-encoded, and sent over IPC to the runner
+ * (`inference/eot/runner.ts`) via `executor.doInference(...)`, with the turn
+ * length in samples.
  *
  * When no executor is available (binding couldn't load on this platform),
  * predictions resolve to a positive default (1.0) so the session still
@@ -149,6 +152,7 @@ export class LocalTransport implements StreamingTurnDetectionTransport {
   protected _opts: BaseStreamingTurnDetectorOptions;
   protected _executor: InferenceExecutor | undefined;
   protected _buf: PcmRingBuffer;
+  protected _turnSamples = 0;
   protected _streamRef: WeakRef<BaseStreamingTurnDetectorStream> | undefined;
   protected _tasks = new Set<Promise<void>>();
   protected _warnedNoExecutor = false;
@@ -160,21 +164,28 @@ export class LocalTransport implements StreamingTurnDetectionTransport {
   }) {
     this._opts = opts.opts;
     this._executor = opts.executor;
-    this._buf = new PcmRingBuffer(CLIENT_BUFFER_SAMPLES);
+    this._buf = new PcmRingBuffer(
+      _getLocalInferenceModule()?.EOT_MAX_SAMPLES ?? MINI_WINDOW_SAMPLES,
+    );
   }
 
   attach(stream: BaseStreamingTurnDetectorStream): void {
     this._streamRef = new WeakRef(stream);
   }
 
-  runInference(requestId: string): void {
+  runInference(requestId: string, _chatCtx?: ChatContext): void {
     const snapshot = this._buf.read();
-    const task = this._predict(requestId, snapshot);
+    const turnSamples = Math.max(this._turnSamples, snapshot.length);
+    const task = this._predict(requestId, snapshot, turnSamples);
     this._tasks.add(task);
     void task.finally(() => this._tasks.delete(task));
   }
 
-  protected async _predict(requestId: string, pcmSnapshot: Int16Array): Promise<void> {
+  protected async _predict(
+    requestId: string,
+    pcmSnapshot: Int16Array,
+    turnSamples: number,
+  ): Promise<void> {
     const stream = this._streamRef?.deref();
     if (stream === undefined) return;
 
@@ -204,6 +215,7 @@ export class LocalTransport implements StreamingTurnDetectionTransport {
     try {
       const out = (await this._executor.doInference(EOT_INFERENCE_METHOD, {
         pcm,
+        turnSamples,
       })) as { probability: number; inferenceDurationMs: number };
       prob = out.probability;
       inferenceDurationMs = out.inferenceDurationMs;
@@ -221,12 +233,19 @@ export class LocalTransport implements StreamingTurnDetectionTransport {
 
   async pushFrame(frame: AudioFrame): Promise<void> {
     this._buf.pushFrame(frame);
+    this._turnSamples += frame.data.length;
+  }
+
+  onStartOfTurn(elapsed: number): void {
+    const elapsedSamples = Math.floor((elapsed * DEFAULT_SAMPLE_RATE) / 1000);
+    this._turnSamples = Math.min(this._turnSamples, elapsedSamples);
   }
 
   async flush(_sentinel: FlushSentinel): Promise<void> {
     if (this._buf.length > 0) {
       this._buf.shift(this._buf.length);
     }
+    this._turnSamples = 0;
   }
 
   detach(): void {
@@ -267,6 +286,8 @@ export class CloudTransport implements StreamingTurnDetectionTransport {
   protected _ws: CloudWebSocket | undefined;
   protected _numRetries = 0;
   protected _connectCalls = 0;
+  /** The user turn length so far, since the last flush; sent with each inferenceStart. */
+  protected _turnSamples = 0;
   /** Outbound FIFO for the active connection; recreated per `_runOnce`. */
   protected _sendChannel: StreamChannel<ClientMsg> | undefined;
   /** Set by `detach()`; stops the retry loop and suppresses the
@@ -312,16 +333,40 @@ export class CloudTransport implements StreamingTurnDetectionTransport {
     return this._ws !== undefined && this._ws.readyState === WS_OPEN;
   }
 
-  runInference(requestId: string): void {
+  runInference(requestId: string, chatCtx?: ChatContext): void {
+    const context = new AgentInference.EotInputChatContext();
+    if (chatCtx !== undefined) {
+      for (let i = chatCtx.items.length - 1; i >= 0; i--) {
+        const item = chatCtx.items[i]!;
+        if (item.type === 'message' && item.role === 'assistant') {
+          const text = item.textContent;
+          if (text) {
+            context.messages.push(
+              new AgentSession.ChatMessage({
+                role: AgentSession.ChatRole.ASSISTANT,
+                content: [{ payload: { case: 'text', value: text } }],
+              }),
+            );
+          }
+          break;
+        }
+      }
+    }
+    this._enqueue(
+      new ClientMessageCtor({ message: { case: 'eotInputChatContext', value: context } }),
+    );
+    const turnSamples = Math.min(this._turnSamples, MAX_UINT32);
     this._enqueue(
       new ClientMessageCtor({
-        message: { case: 'inferenceStart', value: new InferenceStart({ requestId }) },
+        message: { case: 'inferenceStart', value: new InferenceStart({ requestId, turnSamples }) },
       }),
     );
   }
 
   async pushFrame(frame: AudioFrame): Promise<void> {
     if (frame.data.byteLength === 0) return;
+    // count the turn even while disconnected: the user keeps speaking
+    this._turnSamples += frame.samplesPerChannel;
     this._enqueue(
       new ClientMessageCtor({
         message: {
@@ -336,7 +381,13 @@ export class CloudTransport implements StreamingTurnDetectionTransport {
     );
   }
 
+  onStartOfTurn(elapsed: number): void {
+    const elapsedSamples = Math.floor((elapsed * this._opts.sampleRate) / 1000);
+    this._turnSamples = Math.min(this._turnSamples, elapsedSamples);
+  }
+
   async flush(_sentinel: FlushSentinel): Promise<void> {
+    this._turnSamples = 0;
     this._enqueue(
       new ClientMessageCtor({ message: { case: 'sessionFlush', value: new SessionFlush() } }),
     );

@@ -25,6 +25,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { APIConnectionError, APIError } from '../../_exceptions.js';
 import type { InferenceExecutor } from '../../ipc/inference_executor.js';
 import * as job from '../../job.js';
+import { ChatContext } from '../../llm/chat_context.js';
 import { log } from '../../log.js';
 import { DEFAULT_API_CONNECT_OPTIONS } from '../../types.js';
 import type { Task } from '../../utils.js';
@@ -94,6 +95,9 @@ class ScriptedTransport implements StreamingTurnDetectionTransport {
   }
   async pushFrame(frame: AudioFrame): Promise<void> {
     this.events.push(['push_frame', frame]);
+  }
+  onStartOfTurn(elapsed: number): void {
+    this.events.push(['on_start_of_turn', elapsed]);
   }
   async flush(sentinel: FlushSentinel): Promise<void> {
     this.events.push(['flush', sentinel]);
@@ -358,7 +362,7 @@ describe('LocalFallbackDisabled', () => {
       }
 
       const prediction = stream.predict();
-      const requestId = transport.events.at(-1)![1] as string;
+      const requestId = (stream as unknown as { _requestId: string })._requestId;
       stream._resolvePrediction(requestId, 0.75);
       expect((await prediction.await).endOfTurnProbability).toBe(0.75);
       expect(stream.model).toBe('turn-detector-v1');
@@ -857,6 +861,11 @@ describe('LocalModelExecutor', () => {
     return new AudioFrame(new Int16Array(samples), 16000, 1, samples);
   }
 
+  // these tests need the real drain loop: predict() runs behind the queued audio
+  beforeEach(() => {
+    runSpy.mockRestore();
+  });
+
   async function predictOnce(detector: TurnDetector): Promise<number> {
     const stream = detector.stream();
     try {
@@ -899,8 +908,22 @@ describe('LocalModelExecutor', () => {
     expect(await predictOnce(new TurnDetector({ version: 'v1-mini', executor }))).toBe(0.3);
   });
 
+  it('sends an explicit executor the full window without the native binding', async () => {
+    vi.spyOn(warmup, '_getLocalInferenceModule').mockReturnValue(undefined);
+    const doInference = vi.fn(async () => ({ probability: 0.3, inferenceDurationMs: 5 }));
+    const stream = new TurnDetector({ version: 'v1-mini', executor: { doInference } }).stream();
+    try {
+      stream.pushAudio(pcmFrame(40_000));
+      await stream.predict().await;
+      const { pcm } = doInference.mock.calls[0]![1] as { pcm: string };
+      expect(Buffer.from(pcm, 'base64').byteLength / 2).toBe(32_000);
+    } finally {
+      await stream.aclose();
+    }
+  });
+
   it.each([undefined, false])(
-    'routes local predict through the executor (localFallback=%s)',
+    'keeps local inference audio-only (localFallback=%s)',
     async (localFallback) => {
       const doInference = vi.fn(async (method: string, data: unknown) => {
         expect(method).toBe(EOT_INFERENCE_METHOD);
@@ -912,10 +935,15 @@ describe('LocalModelExecutor', () => {
       const detector = new TurnDetector({ version: 'v1-mini', executor, localFallback });
       const stream = detector.stream();
       try {
+        const chatCtx = ChatContext.empty();
+        chatCtx.addMessage({ role: 'assistant', content: 'How can I help?' });
         stream.pushAudio(pcmFrame());
-        const ev = await stream.predict().await;
+        const ev = await stream.predict(chatCtx).await;
         expect(ev.endOfTurnProbability).toBe(0.7);
-        expect(doInference).toHaveBeenCalledWith(EOT_INFERENCE_METHOD, expect.anything());
+        expect(doInference).toHaveBeenCalledWith(EOT_INFERENCE_METHOD, {
+          pcm: expect.any(String),
+          turnSamples: expect.any(Number),
+        });
         if (localFallback === false) {
           expect(warnSpy).toHaveBeenCalledWith(
             expect.stringContaining('localFallback=false has no effect'),

@@ -53,6 +53,7 @@ interface RecognitionInternals {
   turnDetector?: _TurnDetector | BaseStreamingTurnDetector;
   turnDetectorStream?: BaseStreamingTurnDetectorStream;
   turnDetectorPredictionFut?: Future<TurnDetectionEvent>;
+  userTurnStart?: number;
   turnDetectorFlushed: boolean;
   turnDetectorLatePredictionWarned: boolean;
   lastEmittedEotPrediction?: TurnDetectionEvent;
@@ -138,6 +139,7 @@ function makeAudioStream(): BaseStreamingTurnDetectorStream {
   Object.defineProperty(stream, 'predictionTimeout', { value: 10 });
   stream.predict = vi.fn(() => new Future<TurnDetectionEvent>());
   stream.cancelInference = vi.fn();
+  stream.onStartOfTurn = vi.fn();
   stream.flush = vi.fn();
   return stream as BaseStreamingTurnDetectorStream;
 }
@@ -367,6 +369,43 @@ describe('TestResumedSpeechAbortsCommit', () => {
   });
 });
 
+describe('TestStartOfTurn', () => {
+  it('tells the turn detector the user turn start once per turn', async () => {
+    const { internals } = makeRecognition();
+    const stream = makeAudioStream();
+    internals.turnDetectorStream = stream;
+    internals.turnDetector = makeAudioDetector(stream);
+
+    const vad = runScriptedVad(internals);
+    try {
+      await vad.feed(startOfSpeech());
+      await vad.feed({ ...startOfSpeech(), speechDuration: 0 });
+    } finally {
+      await vad.stop();
+    }
+
+    expect(stream.onStartOfTurn).toHaveBeenCalledOnce();
+    expect(stream.onStartOfTurn).toHaveBeenCalledWith(internals.userTurnStart);
+  });
+
+  it('keeps the turn detector count when the turn has no known start', async () => {
+    const { internals } = makeRecognition();
+    const stream = makeAudioStream();
+    internals.turnDetectorStream = stream;
+    internals.turnDetector = makeAudioDetector(stream);
+
+    const vad = runScriptedVad(internals);
+    try {
+      await vad.feed(endOfSpeech());
+    } finally {
+      await vad.stop();
+    }
+
+    expect(internals.userTurnStart).toBeDefined();
+    expect(stream.onStartOfTurn).not.toHaveBeenCalled();
+  });
+});
+
 describe('TestEotPredictionDedup', () => {
   it('emits onEotPrediction once across vad then stt triggers', async () => {
     const { internals, hooks } = makeRecognition();
@@ -572,18 +611,21 @@ describe('TestBackchannelOpportunityEmit', () => {
 
 describe('TestPredictionFutureLifecycle', () => {
   it('silence tick starts a request once', async () => {
-    const { internals } = makeRecognition();
+    const { internals, hooks } = makeRecognition();
     const stream = makeAudioStream();
     internals.turnDetectorStream = stream;
     internals.turnDetector = makeAudioDetector(stream);
     internals.speaking = true;
+    const chatCtx = ChatContext.empty();
+    chatCtx.addMessage({ role: 'assistant', content: 'How can I help?' });
+    hooks.retrieveChatCtx = () => chatCtx;
 
     const vad = runScriptedVad(internals);
     try {
       await vad.feed(inferenceDone(0, 300));
       await vad.feed(inferenceDone(0, 400));
 
-      expect(predictMock(stream).mock.calls.length).toBe(1);
+      expect(predictMock(stream)).toHaveBeenCalledExactlyOnceWith(chatCtx);
       expect(internals.turnDetectorPredictionFut).toBeDefined();
     } finally {
       await vad.stop();
