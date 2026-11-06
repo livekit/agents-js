@@ -375,7 +375,8 @@ class ResponsesHttpLLMStream extends llm.LLMStream {
         usage: {
           completionTokens: event.response.usage.output_tokens,
           promptTokens: event.response.usage.input_tokens,
-          promptCachedTokens: event.response.usage.input_tokens_details.cached_tokens,
+          promptCachedTokens: event.response.usage.input_tokens_details?.cached_tokens ?? 0,
+          reasoningTokens: event.response.usage.output_tokens_details?.reasoning_tokens ?? 0,
           totalTokens: event.response.usage.total_tokens,
           serviceTier: event.response.service_tier ?? undefined,
         },
