@@ -232,7 +232,7 @@ export class LLM extends llm.LLM {
     const toolCtx = llm.toToolContext(toolCtxInput);
     const anthropicTools: Anthropic.Tool[] = [];
     if (toolCtx) {
-      for (const [name, tool] of llm.sortedToolEntries(toolCtx)) {
+      for (const [name, tool] of Object.entries(toolCtx.functionTools)) {
         anthropicTools.push({
           name: name,
           description: tool.description || '',
