@@ -4770,6 +4770,14 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
     // @internal
     _connectedMonoUs: number;
     deleteRoom(roomName?: string): Promise<void>;
+    // @internal
+    _hostedOutput?: {
+        readonly decided: boolean;
+        decide(choice: {
+            logs: boolean;
+            redaction: boolean;
+        }): void;
+    };
     // (undocumented)
     get inferenceExecutor(): InferenceExecutor;
     get inferenceHeaders(): Record<string, string>;
@@ -4807,6 +4815,11 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
     _recordingInitialized: boolean;
     // @internal (undocumented)
     _redactionEnabled: boolean;
+    // @internal
+    _rejectedRecording?: {
+        logs: boolean;
+        redaction: boolean;
+    };
     // (undocumented)
     get room(): Room;
     // (undocumented)
