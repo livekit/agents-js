@@ -16,11 +16,13 @@ import type { TurnDetectionMode } from './turn_config/index.js';
 interface RecognitionInternals {
   lastFinalTranscriptTime: number;
   lastSpeakingTime?: number;
+  speechStartTime?: number;
   speaking: boolean;
   sttPipeline: { inputStartedAt: number };
   userTurnCommitted: boolean;
   onSTTEvent: (event: SpeechEvent) => Promise<void>;
   runEOUDetection: () => void;
+  ensureUserTurnSpan: (startTime?: number) => unknown;
 }
 
 function makeHooks(): RecognitionHooks {
@@ -82,6 +84,25 @@ describe('AudioRecognition transcription delay anchor', () => {
   initializeLogger({ pretty: false, level: 'silent' });
 
   afterEach(() => vi.restoreAllMocks());
+
+  it('uses an STT speechStartTime as the user-turn anchor', async () => {
+    const now = 20_000;
+    const speechStartTime = now - 750;
+    vi.spyOn(Date, 'now').mockReturnValue(now);
+    const { hooks, internals } = makeRecognition({ inputStartedAt: now - 10_000, mode: 'stt' });
+    const ensureUserTurnSpan = vi.spyOn(internals, 'ensureUserTurnSpan');
+
+    await internals.onSTTEvent({
+      type: SpeechEventType.START_OF_SPEECH,
+      speechStartTime,
+    });
+
+    expect(ensureUserTurnSpan).toHaveBeenCalledWith(speechStartTime);
+    expect(internals.speechStartTime).toBe(speechStartTime);
+    expect(hooks.onStartOfSpeech).toHaveBeenCalledWith(
+      expect.objectContaining({ timestamp: speechStartTime }),
+    );
+  });
 
   it.each(modes)(
     'preserves a wired VAD anchor for an untimestamped transcript in %s mode',
