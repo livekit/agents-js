@@ -60,8 +60,8 @@ interface STTBaseOptions {
 
 /**
  * Options specific to saarika:v2.5.
- * saarika:v2.5 will be deprecated soon — prefer {@link STTV3Options} with `saaras:v3` for new integrations.
- * All v2.5 language codes are also supported by v3.
+ * saarika:v2.5 will be deprecated soon — prefer {@link STTV3Options} with `saaras:v4` for new integrations.
+ * All v2.5 language codes are also supported by v3 and v4.
  * @see {@link https://docs.sarvam.ai/api-reference-docs/speech-to-text/transcribe | Sarvam STT API docs}
  */
 export interface STTV2Options extends STTBaseOptions {
@@ -87,14 +87,14 @@ export interface STTTranslateOptions extends STTBaseOptions {
 }
 
 /**
- * Options specific to saaras:v3 (recommended).
+ * Options specific to saaras:v3.
  * @see {@link https://docs.sarvam.ai/api-reference-docs/speech-to-text/transcribe | Sarvam STT API docs}
  */
 export interface STTV3Options extends STTBaseOptions {
   model?: 'saaras:v3';
   /** Language code (BCP-47). Default: 'en-IN'. Set to 'unknown' for auto-detection. */
   languageCode?: STTV3Languages | string;
-  /** Transcription mode (v3 only). Default: 'transcribe' */
+  /** Transcription mode. Default: 'transcribe' */
   mode?: STTModes | string;
   /** Conversation context to boost model accuracy */
   prompt?: string;
@@ -122,8 +122,13 @@ export interface STTV3Options extends STTBaseOptions {
   numInitialIgnoredFrames?: number;
 }
 
+/** Options specific to saaras:v4 (default and recommended). */
+export interface STTV4Options extends Omit<STTV3Options, 'model' | 'prompt'> {
+  model?: 'saaras:v4';
+}
+
 /** Combined options — discriminated by `model` field */
-export type STTOptions = STTV2Options | STTTranslateOptions | STTV3Options;
+export type STTOptions = STTV2Options | STTTranslateOptions | STTV3Options | STTV4Options;
 
 // ---------------------------------------------------------------------------
 // Resolved (internal) options — flat union of all fields
@@ -133,18 +138,18 @@ interface ResolvedSTTOptions {
   apiKey: string;
   model: STTModels;
   streaming: boolean;
-  // saarika:v2.5 and saaras:v3 only — not used by saaras:v2.5 (translate auto-detects)
+  // saarika:v2.5 and saaras:v3/v4 only — not used by saaras:v2.5 (translate auto-detects)
   languageCode?: STTLanguages | string;
-  // saaras:v3 and saaras:v2.5 (translate)
+  // saaras:v3/v4 and saaras:v2.5 (translate)
   mode?: STTModes | string;
-  // saaras:v2.5 (translate) and saaras:v3
+  // saaras:v2.5 (translate) and saaras:v3/v4
   prompt?: string;
-  // saarika:v2.5 and saaras:v3 (/speech-to-text only, not translate)
+  // saarika:v2.5 and saaras:v3/v4 (/speech-to-text only, not translate)
   withTimestamps?: boolean;
   // WS-only flags
   highVadSensitivity?: boolean;
   flushSignal?: boolean;
-  // saaras:v3 WS-only fine-grained VAD params
+  // saaras:v3/v4 WS-only fine-grained VAD params
   positiveSpeechThreshold?: number;
   negativeSpeechThreshold?: number;
   minSpeechFrames?: number;
@@ -200,7 +205,7 @@ function resolveOptions(opts: Partial<STTOptions>): ResolvedSTTOptions {
     throw new Error('Sarvam API key is required, whether as an argument or as $SARVAM_API_KEY');
   }
 
-  const model: STTModels = opts.model ?? 'saaras:v3';
+  const model: STTModels = opts.model ?? 'saaras:v4';
 
   const base: ResolvedSTTOptions = {
     apiKey,
@@ -214,22 +219,24 @@ function resolveOptions(opts: Partial<STTOptions>): ResolvedSTTOptions {
     const translateOpts = opts as STTTranslateOptions;
     base.prompt = translateOpts.prompt;
     base.mode = translateOpts.mode ?? SAARAS_TRANSLATE_DEFAULTS.mode;
-  } else if (model === 'saaras:v3') {
-    const v3Opts = opts as STTV3Options;
-    base.languageCode = normalizeLanguage(v3Opts.languageCode ?? SAARAS_V3_DEFAULTS.languageCode);
-    base.mode = v3Opts.mode ?? SAARAS_V3_DEFAULTS.mode;
-    base.prompt = v3Opts.prompt;
-    base.withTimestamps = v3Opts.withTimestamps;
-    base.positiveSpeechThreshold = v3Opts.positiveSpeechThreshold;
-    base.negativeSpeechThreshold = v3Opts.negativeSpeechThreshold;
-    base.minSpeechFrames = v3Opts.minSpeechFrames;
-    base.firstTurnMinSpeechFrames = v3Opts.firstTurnMinSpeechFrames;
-    base.negativeFramesCount = v3Opts.negativeFramesCount;
-    base.negativeFramesWindow = v3Opts.negativeFramesWindow;
-    base.startSpeechVolumeThreshold = v3Opts.startSpeechVolumeThreshold;
-    base.interruptMinSpeechFrames = v3Opts.interruptMinSpeechFrames;
-    base.preSpeechPadFrames = v3Opts.preSpeechPadFrames;
-    base.numInitialIgnoredFrames = v3Opts.numInitialIgnoredFrames;
+  } else if (model === 'saaras:v3' || model === 'saaras:v4') {
+    const saarasOpts = opts as STTV3Options | STTV4Options;
+    base.languageCode = normalizeLanguage(
+      saarasOpts.languageCode ?? SAARAS_V3_DEFAULTS.languageCode,
+    );
+    base.mode = saarasOpts.mode ?? SAARAS_V3_DEFAULTS.mode;
+    base.prompt = model === 'saaras:v3' ? (opts as STTV3Options).prompt : undefined;
+    base.withTimestamps = saarasOpts.withTimestamps;
+    base.positiveSpeechThreshold = saarasOpts.positiveSpeechThreshold;
+    base.negativeSpeechThreshold = saarasOpts.negativeSpeechThreshold;
+    base.minSpeechFrames = saarasOpts.minSpeechFrames;
+    base.firstTurnMinSpeechFrames = saarasOpts.firstTurnMinSpeechFrames;
+    base.negativeFramesCount = saarasOpts.negativeFramesCount;
+    base.negativeFramesWindow = saarasOpts.negativeFramesWindow;
+    base.startSpeechVolumeThreshold = saarasOpts.startSpeechVolumeThreshold;
+    base.interruptMinSpeechFrames = saarasOpts.interruptMinSpeechFrames;
+    base.preSpeechPadFrames = saarasOpts.preSpeechPadFrames;
+    base.numInitialIgnoredFrames = saarasOpts.numInitialIgnoredFrames;
   } else {
     // saarika:v2.5
     let languageCode = normalizeLanguage(
@@ -269,7 +276,7 @@ function buildWsUrl(opts: ResolvedSTTOptions): string {
     params.set('language-code', opts.languageCode);
   }
 
-  // mode: v3 on STT WS, and translate WS (both endpoints support it)
+  // mode: v3/v4 on STT WS, and translate WS (both endpoints support it)
   if (opts.mode != null) {
     params.set('mode', opts.mode);
   }
@@ -281,7 +288,7 @@ function buildWsUrl(opts: ResolvedSTTOptions): string {
   if (opts.flushSignal != null) {
     params.set('flush_signal', String(opts.flushSignal));
   }
-  if (opts.model === 'saaras:v3') {
+  if (opts.model === 'saaras:v3' || opts.model === 'saaras:v4') {
     if (opts.positiveSpeechThreshold != null) {
       params.set('positive_speech_threshold', String(opts.positiveSpeechThreshold));
     }
@@ -329,7 +336,7 @@ function buildFormData(wavBlob: Blob, opts: ResolvedSTTOptions): FormData {
   if (opts.model !== 'saaras:v2.5' && opts.languageCode != null) {
     formData.append('language_code', opts.languageCode);
   }
-  if (opts.model === 'saaras:v3' && opts.mode != null) {
+  if ((opts.model === 'saaras:v3' || opts.model === 'saaras:v4') && opts.mode != null) {
     formData.append('mode', opts.mode);
   }
   if ((opts.model === 'saaras:v2.5' || opts.model === 'saaras:v3') && opts.prompt != null) {
@@ -451,9 +458,10 @@ export class STT extends stt.STT {
    * `SARVAM_API_KEY` environment variable.
    *
    * Supported models:
-   * - `saaras:v3` (default, recommended) — supports all 22 languages, modes, prompt, timestamps, and uses `/speech-to-text`.
+   * - `saaras:v4` (default, recommended) — supports all 22 languages, modes, timestamps, and uses `/speech-to-text`.
+   * - `saaras:v3` — supports all 22 languages, modes, prompt, timestamps, and uses `/speech-to-text`.
    * - `saaras:v2.5` — Indic-to-English translation via `/speech-to-text-translate`. Auto-detects source language. Supports prompt.
-   * - `saarika:v2.5` — will be deprecated soon. Supports timestamps. All its languages are available in `saaras:v3`.
+   * - `saarika:v2.5` — will be deprecated soon. Supports timestamps. All its languages are available in `saaras:v3` and `saaras:v4`.
    *
    * @see {@link https://docs.sarvam.ai/api-reference-docs/speech-to-text/transcribe | Sarvam STT API docs}
    * @see {@link https://docs.sarvam.ai/api-reference-docs/speech-to-text-translate/translate | Sarvam STT Translate docs}
@@ -588,7 +596,7 @@ export class SpeechStream extends stt.SpeechStream {
     const maxRetry = 32;
     let retries = 0;
 
-    while (!this.input.closed && !this.closed) {
+    while (!this.closed && !this.abortSignal.aborted) {
       const wsUrl = buildWsUrl(this.#opts);
       this.#logger.info(`Sarvam STT connecting to: ${wsUrl}`);
       const ws = new WebSocket(wsUrl, {
@@ -602,6 +610,7 @@ export class SpeechStream extends stt.SpeechStream {
         sessionStart = Date.now();
         await this.#runWS(ws);
         retries = 0;
+        if (this.input.closed) break;
       } catch (e) {
         if (!this.closed && !this.input.closed) {
           // If the session ran for a meaningful duration (>5s), this was a working
@@ -674,10 +683,46 @@ export class SpeechStream extends stt.SpeechStream {
       const samples50Ms = Math.floor(SAMPLE_RATE / 20); // 50ms chunks
       const stream = new AudioByteStream(SAMPLE_RATE, NUM_CHANNELS, samples50Ms);
 
+      const sendFrames = (frames: AudioFrame[]) => {
+        for (const frame of frames) {
+          const pcmBuffer = Buffer.from(
+            frame.data.buffer,
+            frame.data.byteOffset,
+            frame.data.byteLength,
+          );
+          ws.send(
+            JSON.stringify({
+              audio: {
+                data: pcmBuffer.toString('base64'),
+                encoding: 'pcm_s16le',
+                sample_rate: SAMPLE_RATE,
+              },
+            }),
+          );
+        }
+      };
+
       try {
         while (!this.closed) {
           const result = await this.input.next({ signal: attemptSignal });
-          if (result.done) break;
+          if (result.done) {
+            if (attemptSignal.aborted) break;
+
+            sendFrames(stream.flush());
+            if (this.#opts.flushSignal) {
+              ws.send(JSON.stringify({ type: 'flush' }));
+            }
+
+            closing = true;
+            ws.send(
+              JSON.stringify({
+                type: 'end_of_stream',
+                audio: { data: '', encoding: 'pcm_s16le', sample_rate: SAMPLE_RATE },
+              }),
+            );
+            wsMonitor.cancel();
+            break;
+          }
 
           const data = result.value;
 
@@ -697,46 +742,15 @@ export class SpeechStream extends stt.SpeechStream {
             );
           }
 
-          for (const frame of frames) {
-            // Sarvam expects base64-encoded PCM in a JSON message
-            const pcmBuffer = Buffer.from(
-              frame.data.buffer,
-              frame.data.byteOffset,
-              frame.data.byteLength,
-            );
-            const base64Audio = pcmBuffer.toString('base64');
-            ws.send(
-              JSON.stringify({
-                audio: {
-                  data: base64Audio,
-                  encoding: 'audio/wav',
-                  sample_rate: SAMPLE_RATE,
-                },
-              }),
-            );
-          }
+          sendFrames(frames);
 
-          // Send flush message on FLUSH_SENTINEL (VAD end of speech)
-          if (data === SpeechStream.FLUSH_SENTINEL) {
+          if (data === SpeechStream.FLUSH_SENTINEL && this.#opts.flushSignal) {
             ws.send(JSON.stringify({ type: 'flush' }));
           }
         }
       } catch (error) {
         if (!attemptSignal.aborted) throw error;
       } finally {
-        closing = true;
-        // Match Python: end_of_stream includes an empty audio field to avoid
-        // "audio must not be None" rejection from the server
-        try {
-          ws.send(
-            JSON.stringify({
-              type: 'end_of_stream',
-              audio: { data: '', encoding: 'audio/wav', sample_rate: SAMPLE_RATE },
-            }),
-          );
-        } catch {
-          // ws may already be closed
-        }
         wsMonitor.cancel();
       }
     };
@@ -869,7 +883,8 @@ export class SpeechStream extends stt.SpeechStream {
       closing = true;
       attemptController.abort();
       wsMonitor.cancel();
-      ws.close();
+      if (this.abortSignal.aborted) ws.terminate();
+      else ws.close();
       await Promise.allSettled([sendPromise, listenTask.result, wsMonitor.result]);
       ws.removeAllListeners('message');
     }

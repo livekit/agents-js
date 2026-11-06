@@ -9,6 +9,7 @@ import { AudioResampler } from '@livekit/rtc-node';
 import { Logger } from 'pino';
 import type { ReadableStream as ReadableStream_2 } from 'node:stream/web';
 import type { ReadableStreamDefaultReader as ReadableStreamDefaultReader_2 } from 'node:stream/web';
+import type { Span } from '@opentelemetry/api';
 import { TransformStream as TransformStream_2 } from 'node:stream/web';
 import type { TypedEventEmitter } from '@livekit/typed-emitter';
 import type { VideoFrame as VideoFrame_2 } from '@livekit/rtc-node';
@@ -72,7 +73,7 @@ export type STTLanguages = STTV2Languages | STTV3Languages;
 // Warning: (ae-missing-release-tag) "STTModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
-export type STTModels = 'saaras:v3' | 'saaras:v2.5' | 'saarika:v2.5';
+export type STTModels = 'saaras:v4' | 'saaras:v3' | 'saaras:v2.5' | 'saarika:v2.5';
 
 // Warning: (ae-missing-release-tag) "STTModes" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -82,7 +83,7 @@ export type STTModes = 'transcribe' | 'translate' | 'verbatim' | 'translit' | 'c
 // Warning: (ae-missing-release-tag) "STTOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
-export type STTOptions = STTV2Options | STTTranslateOptions | STTV3Options;
+export type STTOptions = STTV2Options | STTTranslateOptions | STTV3Options | STTV4Options;
 
 // Warning: (ae-forgotten-export) The symbol "STTBaseOptions" needs to be exported by the entry point index.d.ts
 // Warning: (ae-missing-release-tag) "STTTranslateOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -135,6 +136,14 @@ export interface STTV3Options extends STTBaseOptions {
     prompt?: string;
     startSpeechVolumeThreshold?: number;
     withTimestamps?: boolean;
+}
+
+// Warning: (ae-missing-release-tag) "STTV4Options" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export interface STTV4Options extends Omit<STTV3Options, 'model' | 'prompt'> {
+    // (undocumented)
+    model?: 'saaras:v4';
 }
 
 // Warning: (ae-missing-release-tag) "SynthesizeStream" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
