@@ -133,6 +133,12 @@ export class SimulationContext {
     return JSON.parse(this.scenario.userdata) as ScenarioUserdata;
   }
 
+  /** The values passed with `lk agent simulate --set KEY=VALUE`, read-only. Every
+   * scenario of the run sees the same values; empty when none were passed. */
+  defines(): Readonly<Record<string, string>> {
+    return Object.freeze({ ...this._dispatch.defines });
+  }
+
   /** Veto this run from your own checks (e.g. final DB state diverged).
    *
    * The effective result is the AND of both verdicts, so this can only fail a
