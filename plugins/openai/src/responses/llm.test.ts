@@ -170,6 +170,71 @@ describe('OpenAI Responses HTTP incomplete handling', () => {
   });
 });
 
+async function usageFromCompletedResponse(cacheWriteTokens: number) {
+  const client = {
+    responses: {
+      create: async () => ({
+        async *[Symbol.asyncIterator]() {
+          yield RESPONSE_CREATED;
+          yield {
+            type: 'response.completed',
+            response: {
+              id: 'resp_1',
+              status: 'completed',
+              output: [],
+              output_tokens: 40,
+              usage: {
+                input_tokens: 2596,
+                output_tokens: 40,
+                total_tokens: 2636,
+                input_tokens_details: {
+                  cached_tokens: 1024,
+                  cache_write_tokens: cacheWriteTokens,
+                },
+                output_tokens_details: { reasoning_tokens: 0 },
+              },
+            },
+          };
+        },
+      }),
+    },
+  };
+  const model = new LLM({
+    model: 'gpt-4.1',
+    apiKey: 'test-key',
+    useWebSocket: false,
+    client: client as unknown as OpenAI,
+  });
+  const chatCtx = ChatContext.empty();
+  chatCtx.addMessage({ role: 'user', content: 'hi' });
+
+  let usage;
+  for await (const chunk of model.chat({ chatCtx })) {
+    if (chunk.usage) usage = chunk.usage;
+  }
+  await model.aclose();
+
+  expect(usage).toBeDefined();
+  return usage!;
+}
+
+describe('OpenAI Responses HTTP cache write usage', () => {
+  it('reports cache write tokens from input token details', async () => {
+    const usage = await usageFromCompletedResponse(1536);
+
+    expect(usage).toMatchObject({
+      cacheCreationTokens: 1536,
+      promptCachedTokens: 1024,
+      promptTokens: 2596,
+      totalTokens: 2636,
+    });
+  });
+
+  it('reports zero when no cache write tokens were used', async () => {
+    expect((await usageFromCompletedResponse(0)).cacheCreationTokens).toBe(0);
+  });
+});
+
 if (hasOpenAIApiKey) {
   describe('OpenAI Responses', async () => {
     await llm(
