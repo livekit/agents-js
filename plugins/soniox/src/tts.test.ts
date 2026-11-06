@@ -381,6 +381,61 @@ describe('Soniox TTS stream cleanup', () => {
     expect(audioBytes).toEqual(expect.arrayContaining([1]));
   });
 
+  it('keeps the text pushed after a retried failure', async () => {
+    let requestCount = 0;
+    let failedResolve: (() => void) | undefined;
+    const failed = new Promise<void>((resolve) => {
+      failedResolve = resolve;
+    });
+    const textsByStream = new Map<string, string[]>();
+    const { url } = await startServer((socket, message) => {
+      if (typeof message.stream_id !== 'string') return;
+      if (typeof message.text === 'string' && message.text !== '') {
+        if (!textsByStream.has(message.stream_id)) requestCount += 1;
+        textsByStream.set(message.stream_id, [
+          ...(textsByStream.get(message.stream_id) ?? []),
+          message.text,
+        ]);
+        if (requestCount === 1) {
+          socket.send(
+            JSON.stringify({
+              stream_id: message.stream_id,
+              error_code: 503,
+              error_message: 'temporarily unavailable',
+            }),
+          );
+          failedResolve?.();
+        }
+      }
+      if (message.text_end === true && requestCount === 2) {
+        socket.send(
+          JSON.stringify({
+            stream_id: message.stream_id,
+            audio: Buffer.alloc(480, 1).toString('base64'),
+            audio_end: true,
+            terminated: true,
+          }),
+        );
+      }
+    });
+    const synthesizer = createTTS({ websocketUrl: url });
+    const stream = synthesizer.stream({
+      connOptions: { maxRetry: 1, retryIntervalMs: 0, timeoutMs: 1000 },
+    });
+    stream.pushText('The answer is ');
+    const output = consume(stream);
+    await waitFor(failed);
+    // The rest of the answer arrives from the LLM after the retry began.
+    await new Promise<void>((resolve) => setTimeout(resolve, 150));
+    stream.pushText('forty-two.');
+    stream.endInput();
+    await waitFor(output, 3000);
+
+    const attempts = [...textsByStream.values()];
+    expect(attempts).toHaveLength(2);
+    expect(attempts[1]).toEqual(['The answer is ', 'forty-two.']);
+  });
+
   it('cancels and settles an active streaming retry when TTS closes', async () => {
     let requestCount = 0;
     let retryStartedResolve: (() => void) | undefined;
