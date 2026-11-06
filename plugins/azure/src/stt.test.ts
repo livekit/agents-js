@@ -400,6 +400,38 @@ describe('Azure STT pronunciation assessment', () => {
   });
 });
 
+describe('Azure STT speech end timing', () => {
+  it('prefers the completed transcript boundary over the SDK endpoint offset', async () => {
+    const { stream, nextEvent } = await recognizedStream(false);
+    stream.startTimeOffset = 7;
+    stream._speaking = true;
+    try {
+      stream._onRecognized(recognizedEvent());
+      const final = (await nextEvent()).value!;
+      stream._onSpeechEnd({ offset: 30_000_000 } as speechsdk.RecognitionEventArgs);
+      const endpoint = (await nextEvent()).value!;
+
+      expect(endpoint.type).toBe(stt.SpeechEventType.END_OF_SPEECH);
+      expect(endpoint.alternatives?.[0]?.endTime).toBe(final.alternatives?.[0]?.endTime);
+    } finally {
+      stream.close();
+    }
+  });
+
+  it('uses the endpoint offset when no timed final is available', async () => {
+    const { stream, nextEvent } = await recognizedStream(false);
+    stream.startTimeOffset = 7;
+    stream._speaking = true;
+    try {
+      stream._onSpeechEnd({ offset: 4_000_000 } as speechsdk.RecognitionEventArgs);
+      const endpoint = (await nextEvent()).value!;
+      expect(endpoint.alternatives?.[0]?.endTime).toBeCloseTo(7.4);
+    } finally {
+      stream.close();
+    }
+  });
+});
+
 function frame(value: number): AudioFrame {
   return new AudioFrame(new Int16Array([value]), 16000, 1, 1);
 }

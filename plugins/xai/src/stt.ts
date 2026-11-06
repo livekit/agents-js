@@ -178,6 +178,7 @@ export class SpeechStream extends stt.SpeechStream {
   #logger = log();
   #speaking = false;
   #emittedChunkFinal = false;
+  #finalAlternatives: stt.SpeechData[] = [];
   #resetWS = new Future();
   #requestId: string;
   #audioDurationCollector: PeriodicCollector<number>;
@@ -238,6 +239,8 @@ export class SpeechStream extends stt.SpeechStream {
           headers: { Authorization: `Bearer ${this.#apiKey}` },
         });
         await waitForWebSocketOpen(ws, 'xAI');
+        this.restartProviderClock();
+        this.#finalAlternatives = [];
       } catch (error) {
         if (error instanceof APIStatusError || error instanceof APIConnectionError) throw error;
         throw new APIConnectionError({
@@ -426,24 +429,24 @@ export class SpeechStream extends stt.SpeechStream {
       }
 
       if (isFinal) {
-        if (!speechFinal) {
-          this.#emittedChunkFinal = true;
+        const speechData = wordsToSpeechData(words, text, language, this.startTimeOffset);
+        if (!speechFinal || !this.#emittedChunkFinal) {
+          this.#finalAlternatives =
+            words.length > 0 && ((words.at(-1)?.['end'] as number | undefined) ?? 0) > 0
+              ? [speechData]
+              : [];
           this.#putMessage({
             type: stt.SpeechEventType.FINAL_TRANSCRIPT,
             requestId: this.#requestId,
-            alternatives: [wordsToSpeechData(words, text, language)],
+            alternatives: [speechData],
           });
+        } else if (words.length > 0 && ((words.at(-1)?.['end'] as number | undefined) ?? 0) > 0) {
+          this.#finalAlternatives = [speechData];
+        }
+        if (speechFinal) {
+          this.#endSpeech();
         } else {
-          if (!this.#emittedChunkFinal) {
-            this.#putMessage({
-              type: stt.SpeechEventType.FINAL_TRANSCRIPT,
-              requestId: this.#requestId,
-              alternatives: [wordsToSpeechData(words, text, language)],
-            });
-          }
-          this.#emittedChunkFinal = false;
-          this.#speaking = false;
-          this.#putMessage({ type: stt.SpeechEventType.END_OF_SPEECH });
+          this.#emittedChunkFinal = true;
         }
       } else {
         if (this.#opts.interimResults) {
@@ -468,15 +471,18 @@ export class SpeechStream extends stt.SpeechStream {
       const language = (data['language'] as string) ?? '';
 
       if (text) {
+        const speechData = wordsToSpeechData(words, text, language, this.startTimeOffset);
+        if (words.length > 0 && ((words.at(-1)?.['end'] as number | undefined) ?? 0) > 0) {
+          this.#finalAlternatives = [speechData];
+        }
         this.#putMessage({
           type: stt.SpeechEventType.FINAL_TRANSCRIPT,
           requestId: this.#requestId,
-          alternatives: [wordsToSpeechData(words, text, language)],
+          alternatives: [speechData],
         });
       }
       if (this.#speaking) {
-        this.#speaking = false;
-        this.#putMessage({ type: stt.SpeechEventType.END_OF_SPEECH });
+        this.#endSpeech();
       }
     } else if (msgType === 'error') {
       throw new APIStatusError({
@@ -486,6 +492,18 @@ export class SpeechStream extends stt.SpeechStream {
     } else {
       this.#logger.warn(`received unexpected message from xAI: ${msgType}`);
     }
+  }
+
+  #endSpeech(): void {
+    this.#speaking = false;
+    this.#emittedChunkFinal = false;
+    this.#putMessage({
+      type: stt.SpeechEventType.END_OF_SPEECH,
+      ...(this.#finalAlternatives.length > 0
+        ? { alternatives: [this.#finalAlternatives[0]!] as [stt.SpeechData] }
+        : {}),
+    });
+    this.#finalAlternatives = [];
   }
 }
 
@@ -497,20 +515,25 @@ function wordsToSpeechData(
   words: Record<string, unknown>[],
   text: string,
   language: string,
+  startTimeOffset = 0,
 ): stt.SpeechData {
   return {
     language: language as LanguageCode,
     text,
-    startTime: words.length ? (words[0]!['start'] as number) ?? 0 : 0,
-    endTime: words.length ? (words[words.length - 1]!['end'] as number) ?? 0 : 0,
+    startTime: words.length ? ((words[0]!['start'] as number) ?? 0) + startTimeOffset : 0,
+    endTime:
+      words.length && ((words.at(-1)?.['end'] as number | undefined) ?? 0) > 0
+        ? (words.at(-1)!['end'] as number) + startTimeOffset
+        : 0,
     confidence: 0,
     words:
       words.length > 0
         ? words.map((w) =>
             createTimedString({
               text: (w['text'] as string) ?? '',
-              startTime: (w['start'] as number) ?? 0,
-              endTime: (w['end'] as number) ?? 0,
+              startTime: ((w['start'] as number) ?? 0) + startTimeOffset,
+              endTime: ((w['end'] as number) ?? 0) + startTimeOffset,
+              startTimeOffset,
             }),
           )
         : undefined,

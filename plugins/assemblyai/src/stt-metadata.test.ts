@@ -172,6 +172,15 @@ describe('AssemblyAI STT metadata', () => {
             },
           },
         },
+        {
+          type: sttLib.SpeechEventType.END_OF_SPEECH,
+          language: 'es',
+          metadata: {
+            assemblyai: {
+              languageConfidence: 0.94,
+            },
+          },
+        },
       ]);
     } finally {
       await closeWebSocketServer(wss);
@@ -274,6 +283,7 @@ describe('AssemblyAI STT PII redaction', () => {
       expect(alternatives.map((alternative) => alternative.text)).toEqual([
         'My name',
         'My name',
+        'My name is [PERSON_NAME].',
         'My name is [PERSON_NAME].',
         'My name is [PERSON_NAME].',
         'My name is [PERSON_NAME].',

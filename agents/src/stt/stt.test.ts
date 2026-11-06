@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { beforeAll, describe, expect, it } from 'vitest';
+import { AudioFrame } from '@livekit/rtc-node';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { APIConnectionError, APIStatusError } from '../_exceptions.js';
 import { initializeLogger } from '../log.js';
 import type { APIConnectOptions } from '../types.js';
@@ -103,6 +104,25 @@ class UntimestampedSpeechStream extends SpeechStream {
 
   protected async run(): Promise<void> {
     this.queue.put({ type: SpeechEventType.START_OF_SPEECH });
+  }
+}
+
+class ClockProbeStream extends SpeechStream {
+  label = 'clock-probe-stream';
+
+  protected async run(): Promise<void> {
+    await new Promise<void>((resolve) =>
+      this.abortSignal.addEventListener('abort', () => resolve(), { once: true }),
+    );
+  }
+
+  async readFrame(): Promise<number> {
+    await this.input.next();
+    return this.startTimeOffset;
+  }
+
+  restartClock(): void {
+    this.restartProviderClock();
   }
 }
 
@@ -247,6 +267,8 @@ describe('SpeechStream retry budget', () => {
 });
 
 describe('STT event timestamps', () => {
+  afterEach(() => vi.restoreAllMocks());
+
   it('timestamps non-streaming recognition results', async () => {
     const before = Date.now();
     const event = await new UntimestampedSTT().recognize([]);
@@ -267,5 +289,35 @@ describe('STT event timestamps', () => {
     } finally {
       stream.close();
     }
+  });
+
+  it('anchors each provider clock on the first frame it consumes', async () => {
+    let now = 1_000_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const stream = new ClockProbeStream(new UntimestampedSTT());
+    stream.startTimeOffset = 7;
+    const frame = AudioFrame.create(16_000, 1, 16_000);
+
+    now = 1_001_000;
+    stream.pushFrame(frame);
+    expect(await stream.readFrame()).toBeCloseTo(7);
+
+    stream.restartClock();
+    now = 1_011_000;
+    stream.pushFrame(frame);
+    expect(await stream.readFrame()).toBeCloseTo(17);
+    stream.close();
+  });
+
+  it('uses queued audio capture time instead of delayed connection setup', async () => {
+    let now = 1_001_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const stream = new ClockProbeStream(new UntimestampedSTT());
+    const frame = AudioFrame.create(16_000, 1, 16_000);
+
+    stream.pushFrame(frame);
+    now += 10_000;
+    expect(await stream.readFrame()).toBeCloseTo(0);
+    stream.close();
   });
 });

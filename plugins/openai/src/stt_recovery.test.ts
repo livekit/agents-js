@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { APIConnectionError, APIError, APIStatusError, type stt } from '@livekit/agents';
+import { APIConnectionError, APIError, APIStatusError, stt } from '@livekit/agents';
 import { AudioFrame } from '@livekit/rtc-node';
 import { once } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -62,6 +62,32 @@ afterEach(async () => {
 });
 
 describe('openai STT recovery', () => {
+  it('subtracts server VAD silence from the speech end boundary', async () => {
+    await startServer();
+    server.on('connection', (socket) => {
+      socket.once('pong', () => {
+        socket.send(JSON.stringify({ type: 'input_audio_buffer.speech_started', item_id: 'one' }));
+        socket.send(
+          JSON.stringify({
+            type: 'input_audio_buffer.speech_stopped',
+            item_id: 'one',
+            audio_end_ms: 750,
+          }),
+        );
+      });
+      socket.ping();
+    });
+    const started = startStream();
+    stream = started.stream;
+    stream.startTimeOffset = 7;
+    for await (const event of stream) {
+      if (event.type === stt.SpeechEventType.END_OF_SPEECH) {
+        expect(event.alternatives?.[0]?.endTime).toBeCloseTo(7.4);
+        break;
+      }
+    }
+  });
+
   it('closes terminal streams when creating replacements', async () => {
     await startServer({ verifyClient: (_info, done) => done(false, 401) });
     const { provider, stream: failedStream } = startStream();

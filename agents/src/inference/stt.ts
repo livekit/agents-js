@@ -1285,7 +1285,7 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
     if (!text && eventType !== SpeechEventType.FINAL_TRANSCRIPT) return;
 
     try {
-      this.processStartOfSpeech();
+      if (text) this.processStartOfSpeech();
 
       // The gateway carries provider-specific data on the `extra` field
       // of the transcript message. We surface it on SpeechData.metadata.
@@ -1329,6 +1329,9 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
           this.speechDuration = 0;
         }
 
+        // An empty flush can account for trailing silence without opening a new turn.
+        if (!text && !this.speaking) return;
+
         this.queue.put({
           type: SpeechEventType.FINAL_TRANSCRIPT,
           requestId,
@@ -1337,7 +1340,17 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
 
         if (this.speaking) {
           this.speaking = false;
-          this.queue.put({ type: SpeechEventType.END_OF_SPEECH });
+          const lastWordEnd = data.words.at(-1)?.end ?? 0;
+          this.queue.put({
+            type: SpeechEventType.END_OF_SPEECH,
+            ...(lastWordEnd > 0
+              ? {
+                  alternatives: [
+                    { ...speechData, endTime: this.startTimeOffset + lastWordEnd },
+                  ] as [SpeechData],
+                }
+              : {}),
+          });
           this.onEndOfSpeech();
         }
       } else {

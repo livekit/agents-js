@@ -516,6 +516,7 @@ export class SpeechStream extends stt.SpeechStream {
       const taskAbort = new AbortController();
       try {
         connection = await this.#pool.get(this.#connOptions.timeoutMs, this.abortSignal);
+        this.restartProviderClock();
         this.#audioPending = false;
         this.#audioEnded = false;
         this.#sentAudioDuration = 0;
@@ -628,10 +629,17 @@ export class SpeechStream extends stt.SpeechStream {
         this.#speaking = true;
         this.#put({ type: stt.SpeechEventType.START_OF_SPEECH });
       } else if (event.type === VADEventType.END_OF_SPEECH) {
+        const speechEndTime =
+          this.inputStartedAt === undefined
+            ? undefined
+            : this.inputStartedAt +
+              this.startTimeOffset * 1000 +
+              event.timestamp -
+              event.silenceDuration;
         await this.#flushAudio(connection);
         if (this.#speaking) {
           this.#speaking = false;
-          this.#put({ type: stt.SpeechEventType.END_OF_SPEECH });
+          this.#put({ type: stt.SpeechEventType.END_OF_SPEECH, speechEndTime });
         }
       }
     }

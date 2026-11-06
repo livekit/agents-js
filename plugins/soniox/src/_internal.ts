@@ -245,7 +245,18 @@ function* sendEndpointTranscript(
         },
       ],
     };
-    yield { type: stt.SpeechEventType.END_OF_SPEECH };
+    // Translation tokens can omit timing; the source tokens carry the speech span.
+    const endpointTokens = state.finalOriginal.endTime > 0 ? state.finalOriginal : state.final;
+    yield {
+      type: stt.SpeechEventType.END_OF_SPEECH,
+      ...(endpointTokens.endTime > 0
+        ? {
+            alternatives: [endpointTokens.toSpeechData(options.startTimeOffset)] as [
+              stt.SpeechData,
+            ],
+          }
+        : {}),
+    };
     state.final.reset();
     state.finalOriginal.reset();
     state.isSpeaking = false;

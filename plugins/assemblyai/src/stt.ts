@@ -470,6 +470,7 @@ export class SpeechStream extends stt.SpeechStream {
     while (!this.input.closed && !this.closed) {
       try {
         const ws = await this.#connectWS();
+        this.restartProviderClock();
         await this.#runWS(ws);
         retries = 0;
       } catch (e) {
@@ -614,14 +615,17 @@ export class SpeechStream extends stt.SpeechStream {
       const samplesPerBuffer = Math.floor((this.#opts.sampleRate * this.#opts.bufferSizeMs) / 1000);
       const audioStream = new AudioByteStream(this.#opts.sampleRate, 1, samplesPerBuffer);
 
-      const abortPromise = waitForAbort(this.abortSignal);
-      const sessionAbort = waitForAbort(sessionController.signal);
+      const attemptSignal = AbortSignal.any([this.abortSignal, sessionController.signal]);
 
       try {
         while (!this.closed) {
-          const result = await Promise.race([this.input.next(), abortPromise, sessionAbort]);
-
-          if (result === undefined) return; // aborted
+          let result: IteratorResult<AudioFrame | typeof SpeechStream.FLUSH_SENTINEL>;
+          try {
+            result = await this.input.next({ signal: attemptSignal });
+          } catch (error) {
+            if (attemptSignal.aborted) return;
+            throw error;
+          }
           if (result.done) break;
 
           const data = result.value;
@@ -860,7 +864,25 @@ export class SpeechStream extends stt.SpeechStream {
         ],
       });
 
-      this.queue.put({ type: stt.SpeechEventType.END_OF_SPEECH });
+      this.queue.put({
+        type: stt.SpeechEventType.END_OF_SPEECH,
+        ...(words.length > 0 && (words.at(-1)?.end ?? 0) > 0
+          ? {
+              alternatives: [
+                {
+                  language,
+                  text: transcript,
+                  startTime,
+                  endTime,
+                  confidence,
+                  words: emittedWords,
+                  speakerId,
+                  ...(metadata ? { metadata } : {}),
+                },
+              ] as [stt.SpeechData],
+            }
+          : {}),
+      });
       if (this.#speechDurationInS > 0) {
         this.queue.put({
           type: stt.SpeechEventType.RECOGNITION_USAGE,

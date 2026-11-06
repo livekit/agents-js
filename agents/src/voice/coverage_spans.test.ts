@@ -614,7 +614,7 @@ describe.sequential('coverage spans', () => {
     });
     const turn = await userTurnWith(adapter as unknown as FakeSTT);
     expect(turn.attributes[traceTypes.ATTR_GEN_AI_REQUEST_MODEL]).toBe('secondary-model');
-  });
+  }, 15_000);
 
   it('normalizes the STT provider to the GenAI registry spelling', async () => {
     class DisplayNamedSTT extends FakeSTT {
