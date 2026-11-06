@@ -5,9 +5,10 @@ import { ConnectionState, RoomEvent } from '@livekit/rtc-node';
 import type { Room } from '@livekit/rtc-node';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { InferenceExecutor } from './ipc/inference_executor.js';
-import { JobContext, type JobProcess, type RunningJobInfo } from './job.js';
+import { JobContext, type JobProcess, type RunningJobInfo, runWithJobContext } from './job.js';
 import { log } from './log.js';
 import { SimulationContext, parseSimulationDispatch } from './simulation.js';
+import { choose } from './simulation/index.js';
 import * as rpcTracing from './telemetry/rpc.js';
 
 const { deleteRoomMock, roomServiceClientMock, setupCloudTracerMock } = vi.hoisted(() => ({
@@ -240,6 +241,58 @@ describe('JobContext.simulationContext', () => {
       { attributes: { 'lk.simulator.dispatch': '{"scenario":{}}' } },
     );
     expect(ctx.simulationContext()).toBeUndefined();
+  });
+});
+
+describe('choose', () => {
+  const options = { 'gpt-5': 'A', gemini: 'B' };
+  const simJob = (choices?: Record<string, string>) =>
+    createJobContextWithRoom(
+      {},
+      {
+        attributes: {
+          'lk.simulator.dispatch': JSON.stringify({ simulationRunId: 'SR_1', choices }),
+        },
+      },
+    ).ctx;
+
+  it('exposes the dispatch choices on the SimulationContext', () => {
+    expect(simJob({ llm: 'gemini' }).simulationContext()!.choices).toEqual({ llm: 'gemini' });
+    expect(simJob().simulationContext()!.choices).toEqual({});
+  });
+
+  it('returns the default outside a job', () => {
+    expect(choose('llm', options, { default: 'gemini' })).toBe('B');
+  });
+
+  it('returns the default outside a simulation', () => {
+    const { ctx } = createJobContextWithRoom();
+    expect(runWithJobContext(ctx, () => choose('llm', options, { default: 'gemini' }))).toBe('B');
+  });
+
+  it('returns the default when the dispatch makes no choice for the knob', () => {
+    const ctx = simJob({ tts: 'cartesia' });
+    expect(runWithJobContext(ctx, () => choose('llm', options, { default: 'gemini' }))).toBe('B');
+  });
+
+  it('returns the option the dispatch names', () => {
+    const ctx = simJob({ llm: 'gemini' });
+    expect(runWithJobContext(ctx, () => choose('llm', options, { default: 'gpt-5' }))).toBe('B');
+  });
+
+  it('throws naming the knob and options when the dispatch names an unknown option', () => {
+    const ctx = simJob({ llm: 'claude' });
+    expect(() =>
+      runWithJobContext(ctx, () => choose('llm', options, { default: 'gpt-5' })),
+    ).toThrow(/'llm'.*'claude'.*\[gpt-5, gemini\]/);
+  });
+
+  it('throws on an unknown default, even when the dispatch names a valid option', () => {
+    expect(() => choose('llm', options, { default: 'claude' })).toThrow(/'claude'/);
+    const ctx = simJob({ llm: 'gemini' });
+    expect(() =>
+      runWithJobContext(ctx, () => choose('llm', options, { default: 'claude' })),
+    ).toThrow(/default 'claude'/);
   });
 });
 
