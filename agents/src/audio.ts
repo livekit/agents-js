@@ -53,7 +53,10 @@ export class AudioByteStream {
     const bytes = ArrayBuffer.isView(data)
       ? new Int8Array(data.buffer, data.byteOffset, data.byteLength)
       : new Int8Array(data);
-    this.#buf = new Int8Array([...this.#buf, ...bytes]);
+    const merged = new Int8Array(this.#buf.length + bytes.length);
+    merged.set(this.#buf, 0);
+    merged.set(bytes, this.#buf.length);
+    this.#buf = merged;
 
     const frames: AudioFrame[] = [];
     while (this.#buf.length >= this.#bytesPerFrame) {
