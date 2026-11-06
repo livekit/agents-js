@@ -9887,7 +9887,7 @@ interface XaiOptions {
 type XAIRealtimeModels = 'xai/grok-voice' | 'xai/grok-voice-latest' | 'xai/grok-voice-3.0';
 
 // @public (undocumented)
-type XaiSTTModels = 'xai/stt-1';
+type XaiSTTModels = 'xai/stt-1' | 'xai/stt-2';
 
 // @public (undocumented)
 type XaiTTSModels = 'xai/tts-1';
