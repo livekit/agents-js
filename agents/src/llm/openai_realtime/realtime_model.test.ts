@@ -9,6 +9,7 @@ import { type WebSocket, WebSocketServer } from 'ws';
 import { APIError, Future, Task, llm, stream } from '../../index.js';
 import type * as api_proto from './api_proto.js';
 import {
+  ItemIdMap,
   RealtimeModel,
   RealtimeSession,
   isFatalError,
@@ -1495,6 +1496,243 @@ it('recreates an item the lost connection never confirmed', async () => {
       server.close((error) => (error ? reject(error) : resolve()));
     });
   }
+});
+
+const LONG_UUID = '09b67175-054b-4b4a-8716-4b59389b8cae';
+const LONG_PREFIXED = 'item_6b1619a1-efb7-4790-80c2-acc780dfce50_3';
+
+type ItemIdServerConnection = {
+  socket: WebSocket;
+  received: ItemIdClientEvent[];
+};
+
+type ItemIdClientEvent = {
+  type?: string;
+  event_id?: string;
+  previous_item_id?: string;
+  item_id?: string;
+  item?: { id?: string };
+};
+
+type ItemIdServerError = { type: string; code: string; message: string };
+
+async function startItemIdLimitServer(): Promise<{
+  server: WebSocketServer;
+  connections: ItemIdServerConnection[];
+  errors: ItemIdServerError[];
+  url: string;
+}> {
+  const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+  await once(server, 'listening');
+  const address = server.address();
+  if (typeof address === 'string' || address === null) {
+    throw new Error('expected websocket server to listen on a TCP port');
+  }
+
+  const connections: ItemIdServerConnection[] = [];
+  const errors: ItemIdServerError[] = [];
+  server.on('connection', (socket) => {
+    const connection: ItemIdServerConnection = { socket, received: [] };
+    connections.push(connection);
+    const held: string[] = [];
+    socket.send(JSON.stringify({ type: 'session.created', event_id: 'ev_session', session: {} }));
+
+    const reject = (event: ItemIdClientEvent, code: string) => {
+      const error = { type: 'invalid_request_error', code, message: code };
+      errors.push(error);
+      socket.send(
+        JSON.stringify({
+          type: 'error',
+          event_id: 'ev_error',
+          error: { ...error, event_id: event.event_id },
+        }),
+      );
+    };
+
+    socket.on('message', (data) => {
+      const event = JSON.parse(data.toString()) as ItemIdClientEvent;
+      connection.received.push(event);
+      if (event.type === 'conversation.item.create') {
+        const item = event.item!;
+        const previous = event.previous_item_id;
+        if ((item.id?.length ?? 0) > 32) {
+          reject(event, 'string_above_max_length');
+        } else if (previous !== undefined && previous !== 'root' && !held.includes(previous)) {
+          reject(event, 'item_create_invalid_previous_item_id');
+        } else {
+          const at =
+            previous === 'root'
+              ? 0
+              : previous !== undefined
+                ? held.indexOf(previous) + 1
+                : held.length;
+          held.splice(at, 0, item.id!);
+          socket.send(
+            JSON.stringify({
+              type: 'conversation.item.added',
+              event_id: `ev_${item.id}`,
+              previous_item_id: at > 0 ? held[at - 1] : null,
+              item,
+            }),
+          );
+        }
+      } else if (event.type === 'conversation.item.delete') {
+        const index = held.indexOf(event.item_id!);
+        if (index === -1) {
+          reject(event, 'item_delete_invalid_item_id');
+        } else {
+          held.splice(index, 1);
+          socket.send(
+            JSON.stringify({
+              type: 'conversation.item.deleted',
+              event_id: 'ev_deleted',
+              item_id: event.item_id,
+            }),
+          );
+        }
+      }
+    });
+  });
+
+  return {
+    server,
+    connections,
+    errors,
+    url: `ws://127.0.0.1:${address.port}/v1`,
+  };
+}
+
+function longIdChatCtx(): llm.ChatContext {
+  const chatCtx = llm.ChatContext.empty();
+  chatCtx.addMessage({ role: 'user', content: 'first', id: LONG_UUID });
+  chatCtx.addMessage({ role: 'assistant', content: 'second', id: LONG_PREFIXED });
+  chatCtx.addMessage({ role: 'user', content: 'third', id: 'item_short' });
+  return chatCtx;
+}
+
+it('sends history with long item IDs while preserving local IDs', async () => {
+  const { server, connections, errors, url } = await startItemIdLimitServer();
+  const model = new RealtimeModel({ apiKey: 'fake', baseURL: url, modalities: ['text'] });
+  const session = model.session();
+  try {
+    const chatCtx = longIdChatCtx();
+    await session.updateChatCtx(chatCtx);
+    const received = connections[0]!.received;
+
+    expect(errors).toEqual([]);
+    expect(session.chatCtx.items.map((item) => item.id)).toEqual([
+      LONG_UUID,
+      LONG_PREFIXED,
+      'item_short',
+    ]);
+    const creates = received.filter((event) => event.type === 'conversation.item.create');
+    expect(creates.every((event) => event.item!.id!.length <= 32)).toBe(true);
+    expect(creates.at(-1)!.item!.id).toBe('item_short');
+
+    await session.updateChatCtx(chatCtx);
+    expect(received.filter((event) => event.type === 'conversation.item.create')).toHaveLength(3);
+
+    chatCtx.items = chatCtx.items.filter((item) => item.id !== LONG_UUID);
+    await session.updateChatCtx(chatCtx);
+    expect(errors).toEqual([]);
+    expect(session.chatCtx.items.map((item) => item.id)).toEqual([LONG_PREFIXED, 'item_short']);
+  } finally {
+    connections.forEach(({ socket }) => socket.terminate());
+    await session.close();
+    await model.close();
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => (error ? reject(error) : resolve()));
+    });
+  }
+});
+
+it('reconnects and replays long item IDs within the limit', async () => {
+  const { server, connections, errors, url } = await startItemIdLimitServer();
+  const model = new RealtimeModel({ apiKey: 'fake', baseURL: url, modalities: ['text'] });
+  const session = model.session();
+  try {
+    const chatCtx = longIdChatCtx();
+    await session.updateChatCtx(chatCtx);
+
+    connections[0]!.socket.close();
+    await vi.waitFor(
+      () =>
+        expect(
+          connections[1]?.received.filter((event) => event.type === 'conversation.item.create'),
+        ).toHaveLength(3),
+      { timeout: 5_000 },
+    );
+    await vi.waitFor(() => expect(session.chatCtx.items).toHaveLength(3));
+    expect(errors).toEqual([]);
+
+    const updatedChatCtx = session.chatCtx.copy();
+    updatedChatCtx.addMessage({
+      role: 'assistant',
+      content: 'fourth',
+      id: LONG_UUID.split('').reverse().join(''),
+    });
+    await session.updateChatCtx(updatedChatCtx);
+    expect(errors).toEqual([]);
+    expect(session.chatCtx.items.map((item) => item.id)).toEqual([
+      LONG_UUID,
+      LONG_PREFIXED,
+      'item_short',
+      LONG_UUID.split('').reverse().join(''),
+    ]);
+  } finally {
+    connections.forEach(({ socket }) => socket.terminate());
+    await session.close();
+    await model.close();
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => (error ? reject(error) : resolve()));
+    });
+  }
+});
+
+it('shortens every reference to a long item ID and restores server references', () => {
+  const ids = new ItemIdMap();
+  const create = {
+    type: 'conversation.item.create',
+    previous_item_id: LONG_UUID,
+    item: { id: LONG_PREFIXED, type: 'message' },
+  };
+  const truncate = {
+    type: 'conversation.item.truncate',
+    item_id: LONG_UUID,
+    audio_end_ms: 10,
+  };
+  const reference = {
+    type: 'response.create',
+    response: { input: [{ type: 'item_reference', id: LONG_UUID }] },
+  };
+  for (const event of [create, truncate, reference]) {
+    ids.shortenEvent(event as unknown as Record<string, unknown>);
+  }
+
+  const shortUuid = create.previous_item_id as string;
+  expect(shortUuid).toHaveLength(32);
+  expect(create.item.id).toHaveLength(32);
+  expect(truncate.item_id).toBe(shortUuid);
+  expect(reference.response.input[0].id).toBe(shortUuid);
+
+  const truncated = {
+    type: 'conversation.item.truncated',
+    item_id: shortUuid,
+  };
+  ids.restoreEvent(truncated as unknown as Record<string, unknown>);
+  expect(truncated.item_id).toBe(LONG_UUID);
+
+  const serverItem = {
+    type: 'conversation.item.added',
+    previous_item_id: null,
+    item: { id: 'x' },
+  };
+  ids.restoreEvent(serverItem as unknown as Record<string, unknown>);
+  expect(serverItem).toEqual({
+    type: 'conversation.item.added',
+    previous_item_id: null,
+    item: { id: 'x' },
+  });
 });
 
 describe('RealtimeSession input audio', () => {
