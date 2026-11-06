@@ -251,6 +251,12 @@ function* sendEndpointTranscript(
     state.isSpeaking = false;
   } else {
     state.finalOriginal.reset();
+    if (state.isSpeaking) {
+      // Non-final tokens are not retained across messages, so an endpoint after a full
+      // retraction must still close the utterance.
+      yield { type: stt.SpeechEventType.END_OF_SPEECH };
+      state.isSpeaking = false;
+    }
   }
 }
 
