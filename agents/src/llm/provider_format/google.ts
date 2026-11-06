@@ -101,7 +101,7 @@ export async function toChatCtx(
   }
 
   // Gemini requires the last message to end with user's turn before they can generate
-  if (injectDummyUserMessage && currentRole !== 'user') {
+  if (injectDummyUserMessage && turns[turns.length - 1]?.role !== 'user') {
     turns.push({ role: 'user', parts: [{ text: '.' }] });
   }
 
