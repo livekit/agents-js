@@ -1239,7 +1239,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       waiterReject = reject;
       connection.registerStream(this, { resolve, reject }, this.connOptions.timeoutMs, () => {
         this.#streamDone = true;
-        this.#sentTokenizerStream.close();
+        sentTokenizerStream.close();
         if (!this.input.closed) this.input.close();
       });
     });
