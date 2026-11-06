@@ -5,6 +5,12 @@
 /** @public */
 export type TTSModels = 's1' | 's2-pro' | 's2.1-pro' | 'drama-3';
 
+/** Fish Audio realtime speech-to-text models. @public */
+export type STTModels = 'transcribe-stream-1';
+
+/** How Fish Audio detects the end of a user turn. @public */
+export type TurnDetectionMode = 'auto' | 'vad' | 'manual';
+
 /** @public */
 export type LatencyMode = 'normal' | 'balanced' | 'low';
 
