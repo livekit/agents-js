@@ -89,7 +89,7 @@ function isGemini3FlashModel(model: string): boolean {
 }
 
 export interface LLMOptions {
-  model: string | ChatModels;
+  model?: string | ChatModels;
   apiKey?: string;
   temperature?: number;
   toolChoice?: llm.ToolChoice;
@@ -112,7 +112,7 @@ export interface LLMOptions {
 }
 
 export class LLM extends llm.LLM {
-  #opts: LLMOptions;
+  #opts: Omit<LLMOptions, 'model'> & { model: string };
   #client: GoogleGenAI;
 
   label(): string {
@@ -145,7 +145,7 @@ export class LLM extends llm.LLM {
    * and the location defaults to "us-central1".
    * - For Google Gemini API: Set the `apiKey` argument or the `GOOGLE_API_KEY` environment variable.
    *
-   * @param model - The model name to use. Defaults to "gemini-2.0-flash-001".
+   * @param model - The model name to use. Defaults to "gemini-3.8-flash".
    * @param apiKey - The API key for Google Gemini. If not provided, it attempts to read from the `GOOGLE_API_KEY` environment variable.
    * @param vertexai - Whether to use VertexAI. If not provided, it attempts to read from the `GOOGLE_GENAI_USE_VERTEXAI` environment variable. Defaults to false.
    * @param project - The Google Cloud project to use (only for VertexAI). Defaults to undefined.
@@ -166,32 +166,28 @@ export class LLM extends llm.LLM {
    * @param cachedContent - Resource name of an explicit context cache to attach to every request from this LLM instance, e.g. `cachedContents/abc123` for the Gemini API or `projects/<project>/locations/<location>/cachedContents/abc123` for VertexAI. The cache must already exist. When set, `systemInstruction`, `tools`, and `toolConfig` are omitted from outgoing requests because Gemini requires those fields to live inside the cached content resource.
    * @param mediaResolution - The media resolution for the request. Defaults to undefined.
    */
-  constructor(
-    {
-      model,
-      apiKey,
-      vertexai,
-      project,
-      location,
-      temperature,
-      maxOutputTokens,
-      topP,
-      topK,
-      presencePenalty,
-      frequencyPenalty,
-      toolChoice,
-      thinkingConfig,
-      automaticFunctionCallingConfig,
-      geminiTools,
-      httpOptions,
-      seed,
-      serviceTier,
-      cachedContent,
-      mediaResolution,
-    }: LLMOptions = {
-      model: 'gemini-2.0-flash-001',
-    },
-  ) {
+  constructor({
+    model = 'gemini-3.8-flash',
+    apiKey,
+    vertexai,
+    project,
+    location,
+    temperature,
+    maxOutputTokens,
+    topP,
+    topK,
+    presencePenalty,
+    frequencyPenalty,
+    toolChoice,
+    thinkingConfig,
+    automaticFunctionCallingConfig,
+    geminiTools,
+    httpOptions,
+    seed,
+    serviceTier,
+    cachedContent,
+    mediaResolution,
+  }: LLMOptions = {}) {
     super();
 
     const useVertexAI =
