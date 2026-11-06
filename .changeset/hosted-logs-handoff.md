@@ -2,4 +2,4 @@
 '@livekit/agents': patch
 ---
 
-When `LIVEKIT_HOSTED_LOGS=true`, create the file at `LIVEKIT_HOSTED_LOGS_HANDOFF_FILE` when `@livekit/agents` loads, and stop exporting pino log lines over OTLP while that file exists. If the file cannot be created, the SDK keeps exporting its logs. Session reports, transcripts, and traces are unchanged.
+On LiveKit Cloud, hand log collection to LiveKit Cloud when `LIVEKIT_HOSTED_LOGS=true`, `LIVEKIT_HOSTED_LOGS_HANDOFF_FILE` and `LIVEKIT_HOSTED_LOGS_JOBS_DIR` are set. Each job process writes its output to its own file, and the session's `record` logs and redaction options decide whether that file is collected. Log records are held until that decision and redacted when the project or the session requires it. Pino log lines are no longer exported over OTLP; session reports, transcripts, and traces are unchanged.
