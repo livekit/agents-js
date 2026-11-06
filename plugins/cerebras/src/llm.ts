@@ -31,7 +31,7 @@ const defaultLLMOptions: LLMOptions = {
 /**
  * Create a custom fetch that compresses request payloads via msgpack and/or gzip.
  *
- * @see https://inference-docs.cerebras.ai/payload-optimization
+ * @see https://inference-docs.cerebras.ai/capabilities/payload-optimization
  */
 function createCompressedFetch(opts: {
   useMsgpack: boolean;
