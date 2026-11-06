@@ -420,6 +420,10 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
   protected override onStreamDone(): void {
     getTTSState(this.#tts).streams.delete(this);
+    // No attempt is left to send what the caller pushes from here on.
+    if (!this.input.closed) {
+      this.input.close();
+    }
   }
 
   /** Starts the one reader of the caller's input, the first time an attempt needs it. */

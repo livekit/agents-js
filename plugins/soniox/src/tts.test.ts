@@ -436,6 +436,31 @@ describe('Soniox TTS stream cleanup', () => {
     expect(attempts[1]).toEqual(['The answer is ', 'forty-two.']);
   });
 
+  it.each([
+    ['the server finishes early', { terminated: true }],
+    ['retries run out', { error_code: 503, error_message: 'temporarily unavailable' }],
+  ])('stops taking text once %s', async (_, reply) => {
+    const { url } = await startServer((socket, message) => {
+      if (typeof message.stream_id !== 'string' || typeof message.text !== 'string') return;
+      socket.send(JSON.stringify({ stream_id: message.stream_id, ...reply }));
+    });
+    const synthesizer = createTTS({ websocketUrl: url });
+    const stream = synthesizer.stream({
+      connOptions: { maxRetry: 1, retryIntervalMs: 0, timeoutMs: 1000 },
+    });
+    synthesizer.on('error', () => {});
+    stream.pushText('Hello, ');
+    await waitFor(
+      consume(stream).catch(() => {}),
+      3000,
+    );
+
+    // The caller is still producing text, but no attempt is left to send it.
+    stream.pushText('and more.');
+    const { input } = stream as unknown as { input: { closed: boolean } };
+    expect(input.closed).toBe(true);
+  });
+
   it('cancels and settles an active streaming retry when TTS closes', async () => {
     let requestCount = 0;
     let retryStartedResolve: (() => void) | undefined;
