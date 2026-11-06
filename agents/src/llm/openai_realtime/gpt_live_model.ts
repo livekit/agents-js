@@ -38,6 +38,8 @@ const ASK_INSTRUCTED = `Immediately follow the instruction below. ${SPEAK_NOW}`;
 const ASK_TYPED = `Reply to the caller now, don't repeat what they said. ${SPEAK_NOW}`;
 const ASK_BARE = `Reply to the caller now. ${SPEAK_NOW}`;
 const SESSION_CLOSE_TIMEOUT = 5000;
+// The service rejects input audio bursts over five seconds, regardless of encoding.
+const MAX_QUEUED_INPUT_AUDIO_SAMPLES = 4 * SAMPLE_RATE;
 const FATAL_ERROR_CODES = new Set([
   'insufficient_quota',
   'invalid_api_key',
@@ -179,6 +181,11 @@ interface Speech {
   startedAt: number;
   quietMs: number;
 }
+interface QueuedCommand {
+  event: ClientEvent | Record<string, unknown>;
+  replayOnReconnect: boolean;
+  context?: string;
+}
 
 /**
  * GPT-Live WebSocket session, accessible through Agent.duplexSession.
@@ -219,14 +226,14 @@ export class GPTLiveSession extends llm.DuplexSession<{
   private inputMuted = false;
   private closing = false;
   private audioClosed = false;
-  private queued: {
-    event: ClientEvent | Record<string, unknown>;
-    replayOnReconnect: boolean;
-    context?: string;
-  }[] = [];
+  private queued: QueuedCommand[] = [];
   private ws?: WebSocket;
   private connectionDone?: Future<Error | undefined>;
   private connectionDraining = false;
+  private queuedSendInFlight?: {
+    ws: WebSocket;
+    command: QueuedCommand;
+  };
   private requestConnectionClose?: () => void;
   private readonly shutdown = new AbortController();
   private readonly mainTask: Promise<void>;
@@ -282,28 +289,76 @@ export class GPTLiveSession extends llm.DuplexSession<{
   }
 
   private flushQueued(): void {
-    if (this.connectionDraining || !this.sessionStarted || this.ws?.readyState !== WebSocket.OPEN)
+    if (
+      (this.connectionDraining && !this.closing) ||
+      !this.sessionStarted ||
+      this.ws?.readyState !== WebSocket.OPEN ||
+      this.queuedSendInFlight
+    )
       return;
-    while (this.queued.length) {
-      const { event, context } = this.queued.shift()!;
-      if (context !== undefined)
-        this.history.insert(new llm.ChatMessage({ role: 'developer', content: [context] }));
-      this.wsSend(this.ws, event);
+    const command = this.queued.shift();
+    if (!command) {
+      if (this.closing) this.requestConnectionClose?.();
+      return;
     }
+    const ws = this.ws;
+    this.queuedSendInFlight = { ws, command };
+    this.wsSend(ws, command.event, (error) => {
+      if (this.queuedSendInFlight?.ws !== ws || this.queuedSendInFlight.command !== command) return;
+      this.queuedSendInFlight = undefined;
+      if (error) return;
+      if (command.context !== undefined)
+        this.history.insert(new llm.ChatMessage({ role: 'developer', content: [command.context] }));
+      this.flushQueued();
+    });
   }
 
-  private wsSend(ws: WebSocket, event: ClientEvent | Record<string, unknown>): void {
+  private wsSend(
+    ws: WebSocket,
+    event: ClientEvent | Record<string, unknown>,
+    onDone?: (error?: Error) => void,
+  ): void {
     this.emit('openai_client_event_queued', event);
     if (this.debug && event.type !== 'session.input_audio.append')
       this.logger.debug({ 'lk.pii.event': event }, 'GPT-Live client event');
     const done = this.connectionDone;
     try {
       ws.send(JSON.stringify(event), (error) => {
-        if (error) done?.resolve(new APIConnectionError({ message: 'GPT-Live send failed' }));
+        if (error) {
+          done?.resolve(new APIConnectionError({ message: 'GPT-Live send failed' }));
+          onDone?.(error);
+        } else {
+          onDone?.();
+        }
       });
-    } catch {
+    } catch (error) {
       done?.resolve(new APIConnectionError({ message: 'GPT-Live send failed' }));
+      onDone?.(error instanceof Error ? error : new Error('GPT-Live send failed'));
     }
+  }
+
+  private trimQueuedAudio(): void {
+    const kept = [] as typeof this.queued;
+    let keptSamples = 0;
+    let droppedSamples = 0;
+    for (const command of [...this.queued].reverse()) {
+      const event = command.event;
+      if (event.type === 'session.input_audio.append' && 'audio' in event) {
+        const samples = Buffer.from(String(event.audio), 'base64').byteLength / 2;
+        if (droppedSamples > 0 || keptSamples + samples > MAX_QUEUED_INPUT_AUDIO_SAMPLES) {
+          droppedSamples += samples;
+          continue;
+        }
+        keptSamples += samples;
+      }
+      kept.push(command);
+    }
+    this.queued = kept.reverse();
+    if (droppedSamples)
+      this.logger.info(
+        { dropped_s: droppedSamples / SAMPLE_RATE, kept_s: keptSamples / SAMPLE_RATE },
+        'gpt-live dropped queued input audio at session start',
+      );
   }
 
   private buildDelegation(): Delegation {
@@ -481,10 +536,25 @@ export class GPTLiveSession extends llm.DuplexSession<{
     let recycleTimer: ReturnType<typeof setTimeout> | undefined;
     let startupTimer: ReturnType<typeof setTimeout> | undefined;
     let closeTimer: ReturnType<typeof setTimeout> | undefined;
-    const requestClose = () => {
-      if (this.connectionDraining || done.done) return;
+    let closeBeforeStartImmediate: ReturnType<typeof setImmediate> | undefined;
+    let closeSent = false;
+    const requestClose = (beforeStartDeadline = false) => {
+      if (done.done || closeSent) return;
       this.connectionDraining = true;
-      if (this.sessionStarted && ws.readyState === WebSocket.OPEN) {
+      if (ws.readyState === WebSocket.OPEN && this.sessionStartSent) {
+        if (!this.sessionStarted && !beforeStartDeadline) {
+          closeBeforeStartImmediate ??= setImmediate(() => requestClose(true));
+          return;
+        }
+        if (
+          this.closing &&
+          this.sessionStarted &&
+          (this.queuedSendInFlight || this.queued.length)
+        ) {
+          this.flushQueued();
+          return;
+        }
+        closeSent = true;
         closeTimer = setTimeout(() => done.resolve(undefined), SESSION_CLOSE_TIMEOUT);
         this.wsSend(ws, { type: 'session.close' } satisfies ClientEvent);
       } else {
@@ -532,7 +602,8 @@ export class GPTLiveSession extends llm.DuplexSession<{
         if (
           this.closing &&
           event.type !== 'session.usage.updated' &&
-          event.type !== 'session.closed'
+          event.type !== 'session.closed' &&
+          (event.type !== 'session.started' || closeSent)
         )
           return;
         const started = event.type === 'session.started' && !this.sessionStarted;
@@ -558,7 +629,9 @@ export class GPTLiveSession extends llm.DuplexSession<{
       clearTimeout(recycleTimer);
       clearTimeout(startupTimer);
       clearTimeout(closeTimer);
+      clearImmediate(closeBeforeStartImmediate);
       this.connectionDraining = false;
+      if (this.queuedSendInFlight?.ws === ws) this.queuedSendInFlight = undefined;
       this.requestConnectionClose = undefined;
       this.ws = undefined;
       this.connectionDone = undefined;
@@ -578,6 +651,7 @@ export class GPTLiveSession extends llm.DuplexSession<{
             type: 'session.input_audio.mute',
             event_id: shortuuid('mute_'),
           } satisfies ClientEvent);
+        if (!this.closing) this.trimQueuedAudio();
         this.flushQueued();
         break;
       case 'session.output_audio.delta': {

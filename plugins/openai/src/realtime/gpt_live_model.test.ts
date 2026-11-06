@@ -32,6 +32,16 @@ const pcm = (duration = 100, level = 0, rate = 24000, channels = 1) => {
     samples[i] = Math.trunc(level * 32767) * (i % 2 ? -1 : 1);
   return new AudioFrame(samples, rate, channels, samples.length / channels);
 };
+const numberedFrame = (number: number) => {
+  const samples = new Int16Array(2400).fill(number);
+  return new AudioFrame(samples, 24000, 1, samples.length);
+};
+const numberedTraffic = (events: GPTLive.ClientEvent[]): (number | string)[] =>
+  events.map((event) =>
+    event.type === 'session.input_audio.append'
+      ? Buffer.from(event.audio, 'base64').readInt16LE()
+      : event.type,
+  );
 const transcript = (
   role: 'user' | 'assistant',
   delta: string,
@@ -366,6 +376,141 @@ describe('GPTLiveModel', () => {
         'Immediately follow the instruction below. Do not wait for the caller to speak first. After that, pause and listen.\n\nGreet the caller.',
     });
     expect(server.events()[2]?.type).toBe('session.input_audio.append');
+  });
+
+  it('sends only the newest four seconds of audio queued before startup', async () => {
+    server.autoStart = false;
+    const info = vi.spyOn(log(), 'info');
+    const session = create();
+    await session._updateSession();
+    await waitCount(1);
+    for (let number = 0; number < 10; number++) session.pushAudio(numberedFrame(number));
+    session.appendCommentary('The caller is on hold.');
+    for (let number = 10; number < 60; number++) session.pushAudio(numberedFrame(number));
+    session.appendThinking('The caller sounds rushed.');
+
+    await server.send(session, { type: 'session.started', session: { id: 'live_0' } });
+    await waitCount(43);
+
+    expect(numberedTraffic(server.events())).toEqual([
+      'session.start',
+      'session.commentary.append',
+      ...Array.from({ length: 40 }, (_, index) => index + 20),
+      'session.thinking.append',
+    ]);
+    expect(info).toHaveBeenCalledWith(
+      { dropped_s: 2, kept_s: 4 },
+      'gpt-live dropped queued input audio at session start',
+    );
+  });
+
+  it('sends only the newest four seconds queued before a reconnected session starts', async () => {
+    const session = create({
+      connOptions: { timeoutMs: 1000, maxRetry: 1, retryIntervalMs: 10 },
+    });
+    await ready(session);
+    server.autoStart = false;
+    server.sockets[0]!.terminate();
+    await waitCount(1, 1);
+    for (let number = 0; number < 60; number++) session.pushAudio(numberedFrame(number));
+
+    await server.send(session, { type: 'session.started', session: { id: 'live_1' } });
+    await waitCount(41, 1);
+
+    expect(numberedTraffic(server.events(1))).toEqual([
+      'session.start',
+      ...Array.from({ length: 40 }, (_, index) => index + 20),
+    ]);
+  });
+
+  it('leaves backlog after a failed send for the next session', async () => {
+    server.autoStart = false;
+    const originalSend = WebSocket.prototype.send;
+    const callOriginalSend = originalSend as unknown as (
+      this: WebSocket,
+      data: Parameters<WebSocket['send']>[0],
+      callback?: (error?: Error) => void,
+    ) => void;
+    let failNextAppend = true;
+    vi.spyOn(WebSocket.prototype, 'send').mockImplementation(function (
+      this: WebSocket,
+      data: Parameters<WebSocket['send']>[0],
+      callback?: (error?: Error) => void,
+    ) {
+      const event = JSON.parse(data.toString()) as GPTLive.ClientEvent;
+      if (failNextAppend && event.type === 'session.input_audio.append') {
+        failNextAppend = false;
+        queueMicrotask(() => callback?.(new Error('send failed')));
+        return;
+      }
+      return callOriginalSend.call(this, data, callback);
+    } as WebSocket['send']);
+    const session = create({
+      connOptions: { timeoutMs: 1000, maxRetry: 1, retryIntervalMs: 10 },
+    });
+    await session._updateSession();
+    await waitCount(1);
+    for (let number = 0; number < 60; number++) session.pushAudio(numberedFrame(number));
+    session.appendCommentary('The caller is on hold.');
+    server.autoStart = true;
+
+    await server.send(session, { type: 'session.started', session: { id: 'live_0' } });
+    await vi.waitFor(() => expect(server.events(1)).toHaveLength(41));
+
+    expect(numberedTraffic(server.events(1))).toEqual([
+      'session.start',
+      ...Array.from({ length: 39 }, (_, index) => index + 21),
+      'session.commentary.append',
+    ]);
+  });
+
+  it('sends a queued audio backlog under the cap whole', async () => {
+    server.autoStart = false;
+    const session = create();
+    await session._updateSession();
+    await waitCount(1);
+    for (let number = 0; number < 30; number++) session.pushAudio(numberedFrame(number));
+
+    await server.send(session, { type: 'session.started', session: { id: 'live_0' } });
+    await waitCount(31);
+
+    expect(numberedTraffic(server.events())).toEqual([
+      'session.start',
+      ...Array.from({ length: 30 }, (_, index) => index),
+    ]);
+  });
+
+  it('sends none of its queued audio when closed before startup', async () => {
+    server.autoStart = false;
+    const session = create();
+    await session._updateSession();
+    await waitCount(1);
+    for (let number = 0; number < 60; number++) session.pushAudio(numberedFrame(number));
+
+    await session.close();
+
+    expect(numberedTraffic(server.events())).toEqual(['session.start', 'session.close']);
+  });
+
+  it('sends its backlog and closes when closed as startup arrives', async () => {
+    server.autoStart = false;
+    const session = create();
+    await session._updateSession();
+    await waitCount(1);
+    for (let number = 0; number < 60; number++) session.pushAudio(numberedFrame(number));
+
+    const started = server.send(session, {
+      type: 'session.started',
+      session: { id: 'live_0' },
+    });
+    const closed = session.close();
+    await Promise.all([started, closed]);
+
+    expect(numberedTraffic(server.events())).toEqual([
+      'session.start',
+      ...Array.from({ length: 60 }, (_, index) => index),
+      'session.close',
+    ]);
   });
 
   it('times out missing startup acknowledgments and exhausts the retry budget', async () => {
