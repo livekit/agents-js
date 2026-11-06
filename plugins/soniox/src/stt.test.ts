@@ -787,3 +787,60 @@ describe('SpeechStream graceful close', () => {
     }
   });
 });
+
+describe('SpeechStream reconnect', () => {
+  it('sends every frame to the new socket after a reconnect', async () => {
+    const { wss, baseUrl } = await startWebSocketServer();
+    let connections = 0;
+    const received: number[] = [];
+    let reconnected: () => void = () => {};
+    const reconnectedPromise = new Promise<void>((resolve) => {
+      reconnected = resolve;
+    });
+    wss.on('connection', (ws) => {
+      connections += 1;
+      const connection = connections;
+      let frames = 0;
+      ws.on('message', (data, isBinary) => {
+        if (!isBinary) {
+          if (connection === 2) reconnected();
+          return;
+        }
+        frames += 1;
+        if (connection === 1) {
+          // A transient server reset after the first frame.
+          ws.close(1011, 'server reset');
+          return;
+        }
+        const bytes = data as Buffer;
+        received.push(new Int16Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 2)[0]!);
+      });
+    });
+
+    try {
+      const soniox = new STT({ apiKey: 'test-key', baseUrl });
+      const stream = soniox.stream({
+        connOptions: { maxRetry: 3, retryIntervalMs: 1, timeoutMs: 1000 },
+      });
+      const drain = consumeSpeechStream(stream);
+      const frame = (id: number) => {
+        const data = new Int16Array(160);
+        data[0] = id;
+        return new AudioFrame(data, 16000, 1, 160);
+      };
+
+      stream.pushFrame(frame(1));
+      await reconnectedPromise;
+      for (let id = 2; id <= 21; id += 1) {
+        stream.pushFrame(frame(id));
+      }
+      await expect.poll(() => received.length).toBe(20);
+      expect(received).toEqual(Array.from({ length: 20 }, (_, i) => i + 2));
+
+      stream.close();
+      await drain.catch(() => {});
+    } finally {
+      await closeWebSocketServer(wss);
+    }
+  });
+});
