@@ -2,13 +2,37 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it, vi } from 'vitest';
-import { AgentInput, AudioInput } from './io.js';
+import { AgentInput, AgentOutput, AudioInput, AudioOutput } from './io.js';
 
 class TestAudioInput extends AudioInput {
   override setAttached = vi.fn();
   override onAttached = vi.fn();
   override onDetached = vi.fn();
 }
+
+class TestAudioOutput extends AudioOutput {
+  clearBuffer(): void {}
+}
+
+describe('AgentOutput.replaceAudioTail', () => {
+  it('propagates the new sink sample rate through nested wrappers', () => {
+    const roomSink = new TestAudioOutput(48000);
+    const inner = new TestAudioOutput(roomSink.sampleRate, roomSink);
+    const outer = new TestAudioOutput(inner.sampleRate, inner);
+    const agentOutput = new AgentOutput(
+      () => {},
+      () => {},
+    );
+    agentOutput.audio = outer;
+
+    const avatarSink = new TestAudioOutput(24000);
+    agentOutput.replaceAudioTail(avatarSink);
+
+    expect(agentOutput.audio).toBe(outer);
+    expect(inner.sampleRate).toBe(24000);
+    expect(outer.sampleRate).toBe(24000);
+  });
+});
 
 describe('AgentInput', () => {
   it('detaches replaced audio and synchronizes the new stream with the disabled state', () => {
