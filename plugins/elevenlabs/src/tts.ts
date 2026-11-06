@@ -308,6 +308,7 @@ class Connection {
   #ws: WebSocket | null = null;
   #isCurrent = true;
   #activeContexts = new Set<string>();
+  #finishedStreams = new Set<string>();
   #inputQueue: ConnectionMessage[] = [];
   #contextData = new Map<string, StreamData>();
   #sendTask: Promise<void> | null = null;
@@ -334,8 +335,31 @@ class Connection {
     return this.#closed;
   }
 
-  markNonCurrent(): void {
+  /**
+   * Stops handing this connection to new streams and closes it as soon as no stream is registered
+   * on it and no context is active. Streams that registered before the call are still served.
+   */
+  retire(): void {
     this.#isCurrent = false;
+    for (const contextId of this.#finishedStreams) this.#cleanupContext(contextId);
+    this.#closeIfUnused();
+  }
+
+  streamFinished(contextId: string): void {
+    if (this.#isCurrent) {
+      if (this.#activeContexts.has(contextId)) this.#finishedStreams.add(contextId);
+      return;
+    }
+    this.#cleanupContext(contextId);
+    this.#closeIfUnused();
+  }
+
+  #isUnused(): boolean {
+    return this.#activeContexts.size === 0 && this.#contextData.size === 0;
+  }
+
+  #closeIfUnused(): void {
+    if (this.#isUnused()) this.close().catch(() => {});
   }
 
   async connect(): Promise<void> {
@@ -472,6 +496,10 @@ class Connection {
           // SynthesizeContent
           const content = msg as SynthesizeContent;
           const isNewContext = !this.#activeContexts.has(content.contextId);
+
+          if (!this.#isCurrent && isNewContext && !this.#contextData.has(content.contextId)) {
+            continue;
+          }
 
           if (isNewContext) {
             const voiceSettings = this.#opts.voiceSettings
@@ -639,7 +667,7 @@ class Connection {
             );
             if (data[dialogue ? 'is_final' : 'isFinal']) {
               this.#cleanupContext(contextId);
-              if (!this.#isCurrent && this.#activeContexts.size === 0) break;
+              if (!this.#isCurrent && this.#isUnused()) break;
             }
           } else {
             this.#logger.warn(
@@ -755,7 +783,7 @@ class Connection {
           ctx.waiter.resolve();
           this.#cleanupContext(contextId!);
 
-          if (!this.#isCurrent && this.#activeContexts.size === 0) {
+          if (!this.#isCurrent && this.#isUnused()) {
             this.#logger.debug('no active contexts, shutting down connection');
             break;
           }
@@ -808,6 +836,7 @@ class Connection {
   #cleanupContext(contextId: string): void {
     this.unregisterStream(contextId);
     this.#activeContexts.delete(contextId);
+    this.#finishedStreams.delete(contextId);
     this.#closingContexts.delete(contextId);
     this.#lastContextSend.delete(contextId);
   }
@@ -993,9 +1022,19 @@ export class TTS extends tts.TTS {
     if (changed) this.#warnIfDialogueModelIgnoresOptions();
 
     if (changed && this.#currentConnection) {
-      this.#currentConnection.markNonCurrent();
+      this.#currentConnection.retire();
       this.#currentConnection = null;
     }
+  }
+
+  /**
+   * Drops the cached connection so the next stream dials a new one. The old connection closes once
+   * the streams already on it are done.
+   */
+  retireConnection(): void {
+    const connection = this.#currentConnection;
+    this.#currentConnection = null;
+    connection?.retire();
   }
 
   async currentConnection(): Promise<Connection> {
@@ -1010,8 +1049,14 @@ export class TTS extends tts.TTS {
       }
 
       const conn = new Connection({ ...this.#opts });
-      await conn.connect();
       this.#currentConnection = conn;
+      try {
+        await conn.connect();
+      } catch (e) {
+        if (this.#currentConnection === conn) this.#currentConnection = null;
+        await conn.close();
+        throw e;
+      }
       return conn;
     } finally {
       unlock();
@@ -1382,6 +1427,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     } finally {
       connection.unregisterStream(this.#contextId);
       closeContext(true);
+      connection.streamFinished(this.#contextId);
       // Clean up abort listener
       this.abortController.signal.removeEventListener('abort', abortHandler);
     }
