@@ -46,9 +46,20 @@ export interface StartOptions {
   livekitUrl?: string | null;
   livekitApiKey?: string | null;
   livekitApiSecret?: string | null;
+  /** Wait for the avatar to join before returning. */
+  waitForAvatar?: boolean;
 }
 
-/** A Synthesia interactive avatar for a LiveKit voice agent. @public */
+/**
+ * A Synthesia interactive avatar for a LiveKit voice agent.
+ *
+ * By default, {@link AvatarSession.start} returns once the avatar has joined the room. Set
+ * `waitForAvatar` to `false` to return as soon as the audio output is installed and finish the
+ * launch in the background. Call {@link AvatarSession.waitUntilReady} to wait for the avatar and
+ * surface a failed background launch.
+ *
+ * @public
+ */
 export class AvatarSession extends voice.AvatarSession {
   private avatarIds: readonly string[];
   #apiKey: string;
@@ -65,6 +76,10 @@ export class AvatarSession extends voice.AvatarSession {
   private previousAudio: voice.AudioOutput | null = null;
   private closePromise?: Promise<void>;
   private teardownPromise?: Promise<void>;
+  private launchPromise?: Promise<void>;
+  private launchError?: SynthesiaError;
+  private launchAbort?: AbortController;
+  private launchInProgress = false;
 
   constructor(avatarConfig: AvatarConfig, options: AvatarSessionOptions = {}) {
     super();
@@ -108,7 +123,9 @@ export class AvatarSession extends voice.AvatarSession {
     room: Room,
     options: StartOptions = {},
   ): Promise<void> {
-    if (this.starting) throw new SynthesiaError('start() is already in progress');
+    if (this.starting || this.launchInProgress) {
+      throw new SynthesiaError('start() is already in progress');
+    }
     this.starting = true;
     try {
       if (this.closePromise) {
@@ -142,28 +159,40 @@ export class AvatarSession extends voice.AvatarSession {
 
       this.state = State.IDLE;
       this.room = room;
+      this.launchPromise = undefined;
+      this.launchError = undefined;
+      this.launchAbort = undefined;
       try {
         await super.start(agentSession, room);
         const api = new SynthesiaAPI({ apiKey: this.#apiKey, apiUrl: this.apiUrl });
-        const response = await api.startSession(
-          {
-            avatarIds: this.avatarIds,
-            livekitUrl: normalizedUrl,
-            livekitToken: await this.mintToken(room, livekitApiKey!, livekitApiSecret!),
-          },
-          { ...DEFAULT_API_CONNECT_OPTIONS, timeoutMs: this.joinTimeout, maxRetry: 0 },
-        );
-        this.sessionIdValue = response.sessionId;
-        const audioOutput = new voice.DataStreamAudioOutput({
-          room,
-          destinationIdentity: this.avatarIdentity,
-          waitRemoteTrack: TrackKind.KIND_VIDEO,
-        });
-        this.agentSession = agentSession;
-        this.previousAudio = agentSession.output.audio;
-        agentSession.output.audio = audioOutput;
-        this.audioOutput = audioOutput;
-        await this.waitForJoinWithin(this.joinTimeout);
+        const request = {
+          avatarIds: this.avatarIds,
+          livekitUrl: normalizedUrl,
+          livekitToken: await this.mintToken(room, livekitApiKey!, livekitApiSecret!),
+        };
+        const connOptions = {
+          ...DEFAULT_API_CONNECT_OPTIONS,
+          timeoutMs: this.joinTimeout,
+          maxRetry: 0,
+        };
+        if (options.waitForAvatar === false) {
+          this.installAudioOutput(agentSession, room);
+          const controller = new AbortController();
+          this.launchAbort = controller;
+          this.launchInProgress = true;
+          this.launchPromise = Promise.resolve().then(() =>
+            this.launchInBackground(
+              api,
+              request,
+              connOptions,
+              agentSession,
+              room,
+              controller.signal,
+            ),
+          );
+          return;
+        }
+        await this.launch(api, request, connOptions, agentSession, room);
       } catch (error) {
         await this.aclose().catch(() => undefined);
         await this.discardPartialStart();
@@ -176,18 +205,116 @@ export class AvatarSession extends voice.AvatarSession {
         throw error;
       }
 
-      if (this.isClosed()) {
-        await this.closePromise;
-        await this.discardPartialStart();
-        throw new SynthesiaError('avatar session was closed while starting');
-      }
-      room.on(RoomEvent.Disconnected, this.onRoomDisconnected);
-      room.on(RoomEvent.TrackUnpublished, this.onTrackUnpublished);
-      room.on(RoomEvent.ParticipantDisconnected, this.onParticipantDisconnected);
-      this.state = State.STARTED;
+      await this.finishStart(room);
     } finally {
       this.starting = false;
     }
+  }
+
+  /**
+   * Wait until the avatar has joined the room. A failed background launch raises the same
+   * {@link SynthesiaError} that a blocking {@link AvatarSession.start} would have raised. The
+   * agent's audio may remain routed to the avatar until the agent session ends, so end or restart
+   * the session when this method rejects.
+   */
+  async waitUntilReady(): Promise<void> {
+    if (this.launchPromise) {
+      await this.launchPromise;
+      if (this.launchError) throw this.launchError;
+      return;
+    }
+    if (this.state !== State.STARTED) {
+      throw new SynthesiaError('the avatar session is not started');
+    }
+  }
+
+  private installAudioOutput(agentSession: voice.AgentSession, room: Room): void {
+    const audioOutput = new voice.DataStreamAudioOutput({
+      room,
+      destinationIdentity: this.avatarIdentity,
+      waitRemoteTrack: TrackKind.KIND_VIDEO,
+    });
+    this.agentSession = agentSession;
+    this.previousAudio = agentSession.output.audio;
+    agentSession.output.audio = audioOutput;
+    this.audioOutput = audioOutput;
+  }
+
+  private async launch(
+    api: SynthesiaAPI,
+    request: Parameters<SynthesiaAPI['startSession']>[0],
+    connOptions: Parameters<SynthesiaAPI['startSession']>[1],
+    agentSession: voice.AgentSession,
+    room: Room,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    if (signal?.aborted) throw new LaunchCancelledError();
+    const response = await raceWithAbort(api.startSession(request, connOptions, signal), signal);
+    this.sessionIdValue = response.sessionId;
+    if (!this.audioOutput) this.installAudioOutput(agentSession, room);
+    if (signal?.aborted) throw new LaunchCancelledError();
+    await raceWithAbort(this.waitForJoinWithin(this.joinTimeout), signal);
+  }
+
+  private async finishStart(room: Room): Promise<void> {
+    if (this.isClosed()) {
+      await this.closePromise;
+      await this.discardPartialStart();
+      throw new SynthesiaError('avatar session was closed while starting');
+    }
+    room.on(RoomEvent.Disconnected, this.onRoomDisconnected);
+    room.on(RoomEvent.TrackUnpublished, this.onTrackUnpublished);
+    room.on(RoomEvent.ParticipantDisconnected, this.onParticipantDisconnected);
+    this.state = State.STARTED;
+  }
+
+  private async launchInBackground(
+    api: SynthesiaAPI,
+    request: Parameters<SynthesiaAPI['startSession']>[0],
+    connOptions: Parameters<SynthesiaAPI['startSession']>[1],
+    agentSession: voice.AgentSession,
+    room: Room,
+    signal: AbortSignal,
+  ): Promise<void> {
+    try {
+      await this.launch(api, request, connOptions, agentSession, room, signal);
+      await this.finishStart(room);
+    } catch (error) {
+      if (signal.aborted || error instanceof LaunchCancelledError) {
+        this.launchError = new SynthesiaError('avatar session was closed while starting');
+        return;
+      }
+      const failure =
+        error instanceof JoinTimeoutError
+          ? new SynthesiaError(`avatar did not join within ${this.joinTimeout}ms`, {
+              type: ErrorType.TIMEOUT,
+              cause: error,
+            })
+          : error instanceof SynthesiaError
+            ? error
+            : new SynthesiaError(`avatar failed to start: ${String(error)}`, { cause: error });
+      this.launchError = failure;
+      log().error(
+        {
+          error: errorClassName(error),
+          type: failure.type,
+          status: failure.status,
+          requestId: failure.requestId,
+        },
+        'avatar failed to start',
+      );
+      await this.closeAfterLaunchFailure();
+      await this.discardPartialStart();
+    } finally {
+      this.launchInProgress = false;
+    }
+  }
+
+  private async closeAfterLaunchFailure(): Promise<void> {
+    this.state = State.CLOSED;
+    this.sessionIdValue = null;
+    this.closePromise ??= this.closeImpl();
+    await this.closePromise.catch(() => undefined);
   }
 
   /** Switch the rendered avatar during a started session. */
@@ -242,8 +369,13 @@ export class AvatarSession extends voice.AvatarSession {
     }
     this.state = State.CLOSED;
     this.sessionIdValue = null;
+    this.launchAbort?.abort();
     this.closePromise = this.closeImpl();
-    return this.closePromise;
+    try {
+      await this.closePromise;
+    } finally {
+      await this.launchPromise;
+    }
   }
 
   private async closeImpl(): Promise<void> {
@@ -403,6 +535,29 @@ class JoinTimeoutError extends Error {
   }
 }
 
+class LaunchCancelledError extends Error {}
+
+async function raceWithAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise;
+  if (signal.aborted) throw new LaunchCancelledError();
+  let onAbort: (() => void) | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        onAbort = () => reject(new LaunchCancelledError());
+        signal.addEventListener('abort', onAbort, { once: true });
+      }),
+    ]);
+  } finally {
+    if (onAbort) signal.removeEventListener('abort', onAbort);
+  }
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function errorClassName(value: unknown): string {
+  return value instanceof Error ? value.constructor.name : typeof value;
 }

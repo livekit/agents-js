@@ -65,6 +65,7 @@ export class SynthesiaAPI {
   async startSession(
     request: StartSessionRequest,
     connOptions: APIConnectOptions = this.connOptions,
+    signal?: AbortSignal,
   ): Promise<StartSessionResponse> {
     const url = this.apiUrl + SESSION_PATH;
     const payload = {
@@ -84,7 +85,9 @@ export class SynthesiaAPI {
           method: 'POST',
           headers: { Authorization: this.#apiKey, 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
-          signal: AbortSignal.timeout(connOptions.timeoutMs),
+          signal: signal
+            ? combineSignals(signal, AbortSignal.timeout(connOptions.timeoutMs))
+            : AbortSignal.timeout(connOptions.timeoutMs),
         });
         status = response.status;
         const body = await readJson(response);
@@ -246,4 +249,16 @@ export function requireSecureApiUrl(apiUrl: string): string {
 /** @internal */
 export function errorName(value: unknown): string {
   return value instanceof Error ? value.name : typeof value;
+}
+
+function combineSignals(...signals: AbortSignal[]): AbortSignal {
+  const controller = new AbortController();
+  for (const signal of signals) {
+    if (signal.aborted) {
+      controller.abort(signal.reason);
+      break;
+    }
+    signal.addEventListener('abort', () => controller.abort(signal.reason), { once: true });
+  }
+  return controller.signal;
 }
