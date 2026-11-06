@@ -133,6 +133,8 @@ export class Agent<UserData = any> {
     get instructions(): string | Instructions;
     // @internal (undocumented)
     _instructions: string | Instructions;
+    // @internal
+    get _interruptionEnabled(): boolean | undefined;
     // (undocumented)
     get llm(): LLM | RealtimeModel | undefined;
     // @internal (undocumented)
@@ -153,6 +155,8 @@ export class Agent<UserData = any> {
     realtimeAudioOutputNode(audio: ReadableStream_2<AudioFrame> | AsyncIterable<AudioFrame>, modelSettings: ModelSettings): Promise<ReadableStream_2<AudioFrame> | null>;
     // (undocumented)
     get session(): AgentSession<UserData>;
+    // @internal
+    _setInterruptionEnabled(enabled: boolean | undefined): void;
     // (undocumented)
     get stt(): STT | undefined;
     // @internal (undocumented)
@@ -507,6 +511,7 @@ export class AgentSession<UserData = UnknownUserData> extends AgentSession_base 
         chatCtx?: ChatContext;
         instructions?: string | Instructions;
         toolChoice?: ToolChoice;
+        tools?: string[];
         allowInterruptions?: boolean;
         inputModality?: 'audio' | 'text';
     }): SpeechHandle;
@@ -530,8 +535,12 @@ export class AgentSession<UserData = UnknownUserData> extends AgentSession_base 
     get keyterms(): string[];
     // (undocumented)
     llm?: LLM | RealtimeModel;
+    // @internal
+    get _nextActivity(): AgentActivity | undefined;
     // @internal (undocumented)
     _onAecWarmupExpired(): void;
+    // @internal
+    _onAmdCompleted(event: AMDCompletedEvent): void;
     // @internal
     _onAmdPrediction(event: AMDPredictionEvent): void;
     // @internal (undocumented)
@@ -605,8 +614,6 @@ export class AgentSession<UserData = UnknownUserData> extends AgentSession_base 
     // (undocumented)
     stt?: STT;
     // @internal
-    _subscribeAudioStream(): ReadableStream_2<AudioFrame> | undefined;
-    // @internal
     get _textOnly(): boolean;
     // (undocumented)
     get toolCtx(): ToolContext<UserData>;
@@ -620,6 +627,10 @@ export class AgentSession<UserData = UnknownUserData> extends AgentSession_base 
     turnDetection?: TurnDetectionMode;
     // @internal
     _turnDetectionExplicit: boolean;
+    // Warning: (ae-forgotten-export) The symbol "TurnHooks" needs to be exported by the entry point index.d.ts
+    //
+    // @internal
+    _turnHooks: TurnHooks | undefined;
     // Warning: (ae-forgotten-export) The symbol "ActivityTransitionOptions" needs to be exported by the entry point index.d.ts
     //
     // @internal (undocumented)
@@ -795,24 +806,48 @@ export class AMD extends AMD_base {
     constructor(session: AgentSession, options?: AMDOptions);
     // (undocumented)
     aclose(): Promise<void>;
-    // (undocumented)
-    execute(): Promise<AMDPredictionEvent>;
-    // Warning: (ae-forgotten-export) The symbol "EndOfTurnInfo" needs to be exported by the entry point index.d.ts
-    // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "AgentActivity"
+    // @internal (undocumented)
+    get _blocksSessionAudio(): boolean;
+    // @internal (undocumented)
+    _deadlineAt(now: number): number | undefined;
+    execute(): Promise<AMDCompletedEvent>;
+    // @internal
+    get _forbidsReply(): boolean;
+    // @internal (undocumented)
+    _getInstructions(stage: AMDCategory): string;
+    // @internal (undocumented)
+    _heldReply: SpeechHandle | undefined;
+    // @internal (undocumented)
+    _heldTurnId: number | undefined;
+    get lifecycle(): AMDLifecycle;
+    // @internal (undocumented)
+    _onReplyGeneration(tools: ToolContext): ToolContext;
+    // @internal (undocumented)
+    _onUserTurnCommitted(transcript: string, endOfTurnDelay: number | undefined): TurnHooks;
+    // @internal (undocumented)
+    pushAudio(frame: AudioFrame): void;
+    // Warning: (ae-forgotten-export) The symbol "ReplyDecision" needs to be exported by the entry point index.d.ts
     //
     // @internal
-    onEndOfTurn(info: EndOfTurnInfo): boolean;
-    // @internal
-    onTranscript(text: string, source?: 'stt' | 'amd_stt'): void;
-    // @internal
-    onUserSpeechEnded(silenceDurationMs: number): void;
-    // @internal
-    onUserSpeechStarted(): void;
+    _shouldReply(turnId: number, chatCtx: ChatContext): Promise<ReplyDecision>;
+    // @internal (undocumented)
+    _shouldWait: boolean;
+    start(): Promise<this>;
+    // @internal (undocumented)
+    _state: AMDCategory;
+    // @internal (undocumented)
+    _trackVoicemail(turnId: number, handle: SpeechHandle): void;
+    // @internal (undocumented)
+    _turnId: number;
+    // @internal (undocumented)
+    _updateIdle(): void;
 }
 
 // @public (undocumented)
 export type AMDCallbacks = {
     amd_prediction: (event: AMDPredictionEvent) => void;
+    amd_completed: (event: AMDCompletedEvent) => void;
+    amd_menu_observed: (event: AMDMenuObservedEvent) => void;
 };
 
 // @public (undocumented)
@@ -822,48 +857,105 @@ export enum AMDCategory {
     // (undocumented)
     MACHINE_IVR = "machine-ivr",
     // (undocumented)
+    MACHINE_SCREENING = "machine-screening",
+    // (undocumented)
     MACHINE_UNAVAILABLE = "machine-unavailable",
     // (undocumented)
     MACHINE_VM = "machine-vm",
+    UNCERTAIN = "uncertain",
+    WAIT = "wait"
+}
+
+// @public (undocumented)
+export interface AMDCompletedEvent {
+    category: AMDCategory;
+    lastPrediction: AMDPredictionEvent | null;
     // (undocumented)
-    UNCERTAIN = "uncertain"
+    reason: AMDReason;
+    // (undocumented)
+    type: 'amd_completed';
+    // (undocumented)
+    voicemailMessagePlayed: boolean;
+}
+
+// @public (undocumented)
+export enum AMDLifecycle {
+    // (undocumented)
+    ACTIVE = "active",
+    // (undocumented)
+    FINISHED = "finished",
+    // (undocumented)
+    INITIALIZED = "initialized",
+    // (undocumented)
+    PENDING = "pending"
+}
+
+// @public
+export interface AMDMenuObservedEvent {
+    extractionDuration: number;
+    // (undocumented)
+    menu: string;
+    // (undocumented)
+    options: IVRMenuOption[];
+    // (undocumented)
+    sessionId: string;
+    // (undocumented)
+    turnId: number;
+    // (undocumented)
+    type: 'amd_menu_observed';
 }
 
 // @public (undocumented)
 export interface AMDOptions {
-    detectionTimeoutMs?: number;
-    humanSilenceThresholdMs?: number;
-    humanSpeechThresholdMs?: number;
-    // (undocumented)
-    interruptOnMachine?: boolean;
-    llm?: LLM | string | null;
-    machineSilenceThresholdMs?: number;
-    // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "DEFAULT_MAX_ENDPOINTING_DELAY_MS"
-    maxEndpointingDelayMs?: number;
-    noSpeechTimeoutMs?: number;
+    humanInstructions?: string | null;
+    idleTimeout?: number;
+    inferenceTimeout?: number;
+    ivrInstructions?: string | null;
+    llm?: LLM | DecisionModel | string | null;
+    machineSilenceThreshold?: number;
+    maxInferenceTimeouts?: number;
+    maxUncertainTurns?: number;
     participantIdentity?: string;
-    prompt?: string;
+    screeningInstructions?: string | null;
     stt?: STT | string | null;
-    suppressCompatibilityWarning?: boolean;
-    waitUntilFinished?: boolean;
+    timeout?: number;
+    voicemailIdleTimeout?: number;
+    voicemailInstructions?: string | null;
+    waitUntilAnswered?: boolean;
 }
 
 // @public (undocumented)
 export interface AMDPredictionEvent {
-    // (undocumented)
     category: AMDCategory;
-    delayMs: number;
+    delay: number;
+    inferenceDuration: number | null;
     // (undocumented)
-    isMachine: boolean;
-    // (undocumented)
-    rawResponse: string;
-    // (undocumented)
-    reason: string;
-    speechDurationMs: number;
+    reason: AMDReason;
+    speechDuration: number;
+    stage: AMDCategory;
     // (undocumented)
     transcript: string;
     // (undocumented)
+    turnId: number;
+    // (undocumented)
     type: 'amd_prediction';
+}
+
+// @public
+export enum AMDReason {
+    AGENT_CHANGED = "agent_changed",
+    CANCELLED = "cancelled",
+    FINISHED = "finished",
+    IDLE_TIMEOUT = "idle_timeout",
+    INFERENCE_ERROR = "inference_error",
+    INFERENCE_TIMEOUT = "inference_timeout",
+    INTERNAL_ERROR = "internal_error",
+    MAX_UNCERTAIN_TURNS = "max_uncertain_turns",
+    PARTICIPANT_DISCONNECTED = "participant_disconnected",
+    PARTICIPANT_MISSING = "participant_missing",
+    PREDICTION = "prediction",
+    REUSED = "reused",
+    TIMEOUT = "timeout"
 }
 
 // Warning: (ae-forgotten-export) The symbol "JSONObject" needs to be exported by the entry point index.d.ts
@@ -2762,7 +2854,7 @@ export const createUserInputTranscribedEvent: (input: {
 }) => UserInputTranscribedEvent;
 
 // @public (undocumented)
-export const createUserStateChangedEvent: (oldState: UserState, newState: UserState, createdAt?: number) => UserStateChangedEvent;
+export const createUserStateChangedEvent: (oldState: UserState, newState: UserState, createdAt?: number, speechTimestamp?: number) => UserStateChangedEvent;
 
 // @public (undocumented)
 export const createUserTranscriptionTimeoutEvent: (input: {
@@ -4070,7 +4162,10 @@ export type FunctionToolsExecutedEvent = {
     functionCallOutputs: FunctionCallOutput[];
     createdAt: number;
     readonly hasToolReply: boolean;
+    readonly hasAgentHandoff: boolean;
     cancelToolReply(): void;
+    cancelAgentHandoff(): void;
+    _handoffRequired: boolean;
 };
 
 // Warning: (ae-internal-missing-underscore) The name "Future" should be prefixed with an underscore because the declaration is marked as @internal
@@ -4720,8 +4815,14 @@ export function isFunctionTool(tool: unknown): tool is FunctionTool;
 // @public
 export const isHosted: () => boolean;
 
+// @public
+export function isHumanPrediction(event: Pick<AMDPredictionEvent, 'category'>): boolean;
+
 // @public (undocumented)
 export function isImmutableArray(array: unknown): boolean;
+
+// @public
+export function isMachinePrediction(event: Pick<AMDPredictionEvent, 'category'>): boolean;
 
 // @public (undocumented)
 export const isPending: (promise: Promise<unknown>) => Promise<Throws<boolean, Error>>;
@@ -4746,6 +4847,16 @@ export function isToolset(value: any): value is Toolset;
 
 // @public
 export function isWritableStreamClosedError(error: unknown): boolean;
+
+// @public (undocumented)
+export interface IVRMenuOption {
+    // (undocumented)
+    dtmf: string;
+    // (undocumented)
+    label: string;
+    // (undocumented)
+    spokenResponse: string;
+}
 
 // @public (undocumented)
 export type JobAcceptArguments = {
@@ -4962,6 +5073,7 @@ declare namespace llm {
         ToolContext,
         ToolError,
         ToolFlag,
+        ToolResult,
         Toolset,
         toToolContext,
         AgentHandoff,
@@ -6340,9 +6452,10 @@ export abstract class RealtimeSession extends EventEmitter {
     // (undocumented)
     close(): Promise<void>;
     abstract commitAudio(): Promise<void>;
-    // (undocumented)
     abstract generateReply(instructions?: string, options?: {
         signal?: AbortSignal;
+        toolChoice?: ToolChoice;
+        tools?: ToolContext;
     }): Promise<GenerationCreatedEvent>;
     abstract interrupt(): Promise<void>;
     // (undocumented)
@@ -6519,6 +6632,7 @@ export type RemoteSessionCallbacks = {
     function_tools_executed: (ev: AgentSession_2.AgentSessionEvent_FunctionToolsExecuted) => void;
     overlapping_speech: (ev: AgentSession_2.AgentSessionEvent_OverlappingSpeech) => void;
     amd_prediction: (ev: AgentSession_2.AgentSessionEvent_AmdPrediction) => void;
+    amd_completed: (ev: AgentSession_2.AgentSessionEvent_AmdCompleted) => void;
     eot_prediction: (ev: AgentSession_2.AgentSessionEvent_EotPrediction) => void;
     session_usage: (ev: AgentSession_2.AgentSessionEvent_SessionUsageUpdated) => void;
     debug_message: (ev: AgentSession_2.DebugMessage) => void;
@@ -6527,7 +6641,7 @@ export type RemoteSessionCallbacks = {
 };
 
 // @public (undocumented)
-export type RemoteSessionEventTypes = 'agent_false_interruption' | 'agent_state_changed' | 'user_state_changed' | 'conversation_item_added' | 'user_input_transcribed' | 'function_tools_executed' | 'overlapping_speech' | 'amd_prediction' | 'eot_prediction' | 'session_usage' | 'debug_message' | 'session_closed' | 'error';
+export type RemoteSessionEventTypes = 'agent_false_interruption' | 'agent_state_changed' | 'user_state_changed' | 'conversation_item_added' | 'user_input_transcribed' | 'function_tools_executed' | 'overlapping_speech' | 'amd_prediction' | 'amd_completed' | 'eot_prediction' | 'session_usage' | 'debug_message' | 'session_closed' | 'error';
 
 // @public (undocumented)
 function replace(replacements: Record<string, string>, options?: {
@@ -6878,7 +6992,7 @@ export class ScoreResult {
 // @public (undocumented)
 const sendDtmfEvents: FunctionTool<    {
 events: ("0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "#" | "*" | "A" | "B" | "C" | "D")[];
-}, unknown, string>;
+}, unknown, ToolResult>;
 
 // @public (undocumented)
 abstract class SentenceStream {
@@ -7053,6 +7167,8 @@ export class SessionHost {
     constructor(transport: SessionTransport, audioInput?: TcpAudioInput, audioOutput?: TcpAudioOutput);
     get attachedSession(): AgentSession | undefined;
     close(): Promise<void>;
+    // @internal
+    _onAmdCompleted(event: AMDCompletedEvent): void;
     // @internal
     _onAmdPrediction(event: AMDPredictionEvent): void;
     // @internal
@@ -8597,6 +8713,17 @@ export interface ToolOptions<UserData = UnknownUserData> {
 }
 
 // @public
+export class ToolResult {
+    // (undocumented)
+    readonly [TOOL_RESULT_SYMBOL]: true;
+    constructor(output: unknown, options?: {
+        replyRequired?: boolean;
+    });
+    output: unknown;
+    replyRequired: boolean;
+}
+
+// @public
 export class Toolset {
     // (undocumented)
     readonly [TOOLSET_SYMBOL]: true;
@@ -9297,11 +9424,12 @@ export type UserInputTranscribedEvent = {
 // @public (undocumented)
 export type UserState = 'speaking' | 'listening' | 'away';
 
-// @public (undocumented)
+// @public
 export type UserStateChangedEvent = {
     type: 'user_state_changed';
     oldState: UserState;
     newState: UserState;
+    speechTimestamp?: number;
     createdAt: number;
 };
 
@@ -9540,11 +9668,18 @@ declare namespace voice {
         testing,
         RunOutputOptions,
         textTransforms,
-        AMDCategory,
-        AMDPredictionEvent,
-        AMDCallbacks,
-        AMDOptions,
         AMD,
+        AMDOptions,
+        AMDCallbacks,
+        AMDCategory,
+        AMDCompletedEvent,
+        AMDLifecycle,
+        AMDMenuObservedEvent,
+        AMDPredictionEvent,
+        AMDReason,
+        IVRMenuOption,
+        isHumanPrediction,
+        isMachinePrediction,
         AvatarSessionCallbacks,
         AvatarSession,
         DataStreamAudioOutputOptions,
@@ -9910,22 +10045,18 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 // src/_exceptions.ts:128:5 - (ae-forgotten-export) The symbol "APIErrorOptions" needs to be exported by the entry point index.d.ts
 // src/inference/tts.ts:315:5 - (ae-forgotten-export) The symbol "TTSEncoding" needs to be exported by the entry point index.d.ts
 // src/llm/chat_context.ts:80:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "audio"
-// src/llm/tool_context.ts:709:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "ToolFlag" has more than one declaration; you need to add a TSDoc member reference selector
-// src/llm/tool_context.ts:756:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "ToolFlag" has more than one declaration; you need to add a TSDoc member reference selector
+// src/llm/tool_context.ts:740:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "ToolFlag" has more than one declaration; you need to add a TSDoc member reference selector
+// src/llm/tool_context.ts:787:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "ToolFlag" has more than one declaration; you need to add a TSDoc member reference selector
 // src/metrics/base.ts:226:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsInputTokenDetails" needs to be exported by the entry point index.d.ts
 // src/metrics/base.ts:230:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsOutputTokenDetails" needs to be exported by the entry point index.d.ts
 // src/stt/stt.ts:395:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "STT"
 // src/utils.ts:468:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "cancelled"
-// src/voice/agent_session.ts:411:3 - (ae-unresolved-link) The @link reference could not be resolved: This type of declaration is not supported yet by the resolver
+// src/voice/agent_session.ts:412:3 - (ae-unresolved-link) The @link reference could not be resolved: This type of declaration is not supported yet by the resolver
 // src/voice/agent_session.ts:1089:5 - (ae-forgotten-export) The symbol "RecordingOptions" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1807:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1807:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1807:5 - (ae-forgotten-export) The symbol "LLMError" needs to be exported by the entry point index.d.ts
-// src/voice/amd.ts:315:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "waitForTrackPublication" has more than one declaration; you need to add a TSDoc member reference selector
-// src/voice/amd.ts:315:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "gateListening"
-// src/voice/amd.ts:323:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "aclose"
-// src/voice/amd.ts:517:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "gateListening"
-// src/voice/events.ts:437:3 - (ae-forgotten-export) The symbol "InterruptionDetectionError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1821:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1821:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1821:5 - (ae-forgotten-export) The symbol "LLMError" needs to be exported by the entry point index.d.ts
+// src/voice/events.ts:461:3 - (ae-forgotten-export) The symbol "InterruptionDetectionError" needs to be exported by the entry point index.d.ts
 // src/voice/room_io/_output.ts:183:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "segmentTags"
 // src/voice/testing/run_result.ts:94:5 - (ae-forgotten-export) The symbol "OutputSchema" needs to be exported by the entry point index.d.ts
 

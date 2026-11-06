@@ -4,7 +4,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { ChatContext, FunctionCall } from '../llm/chat_context.js';
-import { ToolError, ToolFlag, tool } from '../llm/tool_context.js';
+import { ToolError, ToolFlag, ToolResult, tool } from '../llm/tool_context.js';
 import { Future } from '../utils.js';
 import { Agent, StopResponse } from './agent.js';
 import { AgentSession } from './agent_session.js';
@@ -183,6 +183,76 @@ describe('ToolExecutor', () => {
     expect(runCtx.updates.at(-1)?.[1].isError).toBe(true);
     expect(executor.hasRunningTasks).toBe(false);
   });
+
+  it.each([[[false]], [[true]], [[false, true]], [[true, false]]])(
+    'honors replyRequired on deferred ToolResult returns %j',
+    async (replyFlags) => {
+      const agent = {
+        chatCtx: ChatContext.empty(),
+        async updateChatCtx(chatCtx: ChatContext) {
+          this.chatCtx = chatCtx;
+        },
+      };
+      const idle = new Future<void>();
+      const replies: Array<{ instructions?: string }> = [];
+      const session = {
+        userData: {},
+        history: new ChatContext(),
+        currentAgent: agent,
+        _globalRunState: undefined,
+        async waitForIdle() {
+          await idle.await;
+          return { agent };
+        },
+        generateReply: (options: { instructions?: string }) => {
+          replies.push(options);
+          return { id: 'speech_reply', addDoneCallback: () => {} };
+        },
+      } as unknown as AgentSession;
+      const sendDtmf = tool({
+        name: 'send_dtmf',
+        description: 'Send DTMF events.',
+        parameters: z.object({ replyRequired: z.boolean() }),
+        execute: async ({ replyRequired }, { ctx }) => {
+          await ctx.update('Sending digits');
+          return new ToolResult('Sent', { replyRequired });
+        },
+      });
+      const executor = new ToolExecutor();
+
+      try {
+        for (const [index, replyRequired] of replyFlags.entries()) {
+          const functionCall = FunctionCall.create({
+            callId: String(index),
+            name: 'send_dtmf',
+            args: JSON.stringify({ replyRequired }),
+          });
+          const runCtx = new RunContext(session, SpeechHandle.create(), functionCall);
+          await expect(
+            executor.execute({ tool: sendDtmf, runCtx, rawArguments: { replyRequired } }),
+          ).resolves.toContain('Sending digits');
+        }
+        await vi.waitFor(() => expect(executor.hasRunningTasks).toBe(false));
+        idle.resolve();
+        await executor.waitForAll();
+
+        for (const items of [agent.chatCtx.items, session.history.items]) {
+          const outputs = items.filter((item) => item.type === 'function_call_output');
+          expect(outputs.map((item) => [item.callId, item.output, item.replyRequired])).toEqual(
+            replyFlags.map((flag, index) => [`${index}_final`, 'Sent', flag]),
+          );
+        }
+
+        const replyIds = replyFlags.flatMap((flag, index) => (flag ? [`${index}_final`] : []));
+        expect(replies).toHaveLength(replyIds.length > 0 ? 1 : 0);
+        if (replyIds.length > 0) {
+          expect(replies[0]!.instructions).toContain(`call_ids: ${replyIds.join(', ')}`);
+        }
+      } finally {
+        await executor.aclose();
+      }
+    },
+  );
 
   it('preserves StopResponse suppression after progress', async () => {
     const executor = new ToolExecutor();

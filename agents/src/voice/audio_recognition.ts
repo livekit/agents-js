@@ -165,7 +165,7 @@ export interface RecognitionHooks {
   onBackchannelConfirmed: () => void;
   onStartOfSpeech: (ev: VADEvent) => void;
   onVADInferenceDone: (ev: VADEvent) => void;
-  onEndOfSpeech: (ev?: VADEvent) => void;
+  onEndOfSpeech: (ev: VADEvent | undefined, speechEndTime: number) => void;
   onInterimTranscript: (ev: SpeechEvent, speaking: boolean | undefined) => void;
   onFinalTranscript: (ev: SpeechEvent, speaking: boolean | undefined) => void;
   onTranscriptionTimeout: (speechDuration: number, turnStart: number) => void;
@@ -529,18 +529,6 @@ export class AudioRecognition {
 
   private vadInputStream: ReadableStream<AudioFrame>;
   private sttInputStream: ReadableStream<AudioFrame>;
-  /**
-   * Active subscriber writers fed from {@link subscribersBroadcast}. Each
-   * {@link subscribeAudioStream} call appends one entry; entries are dropped
-   * (and their stream closed) on {@link close}.
-   *
-   * The broadcast pattern replaces an earlier `tee()`-based approach where
-   * the second branch grew without bound for sessions that never called
-   * `subscribeAudioStream()` (every voice session that doesn't use AMD).
-   * With this design no extra buffering happens until at least one
-   * subscriber is registered.
-   */
-  private subscriberWriters: WritableStreamDefaultWriter<AudioFrame>[] = [];
   private silenceAudioTransform = new IdentityTransform<AudioFrame>();
   private silenceAudioWriter: WritableStreamDefaultWriter<AudioFrame>;
   private sttOwnershipTransferred = false;
@@ -632,12 +620,8 @@ export class AudioRecognition {
       this.backchannelBoundary = [start, end];
     }
 
-    // Pipe the deferred input stream through a broadcast transform. The
-    // transform is a no-op identity until something calls `subscribeAudioStream()`
-    // — at which point each frame is forwarded to the registered subscriber
-    // writers in addition to flowing downstream to VAD/STT. This avoids the
-    // unbounded queue growth of a pre-emptive `tee()` for sessions that
-    // never subscribe (i.e. anything not using AMD).
+    // Pipe the deferred input stream through a broadcast transform that also feeds the
+    // audio EOT detector stream when one is attached.
     const broadcast = new TransformStream<AudioFrame, AudioFrame>(
       {
         transform: (chunk, controller) => {
@@ -661,12 +645,6 @@ export class AudioRecognition {
                 );
               }
             }
-          }
-          if (this.subscriberWriters.length === 0) return;
-          for (const writer of this.subscriberWriters) {
-            writer.write(chunk).catch(() => {
-              // Subscriber stream closed or backpressure exceeded; drop.
-            });
           }
         },
       },
@@ -1569,26 +1547,28 @@ export class AudioRecognition {
       case SpeechEventType.END_OF_SPEECH:
         if (this.turnDetectionMode !== 'stt') break;
         {
-          const speechEndTime = Date.now();
           const span = this.ensureUserTurnSpan();
           const ctx = this.userTurnContext(span);
           if (this.speaking) {
-            this.endpointing.onEndOfSpeech(speechEndTime, this.interruptionDetected);
+            this.endpointing.onEndOfSpeech(Date.now(), this.interruptionDetected);
           }
           otelContext.with(ctx, () => {
-            this.hooks.onEndOfSpeech({
-              type: VADEventType.END_OF_SPEECH,
-              samplesIndex: 0,
-              timestamp: Date.now(),
-              speechDuration: 0,
-              silenceDuration: 0,
-              frames: [],
-              probability: 0,
-              inferenceDuration: 0,
-              speaking: false,
-              rawAccumulatedSilence: 0,
-              rawAccumulatedSpeech: 0,
-            });
+            this.hooks.onEndOfSpeech(
+              {
+                type: VADEventType.END_OF_SPEECH,
+                samplesIndex: 0,
+                timestamp: Date.now(),
+                speechDuration: 0,
+                silenceDuration: 0,
+                frames: [],
+                probability: 0,
+                inferenceDuration: 0,
+                speaking: false,
+                rawAccumulatedSilence: 0,
+                rawAccumulatedSpeech: 0,
+              },
+              sttLastSpeakingTime,
+            );
           });
         }
         // STT EOT changes user state from speaking to listening without updating VAD internal states.
@@ -1613,13 +1593,9 @@ export class AudioRecognition {
         }
         this.speaking = false;
         this.userTurnCommitted = true;
-        if (ev.speechEndTime !== undefined) {
-          // Clamp provider clock skew so endpointing sleep cannot be extended
-          // by an anchor that lies in the future.
-          this.lastSpeakingTime = Math.min(ev.speechEndTime, Date.now());
-        } else if (useSTTSpeakingTime) {
-          this.lastSpeakingTime = sttLastSpeakingTime;
-        }
+        // sttLastSpeakingTime clamps a provider speechEndTime to now, so a clock running
+        // ahead cannot extend endpointing sleep
+        this.lastSpeakingTime = sttLastSpeakingTime;
 
         if (!this.speaking) {
           const chatCtx = this.hooks.retrieveChatCtx();
@@ -2326,21 +2302,21 @@ export class AudioRecognition {
           case VADEventType.END_OF_SPEECH:
             this.logger.debug('VAD task: END_OF_SPEECH');
             const vadSpeechStarted = this.vadSpeechStarted;
+            // when VAD fires END_OF_SPEECH, it already waited for the silence_duration
+            const speechEndTime = Date.now() - ev.silenceDuration - ev.inferenceDuration;
             {
-              const endTime = Date.now() - ev.silenceDuration - ev.inferenceDuration;
               const span = this.ensureUserTurnSpan();
               const ctx = this.userTurnContext(span);
               if (this.speaking) {
-                this.endpointing.onEndOfSpeech(endTime, this.interruptionDetected);
+                this.endpointing.onEndOfSpeech(speechEndTime, this.interruptionDetected);
               }
-              otelContext.with(ctx, () => this.hooks.onEndOfSpeech(ev));
+              otelContext.with(ctx, () => this.hooks.onEndOfSpeech(ev, speechEndTime));
             }
 
-            // when VAD fires END_OF_SPEECH, it already waited for the silence_duration
             this.activeVadSpeechStartedAt = undefined;
             this.vadSpeechStarted = false;
             this.speaking = false;
-            this.lastSpeakingTime = Date.now() - ev.silenceDuration - ev.inferenceDuration;
+            this.lastSpeakingTime = speechEndTime;
 
             // A committed turn clears vadSpeechStarted before its late VAD EOS arrives.
             if (this.sttPipeline !== undefined && vadSpeechStarted) {
@@ -2375,7 +2351,7 @@ export class AudioRecognition {
       if (this.speaking) {
         const span = this.ensureUserTurnSpan();
         const ctx = this.userTurnContext(span);
-        otelContext.with(ctx, () => this.hooks.onEndOfSpeech(undefined));
+        otelContext.with(ctx, () => this.hooks.onEndOfSpeech(undefined, Date.now()));
         this.speaking = false;
         this.vadSpeechStarted = false;
       }
@@ -2521,37 +2497,6 @@ export class AudioRecognition {
     this.deferredInputStream.detachSource();
   }
 
-  /**
-   * Returns an independent ReadableStream of input audio frames. Each call
-   * returns a fresh branch fed by the broadcast transform inserted into the
-   * deferred input pipeline — frames written after the subscription point
-   * will be delivered, but earlier frames are not replayed.
-   *
-   * Used by AMD when its private STT needs the same participant audio that
-   * the pipeline is processing without consuming it (see python AMD
-   * detector pushing audio into `_AMDClassifier.push_audio`).
-   */
-  subscribeAudioStream(): ReadableStream<AudioFrame> {
-    const transform = new IdentityTransform<AudioFrame>();
-    const writer = transform.writable.getWriter();
-    this.subscriberWriters.push(writer);
-    // Auto-prune the entry once the subscriber's readable side is cancelled
-    // or its writer otherwise errors. Without this, a subscriber that hands
-    // back its stream (e.g. AMD's STT pump after `aclose()`) leaves a writer
-    // in `subscriberWriters` that the broadcast transform keeps writing into
-    // — frames pile up in the IdentityTransform queue until
-    // `AudioRecognition.close()` runs, leaking ~16-32 KB/s.
-    writer.closed
-      .catch(() => {
-        // closed/errored — fall through to the prune below
-      })
-      .finally(() => {
-        const idx = this.subscriberWriters.indexOf(writer);
-        if (idx >= 0) this.subscriberWriters.splice(idx, 1);
-      });
-    return transform.readable;
-  }
-
   clearUserTurn() {
     this.bounceEOUTask?.cancel();
     this.sttFlushRequested = false;
@@ -2643,7 +2588,8 @@ export class AudioRecognition {
       (delayDuration: number = 500) =>
       async (controller: AbortController) => {
         const canFlush = this.sttPipeline?.manualFlush === true;
-        if (canFlush || Date.now() - this.lastFinalTranscriptTime > delayDuration) {
+        // turn hooks may use transcripts from a separate STT stream, so commit without one
+        if (this.stt && (canFlush || Date.now() - this.lastFinalTranscriptTime > delayDuration)) {
           if (canFlush) {
             // a manual-flush STT finalizes on request instead of on trailing silence
             this.sttFlushRequested = this.sttPipeline?.flush() ?? false;
@@ -2713,17 +2659,6 @@ export class AudioRecognition {
       await this.sttPipeline.close();
       this.sttPipeline = undefined;
     }
-
-    // Close any outstanding broadcast subscribers so their consumers see EOF
-    // and don't keep the IdentityTransform queues pinned in memory.
-    for (const writer of this.subscriberWriters) {
-      try {
-        await writer.close();
-      } catch {
-        // already closed / aborted
-      }
-    }
-    this.subscriberWriters = [];
 
     await this.vadTask?.cancelAndWait();
     if (this.bounceEOUTask) {
