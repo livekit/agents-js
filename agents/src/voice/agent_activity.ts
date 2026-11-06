@@ -4615,6 +4615,10 @@ export class AgentActivity implements RecognitionHooks {
     if (!ignoreTaskSwitch && newAgentTask !== null) {
       this.agentSession.updateAgent(newAgentTask);
       schedulingPaused = true;
+    } else if (newAgentTask !== null && this.newTurnsBlocked) {
+      // a stale handoff was ignored because this agent is already handing off: its reply must
+      // not call tools either
+      schedulingPaused = true;
     }
 
     const toolMessages = [
@@ -5294,6 +5298,10 @@ export class AgentActivity implements RecognitionHooks {
     if (!ignoreTaskSwitch && newAgentTask !== null) {
       this.agentSession.updateAgent(newAgentTask);
       schedulingPaused = true;
+    } else if (newAgentTask !== null && this.newTurnsBlocked) {
+      // a stale handoff was ignored because this agent is already handing off: its reply must
+      // not call tools either
+      schedulingPaused = true;
     }
 
     if (functionToolsExecutedEvent.functionCallOutputs.length > 0) {
@@ -5535,6 +5543,17 @@ export class AgentActivity implements RecognitionHooks {
         },
         'Tool call execution finished',
       );
+    }
+
+    // A handoff away from this activity has already started (updateAgent blocks new turns on the
+    // outgoing activity). A later handoff result from the same activity is stale, so applying it
+    // would queue a second transition and run the destination's onEnter again.
+    if (newAgentTask !== null && !ignoreTaskSwitch && this.newTurnsBlocked) {
+      this.logger.warn(
+        { speechId: speechHandle.id },
+        'ignoring agent handoff from a tool call, this agent is already handing off',
+      );
+      ignoreTaskSwitch = true;
     }
 
     return {
