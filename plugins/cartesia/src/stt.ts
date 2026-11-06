@@ -26,6 +26,12 @@ const REQUEST_ID_HEADER = 'cartesia-request-id';
 const API_VERSION = '2026-03-01';
 const DRAIN_TIMEOUT_MS = 5000;
 const KEEPALIVE_INTERVAL_MS = 30000;
+const HEARTBEAT_INTERVAL_MS = 5000;
+const PONG_TIMEOUT_MS = 5000;
+// A dead socket is noticed one heartbeat interval plus the pong timeout after it stops answering,
+// so it can swallow that much audio. The margin covers the redial.
+const REPLAY_MARGIN_MS = 2000;
+const REPLAY_REACH_SECONDS = (HEARTBEAT_INTERVAL_MS + PONG_TIMEOUT_MS + REPLAY_MARGIN_MS) / 1000;
 
 const sanitizedErrorName = (error: Error): string => {
   if (error instanceof SyntaxError) return 'SyntaxError';
@@ -278,6 +284,13 @@ export class SpeechStream extends stt.SpeechStream {
   #speechDuration = 0;
   #closingWs = false;
   #connectTimeout: number;
+  #reconnectError: APIConnectionError | undefined;
+  /**
+   * Audio sent since the last finished turn, as PCM with its duration: what a socket that died
+   * silently swallowed, for the next one. Ink reports no audio timing, so a turn's end clears it.
+   */
+  #replay: { data: Int16Array; seconds: number }[] = [];
+  #replaySeconds = 0;
 
   constructor(sttInstance: STT, opts: STTOptions, connOptions?: APIConnectOptions) {
     super(sttInstance, opts.sampleRate, connOptions);
@@ -299,8 +312,11 @@ export class SpeechStream extends stt.SpeechStream {
     this.#currentTranscript = '';
     this.#speechDuration = 0;
     this.#closingWs = false;
+    this.#reconnectError = undefined;
 
     let keepaliveInterval: NodeJS.Timeout | undefined;
+    let heartbeatInterval: NodeJS.Timeout | undefined;
+    let pongDeadline: NodeJS.Timeout | undefined;
     const abortController = new AbortController();
 
     try {
@@ -398,6 +414,29 @@ export class SpeechStream extends stt.SpeechStream {
           // ignore
         }
       }, KEEPALIVE_INTERVAL_MS);
+
+      const clearPongDeadline = () => {
+        if (pongDeadline) clearTimeout(pongDeadline);
+        pongDeadline = undefined;
+      };
+      ws.on('pong', clearPongDeadline);
+      heartbeatInterval = setInterval(() => {
+        if (ws.readyState !== WebSocket.OPEN || pongDeadline) return;
+        try {
+          ws.ping();
+        } catch (error) {
+          this.#requestReconnect(ws, 'heartbeat write failed', asError(error));
+          return;
+        }
+        pongDeadline = setTimeout(() => {
+          pongDeadline = undefined;
+          this.#requestReconnect(
+            ws,
+            'heartbeat timed out',
+            new Error(`No PONG received after ${PONG_TIMEOUT_MS} milliseconds`),
+          );
+        }, PONG_TIMEOUT_MS);
+      }, HEARTBEAT_INTERVAL_MS);
       await Promise.all([sendPromise, recvPromise]);
       if (firstError !== undefined) throw firstError;
     } catch (error) {
@@ -406,6 +445,8 @@ export class SpeechStream extends stt.SpeechStream {
     } finally {
       abortController.abort();
       if (keepaliveInterval) clearInterval(keepaliveInterval);
+      if (heartbeatInterval) clearInterval(heartbeatInterval);
+      if (pongDeadline) clearTimeout(pongDeadline);
       if (this.#ws?.readyState === WebSocket.OPEN) {
         this.#ws.close();
       }
@@ -421,6 +462,17 @@ export class SpeechStream extends stt.SpeechStream {
     const audioBstream = new AudioByteStream(this.#opts.sampleRate, 1, samplesPerChunk);
 
     let hasEnded = false;
+    const sendAudio = (data: Int16Array) => {
+      if (ws.readyState !== WebSocket.OPEN) return;
+      try {
+        ws.send(data, (error) => {
+          if (error) this.#requestReconnect(ws, 'audio write failed', error);
+        });
+      } catch (error) {
+        this.#requestReconnect(ws, 'audio write failed', asError(error));
+      }
+    };
+    for (const entry of this.#replay) sendAudio(entry.data);
     const nextInput = async () => {
       try {
         return await this.input.next({ signal: abortSignal });
@@ -451,9 +503,8 @@ export class SpeechStream extends stt.SpeechStream {
 
         for (const frame of frames) {
           this.#speechDuration += calculateAudioDurationSeconds(frame);
-          if (ws.readyState === WebSocket.OPEN) {
-            ws.send(frame.data);
-          }
+          this.#remember(frame);
+          sendAudio(frame.data);
         }
       }
 
@@ -537,6 +588,8 @@ export class SpeechStream extends stt.SpeechStream {
               stt.SpeechEventType.FINAL_TRANSCRIPT,
               this.#currentTranscript,
             );
+            // Its words are committed here, so replaying its audio would make the next socket hear them again.
+            this.#forgetReplay();
           }
           if (!this.queue.closed)
             this.queue.put({
@@ -556,6 +609,10 @@ export class SpeechStream extends stt.SpeechStream {
           this.#currentTranscript = '';
         }
 
+        if (this.#reconnectError) {
+          settle(this.#reconnectError);
+          return;
+        }
         if (pendingError) {
           settle(pendingError);
           return;
@@ -581,6 +638,33 @@ export class SpeechStream extends stt.SpeechStream {
         settle(new APIConnectionError({ message: err.message, options: { retryable: true } }));
       });
     });
+  }
+
+  #remember(frame: AudioFrame) {
+    const seconds = calculateAudioDurationSeconds(frame);
+    this.#replay.push({ data: frame.data, seconds });
+    this.#replaySeconds += seconds;
+    while (
+      this.#replay.length > 1 &&
+      this.#replaySeconds - this.#replay[0]!.seconds >= REPLAY_REACH_SECONDS
+    ) {
+      this.#replaySeconds -= this.#replay.shift()!.seconds;
+    }
+  }
+
+  #requestReconnect(ws: WebSocket, reason: string, error: Error) {
+    if (this.#reconnectError || ws.readyState === WebSocket.CLOSED) return;
+    this.#reconnectError = new APIConnectionError({
+      message: `Cartesia STT WebSocket ${reason}: ${error.message}`,
+      options: { retryable: true },
+    });
+    this.#logger.warn({ err: error }, `Cartesia STT WebSocket ${reason}; requesting reconnect`);
+    ws.terminate();
+  }
+
+  #forgetReplay() {
+    this.#replay = [];
+    this.#replaySeconds = 0;
   }
 
   #processStreamEvent(data: Exclude<STTEventMessage, { type: 'error' }>) {
@@ -635,6 +719,7 @@ export class SpeechStream extends stt.SpeechStream {
 
       case 'turn.end': {
         if (!this.#speaking) return;
+        this.#forgetReplay();
         const transcript = data.transcript || this.#currentTranscript;
 
         this.#sendTranscriptEvent(stt.SpeechEventType.FINAL_TRANSCRIPT, transcript);
