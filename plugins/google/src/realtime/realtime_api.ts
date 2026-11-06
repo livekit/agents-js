@@ -164,14 +164,6 @@ export const DEFAULT_IMAGE_ENCODE_OPTIONS = {
 };
 
 /**
- * Input transcription result
- */
-export interface InputTranscription {
-  itemId: string;
-  transcript: string;
-}
-
-/**
  * Internal realtime options for Google Realtime API
  */
 interface RealtimeOptions {
@@ -568,21 +560,18 @@ export class RealtimeSession extends llm.RealtimeSession {
   private messageChannel = new Queue<api_proto.ClientEvents>();
   private inputResampler?: AudioResampler;
   private inputResamplerInputRate?: number;
-  private instructions?: string;
   private currentGeneration?: ResponseGeneration;
   private bstream: AudioByteStream;
 
   // Google-specific properties
   private activeSession?: Session;
   private sessionShouldClose = new Event();
-  private responseCreatedFutures: { [id: string]: Future<llm.GenerationCreatedEvent> } = {};
   private pendingGenerationFut?: Future<llm.GenerationCreatedEvent>;
 
   private sessionResumptionHandle?: string;
   private inUserActivity = false;
   private sessionLock = new Mutex();
   private numRetries = 0;
-  private hasReceivedAudioInput = false;
   private pendingInterruptText = false;
   private earlyCompletionPending = false;
   private pendingToolCallIds = new Set<string>();
@@ -927,9 +916,6 @@ export class RealtimeSession extends llm.RealtimeSession {
       return;
     }
 
-    // Track that we've received audio input
-    this.hasReceivedAudioInput = true;
-
     for (const f of this.resampleAudio(frame)) {
       for (const nf of this.bstream.write(f.data.buffer as ArrayBuffer)) {
         const realtimeInput: types.LiveClientRealtimeInput = {
@@ -1091,13 +1077,6 @@ export class RealtimeSession extends llm.RealtimeSession {
     if (this.pendingGenerationFut && !this.pendingGenerationFut.done) {
       this.pendingGenerationFut.reject(new Error('Session closed'));
     }
-
-    for (const fut of Object.values(this.responseCreatedFutures)) {
-      if (!fut.done) {
-        fut.reject(new Error('Session closed before response created'));
-      }
-    }
-    this.responseCreatedFutures = {};
 
     if (this.currentGeneration) {
       this.markCurrentGenerationDone();
