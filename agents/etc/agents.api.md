@@ -2837,6 +2837,16 @@ export interface DecisionCapabilities {
     decisionKinds: DecisionKind[];
 }
 
+// @public
+interface DecisionEventEnvelope {
+    // (undocumented)
+    event: Record<string, unknown>;
+    // (undocumented)
+    event_id?: string | null;
+    // (undocumented)
+    type: 'decision.event';
+}
+
 // @public (undocumented)
 export type DecisionKind = 'probability' | 'choice' | 'score';
 
@@ -2916,6 +2926,24 @@ export class DecisionResponse {
 
 // @public (undocumented)
 export type DecisionResult = ProbabilityResult | ChoiceResult | ScoreResult;
+
+// @public
+interface DecisionsOptions {
+    // (undocumented)
+    model?: string;
+    // (undocumented)
+    questions?: Record<string, unknown>[];
+}
+
+// @public
+interface DecisionsTrigger {
+    // (undocumented)
+    decisions: DecisionsOptions;
+    // (undocumented)
+    eventType: string;
+    // (undocumented)
+    type: 'decisions';
+}
 
 // @public
 export function dedent(strings: TemplateStringsArray, ...values: unknown[]): string;
@@ -3061,6 +3089,9 @@ type DtmfEvent = (typeof DTMF_EVENTS)[number];
 declare namespace duplex {
     export {
         isDuplexModel,
+        DecisionEventEnvelope,
+        DecisionsOptions,
+        DecisionsTrigger,
         OpenAIDuplexModels,
         DuplexModels,
         OpenAIResponsesOptions,
@@ -4314,6 +4345,9 @@ declare namespace inference {
         DuplexModelOptions,
         DuplexModels,
         DuplexOptions,
+        DecisionsOptions,
+        DecisionsTrigger,
+        DecisionEventEnvelope,
         OpenAIDuplexOptions,
         OpenAIResponsesOptions,
         normalizeSTTFallback,
@@ -5813,8 +5847,10 @@ type OpenAIDuplexModels = 'openai/gpt-live-1';
 
 // @public (undocumented)
 interface OpenAIDuplexOptions {
-    delegation?: 'responses' | 'client';
+    decisionsOptions?: DecisionsOptions;
+    delegation?: 'responses' | 'client' | 'decisions';
     responsesOptions?: OpenAIResponsesOptions;
+    triggers?: DecisionsTrigger[];
 }
 
 // @public
