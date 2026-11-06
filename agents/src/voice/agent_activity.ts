@@ -2340,8 +2340,7 @@ export class AgentActivity implements RecognitionHooks {
       this.audioRecognition
     ) {
       const text = this.audioRecognition.currentTranscript;
-      // TODO(shubhra): better word splitting for multi-language
-      const wordCount = splitWords(text ?? '', true).length;
+      const wordCount = splitWords(text ?? '', true, true).length;
       if (wordCount < this.agentSession.sessionOptions.turnHandling.interruption?.minWords) {
         return;
       }
@@ -2814,7 +2813,7 @@ export class AgentActivity implements RecognitionHooks {
       !this._currentSpeech.interrupted &&
       this.agentSession.sessionOptions.turnHandling.interruption?.minWords > 0
     ) {
-      const wordCount = splitWords(info.newTranscript, true).length;
+      const wordCount = splitWords(info.newTranscript, true, true).length;
       if (wordCount < this.agentSession.sessionOptions.turnHandling.interruption?.minWords) {
         // avoid interruption if the new_transcript contains fewer words than minInterruptionWords
         this.cancelPreemptiveGeneration();
