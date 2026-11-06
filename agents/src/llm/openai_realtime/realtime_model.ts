@@ -17,7 +17,15 @@ import type * as metrics from '../../metrics/index.js';
 import * as stream from '../../stream/index.js';
 import type { APIConnectOptions } from '../../types.js';
 import { DEFAULT_API_CONNECT_OPTIONS } from '../../types.js';
-import { Future, Queue, Task, cancelAndWait, delay, shortuuid } from '../../utils.js';
+import {
+  Future,
+  Queue,
+  Task,
+  cancelAndWait,
+  delay,
+  shortuuid,
+  waitUntilAborted,
+} from '../../utils.js';
 import { type TimedString, createTimedString } from '../../voice/io.js';
 import * as llm from '../index.js';
 import * as api_proto from './api_proto.js';
@@ -1103,7 +1111,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.responseCreatedFutures = {};
   }
 
-  protected async createWsConn(): Promise<WebSocket> {
+  protected async createWsConn(signal?: AbortSignal): Promise<WebSocket> {
     const headers: Record<string, string> = {
       'User-Agent': 'LiveKit-Agents-JS',
     };
@@ -1143,10 +1151,15 @@ export class RealtimeSession extends llm.RealtimeSession {
     return new Promise((resolve, reject) => {
       const ws = new WebSocket(url, { headers });
       let waiting = true;
+      const onAbort = () => {
+        fail(new APIConnectionError({ message: 'OpenAI Realtime API connection aborted' }));
+        ws.terminate();
+      };
       const fail = (error: APIConnectionError | APIStatusError) => {
         if (!waiting) return;
         waiting = false;
         clearTimeout(timeout);
+        signal?.removeEventListener('abort', onAbort);
         reject(error);
       };
 
@@ -1154,11 +1167,13 @@ export class RealtimeSession extends llm.RealtimeSession {
         fail(new APITimeoutError({ message: 'OpenAI Realtime API connection timed out' }));
         ws.terminate();
       }, this._options.connOptions.timeoutMs);
+      signal?.addEventListener('abort', onAbort, { once: true });
 
       ws.once('open', () => {
         if (!waiting) return;
         waiting = false;
         clearTimeout(timeout);
+        signal?.removeEventListener('abort', onAbort);
         resolve(ws);
       });
 
@@ -1303,20 +1318,26 @@ export class RealtimeSession extends llm.RealtimeSession {
       while (!this.#closed && !signal.aborted) {
         try {
           this.#logger.debug('Creating WebSocket connection to OpenAI Realtime API');
-          wsConn = await this.createWsConn();
-          if (signal.aborted) break;
+          const opened = await this.#openWsConn(signal);
+          if (opened === undefined) break;
+          wsConn = opened;
 
           if (reconnecting) {
             await reconnect();
-            if (signal.aborted) break;
+            if (signal.aborted) {
+              wsConn.close();
+              break;
+            }
           }
           numRetries = 0;
           // a failed first handshake leaves the startup events queued, with nothing to replay
           reconnecting = true;
 
-          await this.runWs(wsConn);
+          await this.runWs(wsConn, signal);
           if (signal.aborted) break;
         } catch (error) {
+          if (signal.aborted) break;
+
           if (!isAPIError(error)) {
             this.emitError({ error: error as Error, recoverable: false });
             throw error;
@@ -1352,7 +1373,7 @@ export class RealtimeSession extends llm.RealtimeSession {
             `OpenAI Realtime API connection failed, retrying in ${retryInterval / 1000}s`,
           );
 
-          await delay(retryInterval);
+          await delay(retryInterval, { signal }).catch(() => {});
           numRetries++;
         }
       }
@@ -1362,7 +1383,22 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
   }
 
-  private async runWs(wsConn: WebSocket): Promise<void> {
+  /**
+   * Opens a connection unless the session closes first. A subclass's createWsConn may not honor
+   * the signal, so a socket that opens after the close is closed instead of left behind.
+   */
+  async #openWsConn(signal: AbortSignal): Promise<WebSocket | undefined> {
+    const connecting = this.createWsConn(signal);
+    const { result, isAborted } = await waitUntilAborted(connecting, signal);
+    if (!isAborted) return result;
+    connecting.then(
+      (lateConn) => lateConn.close(),
+      () => {},
+    );
+    return undefined;
+  }
+
+  private async runWs(wsConn: WebSocket, sessionSignal: AbortSignal): Promise<void> {
     const forwardEvents = async (signal: AbortSignal): Promise<void> => {
       const abortFuture = new Future<void>();
       signal.addEventListener('abort', () => abortFuture.resolve());
@@ -1522,6 +1558,7 @@ export class RealtimeSession extends llm.RealtimeSession {
         signal.addEventListener('abort', () => {
           resolve();
         });
+        sessionSignal.addEventListener('abort', () => resolve(), { once: true, signal });
       });
 
       return Promise.race([wsCloseFuture.await, abortPromise]);
@@ -1549,7 +1586,7 @@ export class RealtimeSession extends llm.RealtimeSession {
         if (currentGeneration instanceof DiscardedGeneration) {
           this.currentGeneration = undefined;
         } else {
-          await currentGeneration._doneFut.await;
+          await waitUntilAborted(currentGeneration._doneFut.await, sessionSignal);
         }
       }
 
@@ -1569,7 +1606,9 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.resetInputTurnState();
     super.close();
     this.#closed = true;
-    await this.#task;
+    await this.#task.cancelAndWait(5000).catch((error) => {
+      this.#logger.debug({ error }, 'OpenAI Realtime session task ended with an error');
+    });
     this.inputResampler?.close();
     this.inputResampler = undefined;
 

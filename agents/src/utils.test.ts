@@ -565,6 +565,16 @@ describe('utils', () => {
       expect(parentTask.done).toBe(true);
     });
 
+    it('clears its timeout once the task settles first', async () => {
+      vi.useFakeTimers();
+      const task = Task.from(async ({ signal }) => {
+        await delay(1000, { signal });
+      });
+
+      expect(await task.cancelAndWait(5000)).toBe(TaskResult.Aborted);
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
     it('should cancel and wait for task completion', async () => {
       let taskCompleted = false;
 
