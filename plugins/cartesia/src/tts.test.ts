@@ -340,17 +340,58 @@ describe('Cartesia streaming pool', () => {
     const cartesia = new TTS({ apiKey: 'test-key', baseUrl: baseURL });
     try {
       const events = await synthesizeTurn(cartesia, 'current turn.');
-      expect(events).not.toHaveLength(0);
-      expect(
-        events.every((event) =>
+      const audio = Buffer.concat(
+        events.map((event) =>
           Buffer.from(
             event.frame.data.buffer,
             event.frame.data.byteOffset,
             event.frame.data.byteLength,
-          ).equals(CURRENT_CHUNK),
+          ),
         ),
-      ).toBe(true);
+      );
+      expect(audio.equals(CURRENT_CHUNK)).toBe(true);
     } finally {
+      await cartesia.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('emits audio from the first chunk before the generation is done', async () => {
+    const { wss, baseURL } = await startWebSocketServer();
+    let sendDone: (() => void) | undefined;
+    // Reply with one chunk and hold the done message until the test has read the first frame.
+    serveCartesia(wss, (ws, contextId) => {
+      ws.send(
+        JSON.stringify({
+          type: 'chunk',
+          data: CHUNK_BASE64,
+          done: false,
+          status_code: 200,
+          step_time: 0,
+          context_id: contextId,
+        }),
+      );
+      sendDone = () =>
+        ws.send(
+          JSON.stringify({ type: 'done', done: true, status_code: 200, context_id: contextId }),
+        );
+      return false;
+    });
+
+    const cartesia = new TTS({ apiKey: 'test-key', baseUrl: baseURL });
+    const stream = cartesia.stream();
+    try {
+      stream.pushText('first chunk.');
+      stream.endInput();
+
+      const first = await waitFor(stream[Symbol.asyncIterator]().next());
+      expect(first.done).toBe(false);
+      const event = first.value as tts.SynthesizedAudio;
+      expect(event.final).toBe(false);
+      expect(event.frame.samplesPerChannel).toBe(480); // 20 ms at 24 kHz
+      sendDone?.();
+    } finally {
+      stream.close();
       await cartesia.close();
       await closeWebSocketServer(wss);
     }
@@ -423,15 +464,18 @@ describe('Cartesia streaming pool', () => {
     });
 
     const cartesia = new TTS({ apiKey: 'test-key', baseUrl: baseURL });
+    const errorEvent = once(cartesia, 'error') as Promise<Parameters<tts.TTSCallbacks['error']>>;
     try {
       // The dropped turn does not complete successfully (it fails over rather
-      // than silently ending); at maxRetry: 0 that surfaces as no audio.
-      expect(
-        await synthesizeTurn(cartesia, 'dropping turn.', {
-          ...DEFAULT_API_CONNECT_OPTIONS,
-          maxRetry: 0,
-        }),
-      ).toHaveLength(0);
+      // than silently ending); at maxRetry: 0 that surfaces as an error and the
+      // partial audio is never marked final.
+      const dropped = await synthesizeTurn(cartesia, 'dropping turn.', {
+        ...DEFAULT_API_CONNECT_OPTIONS,
+        maxRetry: 0,
+      });
+      expect(dropped.some((event) => event.final)).toBe(false);
+      const [{ error }] = await waitFor(errorEvent);
+      expect(error).toBeInstanceOf(APIConnectionError);
       // The dead socket is discarded, so the next turn opens a fresh one.
       expect(await synthesizeTurn(cartesia, 'recovery turn.')).not.toHaveLength(0);
       expect(server.connectionCount()).toBe(2);
