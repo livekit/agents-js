@@ -170,6 +170,11 @@ export class AnamAPI {
       };
     }
 
+    if (params.sessionOptions?.showAIAvatarDisclosure !== undefined) {
+      const sessionOptions = (payload.sessionOptions ??= {}) as Record<string, unknown>;
+      sessionOptions.showAIAvatarDisclosure = params.sessionOptions.showAIAvatarDisclosure;
+    }
+
     return this.post<{ sessionId: string }>(this.startPath, payload);
   }
 }
