@@ -45,6 +45,16 @@ describe('STT options', () => {
     },
   );
 
+  it.each([-1, 0, 0.5, 1])('accepts endpoint sensitivity %d', (endpointSensitivity) => {
+    expect(() => new STT({ apiKey: 'test-key', endpointSensitivity })).not.toThrow();
+  });
+
+  it.each([-1.5, 1.5])('rejects endpoint sensitivity %d', (endpointSensitivity) => {
+    expect(() => new STT({ apiKey: 'test-key', endpointSensitivity })).toThrow(
+      'endpointSensitivity must be between -1.0 and 1.0',
+    );
+  });
+
   it.each([-1, 4])(
     'rejects unsupported endpoint latency adjustment level %i',
     (endpointLatencyAdjustmentLevel) => {
@@ -785,5 +795,138 @@ describe('SpeechStream graceful close', () => {
     } finally {
       await closeWebSocketServer(wss);
     }
+  });
+});
+
+describe('SpeechStream agent text input', () => {
+  it('sends the agent text input options in the start request', async () => {
+    const { wss, baseUrl } = await startWebSocketServer();
+    const configPromise = new Promise<Record<string, unknown>>((resolve) => {
+      wss.on('connection', (ws) => {
+        ws.once('message', (data) => {
+          resolve(JSON.parse(data.toString()) as Record<string, unknown>);
+          ws.send(JSON.stringify({ finished: true }));
+        });
+      });
+    });
+
+    try {
+      const soniox = new STT({
+        apiKey: 'test-key',
+        baseUrl,
+        model: 'stt-rt-v6',
+        enableAgentTextInput: true,
+        endpointSensitivity: 0.3,
+      });
+      const stream = soniox.stream({
+        connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1000 },
+      });
+      const drain = consumeSpeechStream(stream);
+
+      const config = await configPromise;
+      expect(config.enable_agent_text_input).toBe(true);
+      expect(config.endpoint_sensitivity).toBe(0.3);
+
+      stream.close();
+      await drain.catch(() => {});
+    } finally {
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('leaves both options out of the start request by default', async () => {
+    const { wss, baseUrl } = await startWebSocketServer();
+    const configPromise = new Promise<Record<string, unknown>>((resolve) => {
+      wss.on('connection', (ws) => {
+        ws.once('message', (data) => {
+          resolve(JSON.parse(data.toString()) as Record<string, unknown>);
+          ws.send(JSON.stringify({ finished: true }));
+        });
+      });
+    });
+
+    try {
+      const soniox = new STT({ apiKey: 'test-key', baseUrl });
+      const stream = soniox.stream({
+        connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1000 },
+      });
+      const drain = consumeSpeechStream(stream);
+
+      const config = await configPromise;
+      expect(config).not.toHaveProperty('enable_agent_text_input');
+      expect(config).not.toHaveProperty('endpoint_sensitivity');
+
+      stream.close();
+      await drain.catch(() => {});
+    } finally {
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('sends the agent text as it is pushed, then the end of the segment', async () => {
+    const { wss, baseUrl } = await startWebSocketServer();
+    const received: Record<string, unknown>[] = [];
+    const connected = new Promise<void>((resolve) => {
+      wss.on('connection', (ws) => {
+        ws.on('message', (data, isBinary) => {
+          if (isBinary) return;
+          const message = JSON.parse(data.toString()) as Record<string, unknown>;
+          if (message.type === 'agent_text') {
+            received.push(message);
+          } else if (message.model) {
+            resolve();
+          }
+        });
+      });
+    });
+
+    try {
+      const soniox = new STT({ apiKey: 'test-key', baseUrl, enableAgentTextInput: true });
+      const stream = soniox.stream({
+        connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1000 },
+      });
+      const drain = consumeSpeechStream(stream);
+      await connected;
+
+      stream.pushAgentText('Is it ');
+      stream.pushAgentText('four?');
+      stream.pushAgentText('', { endOfSegment: true });
+
+      await expect.poll(() => received.length).toBe(3);
+      expect(received).toEqual([
+        { type: 'agent_text', text: 'Is it ' },
+        { type: 'agent_text', text: 'four?' },
+        { type: 'agent_text', text: '', end_of_segment: true },
+      ]);
+
+      stream.close();
+      await drain.catch(() => {});
+    } finally {
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('drops agent text pushed before the connection is open', () => {
+    const soniox = new STT({
+      apiKey: 'test-key',
+      baseUrl: 'ws://127.0.0.1:9',
+      enableAgentTextInput: true,
+    });
+    const stream = soniox.stream({
+      connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1000 },
+    });
+    expect(() => stream.pushAgentText('hello')).not.toThrow();
+    stream.close();
+  });
+
+  it('refuses agent text when the input is not enabled', () => {
+    const soniox = new STT({ apiKey: 'test-key', baseUrl: 'ws://127.0.0.1:9' });
+    const stream = soniox.stream({
+      connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1000 },
+    });
+    expect(() => stream.pushAgentText('hello')).toThrow(
+      'pushAgentText requires enableAgentTextInput',
+    );
+    stream.close();
   });
 });

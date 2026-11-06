@@ -76,6 +76,17 @@ export interface STTOptions {
   maxEndpointDelayMs: number;
   /** How aggressively the model reduces endpoint latency. Range: 0 to 3. */
   endpointLatencyAdjustmentLevel?: number;
+  /**
+   * How readily the model emits speech endpoints. Range: -1.0 to 1.0. Higher values make
+   * endpoints more likely (finalize sooner); lower values make them less likely.
+   */
+  endpointSensitivity?: number;
+  /**
+   * Accept the agent's own speech as text (`stt-rt-v6` and later). Send it with
+   * {@link SpeechStream.pushAgentText} as it plays, so the model can tell the agent's voice
+   * from the user's: the agent's echo is dropped while a user talking over it is still heard.
+   */
+  enableAgentTextInput?: boolean;
   clientReferenceId?: string;
   translation?: TranslationConfig;
 }
@@ -111,6 +122,12 @@ export class STT extends stt.STT {
     ) {
       throw new Error('endpointLatencyAdjustmentLevel must be between 0 and 3');
     }
+    if (
+      merged.endpointSensitivity !== undefined &&
+      (merged.endpointSensitivity < -1 || merged.endpointSensitivity > 1)
+    ) {
+      throw new Error('endpointSensitivity must be between -1.0 and 1.0');
+    }
 
     super({
       streaming: true,
@@ -143,6 +160,7 @@ export class STT extends stt.STT {
 export class SpeechStream extends stt.SpeechStream {
   #opts: STTOptions;
   #logger = log();
+  #ws?: WebSocket;
   label = 'soniox.SpeechStream';
 
   constructor(stt: STT, opts: STTOptions, connOptions?: APIConnectOptions) {
@@ -154,6 +172,7 @@ export class SpeechStream extends stt.SpeechStream {
     let ws: WebSocket | undefined;
     try {
       ws = await this.#connectWS();
+      this.#ws = ws;
       await this.#runWS(ws);
     } catch (error) {
       if (error instanceof APIError) {
@@ -163,8 +182,31 @@ export class SpeechStream extends stt.SpeechStream {
         message: `Soniox Speech-to-Text API connection error: ${error}`,
       });
     } finally {
+      this.#ws = undefined;
       ws?.close();
     }
+  }
+
+  /**
+   * Send text the agent is speaking, as it plays. Requires `enableAgentTextInput`.
+   * Pass `endOfSegment: true` once the agent's turn ends or is interrupted. Text sent while
+   * the connection is not open is dropped.
+   */
+  pushAgentText(text: string, options: { endOfSegment?: boolean } = {}): void {
+    if (!this.#opts.enableAgentTextInput) {
+      throw new Error('pushAgentText requires enableAgentTextInput');
+    }
+    const ws = this.#ws;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      return;
+    }
+    ws.send(
+      JSON.stringify(
+        options.endOfSegment
+          ? { type: 'agent_text', text, end_of_segment: true }
+          : { type: 'agent_text', text },
+      ),
+    );
   }
 
   async #connectWS(): Promise<WebSocket> {
@@ -217,6 +259,8 @@ export class SpeechStream extends stt.SpeechStream {
       client_reference_id: this.#opts.clientReferenceId,
       max_endpoint_delay_ms: this.#opts.maxEndpointDelayMs,
       endpoint_latency_adjustment_level: this.#opts.endpointLatencyAdjustmentLevel,
+      endpoint_sensitivity: this.#opts.endpointSensitivity,
+      enable_agent_text_input: this.#opts.enableAgentTextInput,
     };
 
     if (this.#opts.translation) {
