@@ -40,6 +40,10 @@ interface TextData {
   done: boolean;
   forwardedHyphens: number;
   forwardedText: string;
+  /** Offsets in `pushedText` where a timed string ends. */
+  timedTextEnds: Set<number>;
+  /** Start of a word the walk stopped inside, at a timed string end. */
+  partialWord: string;
 }
 
 /**
@@ -206,6 +210,8 @@ class SegmentSynchronizerImpl {
       done: false,
       forwardedHyphens: 0,
       forwardedText: '',
+      timedTextEnds: new Set(),
+      partialWord: '',
     };
     this.audioData = {
       pushedDuration: 0,
@@ -312,6 +318,7 @@ class SegmentSynchronizerImpl {
       }
 
       this.audioData.annotatedRate.addByAnnotation(textStr, startTime, endTime);
+      this.textData.timedTextEnds.add(this.textData.pushedText.length + textStr.length);
     }
 
     this.textData.wordStream.pushText(textStr);
@@ -449,9 +456,13 @@ class SegmentSynchronizerImpl {
         continue;
       }
       let wordEnd = wordIdx + word.length;
+      // Stop at the end of a timed string even mid-word. The next timed string starts
+      // there; running past it makes that piece match a later repeat of the same letters,
+      // and the walk jumps ahead of the audio.
       while (
         wordEnd < this.textData.pushedText.length &&
-        !/\s/.test(this.textData.pushedText[wordEnd]!)
+        !/\s/.test(this.textData.pushedText[wordEnd]!) &&
+        !this.textData.timedTextEnds.has(wordEnd)
       ) {
         wordEnd++;
       }
@@ -526,7 +537,16 @@ class SegmentSynchronizerImpl {
       );
       await this.sleepIfNotClosed(delayTime / 2);
 
-      this.textData.forwardedHyphens += wordHyphens;
+      // Count forwarded hyphens once per word even when it arrives in pieces. The
+      // fallback above compares them with elapsed time x speed; one hyphen per piece
+      // (per character with character-level alignments) would hold the text far behind
+      // the audio once the annotations run out.
+      const textSoFar = this.textData.partialWord + cleanWord;
+      this.textData.forwardedHyphens +=
+        this.calcHyphens(textSoFar).length - this.calcHyphens(this.textData.partialWord).length;
+      this.textData.partialWord = this.textData.timedTextEnds.has(wordEnd)
+        ? textSoFar.slice(textSoFar.search(/\S*$/))
+        : '';
       this.textData.forwardedText += forwardedWord;
     }
 
