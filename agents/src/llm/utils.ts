@@ -4,6 +4,7 @@
 import { VideoBufferType, VideoFrame } from '@livekit/rtc-node';
 import type { JSONSchema7 } from 'json-schema';
 import { jsonrepair } from 'jsonrepair';
+import { isDeepStrictEqual } from 'node:util';
 import sharp from 'sharp';
 import { log } from '../log.js';
 import type { UnknownUserData } from '../voice/run_context.js';
@@ -362,6 +363,17 @@ export function parseFunctionArguments(
   return args as Record<string, unknown>;
 }
 
+export function repairedFunctionArgumentsJson(rawArgs: string, args: object): string | undefined {
+  try {
+    if (isDeepStrictEqual(JSON.parse(rawArgs), args)) {
+      return undefined;
+    }
+  } catch {
+    // The parsed arguments came from the repair or double-decoding path.
+  }
+  return JSON.stringify(args);
+}
+
 function isJsonObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -573,9 +585,9 @@ export async function executeToolCall(
   try {
     const rawArgs = toolCall.args || '{}';
     args = parseFunctionArguments(rawArgs);
-    const canonicalArgs = JSON.stringify(args);
-    if (canonicalArgs !== rawArgs) {
-      toolCall.args = canonicalArgs;
+    const repairedArgs = repairedFunctionArgumentsJson(rawArgs, args);
+    if (repairedArgs !== undefined) {
+      toolCall.args = repairedArgs;
     }
   } catch (error) {
     return FunctionCallOutput.create({
