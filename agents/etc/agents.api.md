@@ -5051,7 +5051,6 @@ declare namespace llm {
         createToolOptions,
         executeToolCall,
         formatChatHistory,
-        oaiParams,
         serializeImage,
         toJsonSchema,
         validateChatContextStructure,
@@ -5793,11 +5792,6 @@ function normalizeSTTFallback(fallback: STTFallbackModelType | STTFallbackModelT
 
 // @public
 function normalizeTTSFallback(fallback: TTSFallbackModelType | TTSFallbackModelType[]): TTSFallbackModel[];
-
-// Warning: (ae-internal-missing-underscore) The name "oaiParams" should be prefixed with an underscore because the declaration is marked as @internal
-//
-// @internal (undocumented)
-export const oaiParams: (schema: any, isOpenai?: boolean) => OpenAIFunctionParameters;
 
 // @public
 type ObservabilityEndpoint = {
