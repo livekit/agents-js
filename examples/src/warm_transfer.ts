@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+// For Telnyx caller-ID preservation and troubleshooting, see ./warm_transfer.md.
 import {
   type JobContext,
   ServerOptions,
