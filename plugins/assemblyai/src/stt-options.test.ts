@@ -338,6 +338,22 @@ describe('AssemblyAI option validation', () => {
     );
   });
 
+  it('does not cap language codes on Universal-3.6 Pro', async () => {
+    const codes = ['en', 'es', 'fr', 'de', 'it', 'pt', 'nl', 'pl', 'ru', 'ja', 'ko'];
+    await withProvider(
+      { speechModel: 'universal-3-6-pro', languageCodes: codes },
+      async (provider, query, messages) => {
+        expect(JSON.parse(query.get('language_codes')!)).toEqual(codes);
+
+        provider.updateOptions({ languageCodes: [...codes, 'zu'] });
+        await waitUntil(() => messages.length > 0);
+        expect(messages).toEqual([
+          { type: 'UpdateConfiguration', language_codes: [...codes, 'zu'] },
+        ]);
+      },
+    );
+  });
+
   it.each(['provider', 'stream'] as const)(
     'normalizes regional ISO-639-3 codes on %s updates',
     async (target) => {
