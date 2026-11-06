@@ -27,6 +27,9 @@ import {
 } from './utils.js';
 
 export type OpenAIModels =
+  | 'openai/gpt-6.1-sol'
+  | 'openai/gpt-6-sol'
+  | 'openai/gpt-6-luna'
   | 'openai/gpt-5.6-luna'
   | 'openai/gpt-5.6-sol'
   | 'openai/gpt-5.6-terra'
@@ -134,6 +137,22 @@ const REASONING_UNSUPPORTED_PARAMS = new Set([
   'n',
 ]);
 
+// gpt-6 rejects these while it reasons and accepts every one of them again at
+// reasoning_effort "none" (probed against the API 2026-10-20 on gpt-6.1-sol over
+// both the chat and responses transports, gpt-6-sol and gpt-6-luna). It differs
+// from the o-series/gpt-5 set in two ways: n is accepted while reasoning so it is
+// absent here, and stop is rejected so it is added. seed is in neither set.
+const GPT6_REASONING_UNSUPPORTED_PARAMS = new Set([
+  'temperature',
+  'top_p',
+  'presence_penalty',
+  'frequency_penalty',
+  'logit_bias',
+  'logprobs',
+  'top_logprobs',
+  'stop',
+]);
+
 const XAI_REASONING_UNSUPPORTED_PARAMS = new Set(['presence_penalty', 'frequency_penalty', 'stop']);
 
 const UNSUPPORTED_PARAMS: Record<string, Set<string>> = {
@@ -141,9 +160,25 @@ const UNSUPPORTED_PARAMS: Record<string, Set<string>> = {
   o3: REASONING_UNSUPPORTED_PARAMS,
   o4: REASONING_UNSUPPORTED_PARAMS,
   'gpt-5': REASONING_UNSUPPORTED_PARAMS,
+  'gpt-6': GPT6_REASONING_UNSUPPORTED_PARAMS,
   'grok-4-1-fast-reasoning': XAI_REASONING_UNSUPPORTED_PARAMS,
   'grok-4.20-0309-reasoning': XAI_REASONING_UNSUPPORTED_PARAMS,
   'grok-4.20-multi-agent': XAI_REASONING_UNSUPPORTED_PARAMS,
+};
+
+// Params OpenAI accepts again at reasoning_effort "none", by model prefix. The
+// keys mirror the prefixes in UNSUPPORTED_PARAMS.
+const KEPT_AT_EFFORT_NONE: Record<string, Set<string>> = {
+  'gpt-6': GPT6_REASONING_UNSUPPORTED_PARAMS,
+};
+
+// Lowest reasoning effort each model supports. Only models whose floor is
+// "none" take the carve-out above; gpt-6.1-sol's floor is "low", so its params
+// stay stripped however the caller spells the effort.
+const MIN_REASONING_EFFORT: Record<string, 'none' | 'minimal' | 'low' | 'medium' | 'high'> = {
+  'gpt-6-luna': 'none',
+  'gpt-6-sol': 'none',
+  'gpt-6.1-sol': 'low',
 };
 
 const REASONING_EFFORT_TOOL_INCOMPATIBLE_PREFIXES = new Set(['gpt-5.2', 'gpt-5.4']);
@@ -161,10 +196,20 @@ function dropUnsupportedParams(
   let result = { ...params };
 
   for (const [prefix, unsupported] of Object.entries(UNSUPPORTED_PARAMS)) {
-    if (modelName.startsWith(prefix)) {
+    if (!modelName.startsWith(prefix)) continue;
+    // At effort "none" these models take every param back, so nothing is
+    // dropped. KEPT_AT_EFFORT_NONE and MIN_REASONING_EFFORT both have to name
+    // the model: the first by prefix, the second by bare model name. The effort
+    // is read straight off `reasoning_effort`: this builder only makes
+    // chat-completions requests, so a `reasoning` object never reaches it.
+    const keepsEveryParam =
+      KEPT_AT_EFFORT_NONE[prefix] !== undefined &&
+      MIN_REASONING_EFFORT[modelName] === 'none' &&
+      result.reasoning_effort === 'none';
+    if (!keepsEveryParam) {
       result = Object.fromEntries(Object.entries(result).filter(([k]) => !unsupported.has(k)));
-      break;
     }
+    break;
   }
 
   if (
