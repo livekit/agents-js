@@ -76,6 +76,11 @@ function supportsContextUpdate(model: string | undefined, vertexai: boolean | un
   return Boolean(vertexai && model?.includes('3.8'));
 }
 
+/** Whether `tools` holds a retrieval tool, which a contextUpdate rejects with INVALID_ARGUMENT. */
+function hasRetrievalTool(tools: types.Tool[]): boolean {
+  return tools.some((tool) => tool.retrieval !== undefined);
+}
+
 function needsReplyPlaceholder(model: string): boolean {
   return !MODELS_WITHOUT_REPLY_PLACEHOLDER.some((tag) => model.includes(tag));
 }
@@ -947,7 +952,15 @@ export class RealtimeSession extends llm.RealtimeSession {
 
       // convert before committing, so a tool set that fails conversion can be retried
       const convertedTools = this.toolsConfig(tools);
+      const hadRetrieval = hasRetrievalTool(this.toolsConfig(this._tools));
       this._tools = tools;
+
+      if (hadRetrieval || hasRetrievalTool(convertedTools)) {
+        // the server rejects retrieval tools (e.g. VertexRAGRetrieval) in a contextUpdate,
+        // and a contextUpdate can't drop one either, so restart the session instead
+        this.markRestartNeeded();
+        return;
+      }
 
       this.#logger.debug('Updating tools mid-session via contextUpdate');
       this.contextUpdated = true;
@@ -1645,15 +1658,21 @@ export class RealtimeSession extends llm.RealtimeSession {
       if (this.sessionResumptionHandle !== undefined && this.contextUpdated) {
         // the handle restores the conversation, but with the instructions/tools the
         // session had when it was created. a handle may also predate the last
-        // contextUpdate, so the current ones are sent again rather than trusting it
-        session.sendContextUpdate({
-          // an empty string is a real value here: it clears the instructions
-          systemInstruction:
-            this.options.instructions !== undefined
-              ? { parts: [{ text: this.options.instructions }] }
-              : undefined,
-          tools: { tools: this.toolsConfig(this._tools) },
-        });
+        // contextUpdate, so the current ones are sent again rather than trusting it.
+        // a retrieval tool can't go in a contextUpdate; tools holding one never change
+        // by contextUpdate (updateTools restarts instead), so they are left out
+        const tools = this.toolsConfig(this._tools);
+        const resendTools = hasRetrievalTool(tools) ? undefined : { tools };
+        if (this.options.instructions !== undefined || resendTools !== undefined) {
+          session.sendContextUpdate({
+            // an empty string is a real value here: it clears the instructions
+            systemInstruction:
+              this.options.instructions !== undefined
+                ? { parts: [{ text: this.options.instructions }] }
+                : undefined,
+            tools: resendTools,
+          });
+        }
       }
 
       // Send existing chat context

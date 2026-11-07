@@ -5,6 +5,7 @@ import type { LiveServerContent, UsageMetadata } from '@google/genai';
 import { Behavior, FunctionResponseScheduling, ThinkingLevel } from '@google/genai';
 import { llm, log } from '@livekit/agents';
 import { describe, expect, it, vi } from 'vitest';
+import { VertexRAGRetrieval } from '../tools.js';
 import {
   RealtimeModel,
   RealtimeSession,
@@ -807,6 +808,60 @@ describe('Google Realtime 3.8 defaults, labels, and contextUpdate', () => {
     session.sessionResumptionHandle = undefined;
     await session.onSessionOpened({ sendContextUpdate, sendClientContent });
     expect(sendContextUpdate).toHaveBeenCalledTimes(2);
+  });
+
+  it('never sends a retrieval tool in a context update', async () => {
+    const model = new RealtimeModel({
+      model: 'gemini-3.8-live',
+      vertexai: true,
+      project: 'test-project',
+      location: 'us-central1',
+      instructions: 'Cite the corpus.',
+    });
+    const session = model.session();
+    const sendContextUpdate = vi.fn();
+    const internals = session as unknown as {
+      activeSession?: unknown;
+      _tools: llm.ToolContext;
+      contextUpdated: boolean;
+      sessionResumptionHandle?: string;
+      sessionShouldClose: { isSet: boolean; clear(): void };
+      onSessionOpened(s: unknown): Promise<void>;
+    };
+    internals.activeSession = { close: vi.fn(async () => {}), sendContextUpdate };
+    const rag = new VertexRAGRetrieval({
+      ragResources: ['projects/1/locations/us-central1/ragCorpora/2'],
+    });
+    const weatherTool = llm.tool({
+      name: 'getWeather',
+      description: 'Get weather',
+      execute: async () => 'sunny',
+    });
+
+    // adding, keeping, or dropping a retrieval tool restarts instead of sending a contextUpdate
+    for (const tools of [
+      new llm.ToolContext([rag]),
+      new llm.ToolContext([weatherTool, rag]),
+      new llm.ToolContext([weatherTool]),
+    ]) {
+      internals.sessionShouldClose.clear();
+      await session.updateTools(tools);
+      expect(internals.sessionShouldClose.isSet).toBe(true);
+      expect(internals._tools.equals(tools)).toBe(true);
+    }
+    expect(internals.contextUpdated).toBe(false);
+
+    // resuming after an instructions update re-sends the instructions without the tools
+    internals._tools = new llm.ToolContext([weatherTool, rag]);
+    internals.contextUpdated = true;
+    internals.sessionResumptionHandle = 'handle-with-rag';
+    await internals.onSessionOpened({ sendContextUpdate, sendClientContent: vi.fn() });
+    expect(sendContextUpdate).toHaveBeenCalledWith({
+      systemInstruction: { parts: [{ text: 'Cite the corpus.' }] },
+      tools: undefined,
+    });
+
+    await session.close();
   });
 });
 
