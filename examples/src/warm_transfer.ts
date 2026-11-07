@@ -14,7 +14,7 @@ import {
   workflows,
 } from '@livekit/agents';
 import { BackgroundVoiceCancellation } from '@livekit/noise-cancellation-node';
-import { ParticipantKind, type RemoteParticipant } from '@livekit/rtc-node';
+import { ParticipantKind, type RemoteParticipant, RoomEvent } from '@livekit/rtc-node';
 import { fileURLToPath } from 'node:url';
 
 const SIP_TRUNK_ID = process.env.LIVEKIT_SIP_OUTBOUND_TRUNK;
@@ -53,6 +53,36 @@ async function twilioCallerId(caller: RemoteParticipant | undefined): Promise<Ca
     log().warn('could not read SIP headers, using the business number');
     return fallback;
   }
+}
+
+// Waits for the participant the session would link by default: SIP, standard or connector, and
+// not publishing on the agent's behalf (an avatar, for example). Egress participants are skipped,
+// unlike ctx.waitForParticipant(), which returns any non-agent participant.
+function waitForCaller(ctx: JobContext): Promise<RemoteParticipant> {
+  const agentIdentity = ctx.room.localParticipant?.identity;
+  const isCaller = (p: RemoteParticipant) =>
+    voice.DEFAULT_PARTICIPANT_KINDS.includes(p.kind) &&
+    p.attributes['lk.publish_on_behalf'] !== agentIdentity;
+
+  const present = [...ctx.room.remoteParticipants.values()].find(isCaller);
+  if (present) return Promise.resolve(present);
+  return new Promise((resolve, reject) => {
+    const onConnected = (p: RemoteParticipant) => {
+      if (!isCaller(p)) return;
+      cleanup();
+      resolve(p);
+    };
+    const onDisconnected = () => {
+      cleanup();
+      reject(new Error('room disconnected before the caller joined'));
+    };
+    const cleanup = () => {
+      ctx.room.off(RoomEvent.ParticipantConnected, onConnected);
+      ctx.room.off(RoomEvent.Disconnected, onDisconnected);
+    };
+    ctx.room.on(RoomEvent.ParticipantConnected, onConnected);
+    ctx.room.on(RoomEvent.Disconnected, onDisconnected);
+  });
 }
 
 class SupportAgent extends voice.Agent {
@@ -149,7 +179,7 @@ export default defineAgent({
     // Link the session to the caller explicitly so the transfer reads the same participant.
     // Console mode has no room participant, so the business number is used there.
     await ctx.connect();
-    const caller = ctx.room.isConnected ? await ctx.waitForParticipant() : undefined;
+    const caller = ctx.room.isConnected ? await waitForCaller(ctx) : undefined;
 
     await session.start({
       agent: new SupportAgent(caller),
