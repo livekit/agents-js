@@ -39,6 +39,9 @@ const HTTP_TOTAL_TIMEOUT_MS = 120_000;
 // Lets each SynthesizeStream reach the pool owned by the TTS that created it,
 // without widening the constructor signature the base class fixes.
 const connectionPools = new WeakMap<TTS, ConnectionPool<WebSocket>>();
+// The TTS's current options, read by its streams when each utterance is sent so that
+// `updateOptions()` applies from the next sentence on, even mid-stream.
+const currentOptions = new WeakMap<TTS, TTSOptions>();
 
 /**
  * Options of the Vartalaap TTS. Every option but `apiKey`, `baseUrl`, `sampleRate` and
@@ -191,6 +194,7 @@ export class TTS extends tts.TTS {
     resolvedOpts.baseUrl = resolvedOpts.baseUrl.replace(/\/+$/, '');
     checkOptions(resolvedOpts);
     this.#opts = resolvedOpts;
+    currentOptions.set(this, this.#opts);
 
     this.#pool = new ConnectionPool<WebSocket>({
       connectCb: (timeoutMs) => this.#connectWebSocket(timeoutMs),
@@ -226,6 +230,7 @@ export class TTS extends tts.TTS {
     next.baseUrl = next.baseUrl.replace(/\/+$/, '');
     checkOptions(next);
     this.#opts = next;
+    currentOptions.set(this, this.#opts);
 
     if (handshakeChanged) {
       this.#pool.invalidate();
@@ -371,7 +376,7 @@ export class ChunkedStream extends tts.ChunkedStream {
             });
           }
         });
-        res.on('close', () => {
+        res.on('end', () => {
           for (const frame of bstream.flush()) {
             this.queue.put({
               requestId: serverRequestId,
@@ -382,6 +387,15 @@ export class ChunkedStream extends tts.ChunkedStream {
           }
           this.queue.close();
           if (!doneFut.done) doneFut.resolve();
+        });
+        res.on('close', () => {
+          // A connection that closes before the body is complete truncated the audio: fail the
+          // request (retryable) instead of passing the cut-off speech as a success.
+          if (!doneFut.done && !res.complete) {
+            doneFut.reject(
+              new APIConnectionError({ message: 'Vartalaap TTS response ended before the body' }),
+            );
+          }
         });
         res.on('error', (err) => {
           if (err.message === 'aborted') return;
@@ -403,7 +417,12 @@ export class ChunkedStream extends tts.ChunkedStream {
       if (!doneFut.done) doneFut.reject(err);
     });
     req.on('close', () => {
-      if (!doneFut.done) doneFut.resolve();
+      // Closed before any response arrived (or before the response completed).
+      if (!doneFut.done) {
+        doneFut.reject(
+          new APIConnectionError({ message: 'Vartalaap TTS connection closed before a response' }),
+        );
+      }
     });
     const totalTimer = setTimeout(() => {
       if (!doneFut.done) {
@@ -434,38 +453,101 @@ export class ChunkedStream extends tts.ChunkedStream {
  * own `request_id`. The server serves them in order on the connection, so the next sentence is
  * already being synthesised while the current one plays. Binary frames are the PCM of the
  * utterance in progress; `start` and `end` events delimit it.
+ *
+ * The text pushed in is kept for the life of the stream, so a retry after a retryable error
+ * (a 503 while every worker is busy, a dropped socket) re-sends the sentences that had not
+ * finished instead of losing them.
  */
 export class SynthesizeStream extends tts.SynthesizeStream {
+  #tts: TTS;
   #opts: TTSOptions;
+  #overrides: Partial<TTSOptions> = {};
   #pool: ConnectionPool<WebSocket>;
   #logger = log();
+  // Everything pushed into the stream, in order, for every attempt to tokenize from.
+  #inputLog: (string | typeof SynthesizeStream.FLUSH_SENTINEL)[] = [];
+  #inputEnded = false;
+  #inputChanged = new Future<void>();
+  #inputPumpStarted = false;
+  // Utterances whose audio was emitted in full by an earlier attempt; a retry skips them.
+  #completedUtterances = 0;
   label = 'vartalaap.SynthesizeStream';
 
   constructor(tts: TTS, opts: TTSOptions, connOptions?: APIConnectOptions) {
     super(tts, connOptions);
     const pool = connectionPools.get(tts);
     if (!pool) throw new Error('Vartalaap connection pool is not initialized');
+    this.#tts = tts;
     this.#pool = pool;
     this.#opts = opts;
   }
 
   /**
-   * Update the options of this stream. The change applies to the sentences sent from now on;
-   * the connection is kept.
+   * Update the options of this stream only. The change applies to the sentences sent from now
+   * on, on top of the owning TTS's options; the connection is kept.
    */
   updateOptions(opts: Partial<TTSOptions>) {
-    const next = { ...this.#opts, ...opts };
+    const next = { ...this.#opts, ...this.#overrides, ...opts };
     checkOptions(next);
-    this.#opts = next;
+    this.#overrides = { ...this.#overrides, ...opts };
+  }
+
+  // The options of the next utterance: the TTS's current ones (so `tts.updateOptions()` applies
+  // mid-stream) under this stream's own overrides. The handshake inputs (apiKey, baseUrl) stay
+  // those of the checked-out socket.
+  #utteranceOptions(): TTSOptions {
+    return { ...(currentOptions.get(this.#tts) ?? this.#opts), ...this.#overrides };
+  }
+
+  #wakeInputReaders() {
+    const changed = this.#inputChanged;
+    this.#inputChanged = new Future<void>();
+    changed.resolve();
+  }
+
+  // The single consumer of `this.input`: appends every item to the log that each attempt
+  // replays. Started by the first attempt; later attempts find the log already filling.
+  #startInputPump() {
+    if (this.#inputPumpStarted) return;
+    this.#inputPumpStarted = true;
+    void (async () => {
+      try {
+        for await (const data of this.input) {
+          this.#inputLog.push(data);
+          this.#wakeInputReaders();
+        }
+      } catch (error) {
+        this.#logger.debug({ error }, 'Vartalaap TTS input closed');
+      } finally {
+        this.#inputEnded = true;
+        this.#wakeInputReaders();
+      }
+    })();
+  }
+
+  // Replays the log from the start, then follows it as new text arrives, until the input ends
+  // or the attempt that reads it is over.
+  async *#replayInput(stopped: () => boolean) {
+    let index = 0;
+    while (!stopped()) {
+      if (index < this.#inputLog.length) {
+        yield this.#inputLog[index++]!;
+        continue;
+      }
+      if (this.#inputEnded) return;
+      await this.#inputChanged.await;
+    }
   }
 
   protected async run() {
     const requestId = shortuuid();
+    this.#startInputPump();
     const tokenizer = new tokenize.basic.SentenceTokenizer().stream();
     // Utterances sent and not yet ended, in order.
     const pending: { utteranceId: string; segmentId: string }[] = [];
     // Set once the sender has nothing more to send (or the sender failed).
     let senderDone = false;
+    let attemptOver = false;
     const SENDER_DONE = Symbol('SENDER_DONE');
     // Everything the receive loop reacts to: server messages, and the sender finishing.
     type Incoming = { data: RawData; isBinary: boolean } | typeof SENDER_DONE;
@@ -476,32 +558,66 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       });
     };
 
-    const inputTask = async () => {
-      for await (const data of this.input) {
-        if (data === SynthesizeStream.FLUSH_SENTINEL) {
-          tokenizer.flush();
-          continue;
-        }
-        tokenizer.pushText(data);
+    // The chunk watchdog: armed as soon as an utterance is pending (right after its send), reset
+    // on every message the server sends, cleared when nothing is pending. While an utterance is
+    // in flight the server speaks at least every few hundred milliseconds; silence longer than
+    // `chunkTimeout` means the socket is stuck, and a stuck socket is discarded, not pooled.
+    let watchdog: NodeJS.Timeout | undefined;
+    let timedOut = false;
+    let socket: WebSocket | undefined;
+    const clearWatchdog = () => {
+      if (watchdog) {
+        clearTimeout(watchdog);
+        watchdog = undefined;
       }
-      tokenizer.endInput();
-      tokenizer.close();
+    };
+    const armWatchdog = () => {
+      clearWatchdog();
+      if (pending.length === 0 || timedOut) return;
+      watchdog = setTimeout(() => {
+        this.#logger.debug(
+          `Vartalaap WebSocket TTS chunk stream timeout after ${this.#opts.chunkTimeout}ms`,
+        );
+        timedOut = true;
+        if (socket) safeCloseWebSocket(socket);
+        void eventChannel.close();
+      }, this.#opts.chunkTimeout);
+    };
+
+    const inputTask = async () => {
+      try {
+        for await (const data of this.#replayInput(() => attemptOver)) {
+          if (data === SynthesizeStream.FLUSH_SENTINEL) {
+            tokenizer.flush();
+            continue;
+          }
+          tokenizer.pushText(data);
+        }
+      } finally {
+        tokenizer.endInput();
+        tokenizer.close();
+      }
     };
 
     const sendTask = async (ws: WebSocket) => {
+      // Sentences the tokenizer produced so far in this attempt; the first
+      // `#completedUtterances` of them were already spoken by an earlier attempt.
+      let sentenceIndex = 0;
       try {
         for await (const event of tokenizer) {
-          if (this.abortController.signal.aborted) break;
+          if (this.abortController.signal.aborted || attemptOver) break;
           const text = event.token.trim();
           if (!text) continue;
+          if (sentenceIndex++ < this.#completedUtterances) continue;
           const utteranceId = shortuuid();
-          const body = _toVartalaapBody(this.#opts, text, utteranceId);
+          const body = _toVartalaapBody(this.#utteranceOptions(), text, utteranceId);
           if (ws.readyState !== WebSocket.OPEN) {
             throw new APIConnectionError({ message: 'Vartalaap WebSocket closed mid-generation' });
           }
           pending.push({ utteranceId, segmentId: event.segmentId || requestId });
           this.markStarted();
           ws.send(JSON.stringify(body));
+          if (pending.length === 1) armWatchdog();
         }
       } finally {
         senderDone = true;
@@ -516,9 +632,6 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       // The utterance whose audio is arriving (the head of `pending` once its `start` came).
       let currentUtterance: string | undefined;
       let currentSegment: string | undefined;
-      let timeout: NodeJS.Timeout | undefined;
-      // Set when the chunk watchdog fires: the socket is discarded, not pooled.
-      let timedOut = false;
       // Set once every utterance ended. Until then, a socket close or error is a
       // mid-generation drop, not a normal end.
       let completed = false;
@@ -538,31 +651,10 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         }
       };
 
-      const clearChunkTimeout = () => {
-        if (timeout) {
-          clearTimeout(timeout);
-          timeout = undefined;
-        }
-      };
-      // While an utterance is in flight the server speaks at least every few hundred
-      // milliseconds; silence longer than `chunkTimeout` means the socket is stuck.
-      const armChunkTimeout = () => {
-        clearChunkTimeout();
-        if (pending.length === 0) return;
-        timeout = setTimeout(() => {
-          this.#logger.debug(
-            `Vartalaap WebSocket TTS chunk stream timeout after ${this.#opts.chunkTimeout}ms`,
-          );
-          timedOut = true;
-          safeCloseWebSocket(ws);
-          void eventChannel.close();
-        }, this.#opts.chunkTimeout);
-      };
-
       const onMessage = (data: RawData, isBinary: boolean) => signal({ data, isBinary });
       const onClose = (code: number, reason: Buffer) => {
         this.#logger.debug(`WebSocket closed with code ${code}: ${reason.toString()}`);
-        clearChunkTimeout();
+        clearWatchdog();
         if (!completed && !timedOut && !streamError) {
           streamError = new APIConnectionError({
             message: `Vartalaap WebSocket closed mid-generation (code=${code})`,
@@ -588,7 +680,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         if (!this.queue.closed) {
           this.queue.put(SynthesizeStream.END_OF_STREAM);
         }
-        clearChunkTimeout();
+        clearWatchdog();
         completed = true;
       };
 
@@ -608,7 +700,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
             continue;
           }
 
-          armChunkTimeout();
+          armWatchdog();
 
           if (raw.isBinary) {
             // Audio of an utterance we did not start (a stale pooled socket) is dropped.
@@ -625,16 +717,18 @@ export class SynthesizeStream extends tts.SynthesizeStream {
             continue;
           }
 
+          const head = pending[0];
+
           if (event.type === 'error') {
-            // Decided before any audio of the utterance; the socket stays open on the server
-            // side, but the queued utterances behind it are not served, so the turn retries.
+            // Only our own utterance's error, or an untagged connection-level one, fails the
+            // turn; an error left over from a previous turn on a pooled socket is dropped.
+            if (event.request_id && event.request_id !== head?.utteranceId) continue;
             throw statusError(event.status ?? 500, event.error ?? 'unknown error', {
               requestId: event.request_id ?? requestId,
               retryAfter: event.retry_after,
             });
           }
 
-          const head = pending[0];
           if (!head || event.request_id !== head.utteranceId) {
             // An event of an utterance that is not ours (left over on a pooled socket).
             continue;
@@ -653,6 +747,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
             this.noteProviderRequestId(head.utteranceId);
           } else if (event.type === 'end') {
             pending.shift();
+            this.#completedUtterances++;
             // The utterance's audio is complete: hand over its tail without waiting for the
             // next sentence's first frame to pad it.
             pushFrames(bstream.flush(), currentSegment ?? head.segmentId);
@@ -661,7 +756,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
               finish();
               break;
             }
-            if (pending.length === 0) clearChunkTimeout();
+            if (pending.length === 0) clearWatchdog();
           }
           // chunk, first_audio_ms, chunk_end: progress only
         }
@@ -678,10 +773,13 @@ export class SynthesizeStream extends tts.SynthesizeStream {
           throw new APIConnectionError({ message: 'Vartalaap WebSocket closed mid-generation' });
         }
       } finally {
+        // Audio already received is good audio: a failed attempt hands over the frame it was
+        // holding instead of dropping it, and the retry resumes after the utterances that ended.
+        if (!completed) sendLastFrame(false);
         ws.off('message', onMessage);
         ws.off('close', onClose);
         ws.off('error', onError);
-        clearChunkTimeout();
+        clearWatchdog();
       }
     };
 
@@ -694,6 +792,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
           if (ws.readyState !== WebSocket.OPEN) {
             throw new APIConnectionError({ message: 'Vartalaap pooled websocket is not open' });
           }
+          socket = ws;
           await Promise.all([inputTask(), sendTask(ws), recvTask(ws)]);
         },
         { timeout: this.connOptions.timeoutMs, signal: this.abortSignal },
@@ -705,6 +804,9 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       if (e instanceof APIError) throw e;
       throw toRetryableConnectionError(e);
     } finally {
+      attemptOver = true;
+      this.#wakeInputReaders();
+      clearWatchdog();
       void eventChannel.close();
     }
   }
