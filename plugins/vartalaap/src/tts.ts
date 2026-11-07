@@ -455,8 +455,9 @@ export class ChunkedStream extends tts.ChunkedStream {
  * utterance in progress; `start` and `end` events delimit it.
  *
  * The text pushed in is kept for the life of the stream, so a retry after a retryable error
- * (a 503 while every worker is busy, a dropped socket) re-sends the sentences that had not
- * finished instead of losing them.
+ * before any audio was heard (a 503 while every worker is busy, a dropped socket) re-sends the
+ * same sentences instead of losing them. Once a frame has been emitted a failure is final: a
+ * retry would speak the start of the interrupted sentence twice.
  */
 export class SynthesizeStream extends tts.SynthesizeStream {
   #tts: TTS;
@@ -469,8 +470,13 @@ export class SynthesizeStream extends tts.SynthesizeStream {
   #inputEnded = false;
   #inputChanged = new Future<void>();
   #inputPumpStarted = false;
-  // Utterances whose audio was emitted in full by an earlier attempt; a retry skips them.
-  #completedUtterances = 0;
+  // Set once a frame reached the queue. From then on a failure is final: a retry would speak
+  // the start of the interrupted sentence twice.
+  #audioEmitted = false;
+  // Segment ids, one per segment the tokenizer produced, in order. The tokenizer is
+  // deterministic over the input log, so its k-th segment on a retry is the same text as the
+  // k-th segment of the first attempt, and both are reported under the same id.
+  #segmentIds: string[] = [];
   label = 'vartalaap.SynthesizeStream';
 
   constructor(tts: TTS, opts: TTSOptions, connOptions?: APIConnectOptions) {
@@ -600,21 +606,27 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     };
 
     const sendTask = async (ws: WebSocket) => {
-      // Sentences the tokenizer produced so far in this attempt; the first
-      // `#completedUtterances` of them were already spoken by an earlier attempt.
-      let sentenceIndex = 0;
+      // This attempt's tokenizer segment ids, in order of appearance, mapped onto the stream's
+      // stable ones so a retry keeps the segment ids of the first attempt.
+      const tokenizerSegments: string[] = [];
+      const stableSegmentId = (tokenizerSegment: string): string => {
+        let index = tokenizerSegments.indexOf(tokenizerSegment);
+        if (index === -1) {
+          index = tokenizerSegments.push(tokenizerSegment) - 1;
+        }
+        return (this.#segmentIds[index] ??= shortuuid());
+      };
       try {
         for await (const event of tokenizer) {
           if (this.abortController.signal.aborted || attemptOver) break;
           const text = event.token.trim();
           if (!text) continue;
-          if (sentenceIndex++ < this.#completedUtterances) continue;
           const utteranceId = shortuuid();
           const body = _toVartalaapBody(this.#utteranceOptions(), text, utteranceId);
           if (ws.readyState !== WebSocket.OPEN) {
             throw new APIConnectionError({ message: 'Vartalaap WebSocket closed mid-generation' });
           }
-          pending.push({ utteranceId, segmentId: event.segmentId || requestId });
+          pending.push({ utteranceId, segmentId: stableSegmentId(event.segmentId || requestId) });
           this.markStarted();
           ws.send(JSON.stringify(body));
           if (pending.length === 1) armWatchdog();
@@ -640,6 +652,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       const sendLastFrame = (final: boolean) => {
         if (lastFrame && lastSegmentId !== undefined && !this.queue.closed) {
           this.queue.put({ requestId, segmentId: lastSegmentId, frame: lastFrame, final });
+          this.#audioEmitted = true;
           lastFrame = undefined;
         }
       };
@@ -747,11 +760,20 @@ export class SynthesizeStream extends tts.SynthesizeStream {
             this.noteProviderRequestId(head.utteranceId);
           } else if (event.type === 'end') {
             pending.shift();
-            this.#completedUtterances++;
             // The utterance's audio is complete: hand over its tail without waiting for the
             // next sentence's first frame to pad it.
             pushFrames(bstream.flush(), currentSegment ?? head.segmentId);
             currentUtterance = undefined;
+            const next = pending[0];
+            if (next && next.segmentId !== currentSegment) {
+              // The sentence closed its segment: its last frame is the segment's final one.
+              sendLastFrame(true);
+              currentSegment = undefined;
+            } else if (next) {
+              // The segment goes on with the next sentence: nothing more comes for this one, so
+              // its tail is handed over now rather than held until the next frame.
+              sendLastFrame(false);
+            }
             if (senderDone && pending.length === 0) {
               finish();
               break;
@@ -773,9 +795,10 @@ export class SynthesizeStream extends tts.SynthesizeStream {
           throw new APIConnectionError({ message: 'Vartalaap WebSocket closed mid-generation' });
         }
       } finally {
-        // Audio already received is good audio: a failed attempt hands over the frame it was
-        // holding instead of dropping it, and the retry resumes after the utterances that ended.
-        if (!completed) sendLastFrame(false);
+        // A failed attempt drops the frame it was holding: either nothing was spoken yet and the
+        // retry re-sends the sentence from its start, or audio was already heard and the turn
+        // ends here (see `#audioEmitted`); in neither case is the held frame played.
+        if (!completed) lastFrame = undefined;
         ws.off('message', onMessage);
         ws.off('close', onClose);
         ws.off('error', onError);
@@ -801,8 +824,11 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       if (this.abortSignal.aborted) {
         return;
       }
-      if (e instanceof APIError) throw e;
-      throw toRetryableConnectionError(e);
+      const error = e instanceof APIError ? e : toRetryableConnectionError(e);
+      // Once audio has been emitted a retry would repeat the start of the interrupted sentence
+      // (a retry re-sends whole utterances, and the server has no resume), so the failure is
+      // final. Before any audio the retry is clean: the same sentences are sent again.
+      throw this.#audioEmitted ? asFinalError(error) : error;
     } finally {
       attemptOver = true;
       this.#wakeInputReaders();
@@ -811,6 +837,26 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     }
   }
 }
+
+// The same error, marked not retryable, for a failure after audio was already heard.
+const asFinalError = (error: APIError): APIError => {
+  if (!error.retryable) return error;
+  if (error instanceof APIStatusError) {
+    return new APIStatusError({
+      message: error.message,
+      options: {
+        statusCode: error.statusCode,
+        requestId: error.requestId,
+        body: error.body,
+        retryable: false,
+      },
+    });
+  }
+  if (error instanceof APITimeoutError) {
+    return new APITimeoutError({ message: error.message, options: { retryable: false } });
+  }
+  return new APIConnectionError({ message: error.message, options: { retryable: false } });
+};
 
 const authHeaders = (apiKey: string): Record<string, string> => ({
   Authorization: `Bearer ${apiKey}`,

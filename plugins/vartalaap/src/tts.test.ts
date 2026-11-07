@@ -523,13 +523,12 @@ describe('Vartalaap chunked synthesis', () => {
 });
 
 describe('Vartalaap streaming recovery', () => {
-  it('replays the unfinished sentences after a 503 on a fresh socket, without repeating audio', async () => {
+  it('does not retry a 503 once the first sentence was heard: the error is final', async () => {
     const { wss, baseURL } = await startWebSocketServer();
-    // Connection 1 serves the first sentence and is busy for the second; connection 2 serves
-    // whatever the retry sends.
+    // The first sentence is served; the server is busy for the second.
     const server = serveVartalaap(wss, {
-      onUtterance: (ws, utterance, connectionNumber) => {
-        if (connectionNumber === 1 && server.utterances.length === 2) {
+      onUtterance: (ws, utterance) => {
+        if (server.utterances.length === 2) {
           ws.send(
             JSON.stringify({
               type: 'error',
@@ -546,29 +545,23 @@ describe('Vartalaap streaming recovery', () => {
     });
 
     const vartalaap = new TTS({ apiKey: 'test-key', baseUrl: baseURL });
+    const errorEvent = once(vartalaap, 'error') as Promise<Parameters<tts.TTSCallbacks['error']>>;
     try {
       const events = await synthesizeTurn(
         vartalaap,
         ['Pehla vaakya yahan khatam hota hai. ', 'Doosra vaakya bhi yahan khatam hota hai.'],
-        { ...DEFAULT_API_CONNECT_OPTIONS, maxRetry: 1, retryIntervalMs: 0 },
+        { ...DEFAULT_API_CONNECT_OPTIONS, maxRetry: 3, retryIntervalMs: 0 },
       );
 
-      expect(server.connectionCount()).toBe(2);
-      // Three utterances in all: both sentences on the first socket, only the second again.
-      expect(server.utterances.map((u) => u.text)).toEqual([
-        'Pehla vaakya yahan khatam hota hai.',
-        'Doosra vaakya bhi yahan khatam hota hai.',
-        'Doosra vaakya bhi yahan khatam hota hai.',
-      ]);
-      expect(server.utterances[2]!.request_id).not.toBe(server.utterances[1]!.request_id);
+      // The first sentence was heard once, in full; no retry re-sent it.
+      expect(audioOf(events).equals(Buffer.alloc(2 * FRAME_BYTES, 1))).toBe(true);
+      expect(server.connectionCount()).toBe(1);
+      expect(server.utterances).toHaveLength(2);
 
-      const audio = audioOf(events);
-      expect(audio).toHaveLength(4 * FRAME_BYTES);
-      expect(audio.subarray(0, 2 * FRAME_BYTES).equals(Buffer.alloc(2 * FRAME_BYTES, 1))).toBe(
-        true,
-      );
-      expect(audio.subarray(2 * FRAME_BYTES).equals(Buffer.alloc(2 * FRAME_BYTES, 3))).toBe(true);
-      expect(events.at(-1)!.final).toBe(true);
+      const [{ error }] = await errorEvent;
+      expect(error).toBeInstanceOf(APIStatusError);
+      expect((error as APIStatusError).statusCode).toBe(503);
+      expect((error as APIStatusError).retryable).toBe(false);
     } finally {
       await vartalaap.close();
       await closeWebSocketServer(wss);
@@ -672,6 +665,149 @@ describe('Vartalaap streaming recovery', () => {
       });
       expect(audioOf(events)).toHaveLength(2 * FRAME_BYTES);
       expect(errored).toBe(false);
+    } finally {
+      await vartalaap.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+});
+
+describe('Vartalaap partial audio', () => {
+  // The byte stream frames audio in 100 ms (4800 B) frames and holds the latest one back until
+  // the next arrives, so three 80 ms server frames put exactly one frame on the queue.
+  const THREE_SERVER_FRAMES = 3;
+
+  it('does not retry once audio was heard: a drop mid-utterance is final, with no repeat', async () => {
+    const { wss, baseURL } = await startWebSocketServer();
+    const server = serveVartalaap(wss, {
+      onUtterance: (ws, utterance) => {
+        ws.send(JSON.stringify({ type: 'start', request_id: utterance.request_id }));
+        for (let i = 0; i < THREE_SERVER_FRAMES; i++) {
+          ws.send(Buffer.alloc(FRAME_BYTES, 1), { binary: true });
+        }
+        setTimeout(() => ws.close(1011, 'mid-speech drop'), 5);
+        return false;
+      },
+    });
+
+    const vartalaap = new TTS({ apiKey: 'test-key', baseUrl: baseURL });
+    const errorEvent = once(vartalaap, 'error') as Promise<Parameters<tts.TTSCallbacks['error']>>;
+    try {
+      // Retries are allowed, yet none happens: the audio already heard must not be repeated.
+      const events = await synthesizeTurn(vartalaap, ['dropping turn.'], {
+        ...DEFAULT_API_CONNECT_OPTIONS,
+        maxRetry: 3,
+        retryIntervalMs: 0,
+      });
+      expect(events).toHaveLength(1);
+      expect(audioOf(events)).toHaveLength(4800);
+
+      const [{ error }] = await errorEvent;
+      expect(error).toBeInstanceOf(APIConnectionError);
+      expect((error as APIConnectionError).retryable).toBe(false);
+      expect(server.connectionCount()).toBe(1);
+      expect(server.utterances).toHaveLength(1);
+    } finally {
+      await vartalaap.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('closes each segment with a final frame under its own segment id', async () => {
+    const { wss, baseURL } = await startWebSocketServer();
+    serveVartalaap(wss);
+
+    const vartalaap = new TTS({ apiKey: 'test-key', baseUrl: baseURL });
+    try {
+      const stream = vartalaap.stream();
+      stream.pushText('Pehla vaakya yahan khatam hota hai. ');
+      stream.flush();
+      stream.pushText('Doosra vaakya bhi yahan khatam hota hai.');
+      stream.endInput();
+
+      const events: tts.SynthesizedAudio[] = [];
+      for await (const event of stream) {
+        if (event !== tts.SynthesizeStream.END_OF_STREAM) events.push(event);
+      }
+      stream.close();
+
+      const segments = [...new Set(events.map((event) => event.segmentId))];
+      expect(segments).toHaveLength(2);
+      const [first, second] = segments as [string, string];
+      const firstEvents = events.filter((event) => event.segmentId === first);
+      const secondEvents = events.filter((event) => event.segmentId === second);
+      expect(audioOf(firstEvents).equals(Buffer.alloc(2 * FRAME_BYTES, 1))).toBe(true);
+      expect(audioOf(secondEvents).equals(Buffer.alloc(2 * FRAME_BYTES, 2))).toBe(true);
+      expect(firstEvents.at(-1)!.final).toBe(true);
+      expect(firstEvents.slice(0, -1).every((event) => !event.final)).toBe(true);
+      expect(secondEvents.at(-1)!.final).toBe(true);
+      expect(secondEvents.slice(0, -1).every((event) => !event.final)).toBe(true);
+      // The first segment is closed before the second one opens.
+      expect(events.indexOf(firstEvents.at(-1)!)).toBeLessThan(events.indexOf(secondEvents[0]!));
+    } finally {
+      await vartalaap.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('keeps the segment id when a 503 before any audio is retried on a new socket', async () => {
+    const { wss, baseURL } = await startWebSocketServer();
+    const server = serveVartalaap(wss, {
+      onUtterance: (ws, utterance, connectionNumber) => {
+        if (connectionNumber === 1) {
+          ws.send(
+            JSON.stringify({
+              type: 'error',
+              request_id: utterance.request_id,
+              error: 'all workers busy',
+              status: 503,
+              retry_after: 1,
+            }),
+          );
+          return false;
+        }
+        return true;
+      },
+    });
+
+    const vartalaap = new TTS({ apiKey: 'test-key', baseUrl: baseURL });
+    try {
+      const stream = vartalaap.stream({
+        connOptions: { ...DEFAULT_API_CONNECT_OPTIONS, maxRetry: 1, retryIntervalMs: 0 },
+      });
+      stream.pushText('Pehla vaakya yahan khatam hota hai. ');
+      stream.flush();
+      stream.pushText('Doosra vaakya bhi yahan khatam hota hai.');
+      stream.endInput();
+
+      const events: tts.SynthesizedAudio[] = [];
+      for await (const event of stream) {
+        if (event !== tts.SynthesizeStream.END_OF_STREAM) events.push(event);
+      }
+      stream.close();
+
+      expect(server.connectionCount()).toBe(2);
+      // Both sentences on the first socket (the second one was queued behind the busy first),
+      // then both again on the second: the retry starts over because nothing was heard.
+      expect(server.utterances.map((u) => u.text)).toEqual([
+        'Pehla vaakya yahan khatam hota hai.',
+        'Doosra vaakya bhi yahan khatam hota hai.',
+        'Pehla vaakya yahan khatam hota hai.',
+        'Doosra vaakya bhi yahan khatam hota hai.',
+      ]);
+
+      // Audio once, from the retry (utterances 3 and 4), in two segments with stable ids:
+      // the same two ids the first attempt reported, so the user-facing segment sequence is
+      // unaffected by the retry.
+      const audio = audioOf(events);
+      expect(audio).toHaveLength(4 * FRAME_BYTES);
+      expect(audio.subarray(0, 2 * FRAME_BYTES).equals(Buffer.alloc(2 * FRAME_BYTES, 3))).toBe(
+        true,
+      );
+      expect(audio.subarray(2 * FRAME_BYTES).equals(Buffer.alloc(2 * FRAME_BYTES, 4))).toBe(true);
+      const segments = [...new Set(events.map((event) => event.segmentId))];
+      expect(segments).toHaveLength(2);
+      expect(events.filter((e) => e.final)).toHaveLength(2);
     } finally {
       await vartalaap.close();
       await closeWebSocketServer(wss);
