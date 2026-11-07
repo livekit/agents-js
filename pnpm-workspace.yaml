@@ -11,8 +11,6 @@ minimumReleaseAgeExclude:
   - '@mistralai/mistralai@3.4.0'
   - encodeurl@2.0.1
   - qs@6.17.1
-  # Gemini 4 continuation support.
-  - '@google/genai@2.29.1'
   - '@livekit/*'
   # phonic_model realtime config option
   - phonic@0.32.28

@@ -81,4 +81,8 @@ export type ClientEvents =
   | {
       type: 'function_response';
       value: types.FunctionResponse;
+    }
+  | {
+      type: 'context_update';
+      value: Parameters<types.Session['sendContextUpdate']>[0];
     };
