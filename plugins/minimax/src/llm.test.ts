@@ -4,12 +4,7 @@
 import { llm } from '@livekit/agents';
 import { describe, expect, it } from 'vitest';
 import { AnthropicLLM, type AnthropicLLMOptions, LLM, type LLMOptions } from './llm.js';
-import {
-  CHAT_MODEL_INFO,
-  type ChatThinkingMode,
-  DEFAULT_CHAT_MODEL,
-  REGIONAL_ENDPOINTS,
-} from './models.js';
+import { CHAT_MODEL_INFO, DEFAULT_CHAT_MODEL, REGIONAL_ENDPOINTS } from './models.js';
 
 const drain = async (stream: AsyncIterable<unknown>): Promise<void> => {
   for await (const chunk of stream) {
@@ -19,29 +14,72 @@ const drain = async (stream: AsyncIterable<unknown>): Promise<void> => {
 
 describe('MiniMax LLM', () => {
   it('exports the current model metadata', () => {
-    expect(DEFAULT_CHAT_MODEL).toBe('MiniMax-M3');
+    expect(DEFAULT_CHAT_MODEL).toBe('MiniMax-M3.1-Flash');
     expect(CHAT_MODEL_INFO).toEqual({
-      'MiniMax-M3': {
+      'MiniMax-M3.1-Flash': {
         contextWindow: 1_000_000,
         pricingUSDPerMillionTokens: {
-          input: 0.6,
-          output: 2.4,
-          cacheRead: 0.12,
+          input: 0.15,
+          output: 0.6,
+          cacheRead: 0.015,
           cacheWrite: null,
         },
+        pricingTiers: null,
         inputModalities: ['text', 'image', 'video'],
-        thinking: ['adaptive', 'disabled'],
+        thinking: ['adaptive'],
+        thinkingAlwaysOn: true,
+        thinkingDefaults: {
+          openAI: 'adaptive',
+          anthropic: 'adaptive',
+        },
+        reasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+        reasoningEffortDefault: 'max',
+        serviceTierSupported: false,
       },
-      'MiniMax-M2.7': {
-        contextWindow: 204_800,
+      'MiniMax-M3': {
+        contextWindow: 1_000_000,
         pricingUSDPerMillionTokens: {
           input: 0.3,
           output: 1.2,
           cacheRead: 0.06,
-          cacheWrite: 0.375,
+          cacheWrite: null,
         },
-        inputModalities: ['text'],
-        thinking: ['always_on'],
+        pricingTiers: {
+          selectionBasis: 'request_input_tokens',
+          inputTokenThreshold: '512k',
+          standard: [
+            {
+              inputTokenCondition: '<=512k',
+              pricingUSDPerMillionTokens: {
+                input: 0.3,
+                output: 1.2,
+                cacheRead: 0.06,
+                cacheWrite: null,
+              },
+            },
+            {
+              inputTokenCondition: '>512k',
+              pricingUSDPerMillionTokens: {
+                input: 0.6,
+                output: 2.4,
+                cacheRead: 0.12,
+                cacheWrite: null,
+              },
+            },
+          ],
+          priorityMultiplier: 1.5,
+          priorityMultiplierAppliesTo: ['input', 'output', 'cacheRead'],
+        },
+        inputModalities: ['text', 'image', 'video'],
+        thinking: ['adaptive', 'disabled'],
+        thinkingAlwaysOn: false,
+        thinkingDefaults: {
+          openAI: 'adaptive',
+          anthropic: 'disabled',
+        },
+        reasoningEfforts: [],
+        reasoningEffortDefault: null,
+        serviceTierSupported: true,
       },
     });
   });
@@ -58,7 +96,7 @@ describe('MiniMax LLM', () => {
     expect(chinaAnthropic.baseURL).toBe(REGIONAL_ENDPOINTS.cn_zh.anthropicBaseURL);
   });
 
-  it('passes adaptive thinking to the OpenAI-compatible request', async () => {
+  it('passes default MiniMax-M3.1-Flash options to the OpenAI-compatible request', async () => {
     let capturedRequest: Record<string, unknown> | undefined;
     const client = {
       baseURL: 'https://unused.invalid',
@@ -71,16 +109,19 @@ describe('MiniMax LLM', () => {
         },
       },
     } as unknown as NonNullable<LLMOptions['client']>;
-    const model = new LLM({ client, thinking: 'adaptive' });
+    const model = new LLM({ client });
     const chatCtx = new llm.ChatContext();
     chatCtx.addMessage({ role: 'user', content: 'Hello' });
 
     await drain(model.chat({ chatCtx }));
 
+    expect(model.thinking).toBe('adaptive');
+    expect(model.reasoningEffort).toBe('max');
     expect(capturedRequest?.thinking).toEqual({ type: 'adaptive' });
+    expect(capturedRequest?.reasoning_effort).toBe('max');
   });
 
-  it('passes disabled thinking to the Anthropic-compatible request', async () => {
+  it('passes default MiniMax-M3.1-Flash options to the Anthropic-compatible request', async () => {
     let capturedRequest: Record<string, unknown> | undefined;
     const client = {
       baseURL: 'https://unused.invalid',
@@ -91,50 +132,70 @@ describe('MiniMax LLM', () => {
         },
       },
     } as unknown as NonNullable<AnthropicLLMOptions['client']>;
-    const model = new AnthropicLLM({ client, thinking: 'disabled' });
+    const model = new AnthropicLLM({ client });
     const chatCtx = new llm.ChatContext();
     chatCtx.addMessage({ role: 'user', content: 'Hello' });
 
     await drain(model.chat({ chatCtx }));
 
-    expect(capturedRequest?.thinking).toEqual({ type: 'disabled' });
+    expect(model.thinking).toBe('adaptive');
+    expect(model.reasoningEffort).toBe('max');
+    expect(capturedRequest?.thinking).toEqual({ type: 'adaptive' });
+    expect(capturedRequest?.output_config).toEqual({ effort: 'max' });
   });
 
-  it('keeps always-on thinking implicit for MiniMax-M2.7', async () => {
-    let capturedRequest: Record<string, unknown> | undefined;
-    const client = {
+  it('uses API-specific MiniMax-M3 thinking defaults and ignores effort', async () => {
+    let openAIRequest: Record<string, unknown> | undefined;
+    let anthropicRequest: Record<string, unknown> | undefined;
+    const openAIClient = {
       baseURL: 'https://unused.invalid',
       chat: {
         completions: {
           create: async (request: Record<string, unknown>) => {
-            capturedRequest = request;
+            openAIRequest = request;
             return (async function* (): AsyncGenerator<never> {})();
           },
         },
       },
     } as unknown as NonNullable<LLMOptions['client']>;
-    const model = new LLM({ client, model: 'MiniMax-M2.7' });
+    const anthropicClient = {
+      baseURL: 'https://unused.invalid',
+      messages: {
+        create: async (request: Record<string, unknown>) => {
+          anthropicRequest = request;
+          return (async function* (): AsyncGenerator<never> {})();
+        },
+      },
+    } as unknown as NonNullable<AnthropicLLMOptions['client']>;
+    const openAIModel = new LLM({
+      client: openAIClient,
+      model: 'MiniMax-M3',
+      reasoningEffort: 'high',
+    });
+    const anthropicModel = new AnthropicLLM({
+      client: anthropicClient,
+      model: 'MiniMax-M3',
+      reasoningEffort: 'high',
+    });
     const chatCtx = new llm.ChatContext();
     chatCtx.addMessage({ role: 'user', content: 'Hello' });
 
-    await drain(model.chat({ chatCtx }));
+    await drain(openAIModel.chat({ chatCtx }));
+    await drain(anthropicModel.chat({ chatCtx }));
 
-    expect(model.thinking).toBe('always_on');
-    expect(capturedRequest).not.toHaveProperty('thinking');
+    expect(openAIModel.thinking).toBe('adaptive');
+    expect(anthropicModel.thinking).toBe('disabled');
+    expect(openAIModel.reasoningEffort).toBeUndefined();
+    expect(anthropicModel.reasoningEffort).toBeUndefined();
+    expect(openAIRequest?.thinking).toEqual({ type: 'adaptive' });
+    expect(openAIRequest).not.toHaveProperty('reasoning_effort');
+    expect(anthropicRequest?.thinking).toEqual({ type: 'disabled' });
+    expect(anthropicRequest).not.toHaveProperty('output_config');
   });
 
-  it.each<ChatThinkingMode>(['adaptive', 'disabled'])(
-    'rejects %s thinking for MiniMax-M2.7',
-    (thinking) => {
-      expect(() => new LLM({ apiKey: 'test-key', model: 'MiniMax-M2.7', thinking })).toThrow(
-        `Thinking mode "${thinking}" is not supported by MiniMax model "MiniMax-M2.7"`,
-      );
-    },
-  );
-
-  it('rejects always-on thinking for MiniMax-M3', () => {
-    expect(
-      () => new LLM({ apiKey: 'test-key', model: 'MiniMax-M3', thinking: 'always_on' }),
-    ).toThrow('Thinking mode "always_on" is not supported by MiniMax model "MiniMax-M3"');
+  it('rejects disabled thinking for MiniMax-M3.1-Flash', () => {
+    expect(() => new LLM({ apiKey: 'test-key', thinking: 'disabled' })).toThrow(
+      'Thinking mode "disabled" is not supported by MiniMax model "MiniMax-M3.1-Flash"',
+    );
   });
 });

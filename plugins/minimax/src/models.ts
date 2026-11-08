@@ -6,7 +6,10 @@
 export type ChatInputModality = 'text' | 'image' | 'video';
 
 /** Thinking behavior supported by a MiniMax chat model. */
-export type ChatThinkingMode = 'adaptive' | 'disabled' | 'always_on';
+export type ChatThinkingMode = 'adaptive' | 'disabled';
+
+/** Reasoning effort accepted by MiniMax-M3.1-Flash. */
+export type ChatReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
 /** Per-token pricing in USD per million tokens. */
 export interface ChatModelPricing {
@@ -16,37 +19,101 @@ export interface ChatModelPricing {
   cacheWrite: number | null;
 }
 
+/** Long-context and priority pricing published for a MiniMax chat model. */
+export interface ChatModelPricingTiers {
+  selectionBasis: 'request_input_tokens';
+  inputTokenThreshold: '512k';
+  standard: readonly {
+    inputTokenCondition: '<=512k' | '>512k';
+    pricingUSDPerMillionTokens: ChatModelPricing;
+  }[];
+  priorityMultiplier: number;
+  priorityMultiplierAppliesTo: readonly ('input' | 'output' | 'cacheRead')[];
+}
+
 /** Metadata for a supported MiniMax chat model. */
 export interface ChatModelInfo {
   contextWindow: number;
   pricingUSDPerMillionTokens: ChatModelPricing;
+  pricingTiers: ChatModelPricingTiers | null;
   inputModalities: readonly ChatInputModality[];
   thinking: readonly ChatThinkingMode[];
+  thinkingAlwaysOn: boolean;
+  thinkingDefaults: {
+    openAI: ChatThinkingMode;
+    anthropic: ChatThinkingMode;
+  };
+  reasoningEfforts: readonly ChatReasoningEffort[];
+  reasoningEffortDefault: ChatReasoningEffort | null;
+  serviceTierSupported: boolean;
 }
 
 /** Supported MiniMax chat models and their current capabilities. */
 export const CHAT_MODEL_INFO = {
-  'MiniMax-M3': {
+  'MiniMax-M3.1-Flash': {
     contextWindow: 1_000_000,
     pricingUSDPerMillionTokens: {
-      input: 0.6,
-      output: 2.4,
-      cacheRead: 0.12,
+      input: 0.15,
+      output: 0.6,
+      cacheRead: 0.015,
       cacheWrite: null,
     },
+    pricingTiers: null,
     inputModalities: ['text', 'image', 'video'],
-    thinking: ['adaptive', 'disabled'],
+    thinking: ['adaptive'],
+    thinkingAlwaysOn: true,
+    thinkingDefaults: {
+      openAI: 'adaptive',
+      anthropic: 'adaptive',
+    },
+    reasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+    reasoningEffortDefault: 'max',
+    serviceTierSupported: false,
   },
-  'MiniMax-M2.7': {
-    contextWindow: 204_800,
+  'MiniMax-M3': {
+    contextWindow: 1_000_000,
     pricingUSDPerMillionTokens: {
       input: 0.3,
       output: 1.2,
       cacheRead: 0.06,
-      cacheWrite: 0.375,
+      cacheWrite: null,
     },
-    inputModalities: ['text'],
-    thinking: ['always_on'],
+    pricingTiers: {
+      selectionBasis: 'request_input_tokens',
+      inputTokenThreshold: '512k',
+      standard: [
+        {
+          inputTokenCondition: '<=512k',
+          pricingUSDPerMillionTokens: {
+            input: 0.3,
+            output: 1.2,
+            cacheRead: 0.06,
+            cacheWrite: null,
+          },
+        },
+        {
+          inputTokenCondition: '>512k',
+          pricingUSDPerMillionTokens: {
+            input: 0.6,
+            output: 2.4,
+            cacheRead: 0.12,
+            cacheWrite: null,
+          },
+        },
+      ],
+      priorityMultiplier: 1.5,
+      priorityMultiplierAppliesTo: ['input', 'output', 'cacheRead'],
+    },
+    inputModalities: ['text', 'image', 'video'],
+    thinking: ['adaptive', 'disabled'],
+    thinkingAlwaysOn: false,
+    thinkingDefaults: {
+      openAI: 'adaptive',
+      anthropic: 'disabled',
+    },
+    reasoningEfforts: [],
+    reasoningEffortDefault: null,
+    serviceTierSupported: true,
   },
 } as const satisfies Record<string, ChatModelInfo>;
 
@@ -54,7 +121,7 @@ export const CHAT_MODEL_INFO = {
 export type ChatModels = keyof typeof CHAT_MODEL_INFO;
 
 /** Default MiniMax chat model. */
-export const DEFAULT_CHAT_MODEL: ChatModels = 'MiniMax-M3';
+export const DEFAULT_CHAT_MODEL: ChatModels = 'MiniMax-M3.1-Flash';
 
 /** Regional MiniMax compatible API endpoints. */
 export const REGIONAL_ENDPOINTS = {

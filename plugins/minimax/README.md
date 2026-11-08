@@ -41,9 +41,9 @@ import { LLM } from '@livekit/agents-plugin-minimax';
 
 const model = new LLM({
   region: 'global_en',
-  thinking: 'adaptive',
 });
 ```
 
 Use `AnthropicLLM` for the Anthropic-compatible API, and set `region: 'cn_zh'`
-to select the China endpoint.
+to select the China endpoint. The default model is `MiniMax-M3.1-Flash`;
+`MiniMax-M3` is also available.
