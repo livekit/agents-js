@@ -891,3 +891,58 @@ describe('Vartaloop short flushed segment', () => {
     }
   });
 });
+
+describe('Vartaloop segment finality', () => {
+  it('closes a segment whose last utterance delivered no audio with a silent final marker', async () => {
+    const { wss, baseURL } = await startWebSocketServer();
+    // The first utterance speaks one 80 ms frame; the second (text that normalises to nothing)
+    // is answered with start and end only.
+    const server = serveVartaloop(wss, {
+      onUtterance: (ws, utterance) => {
+        ws.send(JSON.stringify({ type: 'start', request_id: utterance.request_id }));
+        if (server.utterances.length === 1) {
+          ws.send(Buffer.alloc(FRAME_BYTES, 1), { binary: true });
+        }
+        ws.send(JSON.stringify({ type: 'end', request_id: utterance.request_id }));
+        return false;
+      },
+    });
+
+    const vartaloop = new TTS({ apiKey: 'test-key', baseUrl: baseURL });
+    try {
+      const stream = vartaloop.stream();
+      // Two sentences of one segment: the first is sent as soon as the second follows it; the
+      // second stays in the tokenizer until the input ends.
+      stream.pushText(
+        'Pehla vaakya yahan khatam hota hai. Doosra vaakya bhi yahan khatam hota hai. ',
+      );
+
+      // Sentence 1 ends with nothing pending and its segment still open: released non-final.
+      const first = await waitFor(stream.next(), 1000);
+      const spoken = first.value as tts.SynthesizedAudio;
+      expect(spoken).not.toBe(tts.SynthesizeStream.END_OF_STREAM);
+      expect(audioOf([spoken]).equals(Buffer.alloc(FRAME_BYTES, 1))).toBe(true);
+      expect(spoken.final).toBe(false);
+
+      stream.endInput();
+      const rest: tts.SynthesizedAudio[] = [];
+      for await (const event of stream) {
+        if (event !== tts.SynthesizeStream.END_OF_STREAM) rest.push(event);
+      }
+      stream.close();
+
+      expect(server.utterances).toHaveLength(2);
+      // Exactly one final frame closes the segment: the 10 ms silent marker.
+      expect(rest).toHaveLength(1);
+      const marker = rest[0]!;
+      expect(marker.segmentId).toBe(spoken.segmentId);
+      expect(marker.final).toBe(true);
+      expect(marker.frame.samplesPerChannel).toBe(240);
+      expect(marker.frame.sampleRate).toBe(24000);
+      expect(audioOf([marker]).equals(Buffer.alloc(480))).toBe(true);
+    } finally {
+      await vartaloop.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+});

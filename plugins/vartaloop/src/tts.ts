@@ -18,7 +18,7 @@ import {
   tokenize,
   tts,
 } from '@livekit/agents';
-import type { AudioFrame } from '@livekit/rtc-node';
+import { AudioFrame } from '@livekit/rtc-node';
 import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { type RawData, WebSocket } from 'ws';
@@ -30,6 +30,9 @@ const DEFAULT_VOICE: TTSVoices = 'saanvi';
 const API_KEY_ENV = 'VARTALOOP_API_KEY';
 const SAMPLE_RATE = 24000;
 const NUM_CHANNELS = 1;
+// A segment that had audio always ends on a final frame. When its last utterance delivered no
+// PCM (text that normalises to nothing), this many samples of silence carry the final marker.
+const FINAL_MARKER_SAMPLES = 240; // 10 ms at 24 kHz
 const USER_AGENT = `agents-plugin-vartaloop/${__PACKAGE_VERSION__}`;
 // A pooled socket is reopened after this long so one call cannot pin a connection forever.
 const MAX_SESSION_DURATION_MS = 300_000;
@@ -668,6 +671,9 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       // The utterance whose audio is arriving (the head of `pending` once its `start` came).
       let currentUtterance: string | undefined;
       let currentSegment: string | undefined;
+      // Segments that have had a frame emitted, and those already closed by a final frame.
+      const segmentsWithAudio = new Set<string>();
+      const closedSegments = new Set<string>();
       // Set once every utterance ended. Until then, a socket close or error is a
       // mid-generation drop, not a normal end.
       let completed = false;
@@ -677,7 +683,28 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         if (lastFrame && lastSegmentId !== undefined && !this.queue.closed) {
           this.queue.put({ requestId, segmentId: lastSegmentId, frame: lastFrame, final });
           this.#audioEmitted = true;
+          segmentsWithAudio.add(lastSegmentId);
+          if (final) closedSegments.add(lastSegmentId);
           lastFrame = undefined;
+        }
+      };
+      // Ends a segment on a final frame: the held frame when there is one, otherwise (the
+      // segment's last utterance delivered no PCM) a short silent marker, so a segment that had
+      // audio is always closed. A segment with no audio at all emits nothing.
+      const closeSegment = (segmentId: string) => {
+        if (lastFrame && lastSegmentId === segmentId) {
+          sendLastFrame(true);
+          return;
+        }
+        if (segmentsWithAudio.has(segmentId) && !closedSegments.has(segmentId)) {
+          lastFrame = new AudioFrame(
+            new Int16Array(FINAL_MARKER_SAMPLES),
+            this.#opts.sampleRate,
+            NUM_CHANNELS,
+            FINAL_MARKER_SAMPLES,
+          );
+          lastSegmentId = segmentId;
+          sendLastFrame(true);
         }
       };
       const pushFrames = (frames: AudioFrame[], segmentId: string) => {
@@ -712,8 +739,11 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       ws.on('error', onError);
 
       const finish = () => {
-        pushFrames(bstream.flush(), currentSegment ?? lastSegmentId ?? requestId);
-        sendLastFrame(true);
+        const segmentId = currentSegment ?? lastSegmentId;
+        if (segmentId !== undefined) {
+          pushFrames(bstream.flush(), segmentId);
+          closeSegment(segmentId);
+        }
         if (!this.queue.closed) {
           this.queue.put(SynthesizeStream.END_OF_STREAM);
         }
@@ -777,7 +807,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
               // A new segment: close the frames of the previous one.
               if (currentSegment !== undefined) {
                 pushFrames(bstream.flush(), currentSegment);
-                sendLastFrame(true);
+                closeSegment(currentSegment);
               }
               currentSegment = head.segmentId;
             }
@@ -786,12 +816,13 @@ export class SynthesizeStream extends tts.SynthesizeStream {
             pending.shift();
             // The utterance's audio is complete: hand over its tail without waiting for the
             // next sentence's first frame to pad it.
-            pushFrames(bstream.flush(), currentSegment ?? head.segmentId);
+            const segmentId = currentSegment ?? head.segmentId;
+            pushFrames(bstream.flush(), segmentId);
             currentUtterance = undefined;
             const next = pending[0];
-            if (next && next.segmentId !== currentSegment) {
+            if (next && next.segmentId !== segmentId) {
               // The sentence closed its segment: its last frame is the segment's final one.
-              sendLastFrame(true);
+              closeSegment(segmentId);
               currentSegment = undefined;
             } else if (next) {
               // The segment goes on with the next sentence: nothing more comes for this one, so
@@ -801,7 +832,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
               // Nothing queued behind it and its segment already flushed (or the input ended):
               // release the tail now, as the segment's final frame, so a short flushed greeting
               // is heard without waiting for the next sentence or the end of the input.
-              sendLastFrame(true);
+              closeSegment(segmentId);
               currentSegment = undefined;
             } else {
               // Nothing queued behind it yet, but the segment is still open: release the tail
