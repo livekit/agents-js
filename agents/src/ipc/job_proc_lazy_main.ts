@@ -65,6 +65,7 @@ const safeSend = (msg: IPCMessage): boolean => {
 type JobTask = {
   ctx: JobContext;
   task: Promise<void>;
+  readonly failed: boolean;
 };
 
 class PendingInference {
@@ -119,7 +120,8 @@ class InfClient implements InferenceExecutor {
   }
 }
 
-const startJob = (
+/** @internal */
+export const startJob = (
   proc: JobProcess,
   func: (ctx: JobContext) => Promise<void>,
   info: RunningJobInfo,
@@ -135,6 +137,7 @@ const startJob = (
   // a shutdown the agent asked for (ctx.shutdown()), as opposed to the room dropping or the
   // worker's request
   let userInitiated = false;
+  let failed = false;
 
   const room = new Room();
   room.on(RoomEvent.Disconnected, () => {
@@ -227,6 +230,9 @@ const startJob = (
           );
 
           void entrypointPromise.catch(() => {
+            // Errors while unwinding an already requested shutdown do not turn that shutdown into
+            // a failed job.
+            if (!shutdown) failed = true;
             closeEvent.emit('close', EXIT_REASON.jobCrashed);
           });
         }
@@ -286,11 +292,17 @@ const startJob = (
     }
   })();
 
-  return { ctx, task };
+  return {
+    ctx,
+    task,
+    get failed() {
+      return failed;
+    },
+  };
 };
 
 (async () => {
-  if (process.send) {
+  if (process.send && process.argv[2]) {
     const join = new Future();
 
     const moduleFile = process.argv[2];
@@ -433,6 +445,6 @@ const startJob = (
     }
 
     logger.debug('Job process shutdown');
-    process.exit(0);
+    process.exit(Number((job as JobTask | undefined)?.failed ?? false));
   }
 })();
