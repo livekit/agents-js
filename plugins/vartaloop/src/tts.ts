@@ -327,6 +327,9 @@ export class ChunkedStream extends tts.ChunkedStream {
     const baseUrl = new URL(this.#opts.baseUrl);
     const request = baseUrl.protocol === 'http:' ? httpRequest : httpsRequest;
     const doneFut = new Future<void>();
+    // Set once a frame reached the queue. From then on a failure is final: a retry would send
+    // the whole text again and the start would be heard twice.
+    let audioEmitted = false;
 
     const req = request(
       {
@@ -374,6 +377,7 @@ export class ChunkedStream extends tts.ChunkedStream {
               frame,
               final: false,
             });
+            audioEmitted = true;
           }
         });
         res.on('end', () => {
@@ -437,8 +441,8 @@ export class ChunkedStream extends tts.ChunkedStream {
     } catch (e) {
       if (this.abortSignal.aborted) return;
       if (!this.queue.closed) this.queue.close();
-      if (e instanceof APIError) throw e;
-      throw toRetryableConnectionError(e);
+      const error = e instanceof APIError ? e : toRetryableConnectionError(e);
+      throw audioEmitted ? asFinalError(error) : error;
     } finally {
       clearTimeout(totalTimer);
     }
@@ -531,6 +535,25 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     })();
   }
 
+  // Whether the input log already shows the segment at `index` closed: a flush recorded after
+  // its text (a flush only starts a new segment when text preceded it), or the end of the input.
+  #segmentClosed(index: number): boolean {
+    if (this.#inputEnded) return true;
+    let closed = 0;
+    let textSinceFlush = false;
+    for (const item of this.#inputLog) {
+      if (item === SynthesizeStream.FLUSH_SENTINEL) {
+        if (textSinceFlush) {
+          closed++;
+          textSinceFlush = false;
+        }
+      } else if (item.trim()) {
+        textSinceFlush = true;
+      }
+    }
+    return index < closed;
+  }
+
   // Replays the log from the start, then follows it as new text arrives, until the input ends
   // or the attempt that reads it is over.
   async *#replayInput(stopped: () => boolean) {
@@ -549,8 +572,8 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     const requestId = shortuuid();
     this.#startInputPump();
     const tokenizer = new tokenize.basic.SentenceTokenizer().stream();
-    // Utterances sent and not yet ended, in order.
-    const pending: { utteranceId: string; segmentId: string }[] = [];
+    // Utterances sent and not yet ended, in order, each with its segment (id and position).
+    const pending: { utteranceId: string; segmentId: string; segmentIndex: number }[] = [];
     // Set once the sender has nothing more to send (or the sender failed).
     let senderDone = false;
     let attemptOver = false;
@@ -609,12 +632,12 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       // This attempt's tokenizer segment ids, in order of appearance, mapped onto the stream's
       // stable ones so a retry keeps the segment ids of the first attempt.
       const tokenizerSegments: string[] = [];
-      const stableSegmentId = (tokenizerSegment: string): string => {
+      const stableSegment = (tokenizerSegment: string): { id: string; index: number } => {
         let index = tokenizerSegments.indexOf(tokenizerSegment);
         if (index === -1) {
           index = tokenizerSegments.push(tokenizerSegment) - 1;
         }
-        return (this.#segmentIds[index] ??= shortuuid());
+        return { id: (this.#segmentIds[index] ??= shortuuid()), index };
       };
       try {
         for await (const event of tokenizer) {
@@ -626,7 +649,8 @@ export class SynthesizeStream extends tts.SynthesizeStream {
           if (ws.readyState !== WebSocket.OPEN) {
             throw new APIConnectionError({ message: 'Vartaloop WebSocket closed mid-generation' });
           }
-          pending.push({ utteranceId, segmentId: stableSegmentId(event.segmentId || requestId) });
+          const segment = stableSegment(event.segmentId || requestId);
+          pending.push({ utteranceId, segmentId: segment.id, segmentIndex: segment.index });
           this.markStarted();
           ws.send(JSON.stringify(body));
           if (pending.length === 1) armWatchdog();
@@ -772,6 +796,16 @@ export class SynthesizeStream extends tts.SynthesizeStream {
             } else if (next) {
               // The segment goes on with the next sentence: nothing more comes for this one, so
               // its tail is handed over now rather than held until the next frame.
+              sendLastFrame(false);
+            } else if (this.#segmentClosed(head.segmentIndex)) {
+              // Nothing queued behind it and its segment already flushed (or the input ended):
+              // release the tail now, as the segment's final frame, so a short flushed greeting
+              // is heard without waiting for the next sentence or the end of the input.
+              sendLastFrame(true);
+              currentSegment = undefined;
+            } else {
+              // Nothing queued behind it yet, but the segment is still open: release the tail
+              // now and let the segment's final marker ride on its later sentence.
               sendLastFrame(false);
             }
             if (senderDone && pending.length === 0) {

@@ -474,6 +474,38 @@ describe('Vartaloop chunked synthesis', () => {
     }
   });
 
+  it('does not retry a body truncated after audio was heard: the error is final', async () => {
+    let hits = 0;
+    const http = await startHttpServer((_req, _body, res) => {
+      hits++;
+      res.writeHead(200, { 'content-type': 'audio/pcm;rate=24000;channels=1' });
+      // One full 100 ms frame (the byte stream's frame size), then the connection drops.
+      res.write(Buffer.alloc(4800, 6));
+      setTimeout(() => res.destroy(), 5);
+    });
+
+    const vartaloop = new TTS({ apiKey: 'test-key', baseUrl: http.baseURL });
+    const errorEvent = once(vartaloop, 'error') as Promise<Parameters<tts.TTSCallbacks['error']>>;
+    try {
+      const events = await collect(
+        vartaloop.synthesize('cut off after a frame.', {
+          ...DEFAULT_API_CONNECT_OPTIONS,
+          maxRetry: 2,
+          retryIntervalMs: 0,
+        }),
+      );
+      expect(events).toHaveLength(1);
+      expect(audioOf(events).equals(Buffer.alloc(4800, 6))).toBe(true);
+      const [{ error }] = await errorEvent;
+      expect(error).toBeInstanceOf(APIConnectionError);
+      expect((error as APIConnectionError).retryable).toBe(false);
+      expect(hits).toBe(1);
+    } finally {
+      await vartaloop.close();
+      await http.close();
+    }
+  });
+
   it('rejects a truncated body with a retryable APIConnectionError', async () => {
     const http = await startHttpServer((_req, _body, res) => {
       res.writeHead(200, { 'content-type': 'audio/pcm;rate=24000;channels=1' });
@@ -808,6 +840,51 @@ describe('Vartaloop partial audio', () => {
       const segments = [...new Set(events.map((event) => event.segmentId))];
       expect(segments).toHaveLength(2);
       expect(events.filter((e) => e.final)).toHaveLength(2);
+    } finally {
+      await vartaloop.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+});
+
+describe('Vartaloop short flushed segment', () => {
+  it('releases a flushed sentence as soon as it ends, while the input stays open', async () => {
+    const { wss, baseURL } = await startWebSocketServer();
+    // One 80 ms frame per utterance: less than the byte stream's 100 ms frame, so the audio
+    // only comes out of the flush at the utterance's end.
+    serveVartaloop(wss, {
+      onUtterance: (ws, utterance) => {
+        ws.send(JSON.stringify({ type: 'start', request_id: utterance.request_id }));
+        ws.send(Buffer.alloc(FRAME_BYTES, 1), { binary: true });
+        ws.send(JSON.stringify({ type: 'end', request_id: utterance.request_id }));
+        return false;
+      },
+    });
+
+    const vartaloop = new TTS({ apiKey: 'test-key', baseUrl: baseURL });
+    try {
+      const stream = vartaloop.stream();
+      stream.pushText('Namaste ji. ');
+      stream.flush();
+
+      const first = await waitFor(stream.next(), 200);
+      expect(first.done).toBe(false);
+      const greeting = first.value as tts.SynthesizedAudio;
+      expect(greeting).not.toBe(tts.SynthesizeStream.END_OF_STREAM);
+      expect(audioOf([greeting]).equals(Buffer.alloc(FRAME_BYTES, 1))).toBe(true);
+      expect(greeting.final).toBe(true);
+
+      stream.pushText('Aap kaise hain aaj?');
+      stream.endInput();
+      const rest: tts.SynthesizedAudio[] = [];
+      for await (const event of stream) {
+        if (event !== tts.SynthesizeStream.END_OF_STREAM) rest.push(event);
+      }
+      stream.close();
+
+      expect(rest).toHaveLength(1);
+      expect(rest[0]!.segmentId).not.toBe(greeting.segmentId);
+      expect(rest[0]!.final).toBe(true);
     } finally {
       await vartaloop.close();
       await closeWebSocketServer(wss);
