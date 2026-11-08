@@ -1594,14 +1594,16 @@ export function performToolExecutions({
           // is bound by what the report asked for
           toolOutput.replyToolChoice = runCtx._replyToolChoice;
         } catch (rawError) {
-          logger.error(
-            {
-              function: toolCall.name,
-              speech_id: speechHandle.id,
-              error: toError(rawError).message,
-            },
-            'exception occurred while executing tool',
-          );
+          if (!isStopResponse(rawError)) {
+            logger.error(
+              {
+                function: toolCall.name,
+                speech_id: speechHandle.id,
+                error: toError(rawError).message,
+              },
+              'exception occurred while executing tool',
+            );
+          }
           toolOutput = createToolOutput({
             toolCall,
             exception: toError(rawError),
