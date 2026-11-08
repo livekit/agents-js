@@ -27,10 +27,10 @@ import type { TTSDigits, TTSExpressions, TTSModels, TTSProfiles, TTSVoices } fro
 const DEFAULT_BASE_URL = 'https://api.vartaloop.ai';
 const DEFAULT_MODEL: TTSModels = 'narad';
 const DEFAULT_VOICE: TTSVoices = 'saanvi';
-const API_KEY_ENV = 'VARTALAAP_API_KEY';
+const API_KEY_ENV = 'VARTALOOP_API_KEY';
 const SAMPLE_RATE = 24000;
 const NUM_CHANNELS = 1;
-const USER_AGENT = `agents-plugin-vartalaap/${__PACKAGE_VERSION__}`;
+const USER_AGENT = `agents-plugin-vartaloop/${__PACKAGE_VERSION__}`;
 // A pooled socket is reopened after this long so one call cannot pin a connection forever.
 const MAX_SESSION_DURATION_MS = 300_000;
 // Wall-time ceiling for one REST request (the server's own per-request limit is 120 s).
@@ -44,7 +44,7 @@ const connectionPools = new WeakMap<TTS, ConnectionPool<WebSocket>>();
 const currentOptions = new WeakMap<TTS, TTSOptions>();
 
 /**
- * Options of the Vartalaap TTS. Every option but `apiKey`, `baseUrl`, `sampleRate` and
+ * Options of the Vartaloop TTS. Every option but `apiKey`, `baseUrl`, `sampleRate` and
  * `chunkTimeout` travels in the body of each utterance, so {@link TTS.updateOptions} applies it
  * from the next sentence on without reconnecting.
  */
@@ -94,7 +94,7 @@ export interface TTSOptions {
    * @defaultValue 24000
    */
   sampleRate: number;
-  /** The Vartalaap API key. Read from the `VARTALAAP_API_KEY` environment variable when not given. */
+  /** The Vartaloop API key. Read from the `VARTALOOP_API_KEY` environment variable when not given. */
   apiKey?: string;
   /**
    * The API base URL.
@@ -149,7 +149,7 @@ interface ServerEvent {
 }
 
 /**
- * Text-to-speech over the Vartalaap API: Hinglish and Indian-language voices as 16-bit PCM mono
+ * Text-to-speech over the Vartaloop API: Hinglish and Indian-language voices as 16-bit PCM mono
  * at 24 kHz.
  *
  * @remarks
@@ -162,22 +162,22 @@ export class TTS extends tts.TTS {
   #opts: TTSOptions;
   #pool: ConnectionPool<WebSocket>;
   #closed = false;
-  label = 'vartalaap.TTS';
+  label = 'vartaloop.TTS';
 
   get model(): string {
     return this.#opts.model;
   }
 
   get provider(): string {
-    return 'Vartalaap';
+    return 'Vartaloop';
   }
 
   /**
-   * Create a new instance of Vartalaap TTS.
+   * Create a new instance of Vartaloop TTS.
    *
    * @remarks
-   * `apiKey` must be set to your Vartalaap API key, either using the argument or by setting the
-   * `VARTALAAP_API_KEY` environment variable.
+   * `apiKey` must be set to your Vartaloop API key, either using the argument or by setting the
+   * `VARTALOOP_API_KEY` environment variable.
    */
   constructor(opts: Partial<TTSOptions> = {}) {
     const resolvedOpts: TTSOptions = { ...defaultTTSOptions, ...opts };
@@ -185,11 +185,11 @@ export class TTS extends tts.TTS {
 
     if (!resolvedOpts.apiKey) {
       throw new Error(
-        `Vartalaap API key is required, whether as an argument or as $${API_KEY_ENV}`,
+        `Vartaloop API key is required, whether as an argument or as $${API_KEY_ENV}`,
       );
     }
     if (resolvedOpts.sampleRate !== SAMPLE_RATE) {
-      throw new Error(`Vartalaap TTS produces ${SAMPLE_RATE} Hz audio; sampleRate must be it`);
+      throw new Error(`Vartaloop TTS produces ${SAMPLE_RATE} Hz audio; sampleRate must be it`);
     }
     resolvedOpts.baseUrl = resolvedOpts.baseUrl.replace(/\/+$/, '');
     checkOptions(resolvedOpts);
@@ -221,11 +221,11 @@ export class TTS extends tts.TTS {
     const next: TTSOptions = { ...this.#opts, ...opts };
     if (!next.apiKey) {
       throw new Error(
-        `Vartalaap API key is required, whether as an argument or as $${API_KEY_ENV}`,
+        `Vartaloop API key is required, whether as an argument or as $${API_KEY_ENV}`,
       );
     }
     if (next.sampleRate !== SAMPLE_RATE) {
-      throw new Error(`Vartalaap TTS produces ${SAMPLE_RATE} Hz audio; sampleRate must be it`);
+      throw new Error(`Vartaloop TTS produces ${SAMPLE_RATE} Hz audio; sampleRate must be it`);
     }
     next.baseUrl = next.baseUrl.replace(/\/+$/, '');
     checkOptions(next);
@@ -281,7 +281,7 @@ export class TTS extends tts.TTS {
     });
     if (this.#closed) {
       safeCloseWebSocket(ws);
-      throw new APIConnectionError({ message: 'Vartalaap TTS is closed' });
+      throw new APIConnectionError({ message: 'Vartaloop TTS is closed' });
     }
     if (apiKey !== this.#opts.apiKey || baseUrl !== this.#opts.baseUrl) {
       safeCloseWebSocket(ws);
@@ -298,7 +298,7 @@ export class TTS extends tts.TTS {
 
 /** Synthesize one text over `POST /v1/tts`, forwarding the chunked PCM body as it arrives. */
 export class ChunkedStream extends tts.ChunkedStream {
-  label = 'vartalaap.ChunkedStream';
+  label = 'vartaloop.ChunkedStream';
   #logger = log();
   #opts: TTSOptions;
   #text: string;
@@ -320,7 +320,7 @@ export class ChunkedStream extends tts.ChunkedStream {
   protected async run() {
     const requestId = shortuuid();
     const bstream = new AudioByteStream(this.#opts.sampleRate, NUM_CHANNELS);
-    const body = _toVartalaapBody(this.#opts, this.#text, requestId);
+    const body = _toVartaloopBody(this.#opts, this.#text, requestId);
     body.stream = true;
     const payload = JSON.stringify(body);
 
@@ -393,13 +393,13 @@ export class ChunkedStream extends tts.ChunkedStream {
           // request (retryable) instead of passing the cut-off speech as a success.
           if (!doneFut.done && !res.complete) {
             doneFut.reject(
-              new APIConnectionError({ message: 'Vartalaap TTS response ended before the body' }),
+              new APIConnectionError({ message: 'Vartaloop TTS response ended before the body' }),
             );
           }
         });
         res.on('error', (err) => {
           if (err.message === 'aborted') return;
-          this.#logger.error({ err }, 'Vartalaap TTS response error');
+          this.#logger.error({ err }, 'Vartaloop TTS response error');
           if (!doneFut.done) doneFut.reject(err);
         });
       },
@@ -407,26 +407,26 @@ export class ChunkedStream extends tts.ChunkedStream {
 
     req.on('timeout', () => {
       if (!doneFut.done) {
-        doneFut.reject(new APITimeoutError({ message: 'Vartalaap TTS request timed out' }));
+        doneFut.reject(new APITimeoutError({ message: 'Vartaloop TTS request timed out' }));
       }
       req.destroy();
     });
     req.on('error', (err) => {
       if (err.name === 'AbortError') return;
-      this.#logger.error({ err }, 'Vartalaap TTS request error');
+      this.#logger.error({ err }, 'Vartaloop TTS request error');
       if (!doneFut.done) doneFut.reject(err);
     });
     req.on('close', () => {
       // Closed before any response arrived (or before the response completed).
       if (!doneFut.done) {
         doneFut.reject(
-          new APIConnectionError({ message: 'Vartalaap TTS connection closed before a response' }),
+          new APIConnectionError({ message: 'Vartaloop TTS connection closed before a response' }),
         );
       }
     });
     const totalTimer = setTimeout(() => {
       if (!doneFut.done) {
-        doneFut.reject(new APITimeoutError({ message: 'Vartalaap TTS request timed out' }));
+        doneFut.reject(new APITimeoutError({ message: 'Vartaloop TTS request timed out' }));
       }
       req.destroy();
     }, HTTP_TOTAL_TIMEOUT_MS);
@@ -477,12 +477,12 @@ export class SynthesizeStream extends tts.SynthesizeStream {
   // deterministic over the input log, so its k-th segment on a retry is the same text as the
   // k-th segment of the first attempt, and both are reported under the same id.
   #segmentIds: string[] = [];
-  label = 'vartalaap.SynthesizeStream';
+  label = 'vartaloop.SynthesizeStream';
 
   constructor(tts: TTS, opts: TTSOptions, connOptions?: APIConnectOptions) {
     super(tts, connOptions);
     const pool = connectionPools.get(tts);
-    if (!pool) throw new Error('Vartalaap connection pool is not initialized');
+    if (!pool) throw new Error('Vartaloop connection pool is not initialized');
     this.#tts = tts;
     this.#pool = pool;
     this.#opts = opts;
@@ -523,7 +523,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
           this.#wakeInputReaders();
         }
       } catch (error) {
-        this.#logger.debug({ error }, 'Vartalaap TTS input closed');
+        this.#logger.debug({ error }, 'Vartaloop TTS input closed');
       } finally {
         this.#inputEnded = true;
         this.#wakeInputReaders();
@@ -560,7 +560,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     const eventChannel = stream.createStreamChannel<Incoming>();
     const signal = (value: Incoming) => {
       void eventChannel.write(value).catch((error: unknown) => {
-        this.#logger.debug({ error }, 'Failed writing Vartalaap event to channel (likely closed)');
+        this.#logger.debug({ error }, 'Failed writing Vartaloop event to channel (likely closed)');
       });
     };
 
@@ -582,7 +582,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       if (pending.length === 0 || timedOut) return;
       watchdog = setTimeout(() => {
         this.#logger.debug(
-          `Vartalaap WebSocket TTS chunk stream timeout after ${this.#opts.chunkTimeout}ms`,
+          `Vartaloop WebSocket TTS chunk stream timeout after ${this.#opts.chunkTimeout}ms`,
         );
         timedOut = true;
         if (socket) safeCloseWebSocket(socket);
@@ -622,9 +622,9 @@ export class SynthesizeStream extends tts.SynthesizeStream {
           const text = event.token.trim();
           if (!text) continue;
           const utteranceId = shortuuid();
-          const body = _toVartalaapBody(this.#utteranceOptions(), text, utteranceId);
+          const body = _toVartaloopBody(this.#utteranceOptions(), text, utteranceId);
           if (ws.readyState !== WebSocket.OPEN) {
-            throw new APIConnectionError({ message: 'Vartalaap WebSocket closed mid-generation' });
+            throw new APIConnectionError({ message: 'Vartaloop WebSocket closed mid-generation' });
           }
           pending.push({ utteranceId, segmentId: stableSegmentId(event.segmentId || requestId) });
           this.markStarted();
@@ -670,13 +670,13 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         clearWatchdog();
         if (!completed && !timedOut && !streamError) {
           streamError = new APIConnectionError({
-            message: `Vartalaap WebSocket closed mid-generation (code=${code})`,
+            message: `Vartaloop WebSocket closed mid-generation (code=${code})`,
           });
         }
         void eventChannel.close();
       };
       const onError = (err: Error) => {
-        this.#logger.error({ err }, 'Vartalaap WebSocket error');
+        this.#logger.error({ err }, 'Vartaloop WebSocket error');
         if (!completed && !timedOut && !streamError) {
           streamError = err instanceof APIError ? err : toRetryableConnectionError(err);
         }
@@ -726,7 +726,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
           try {
             event = JSON.parse(toBuffer(raw.data).toString('utf8')) as ServerEvent;
           } catch (parseErr) {
-            this.#logger.warn({ parseErr }, 'Failed to parse Vartalaap message');
+            this.#logger.warn({ parseErr }, 'Failed to parse Vartaloop message');
             continue;
           }
 
@@ -785,14 +785,14 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
         if (timedOut) {
           throw new APITimeoutError({
-            message: `Vartalaap TTS chunk stream timed out after ${this.#opts.chunkTimeout}ms`,
+            message: `Vartaloop TTS chunk stream timed out after ${this.#opts.chunkTimeout}ms`,
           });
         }
         if (streamError) {
           throw streamError;
         }
         if (!completed && !this.abortController.signal.aborted) {
-          throw new APIConnectionError({ message: 'Vartalaap WebSocket closed mid-generation' });
+          throw new APIConnectionError({ message: 'Vartaloop WebSocket closed mid-generation' });
         }
       } finally {
         // A failed attempt drops the frame it was holding: either nothing was spoken yet and the
@@ -813,7 +813,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       await this.#pool.withConnection(
         async (ws) => {
           if (ws.readyState !== WebSocket.OPEN) {
-            throw new APIConnectionError({ message: 'Vartalaap pooled websocket is not open' });
+            throw new APIConnectionError({ message: 'Vartaloop pooled websocket is not open' });
           }
           socket = ws;
           await Promise.all([inputTask(), sendTask(ws), recvTask(ws)]);
@@ -896,7 +896,7 @@ const statusError = (
     message = `${message} (retry after ${retryAfter}s)`;
   }
   return new APIStatusError({
-    message: `Vartalaap returned error: ${message}`,
+    message: `Vartaloop returned error: ${message}`,
     options: { statusCode: status, requestId, body, retryable: status >= 500 },
   });
 };
@@ -951,8 +951,8 @@ const toRetryableConnectionError = (e: unknown): APIConnectionError => {
     hasErrorCode(e, 'ETIMEDOUT') ||
     (typeof err.message === 'string' && err.message.includes('ETIMEDOUT'));
   const message = isTimeout
-    ? 'Vartalaap connection timed out'
-    : `Vartalaap connection failed: ${err.message || 'unknown error'}`;
+    ? 'Vartaloop connection timed out'
+    : `Vartaloop connection failed: ${err.message || 'unknown error'}`;
   return isTimeout ? new APITimeoutError({ message }) : new APIConnectionError({ message });
 };
 
@@ -988,7 +988,7 @@ const waitForWsOpen = async ({
     const statusCode = response.statusCode ?? -1;
     fut.reject(
       new APIStatusError({
-        message: `Vartalaap WebSocket connection rejected with status ${statusCode}`,
+        message: `Vartaloop WebSocket connection rejected with status ${statusCode}`,
         options: { statusCode },
       }),
     );
@@ -1008,7 +1008,7 @@ const waitForWsOpen = async ({
   if (timeoutMs > 0) {
     timeout = setTimeout(
       () =>
-        fut.reject(new APITimeoutError({ message: 'Vartalaap WebSocket connection timed out' })),
+        fut.reject(new APITimeoutError({ message: 'Vartaloop WebSocket connection timed out' })),
       timeoutMs,
     );
   }
@@ -1106,7 +1106,7 @@ const connectWebSocket = async ({
   const isTimeout =
     hasErrorCode(connectError, 'ETIMEDOUT') || /timed?\s*out|timeout/i.test(error.message);
   if (isTimeout) {
-    throw new APITimeoutError({ message: 'Vartalaap WebSocket connection timed out' });
+    throw new APITimeoutError({ message: 'Vartaloop WebSocket connection timed out' });
   }
   // Transport errors can quote the URL (which may carry a key): keep the type only.
   throw new APIConnectionError({ message: sanitizedErrorName(error) });
@@ -1120,7 +1120,7 @@ const connectWebSocket = async ({
  *
  * @internal
  */
-export const _toVartalaapBody = (
+export const _toVartaloopBody = (
   opts: TTSOptions,
   text: string,
   requestId: string,

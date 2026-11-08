@@ -6,14 +6,14 @@ import { Plugin } from '@livekit/agents';
 export * from './models.js';
 export * from './tts.js';
 
-class VartalaapPlugin extends Plugin {
+class VartaloopPlugin extends Plugin {
   constructor() {
     super({
-      title: 'vartalaap',
+      title: 'vartaloop',
       version: __PACKAGE_VERSION__,
       package: __PACKAGE_NAME__,
     });
   }
 }
 
-Plugin.registerPlugin(new VartalaapPlugin());
+Plugin.registerPlugin(new VartaloopPlugin());

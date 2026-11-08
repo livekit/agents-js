@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * The Vartalaap model family. `narad` is the current Hinglish / Indian-English model.
+ * The Vartaloop model family. `narad` is the current Hinglish / Indian-English model.
  *
  * @remarks
  * The API has no model field; the value names the model in metrics and logs only.

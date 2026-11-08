@@ -8,7 +8,7 @@
     "outDir": "./dist"
   },
   "typedocOptions": {
-    "name": "plugins/agents-plugin-vartalaap",
+    "name": "plugins/agents-plugin-vartaloop",
     "entryPointStrategy": "resolve",
     "readme": "none",
     "entryPoints": ["src/index.ts"]

@@ -16,17 +16,17 @@ import { type IncomingMessage, type ServerResponse, createServer } from 'node:ht
 import type { AddressInfo } from 'node:net';
 import { describe, expect, it } from 'vitest';
 import { type WebSocket, WebSocketServer } from 'ws';
-import { TTS, type TTSOptions, _toVartalaapBody } from './tts.js';
+import { TTS, type TTSOptions, _toVartaloopBody } from './tts.js';
 
-const hasVartalaapConfig = Boolean(process.env.VARTALAAP_API_KEY && process.env.OPENAI_API_KEY);
+const hasVartaloopConfig = Boolean(process.env.VARTALOOP_API_KEY && process.env.OPENAI_API_KEY);
 
-if (hasVartalaapConfig) {
-  describe('Vartalaap', async () => {
+if (hasVartaloopConfig) {
+  describe('Vartaloop', async () => {
     await testTts(new TTS(), new STT());
   });
 } else {
-  describe('Vartalaap', () => {
-    it.skip('requires VARTALAAP_API_KEY and OPENAI_API_KEY', () => {});
+  describe('Vartaloop', () => {
+    it.skip('requires VARTALOOP_API_KEY and OPENAI_API_KEY', () => {});
   });
 }
 
@@ -68,12 +68,12 @@ interface Utterance {
   [key: string]: unknown;
 }
 
-// A minimal Vartalaap TTS WebSocket server: for every utterance it replies with start, two
+// A minimal Vartaloop TTS WebSocket server: for every utterance it replies with start, two
 // binary frames (with a first_audio_ms event between them) and end, all tagged with the
 // utterance's request_id. `onUtterance` lets a test override the reply (e.g. to simulate a
 // provider failure); return false to suppress the normal reply. `onConnection` runs before any
 // utterance arrives.
-function serveVartalaap(
+function serveVartaloop(
   wss: WebSocketServer,
   {
     onUtterance,
@@ -108,11 +108,11 @@ function serveVartalaap(
 }
 
 async function synthesizeTurn(
-  vartalaap: TTS,
+  vartaloop: TTS,
   texts: string[],
   connOptions?: APIConnectOptions,
 ): Promise<tts.SynthesizedAudio[]> {
-  const stream = vartalaap.stream({ connOptions });
+  const stream = vartaloop.stream({ connOptions });
   for (const text of texts) {
     stream.pushText(text);
   }
@@ -155,9 +155,9 @@ function audioOf(events: tts.SynthesizedAudio[]): Buffer {
   );
 }
 
-describe('Vartalaap request body', () => {
+describe('Vartaloop request body', () => {
   it('sends only the non-default fields and never the model', () => {
-    const body = _toVartalaapBody(TEST_TTS_OPTIONS, 'namaste.', 'req-1');
+    const body = _toVartaloopBody(TEST_TTS_OPTIONS, 'namaste.', 'req-1');
     expect(body).toEqual({
       text: 'namaste.',
       voice: 'saanvi',
@@ -167,7 +167,7 @@ describe('Vartalaap request body', () => {
     });
     expect(body).not.toHaveProperty('model');
 
-    const full = _toVartalaapBody(
+    const full = _toVartaloopBody(
       {
         ...TEST_TTS_OPTIONS,
         voice: 'sahil',
@@ -199,17 +199,17 @@ describe('Vartalaap request body', () => {
     });
     expect(full).not.toHaveProperty('model');
 
-    const defaults = _toVartalaapBody({ ...TEST_TTS_OPTIONS, profile: 'default' }, 'hi.', 'req-3');
+    const defaults = _toVartaloopBody({ ...TEST_TTS_OPTIONS, profile: 'default' }, 'hi.', 'req-3');
     expect(defaults).not.toHaveProperty('profile');
     expect(defaults).not.toHaveProperty('style');
     expect(defaults).not.toHaveProperty('raw');
   });
 });
 
-describe('Vartalaap streaming pool', () => {
+describe('Vartaloop streaming pool', () => {
   it('sends each sentence as its own utterance, in order, and drops stale leftovers', async () => {
     const { wss, baseURL } = await startWebSocketServer();
-    const server = serveVartalaap(wss, {
+    const server = serveVartaloop(wss, {
       onConnection: (ws) => {
         // What an interrupted previous turn left on a pooled socket.
         ws.send(JSON.stringify({ type: 'start', request_id: 'stale-request-id' }));
@@ -218,9 +218,9 @@ describe('Vartalaap streaming pool', () => {
       },
     });
 
-    const vartalaap = new TTS({ apiKey: 'test-key', baseUrl: baseURL });
+    const vartaloop = new TTS({ apiKey: 'test-key', baseUrl: baseURL });
     try {
-      const events = await synthesizeTurn(vartalaap, [
+      const events = await synthesizeTurn(vartaloop, [
         'Pehla vaakya yahan khatam hota hai. ',
         'Doosra vaakya bhi yahan khatam hota hai.',
       ]);
@@ -241,14 +241,14 @@ describe('Vartalaap streaming pool', () => {
       expect(events.at(-1)!.final).toBe(true);
       expect(events.slice(0, -1).every((event) => !event.final)).toBe(true);
     } finally {
-      await vartalaap.close();
+      await vartaloop.close();
       await closeWebSocketServer(wss);
     }
   });
 
   it('rejects with a retryable APIStatusError when the server is busy (503)', async () => {
     const { wss, baseURL } = await startWebSocketServer();
-    serveVartalaap(wss, {
+    serveVartaloop(wss, {
       onUtterance: (ws, utterance) => {
         ws.send(
           JSON.stringify({
@@ -263,10 +263,10 @@ describe('Vartalaap streaming pool', () => {
       },
     });
 
-    const vartalaap = new TTS({ apiKey: 'test-key', baseUrl: baseURL });
-    const errorEvent = once(vartalaap, 'error') as Promise<Parameters<tts.TTSCallbacks['error']>>;
+    const vartaloop = new TTS({ apiKey: 'test-key', baseUrl: baseURL });
+    const errorEvent = once(vartaloop, 'error') as Promise<Parameters<tts.TTSCallbacks['error']>>;
     try {
-      const events = await synthesizeTurn(vartalaap, ['busy turn.'], {
+      const events = await synthesizeTurn(vartaloop, ['busy turn.'], {
         ...DEFAULT_API_CONNECT_OPTIONS,
         maxRetry: 0,
       });
@@ -278,14 +278,14 @@ describe('Vartalaap streaming pool', () => {
       expect((error as APIStatusError).retryable).toBe(true);
       expect(error.message).toContain('retry after 2s');
     } finally {
-      await vartalaap.close();
+      await vartaloop.close();
       await closeWebSocketServer(wss);
     }
   });
 
   it('rejects with a non-retryable APIStatusError on a 400', async () => {
     const { wss, baseURL } = await startWebSocketServer();
-    serveVartalaap(wss, {
+    serveVartaloop(wss, {
       onUtterance: (ws, utterance) => {
         ws.send(
           JSON.stringify({
@@ -299,61 +299,61 @@ describe('Vartalaap streaming pool', () => {
       },
     });
 
-    const vartalaap = new TTS({ apiKey: 'test-key', baseUrl: baseURL });
-    const errorEvent = once(vartalaap, 'error') as Promise<Parameters<tts.TTSCallbacks['error']>>;
+    const vartaloop = new TTS({ apiKey: 'test-key', baseUrl: baseURL });
+    const errorEvent = once(vartaloop, 'error') as Promise<Parameters<tts.TTSCallbacks['error']>>;
     try {
-      expect(await synthesizeTurn(vartalaap, ['bad turn.'])).toHaveLength(0);
+      expect(await synthesizeTurn(vartaloop, ['bad turn.'])).toHaveLength(0);
 
       const [{ error }] = await errorEvent;
       expect(error).toBeInstanceOf(APIStatusError);
       expect((error as APIStatusError).statusCode).toBe(400);
       expect((error as APIStatusError).retryable).toBe(false);
     } finally {
-      await vartalaap.close();
+      await vartaloop.close();
       await closeWebSocketServer(wss);
     }
   });
 
   it('applies updateOptions to the next utterance without reconnecting', async () => {
     const { wss, baseURL } = await startWebSocketServer();
-    const server = serveVartalaap(wss);
+    const server = serveVartaloop(wss);
 
-    const vartalaap = new TTS({ apiKey: 'test-key', baseUrl: baseURL });
+    const vartaloop = new TTS({ apiKey: 'test-key', baseUrl: baseURL });
     try {
-      expect(await synthesizeTurn(vartalaap, ['first turn.'])).not.toHaveLength(0);
+      expect(await synthesizeTurn(vartaloop, ['first turn.'])).not.toHaveLength(0);
       expect(server.utterances[0]).toMatchObject({ voice: 'saanvi' });
       expect(server.utterances[0]).not.toHaveProperty('style');
 
-      vartalaap.updateOptions({ voice: 'sahil', expression: 'excited' });
-      expect(await synthesizeTurn(vartalaap, ['second turn.'])).not.toHaveLength(0);
+      vartaloop.updateOptions({ voice: 'sahil', expression: 'excited' });
+      expect(await synthesizeTurn(vartaloop, ['second turn.'])).not.toHaveLength(0);
       expect(server.utterances[1]).toMatchObject({ voice: 'sahil', style: 'excited' });
       expect(server.connectionCount()).toBe(1);
     } finally {
-      await vartalaap.close();
+      await vartaloop.close();
       await closeWebSocketServer(wss);
     }
   });
 
   it('prewarms and reuses the ready websocket', async () => {
     const { wss, baseURL } = await startWebSocketServer();
-    const server = serveVartalaap(wss);
+    const server = serveVartaloop(wss);
     const connected = once(wss, 'connection');
 
-    const vartalaap = new TTS({ apiKey: 'test-key', baseUrl: baseURL });
+    const vartaloop = new TTS({ apiKey: 'test-key', baseUrl: baseURL });
     try {
-      vartalaap.prewarm();
+      vartaloop.prewarm();
       await connected;
-      expect(await synthesizeTurn(vartalaap, ['prewarmed turn.'])).not.toHaveLength(0);
+      expect(await synthesizeTurn(vartaloop, ['prewarmed turn.'])).not.toHaveLength(0);
       expect(server.connectionCount()).toBe(1);
     } finally {
-      await vartalaap.close();
+      await vartaloop.close();
       await closeWebSocketServer(wss);
     }
   });
 
   it('discards the socket when it drops mid-utterance and reconnects for the next turn', async () => {
     const { wss, baseURL } = await startWebSocketServer();
-    const server = serveVartalaap(wss, {
+    const server = serveVartaloop(wss, {
       onUtterance: (ws, utterance, connectionNumber) => {
         if (connectionNumber === 1) {
           ws.send(JSON.stringify({ type: 'start', request_id: utterance.request_id }));
@@ -365,31 +365,31 @@ describe('Vartalaap streaming pool', () => {
       },
     });
 
-    const vartalaap = new TTS({ apiKey: 'test-key', baseUrl: baseURL });
+    const vartaloop = new TTS({ apiKey: 'test-key', baseUrl: baseURL });
     try {
       expect(
-        await synthesizeTurn(vartalaap, ['dropping turn.'], {
+        await synthesizeTurn(vartaloop, ['dropping turn.'], {
           ...DEFAULT_API_CONNECT_OPTIONS,
           maxRetry: 0,
         }),
       ).toHaveLength(0);
-      expect(await synthesizeTurn(vartalaap, ['recovery turn.'])).not.toHaveLength(0);
+      expect(await synthesizeTurn(vartaloop, ['recovery turn.'])).not.toHaveLength(0);
       expect(server.connectionCount()).toBe(2);
     } finally {
-      await vartalaap.close();
+      await vartaloop.close();
       await closeWebSocketServer(wss);
     }
   });
 });
 
-describe('Vartalaap options', () => {
+describe('Vartaloop options', () => {
   it('requires an API key', () => {
-    const saved = process.env.VARTALAAP_API_KEY;
-    delete process.env.VARTALAAP_API_KEY;
+    const saved = process.env.VARTALOOP_API_KEY;
+    delete process.env.VARTALOOP_API_KEY;
     try {
-      expect(() => new TTS()).toThrow(/VARTALAAP_API_KEY/);
+      expect(() => new TTS()).toThrow(/VARTALOOP_API_KEY/);
     } finally {
-      if (saved !== undefined) process.env.VARTALAAP_API_KEY = saved;
+      if (saved !== undefined) process.env.VARTALOOP_API_KEY = saved;
     }
   });
 
@@ -402,12 +402,12 @@ describe('Vartalaap options', () => {
     expect(() => new TTS({ apiKey: 'test-key', temperature: 3 })).toThrow(/temperature/);
     expect(() => new TTS({ apiKey: 'test-key', digits: 'fr' })).toThrow(/digits/);
     expect(() => new TTS({ apiKey: 'test-key', profile: 'studio' })).toThrow(/profile/);
-    const vartalaap = new TTS({ apiKey: 'test-key' });
-    expect(() => vartalaap.updateOptions({ speed: 2.5 })).toThrow(/speed/);
+    const vartaloop = new TTS({ apiKey: 'test-key' });
+    expect(() => vartaloop.updateOptions({ speed: 2.5 })).toThrow(/speed/);
   });
 });
 
-describe('Vartalaap chunked synthesis', () => {
+describe('Vartaloop chunked synthesis', () => {
   async function startHttpServer(
     handler: (req: IncomingMessage, body: Record<string, unknown>, res: ServerResponse) => void,
   ) {
@@ -450,12 +450,12 @@ describe('Vartalaap chunked synthesis', () => {
       setTimeout(() => res.end(Buffer.alloc(FRAME_BYTES, 4)), 5);
     });
 
-    const vartalaap = new TTS({ apiKey: 'test-key', baseUrl: http.baseURL, voice: 'meera' });
+    const vartaloop = new TTS({ apiKey: 'test-key', baseUrl: http.baseURL, voice: 'meera' });
     try {
-      const events = await collect(vartalaap.synthesize('Namaste duniya.'));
+      const events = await collect(vartaloop.synthesize('Namaste duniya.'));
       expect(seen.url).toBe('/v1/tts');
       expect(seen.auth).toBe('Bearer test-key');
-      expect(seen.agent).toMatch(/^agents-plugin-vartalaap\//);
+      expect(seen.agent).toMatch(/^agents-plugin-vartaloop\//);
       expect(seen.body).toMatchObject({
         text: 'Namaste duniya.',
         voice: 'meera',
@@ -469,7 +469,7 @@ describe('Vartalaap chunked synthesis', () => {
       expect(audio.subarray(0, FRAME_BYTES).equals(Buffer.alloc(FRAME_BYTES, 3))).toBe(true);
       expect(audio.subarray(FRAME_BYTES).equals(Buffer.alloc(FRAME_BYTES, 4))).toBe(true);
     } finally {
-      await vartalaap.close();
+      await vartaloop.close();
       await http.close();
     }
   });
@@ -482,17 +482,17 @@ describe('Vartalaap chunked synthesis', () => {
       setTimeout(() => res.destroy(), 5);
     });
 
-    const vartalaap = new TTS({ apiKey: 'test-key', baseUrl: http.baseURL });
-    const errorEvent = once(vartalaap, 'error') as Promise<Parameters<tts.TTSCallbacks['error']>>;
+    const vartaloop = new TTS({ apiKey: 'test-key', baseUrl: http.baseURL });
+    const errorEvent = once(vartaloop, 'error') as Promise<Parameters<tts.TTSCallbacks['error']>>;
     try {
       await collect(
-        vartalaap.synthesize('cut off.', { ...DEFAULT_API_CONNECT_OPTIONS, maxRetry: 0 }),
+        vartaloop.synthesize('cut off.', { ...DEFAULT_API_CONNECT_OPTIONS, maxRetry: 0 }),
       );
       const [{ error }] = await errorEvent;
       expect(error).toBeInstanceOf(APIConnectionError);
       expect((error as APIConnectionError).retryable).toBe(true);
     } finally {
-      await vartalaap.close();
+      await vartaloop.close();
       await http.close();
     }
   });
@@ -503,11 +503,11 @@ describe('Vartalaap chunked synthesis', () => {
       res.end(JSON.stringify({ error: 'all workers busy' }));
     });
 
-    const vartalaap = new TTS({ apiKey: 'test-key', baseUrl: http.baseURL });
-    const errorEvent = once(vartalaap, 'error') as Promise<Parameters<tts.TTSCallbacks['error']>>;
+    const vartaloop = new TTS({ apiKey: 'test-key', baseUrl: http.baseURL });
+    const errorEvent = once(vartaloop, 'error') as Promise<Parameters<tts.TTSCallbacks['error']>>;
     try {
       const events = await collect(
-        vartalaap.synthesize('busy.', { ...DEFAULT_API_CONNECT_OPTIONS, maxRetry: 0 }),
+        vartaloop.synthesize('busy.', { ...DEFAULT_API_CONNECT_OPTIONS, maxRetry: 0 }),
       );
       expect(events).toHaveLength(0);
       const [{ error }] = await errorEvent;
@@ -516,17 +516,17 @@ describe('Vartalaap chunked synthesis', () => {
       expect((error as APIStatusError).retryable).toBe(true);
       expect(error.message).toContain('all workers busy (retry after 3s)');
     } finally {
-      await vartalaap.close();
+      await vartaloop.close();
       await http.close();
     }
   });
 });
 
-describe('Vartalaap streaming recovery', () => {
+describe('Vartaloop streaming recovery', () => {
   it('does not retry a 503 once the first sentence was heard: the error is final', async () => {
     const { wss, baseURL } = await startWebSocketServer();
     // The first sentence is served; the server is busy for the second.
-    const server = serveVartalaap(wss, {
+    const server = serveVartaloop(wss, {
       onUtterance: (ws, utterance) => {
         if (server.utterances.length === 2) {
           ws.send(
@@ -544,11 +544,11 @@ describe('Vartalaap streaming recovery', () => {
       },
     });
 
-    const vartalaap = new TTS({ apiKey: 'test-key', baseUrl: baseURL });
-    const errorEvent = once(vartalaap, 'error') as Promise<Parameters<tts.TTSCallbacks['error']>>;
+    const vartaloop = new TTS({ apiKey: 'test-key', baseUrl: baseURL });
+    const errorEvent = once(vartaloop, 'error') as Promise<Parameters<tts.TTSCallbacks['error']>>;
     try {
       const events = await synthesizeTurn(
-        vartalaap,
+        vartaloop,
         ['Pehla vaakya yahan khatam hota hai. ', 'Doosra vaakya bhi yahan khatam hota hai.'],
         { ...DEFAULT_API_CONNECT_OPTIONS, maxRetry: 3, retryIntervalMs: 0 },
       );
@@ -563,20 +563,20 @@ describe('Vartalaap streaming recovery', () => {
       expect((error as APIStatusError).statusCode).toBe(503);
       expect((error as APIStatusError).retryable).toBe(false);
     } finally {
-      await vartalaap.close();
+      await vartaloop.close();
       await closeWebSocketServer(wss);
     }
   });
 
   it('times out a server that goes silent after an utterance was sent', async () => {
     const { wss, baseURL } = await startWebSocketServer();
-    serveVartalaap(wss, { onUtterance: () => false });
+    serveVartaloop(wss, { onUtterance: () => false });
 
-    const vartalaap = new TTS({ apiKey: 'test-key', baseUrl: baseURL, chunkTimeout: 100 });
-    const errorEvent = once(vartalaap, 'error') as Promise<Parameters<tts.TTSCallbacks['error']>>;
+    const vartaloop = new TTS({ apiKey: 'test-key', baseUrl: baseURL, chunkTimeout: 100 });
+    const errorEvent = once(vartaloop, 'error') as Promise<Parameters<tts.TTSCallbacks['error']>>;
     try {
       expect(
-        await synthesizeTurn(vartalaap, ['silent turn.'], {
+        await synthesizeTurn(vartaloop, ['silent turn.'], {
           ...DEFAULT_API_CONNECT_OPTIONS,
           maxRetry: 0,
         }),
@@ -591,7 +591,7 @@ describe('Vartalaap streaming recovery', () => {
       );
       expect(wss.clients.size).toBe(0);
     } finally {
-      await vartalaap.close();
+      await vartaloop.close();
       await closeWebSocketServer(wss);
     }
   });
@@ -602,20 +602,20 @@ describe('Vartalaap streaming recovery', () => {
     const firstUtterance = new Promise<void>((resolve) => {
       firstUtteranceSeen = resolve;
     });
-    const server = serveVartalaap(wss, {
+    const server = serveVartaloop(wss, {
       onUtterance: () => {
         firstUtteranceSeen?.();
         return true;
       },
     });
 
-    const vartalaap = new TTS({ apiKey: 'test-key', baseUrl: baseURL });
+    const vartaloop = new TTS({ apiKey: 'test-key', baseUrl: baseURL });
     try {
-      const stream = vartalaap.stream();
+      const stream = vartaloop.stream();
       stream.pushText('Pehla vaakya yahan khatam hota hai. ');
       stream.flush();
       await firstUtterance;
-      vartalaap.updateOptions({ voice: 'sahil', expression: 'sad' });
+      vartaloop.updateOptions({ voice: 'sahil', expression: 'sad' });
       stream.pushText('Doosra vaakya bhi yahan khatam hota hai.');
       stream.endInput();
 
@@ -632,14 +632,14 @@ describe('Vartalaap streaming recovery', () => {
       expect(server.utterances[1]).toMatchObject({ voice: 'sahil', style: 'sad' });
       expect(server.connectionCount()).toBe(1);
     } finally {
-      await vartalaap.close();
+      await vartaloop.close();
       await closeWebSocketServer(wss);
     }
   });
 
   it('ignores an error event of an utterance that is not ours', async () => {
     const { wss, baseURL } = await startWebSocketServer();
-    serveVartalaap(wss, {
+    serveVartaloop(wss, {
       onUtterance: (ws) => {
         ws.send(
           JSON.stringify({
@@ -653,33 +653,33 @@ describe('Vartalaap streaming recovery', () => {
       },
     });
 
-    const vartalaap = new TTS({ apiKey: 'test-key', baseUrl: baseURL });
+    const vartaloop = new TTS({ apiKey: 'test-key', baseUrl: baseURL });
     let errored = false;
-    vartalaap.on('error', () => {
+    vartaloop.on('error', () => {
       errored = true;
     });
     try {
-      const events = await synthesizeTurn(vartalaap, ['current turn.'], {
+      const events = await synthesizeTurn(vartaloop, ['current turn.'], {
         ...DEFAULT_API_CONNECT_OPTIONS,
         maxRetry: 0,
       });
       expect(audioOf(events)).toHaveLength(2 * FRAME_BYTES);
       expect(errored).toBe(false);
     } finally {
-      await vartalaap.close();
+      await vartaloop.close();
       await closeWebSocketServer(wss);
     }
   });
 });
 
-describe('Vartalaap partial audio', () => {
+describe('Vartaloop partial audio', () => {
   // The byte stream frames audio in 100 ms (4800 B) frames and holds the latest one back until
   // the next arrives, so three 80 ms server frames put exactly one frame on the queue.
   const THREE_SERVER_FRAMES = 3;
 
   it('does not retry once audio was heard: a drop mid-utterance is final, with no repeat', async () => {
     const { wss, baseURL } = await startWebSocketServer();
-    const server = serveVartalaap(wss, {
+    const server = serveVartaloop(wss, {
       onUtterance: (ws, utterance) => {
         ws.send(JSON.stringify({ type: 'start', request_id: utterance.request_id }));
         for (let i = 0; i < THREE_SERVER_FRAMES; i++) {
@@ -690,11 +690,11 @@ describe('Vartalaap partial audio', () => {
       },
     });
 
-    const vartalaap = new TTS({ apiKey: 'test-key', baseUrl: baseURL });
-    const errorEvent = once(vartalaap, 'error') as Promise<Parameters<tts.TTSCallbacks['error']>>;
+    const vartaloop = new TTS({ apiKey: 'test-key', baseUrl: baseURL });
+    const errorEvent = once(vartaloop, 'error') as Promise<Parameters<tts.TTSCallbacks['error']>>;
     try {
       // Retries are allowed, yet none happens: the audio already heard must not be repeated.
-      const events = await synthesizeTurn(vartalaap, ['dropping turn.'], {
+      const events = await synthesizeTurn(vartaloop, ['dropping turn.'], {
         ...DEFAULT_API_CONNECT_OPTIONS,
         maxRetry: 3,
         retryIntervalMs: 0,
@@ -708,18 +708,18 @@ describe('Vartalaap partial audio', () => {
       expect(server.connectionCount()).toBe(1);
       expect(server.utterances).toHaveLength(1);
     } finally {
-      await vartalaap.close();
+      await vartaloop.close();
       await closeWebSocketServer(wss);
     }
   });
 
   it('closes each segment with a final frame under its own segment id', async () => {
     const { wss, baseURL } = await startWebSocketServer();
-    serveVartalaap(wss);
+    serveVartaloop(wss);
 
-    const vartalaap = new TTS({ apiKey: 'test-key', baseUrl: baseURL });
+    const vartaloop = new TTS({ apiKey: 'test-key', baseUrl: baseURL });
     try {
-      const stream = vartalaap.stream();
+      const stream = vartaloop.stream();
       stream.pushText('Pehla vaakya yahan khatam hota hai. ');
       stream.flush();
       stream.pushText('Doosra vaakya bhi yahan khatam hota hai.');
@@ -745,14 +745,14 @@ describe('Vartalaap partial audio', () => {
       // The first segment is closed before the second one opens.
       expect(events.indexOf(firstEvents.at(-1)!)).toBeLessThan(events.indexOf(secondEvents[0]!));
     } finally {
-      await vartalaap.close();
+      await vartaloop.close();
       await closeWebSocketServer(wss);
     }
   });
 
   it('keeps the segment id when a 503 before any audio is retried on a new socket', async () => {
     const { wss, baseURL } = await startWebSocketServer();
-    const server = serveVartalaap(wss, {
+    const server = serveVartaloop(wss, {
       onUtterance: (ws, utterance, connectionNumber) => {
         if (connectionNumber === 1) {
           ws.send(
@@ -770,9 +770,9 @@ describe('Vartalaap partial audio', () => {
       },
     });
 
-    const vartalaap = new TTS({ apiKey: 'test-key', baseUrl: baseURL });
+    const vartaloop = new TTS({ apiKey: 'test-key', baseUrl: baseURL });
     try {
-      const stream = vartalaap.stream({
+      const stream = vartaloop.stream({
         connOptions: { ...DEFAULT_API_CONNECT_OPTIONS, maxRetry: 1, retryIntervalMs: 0 },
       });
       stream.pushText('Pehla vaakya yahan khatam hota hai. ');
@@ -809,7 +809,7 @@ describe('Vartalaap partial audio', () => {
       expect(segments).toHaveLength(2);
       expect(events.filter((e) => e.final)).toHaveLength(2);
     } finally {
-      await vartalaap.close();
+      await vartaloop.close();
       await closeWebSocketServer(wss);
     }
   });
