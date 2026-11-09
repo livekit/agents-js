@@ -1795,7 +1795,11 @@ export class AgentSession<
     });
   }
 
-  /** @internal */
+  /**
+   * Close the session with the supplied reason and wait for teardown to finish.
+   * If closure is already in progress, wait for it and preserve its reason.
+   * @internal
+   */
   async _closeImpl({
     reason,
     drain = false,

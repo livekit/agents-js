@@ -15,8 +15,9 @@ import {
 } from './job_lifecycle.js';
 import { flushCloudMetrics, flushCloudTraces, flushOtelLogs } from './telemetry/index.js';
 import { ATTRIBUTE_SIMULATOR } from './types.js';
-import type { AgentSession } from './voice/agent_session.js';
-import { CloseReason, type ShutdownReason } from './voice/events.js';
+import { Agent } from './voice/agent.js';
+import { AgentSession } from './voice/agent_session.js';
+import { AgentSessionEventTypes, CloseReason } from './voice/events.js';
 import type { SessionHost } from './voice/remote_session.js';
 
 vi.mock('./telemetry/index.js', async (importOriginal) => ({
@@ -115,18 +116,26 @@ describe('finalizeSession', () => {
   });
 
   it('closes the primary session as JOB_SHUTDOWN', async () => {
-    const closeReasons: ShutdownReason[] = [];
-    const session: Pick<AgentSession, 'close' | '_closeImpl'> = {
-      close: async () => session._closeImpl({ reason: CloseReason.USER_INITIATED }),
-      _closeImpl: async ({ reason }) => {
-        closeReasons.push(reason);
-      },
-    };
+    const session = new AgentSession({ vad: null });
+    const agent = new Agent({ instructions: 'test' });
+    const onExit = vi.spyOn(agent, 'onExit');
+    const onClose = vi.fn();
+    session.on(AgentSessionEventTypes.Close, onClose);
+    await session.start({ agent });
     const ctx = createJobContext(async () => {}, session);
 
-    await finalizeSession(ctx, undefined, 1000, createLogger());
+    try {
+      expect(session._activity).toBeDefined();
+      await finalizeSession(ctx, undefined, 1000, createLogger());
 
-    expect(closeReasons).toEqual([CloseReason.JOB_SHUTDOWN]);
+      expect(onExit).toHaveBeenCalledOnce();
+      expect(onClose).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ reason: CloseReason.JOB_SHUTDOWN }),
+      );
+      expect(session._activity).toBeUndefined();
+    } finally {
+      await session.close();
+    }
   });
 
   it('skips the application callback when the primary session fails to close', async () => {
