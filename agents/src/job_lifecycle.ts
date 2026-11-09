@@ -16,6 +16,7 @@ import {
 } from './telemetry/index.js';
 import { ATTRIBUTE_SIMULATOR } from './types.js';
 import { Event, IdleTimeoutError, waitUntilTimeout } from './utils.js';
+import { CloseReason } from './voice/events.js';
 import type { SessionHost } from './voice/remote_session.js';
 
 export const DEFAULT_SESSION_END_TIMEOUT = 300 * 1000;
@@ -98,12 +99,18 @@ export async function finalizeSession(
   const session = ctx._primaryAgentSession;
   const sessionClosed =
     !session ||
-    (await waitOrContinue(() => session.close(), SESSION_CLOSE_TIMEOUT, logger, {
-      timeout:
-        'AgentSession.close() timed out; proceeding with shutdown without running onSessionEnd.',
-      error: 'AgentSession.close() failed; proceeding with shutdown without running onSessionEnd.',
-      lateReject: 'AgentSession.close() rejected after shutdown timeout',
-    }));
+    (await waitOrContinue(
+      () => session._closeImpl({ reason: CloseReason.JOB_SHUTDOWN }),
+      SESSION_CLOSE_TIMEOUT,
+      logger,
+      {
+        timeout:
+          'AgentSession.close() timed out; proceeding with shutdown without running onSessionEnd.',
+        error:
+          'AgentSession.close() failed; proceeding with shutdown without running onSessionEnd.',
+        lateReject: 'AgentSession.close() rejected after shutdown timeout',
+      },
+    ));
 
   await runWithJobContextAsync(ctx, async () => {
     if (sessionClosed && onSessionEnd) {
