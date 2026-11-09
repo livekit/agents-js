@@ -525,9 +525,13 @@ export class RealtimeSession extends llm.RealtimeSession {
     if (Object.keys(this._tools.functionTools).length > 0) {
       this.sendEvent(this.createToolsUpdateEvent(this._tools));
     }
-    // options.chatCtx is not seeded. The server accepts history at any time, so seeding gains
-    // nothing. updateChatCtx diffs against acknowledged items only, so a seeded copy that is not
-    // acknowledged within its timeout would be sent again by the framework's update.
+    if (options?.chatCtx !== undefined && options.chatCtx.items.length > 0) {
+      // A later updateChatCtx with the same context waits for this one and then finds nothing new.
+      // It sends items again only if this call times out or the server rejects an item.
+      void this.updateChatCtx(options.chatCtx).catch((error) => {
+        this.#logger.error(error, 'failed to apply the initial chat context');
+      });
+    }
   }
 
   private hasInflightResponse(): boolean {

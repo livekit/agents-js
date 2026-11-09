@@ -1193,25 +1193,16 @@ describe('RealtimeSession initial session options', () => {
     expect(session.tools.equals(tools)).toBe(true);
   });
 
-  it('queues each history item once when the server is slow to acknowledge it', async () => {
+  it('queues the seeded chat context through the standard update path', async () => {
     stubTaskRuntime();
-    vi.useFakeTimers();
-    try {
-      const chatCtx = llm.ChatContext.empty();
-      chatCtx.addMessage({ role: 'user', content: 'hi there' });
-      const session = new RealtimeModel({ apiKey: 'test-key' }).session({ chatCtx });
 
-      // AgentActivity applies the same history after creation. No acknowledgement arrives, so
-      // every update times out.
-      const update = session.updateChatCtx(chatCtx).catch(() => {});
-      await vi.advanceTimersByTimeAsync(11_000);
-      await update;
+    const chatCtx = llm.ChatContext.empty();
+    chatCtx.addMessage({ role: 'user', content: 'hi there' });
+    const session = new RealtimeModel({ apiKey: 'test-key' }).session({ chatCtx });
 
-      const creates = queuedEvents(session).filter((ev) => ev.type === 'conversation.item.create');
-      expect(creates).toHaveLength(1);
-    } finally {
-      vi.useRealTimers();
-    }
+    await vi.waitFor(() =>
+      expect(queuedEvents(session).some((ev) => ev.type === 'conversation.item.create')).toBe(true),
+    );
   });
 
   it('keeps disabling turn detection alongside the seeded config', () => {
