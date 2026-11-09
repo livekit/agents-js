@@ -1,0 +1,23 @@
+agents/src/voice/agent_session.ts
+  s_d7aeb3a2c351db::t_f7c9267bd2d368 1798-1802
+agents/src/job_lifecycle.test.ts
+  s_d7aeb3a2c351db::t_f7c9267bd2d368 18-20,119-124,127-138
+agents/etc/agents.api.md
+  s_d7aeb3a2c351db::t_44048ac82ca6da 473,9896,9927-9929
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "93d1a37b75c9284aa1770e0f517e657cc2424ce0",
+  "prompts": {},
+  "sessions": {
+    "s_d7aeb3a2c351db": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1bff3-f9ab-70e1-8599-edfaf1ef3602",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
