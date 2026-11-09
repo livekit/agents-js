@@ -154,6 +154,9 @@ type ClientEvents = {
 } | {
     type: 'function_response';
     value: types.FunctionResponse;
+} | {
+    type: 'context_update';
+    value: Parameters<types.Session['sendContextUpdate']>[0];
 };
 
 // Warning: (ae-missing-release-tag) "CustomPronunciationParams" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -392,6 +395,7 @@ class RealtimeModel_4 extends llm.RealtimeModel {
         thinkingConfig?: types.ThinkingConfig;
         toolBehavior?: types.Behavior;
         toolResponseScheduling?: types.FunctionResponseScheduling;
+        labels?: Record<string, string>;
     });
     close(): Promise<void>;
     // (undocumented)
