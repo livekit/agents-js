@@ -1,0 +1,31 @@
+plugins/phonic/src/realtime/realtime_model.ts
+  s_0eb607992d36c3::t_e984d8fa9b32d3 471-472,516-517,554,730,749,1001,1014
+plugins/phonic/src/realtime/realtime_model.test.ts
+  s_0eb607992d36c3::t_28981af33c3e05 63,75-91
+.changeset/google-realtime-single-connect.md
+  s_f8cb6f3866b6ce::t_1f0e5fdef4da41 10
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "40ce69d3bdf63e325fd372e2498f98dcec8f0183",
+  "prompts": {},
+  "sessions": {
+    "s_0eb607992d36c3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_0eb607992d36c3",
+        "model": "unknown"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    },
+    "s_f8cb6f3866b6ce": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_f8cb6f3866b6ce",
+        "model": "unknown"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
