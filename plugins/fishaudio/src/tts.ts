@@ -30,6 +30,7 @@ const connectionPools = new WeakMap<TTS, ConnectionPool<WebSocket>>();
 /** @public */
 export interface TTSOptions {
   apiKey?: string;
+  /** TTS model to use: `s1`, `s2-pro`, `s2.1-pro`, or `drama-3`. Defaults to `s2.1-pro`. */
   model?: TTSModels | string;
   voiceId?: string;
   sampleRate?: number;
@@ -238,7 +239,7 @@ export class TTS extends tts.TTS {
     // rather than batching short sentences together — minimizes TTFB on the
     // first sentence and keeps Fish synthesizing continuously.
     const tokenizer =
-      opts.tokenizer ?? new tokenize.basic.SentenceTokenizer({ minSentenceLength: 1 });
+      opts.tokenizer ?? new tokenize.blingfire.SentenceTokenizer({ minSentenceLength: 1 });
 
     this.#opts = {
       apiKey,
@@ -365,6 +366,11 @@ export class TTS extends tts.TTS {
 
   prewarm(): void {
     this.#pool.prewarm();
+  }
+
+  /** Release pooled connections; an in-flight synthesis keeps its until it finishes. */
+  override async releaseIdleConnections(): Promise<void> {
+    await this.#pool.releaseIdle();
   }
 
   override async close(): Promise<void> {

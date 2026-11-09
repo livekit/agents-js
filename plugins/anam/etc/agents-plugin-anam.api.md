@@ -26,6 +26,7 @@ import { Room } from '@livekit/rtc-node';
 import { RpcInvocationData } from '@livekit/rtc-node';
 import type { Span } from '@opentelemetry/api';
 import type { TextStreamInfo } from '@livekit/rtc-node';
+import { Throws } from '@livekit/throws-transformer/throws';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import { TrackKind } from '@livekit/rtc-node';
 import { TrackPublishOptions } from '@livekit/rtc-node';
@@ -39,17 +40,11 @@ import { z } from 'zod';
 export class AnamAPI {
     constructor(apiKey: string, apiUrl?: string, conn?: APIConnectOptions);
     // (undocumented)
-    createSessionToken(params: {
+    startSession(params: {
         personaConfig: PersonaConfig;
         livekitUrl?: string;
         livekitToken?: string;
         sessionOptions?: SessionOptions;
-    }): Promise<{
-        sessionToken: string;
-    }>;
-    // (undocumented)
-    startEngineSession(params: {
-        sessionToken: string;
     }): Promise<{
         sessionId: string;
     }>;

@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import * as agents from '../index.js';
+import { type JobContext, runWithJobContextAsync } from '../job.js';
 import { ChatContext } from '../llm/index.js';
 import { initializeLogger } from '../log.js';
 import type { LLMMetrics } from '../metrics/base.js';
@@ -62,7 +63,12 @@ describe('inference.LLM prewarm', () => {
 async function captureHeaders(opts: {
   ctor?: InferenceClass;
   perCall?: InferenceClass;
+  jobCtx?: JobContext;
 }): Promise<CapturedHeaders> {
+  if (opts.jobCtx) {
+    const { jobCtx, ...rest } = opts;
+    return runWithJobContextAsync(jobCtx, () => captureHeaders(rest));
+  }
   const llm = new LLM({
     model: 'openai/gpt-4o-mini',
     apiKey: 'test-key',
@@ -394,6 +400,18 @@ describe('inference.LLM X-LiveKit-Inference-Priority header', () => {
     const headers = await captureHeaders({ ctor: 'standard', perCall: 'priority' });
     expect(headers['X-LiveKit-Inference-Priority']).toBe('priority');
   });
+
+  // --- job context overrides everything ---
+
+  it("a text simulation job's 'low' overrides per-call 'priority'", async () => {
+    const jobCtx = {
+      job: { id: 'job-id', room: { sid: 'RM_1' } },
+      room: { isConnected: false },
+      inferenceHeaders: { 'X-LiveKit-Inference-Priority': 'low' },
+    } as unknown as JobContext;
+    const headers = await captureHeaders({ ctor: 'standard', perCall: 'priority', jobCtx });
+    expect(headers['X-LiveKit-Inference-Priority']).toBe('low');
+  });
 });
 
 describe('inference.LLM streamed tool calls', () => {
@@ -489,7 +507,10 @@ describeLiveKitInference('LiveKit Inference LLM integration', agents, async (har
     'openai/gpt-oss-120b',
   ] as const) {
     describe(model, async () => {
-      await harness.llm(withLiveConnOptions(new LLM({ model })), false);
+      await harness.llm(
+        withLiveConnOptions(new LLM({ model })),
+        model === 'google/gemini-2.5-flash',
+      );
     });
   }
 

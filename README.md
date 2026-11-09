@@ -83,6 +83,7 @@ Currently, only the following plugins are supported:
 | [@livekit/agents-plugin-phonic](https://www.npmjs.com/package/@livekit/agents-plugin-phonic)         | Realtime      |
 | [@livekit/agents-plugin-fishaudio](https://www.npmjs.com/package/@livekit/agents-plugin-fishaudio)   | TTS           |
 | [@livekit/agents-plugin-hume](https://www.npmjs.com/package/@livekit/agents-plugin-hume)             | TTS           |
+| [@livekit/agents-plugin-speechify](https://www.npmjs.com/package/@livekit/agents-plugin-speechify)   | TTS           |
 
 ## Docs and guides
 
@@ -160,8 +161,10 @@ export default defineAgent({
       // See more at https://docs.livekit.io/agents/build/turns
       vad: ctx.proc.userData.vad! as silero.VAD,
       turnDetection: new livekit.turnDetector.MultilingualModel(),
-      // to use realtime model, replace the stt, llm, tts and vad with the following
-      // llm: new openai.realtime.RealtimeModel(),
+      // To use hosted OpenAI Realtime or xAI Grok Voice, replace stt, llm, tts and vad with the
+      // following. Use the provider plugin's RealtimeModel instead when supplying credentials directly.
+      // llm: new inference.RealtimeModel({ model: 'openai/gpt-realtime' }),
+      // or, for OpenAI's full-duplex GPT-Live: llm: 'openai/gpt-live-1',
     });
 
     await session.start({

@@ -8,7 +8,20 @@ import EotRunner from './runner.js';
 describe('EotRunner', () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
   });
+
+  it.each(['0', 'false', 'no', 'off', 'FALSE', ' off '])(
+    'skips model initialization when local inference preload is disabled with %j',
+    async (value) => {
+      vi.stubEnv(warmup.ENV_PRELOAD_LOCAL_INFERENCE, value);
+      const load = vi.spyOn(warmup, '_getLocalInferenceModule');
+
+      await new EotRunner().initialize();
+
+      expect(load).not.toHaveBeenCalled();
+    },
+  );
 
   it('initializes the native EOT model and predicts on decoded PCM', async () => {
     const received: Int16Array[] = [];
@@ -45,6 +58,22 @@ describe('EotRunner', () => {
     expect(Array.from(received[0]!)).toEqual([1, -2, 3, -4]);
 
     await runner.close();
+  });
+
+  it('rejects when the native prediction fails', async () => {
+    const fakeMod = {
+      initEot: vi.fn(),
+      predict: vi.fn(async () => {
+        throw new Error('predict failed');
+      }),
+    };
+    vi.spyOn(warmup, '_getLocalInferenceModule').mockReturnValue(
+      fakeMod as unknown as ReturnType<typeof warmup._getLocalInferenceModule>,
+    );
+
+    const runner = new EotRunner();
+    await runner.initialize();
+    await expect(runner.run({ pcm: '' })).rejects.toThrow('predict failed');
   });
 
   it('throws on initialize when the native binding is unavailable', async () => {

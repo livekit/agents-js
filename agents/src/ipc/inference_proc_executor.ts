@@ -6,11 +6,10 @@ import type { ChildProcess } from 'node:child_process';
 import { fork } from 'node:child_process';
 import { extname } from 'node:path';
 import { InferenceRunner } from '../inference_runner.js';
-import { log } from '../log.js';
 import { shortuuid } from '../utils.js';
 import type { InferenceExecutor } from './inference_executor.js';
 import type { IPCMessage } from './message.js';
-import { SupervisedProc } from './supervised_proc.js';
+import { type ProcOpts, SupervisedProc } from './supervised_proc.js';
 
 class PendingInference {
   promise = new ThrowsPromise<{ requestId: string; data: unknown; error?: Error }, never>(
@@ -28,36 +27,14 @@ const currentFileExtension = extname(import.meta.url);
 export class InferenceProcExecutor extends SupervisedProc implements InferenceExecutor {
   #runners: { [id: string]: string };
   #activeRequests: { [id: string]: PendingInference } = {};
-  #logger = log();
 
   constructor({
     runners,
-    initializeTimeout,
-    closeTimeout,
-    memoryWarnMB,
-    memoryLimitMB,
-    pingInterval,
-    pingTimeout,
-    highPingThreshold,
-  }: {
+    ...opts
+  }: ProcOpts & {
     runners: { [id: string]: string };
-    initializeTimeout: number;
-    closeTimeout: number;
-    memoryWarnMB: number;
-    memoryLimitMB: number;
-    pingInterval: number;
-    pingTimeout: number;
-    highPingThreshold: number;
   }) {
-    super(
-      initializeTimeout,
-      closeTimeout,
-      memoryWarnMB,
-      memoryLimitMB,
-      pingInterval,
-      pingTimeout,
-      highPingThreshold,
-    );
+    super(opts);
     this.#runners = runners;
   }
 
@@ -109,9 +86,10 @@ export class InferenceProcExecutor extends SupervisedProc implements InferenceEx
           const res = this.#activeRequests[msg.value.requestId];
           delete this.#activeRequests[msg.value.requestId];
           if (!res) {
-            this.#logger
-              .child({ requestId: msg.value.requestId })
-              .warn('received unexpected inference response');
+            this.logger.warn(
+              { requestId: msg.value.requestId },
+              'received unexpected inference response',
+            );
             return;
           }
 

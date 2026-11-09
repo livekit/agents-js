@@ -1,8 +1,11 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { enableOtelLogging, initializeLogger, log } from './log.js';
+import { loggerOptions, setLoggerState } from './log_core.js';
 import {
   PinoCloudExporter,
   flushPinoLogs,
@@ -10,12 +13,74 @@ import {
 } from './telemetry/pino_otel_transport.js';
 import { REDACTED_EXCEPTION_MESSAGE } from './telemetry/utils.js';
 
+const prettyMocks = vi.hoisted(() => ({ pinoPretty: vi.fn() }));
+
+vi.mock('pino-pretty', async () => {
+  const { PassThrough } = await import('node:stream');
+  prettyMocks.pinoPretty.mockImplementation(() => new PassThrough());
+  return { build: prettyMocks.pinoPretty };
+});
+
 const OTEL_ENABLED_KEY = Symbol.for('@livekit/agents:otelEnabled');
+
+function entrypoint() {
+  log().info('hello');
+}
+
+const entrypointLogLine =
+  readFileSync(fileURLToPath(import.meta.url), 'utf8')
+    .split('\n')
+    .findIndex((line) => line.includes("log().info('hello')")) + 1;
 
 function resetOtelLoggingState() {
   delete (globalThis as Record<symbol, unknown>)[OTEL_ENABLED_KEY];
   initializeLogger({ pretty: false, level: 'silent' });
 }
+
+// process.platform is non-writable and stdout.isTTY is absent off a TTY, so
+// neither can be set by plain assignment.
+function stubConsole(platform: NodeJS.Platform, isTTY: boolean | undefined) {
+  Object.defineProperty(process, 'platform', { value: platform, configurable: true });
+  Object.defineProperty(process.stdout, 'isTTY', { value: isTTY, configurable: true });
+}
+
+describe('pretty logging', () => {
+  let initializePrettyLogger = initializeLogger;
+  const { platform } = process;
+  const { isTTY } = process.stdout;
+
+  beforeAll(async () => {
+    // vitest.setup.ts imported log.js before the pino-pretty mock above was
+    // registered, so a fresh copy is needed to observe the mock.
+    vi.resetModules();
+    ({ initializeLogger: initializePrettyLogger } = await import('./log.js'));
+  });
+
+  afterEach(() => {
+    stubConsole(platform, isTTY);
+    prettyMocks.pinoPretty.mockClear();
+    initializeLogger({ pretty: false, level: 'silent' });
+  });
+
+  it.each([
+    ['win32', true, process.stdout],
+    ['win32', false, undefined],
+    ['linux', true, undefined],
+  ] as const)(
+    'selects the pino-pretty destination on %s when isTTY is %s',
+    (platform, isTTY, destination) => {
+      stubConsole(platform, isTTY);
+
+      initializePrettyLogger({ pretty: true, level: 'silent' });
+
+      expect(prettyMocks.pinoPretty).toHaveBeenCalledOnce();
+      expect(prettyMocks.pinoPretty).toHaveBeenCalledWith({
+        colorize: true,
+        ...(destination && { destination }),
+      });
+    },
+  );
+});
 
 describe('OTEL logging', () => {
   afterEach(() => {
@@ -31,7 +96,7 @@ describe('OTEL logging', () => {
     const emitSpy = vi.spyOn(PinoCloudExporter.prototype, 'emit').mockImplementation(() => {});
 
     initPinoCloudExporter({
-      cloudHostname: 'example.livekit.cloud',
+      observabilityUrl: 'https://example.livekit.cloud',
       roomId: 'RM_test',
       jobId: 'AJ_test',
     });
@@ -52,7 +117,7 @@ describe('OTEL logging', () => {
     const emitSpy = vi.spyOn(PinoCloudExporter.prototype, 'emit').mockImplementation(() => {});
 
     initPinoCloudExporter({
-      cloudHostname: 'example.livekit.cloud',
+      observabilityUrl: 'https://example.livekit.cloud',
       roomId: 'RM_test',
       jobId: 'AJ_test',
     });
@@ -79,7 +144,7 @@ describe('OTEL logging', () => {
     const emitSpy = vi.spyOn(PinoCloudExporter.prototype, 'emit').mockImplementation(() => {});
 
     initPinoCloudExporter({
-      cloudHostname: 'example.livekit.cloud',
+      observabilityUrl: 'https://example.livekit.cloud',
       roomId: 'RM_test',
       jobId: 'AJ_test',
     });
@@ -140,7 +205,7 @@ describe('OTEL logging', () => {
       initializeLogger({ pretty: false, level: 'info' });
 
       initPinoCloudExporter({
-        cloudHostname: 'example.livekit.cloud',
+        observabilityUrl: 'https://example.livekit.cloud',
         roomId: 'RM_test',
         jobId: 'AJ_test',
         metadata: { 'lk.redaction.enabled': redactionEnabled },
@@ -186,4 +251,143 @@ describe('OTEL logging', () => {
       }
     },
   );
+});
+
+describe('log metadata', () => {
+  beforeEach(() => {
+    initPinoCloudExporter({
+      observabilityUrl: 'https://example.livekit.cloud',
+      roomId: 'RM_test',
+      jobId: 'AJ_test',
+    });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    resetOtelLoggingState();
+  });
+
+  it('adds code attributes', async () => {
+    initializeLogger({ pretty: false, level: 'info' });
+    const emitSpy = vi.spyOn(PinoCloudExporter.prototype, 'emit').mockImplementation(() => {});
+    enableOtelLogging();
+
+    entrypoint();
+
+    await vi.waitFor(() => {
+      const record = emitSpy.mock.calls
+        .map(([logObj]) => logObj)
+        .find(({ msg }) => msg === 'hello');
+      expect(record).toMatchObject({
+        'code.file.path': fileURLToPath(import.meta.url),
+        'code.function.name': 'entrypoint',
+        'code.line.number': entrypointLogLine,
+      });
+    });
+  });
+
+  it.each([false, true])('adds current job context to cached loggers (pretty: %s)', (pretty) => {
+    initializeLogger({ pretty, level: 'info' });
+    const cached = log().child({ component: 'prewarmed' });
+    const emitSpy = vi.spyOn(PinoCloudExporter.prototype, 'emit').mockImplementation(() => {});
+    enableOtelLogging();
+
+    cached.info('before job');
+    expect(emitSpy.mock.calls.at(-1)?.[0]).not.toHaveProperty('agent_name');
+
+    const context = { jobID: 'AJ_named', room_id: 'RM_named', agent_name: 'named-agent' };
+    setLoggerState(log().child(context), loggerOptions()!);
+    cached.info('cached logger');
+    log().info('current logger');
+
+    expect(emitSpy.mock.calls.at(-2)?.[0]).toMatchObject({
+      ...context,
+      component: 'prewarmed',
+      msg: 'cached logger',
+    });
+    expect(emitSpy.mock.calls.at(-1)?.[0]).toMatchObject({ ...context, msg: 'current logger' });
+    if (pretty) {
+      expect(emitSpy.mock.calls.at(-1)?.[0]).not.toHaveProperty('code.file.path');
+    }
+
+    initializeLogger({ pretty, level: 'info' });
+    cached.info('after reset');
+    expect(emitSpy.mock.calls.at(-1)?.[0]).not.toHaveProperty('agent_name');
+  });
+
+  it.each([
+    { 'code.file.path': '/reported/source.ts' },
+    { 'code.function.name': 'reported' },
+    { 'code.line.number': 42 },
+    { 'code.file.path': null },
+  ])('preserves child code attributes: %j', (bindings) => {
+    initializeLogger({ pretty: false, level: 'info' });
+    const emitSpy = vi.spyOn(PinoCloudExporter.prototype, 'emit').mockImplementation(() => {});
+    enableOtelLogging();
+
+    const child = log().child(bindings);
+    child.info('child attributes');
+    expect(emitSpy.mock.calls.at(-1)?.[0]).toMatchObject(bindings);
+    expect(emitSpy.mock.calls.at(-1)?.[0]).toHaveProperty('code.line.number');
+    expect(emitSpy.mock.calls.at(-1)?.[0]).toHaveProperty('code.function.name');
+
+    const override = {
+      'code.file.path': '/override.ts',
+      'code.function.name': 'override',
+      'code.line.number': 84,
+    };
+    child.info(override, 'call attributes');
+    expect(emitSpy.mock.calls.at(-1)?.[0]).toMatchObject(override);
+  });
+
+  it.each([
+    '/app/node_modules/@opentelemetry/instrumentation-pino/build/src/instrumentation.js',
+    'C:\\app\\node_modules\\@opentelemetry\\instrumentation-pino\\build\\src\\instrumentation.js',
+  ])('skips the Pino instrumentation frame at %s', (instrumentationPath) => {
+    initializeLogger({ pretty: false, level: 'info' });
+    const emitSpy = vi.spyOn(PinoCloudExporter.prototype, 'emit').mockImplementation(() => {});
+    enableOtelLogging();
+    vi.spyOn(Error, 'captureStackTrace').mockImplementation((holder) => {
+      Object.assign(holder, {
+        stack: `Error\n    at logger.<computed> (${instrumentationPath}:45:71)\n    at Pino.write (/app/node_modules/pino/lib/proto.js:204:16)\n    at entrypoint (${import.meta.url}:42:9)`,
+      });
+    });
+
+    log().info('instrumented logger');
+    expect(emitSpy.mock.calls.at(-1)?.[0]).toMatchObject({
+      'code.file.path': fileURLToPath(import.meta.url),
+      'code.function.name': 'entrypoint',
+      'code.line.number': 42,
+    });
+  });
+
+  it.each([
+    [
+      'throws',
+      () => {
+        throw new Error('broken hook');
+      },
+    ],
+    ['returns call sites', (_error: Error, callSites: NodeJS.CallSite[]) => callSites],
+  ])('still logs when a global Error.prepareStackTrace %s', async (_name, prepareStackTrace) => {
+    initializeLogger({ pretty: false, level: 'info' });
+    const emitSpy = vi.spyOn(PinoCloudExporter.prototype, 'emit').mockImplementation(() => {});
+    enableOtelLogging();
+
+    const original = Error.prepareStackTrace;
+    Error.prepareStackTrace = prepareStackTrace;
+    try {
+      expect(() => log().info('broken stack')).not.toThrow();
+    } finally {
+      Error.prepareStackTrace = original;
+    }
+
+    await vi.waitFor(() => {
+      const record = emitSpy.mock.calls
+        .map(([logObj]) => logObj)
+        .find(({ msg }) => msg === 'broken stack');
+      expect(record).toBeDefined();
+      expect(record).not.toHaveProperty('code.file.path');
+    });
+  });
 });

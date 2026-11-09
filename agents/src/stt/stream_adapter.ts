@@ -4,18 +4,27 @@
 import type { AudioFrame } from '@livekit/rtc-node';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import { log } from '../log.js';
+import type { STTMetrics } from '../metrics/base.js';
 import type { APIConnectOptions } from '../types.js';
 import { isStreamClosedError } from '../utils.js';
 import type { VAD, VADStream } from '../vad.js';
 import { VADEventType } from '../vad.js';
 import type { ConversationItemAddedEvent } from '../voice/events.js';
-import type { SpeechEvent } from './stt.js';
+import type { STTError, SpeechEvent } from './stt.js';
 import { STT, SpeechEventType, SpeechStream } from './stt.js';
 
 export class StreamAdapter extends STT {
   #stt: STT;
   #vad: VAD;
   label: string;
+
+  #forwardMetrics = (metrics: STTMetrics) => {
+    this.emit('metrics_collected', metrics);
+  };
+
+  #forwardError = (error: STTError) => {
+    this.emit('error', error);
+  };
 
   constructor(stt: STT, vad: VAD) {
     super({
@@ -28,13 +37,14 @@ export class StreamAdapter extends STT {
     this.#vad = vad;
     this.label = `stt.StreamAdapter<${this.#stt.label}>`;
 
-    this.#stt.on('metrics_collected', (metrics) => {
-      this.emit('metrics_collected', metrics);
-    });
+    this.#stt.on('metrics_collected', this.#forwardMetrics);
+    this.#stt.on('error', this.#forwardError);
+  }
 
-    this.#stt.on('error', (error) => {
-      this.emit('error', error);
-    });
+  async close(): Promise<void> {
+    this.#stt.off('metrics_collected', this.#forwardMetrics);
+    this.#stt.off('error', this.#forwardError);
+    await super.close();
   }
 
   _recognize(frame: AudioFrame, abortSignal?: AbortSignal): Promise<SpeechEvent> {
@@ -104,15 +114,19 @@ export class StreamAdapterWrapper extends SpeechStream {
             this.output.put({ type: SpeechEventType.START_OF_SPEECH });
             break;
           case VADEventType.END_OF_SPEECH:
-            this.output.put({ type: SpeechEventType.END_OF_SPEECH });
+            const speechEndTime = Date.now() - ev.silenceDuration - ev.inferenceDuration;
+            this.output.put({ type: SpeechEventType.END_OF_SPEECH, speechEndTime });
 
             try {
               const event = await this.#stt.recognize(ev.frames, this.abortSignal);
-              if (!event.alternatives![0].text) {
+              if (!event.alternatives?.[0]?.text) {
                 continue;
               }
 
-              this.output.put(event);
+              this.output.put({
+                ...event,
+                speechEndTime: event.speechEndTime ?? speechEndTime,
+              });
               break;
             } catch (error) {
               let logger = log();

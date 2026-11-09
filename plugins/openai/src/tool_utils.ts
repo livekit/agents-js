@@ -5,16 +5,14 @@ import { llm } from '@livekit/agents';
 import type OpenAI from 'openai';
 import { OpenAITool } from './tools.js';
 
-export function toResponsesTools(
-  toolCtx: llm.ToolContext,
+export function toResponsesTool(
+  tool: llm.Tool,
   strictToolSchema: boolean,
-): OpenAI.Responses.Tool[] | undefined {
-  // Function tools are emitted first, sorted by name for deterministic payloads; provider
-  // tools follow in registration order.
-  const functionTools = llm.sortedToolEntries(toolCtx).map(([name, tool]) => {
+): OpenAI.Responses.Tool | undefined {
+  if (llm.isFunctionTool(tool)) {
     const oaiParams = {
       type: 'function' as const,
-      name,
+      name: tool.name,
       description: tool.description,
       parameters: llm.toJsonSchema(
         tool.parameters,
@@ -28,19 +26,24 @@ export function toResponsesTools(
     }
 
     return oaiParams;
-  });
+  }
 
-  const providerTools = toolCtx
-    .flatten()
-    .filter((tool) => !llm.isFunctionTool(tool))
-    .map((tool) =>
-      tool instanceof OpenAITool
-        ? (tool.toToolConfig() as unknown as OpenAI.Responses.Tool)
-        : undefined,
-    )
+  return tool instanceof OpenAITool
+    ? (tool.toToolConfig() as unknown as OpenAI.Responses.Tool)
+    : undefined;
+}
+
+export function toResponsesTools(
+  toolCtx: llm.ToolContext,
+  strictToolSchema: boolean,
+): OpenAI.Responses.Tool[] | undefined {
+  // Function tools are emitted first, sorted by name for deterministic payloads; provider
+  // tools follow in registration order.
+  const functionTools = llm.sortedToolEntries(toolCtx).map(([, tool]) => tool);
+  const providerTools = toolCtx.flatten().filter((tool) => !llm.isFunctionTool(tool));
+  const tools = [...functionTools, ...providerTools]
+    .map((tool) => toResponsesTool(tool, strictToolSchema))
     .filter((tool): tool is OpenAI.Responses.Tool => tool !== undefined);
-
-  const tools = [...functionTools, ...providerTools];
 
   return tools.length > 0 ? tools : undefined;
 }

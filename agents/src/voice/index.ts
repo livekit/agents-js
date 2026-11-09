@@ -56,6 +56,7 @@ export {
   AudioOutput,
   type AudioOutputCapabilities,
   type PlaybackFinishedEvent,
+  type PlaybackProgressedEvent,
   type PlaybackStartedEvent,
   type TimedString,
   createTimedString,
@@ -64,6 +65,13 @@ export {
 export * from './report.js';
 export * from './room_io/index.js';
 export { RunContext } from './run_context.js';
+export {
+  SpeechHandle,
+  SpeechHandleCircularWaitError,
+  type InputDetails,
+  type ResolvedSpeechHandle,
+} from './speech_handle.js';
+export type { InterruptionSource } from './speech_handle.js';
 export * from './turn_config/endpointing.js';
 export * from './turn_config/user_turn_limit.js';
 export * as testing from './testing/index.js';

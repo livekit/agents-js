@@ -3,9 +3,10 @@
 // SPDX-License-Identifier: Apache-2.0
 import {
   type APIConnectOptions,
+  APIConnectionError,
+  APIStatusError,
   type AudioBuffer,
   AudioByteStream,
-  AudioEnergyFilter,
   Future,
   Task,
   createTimedString,
@@ -15,15 +16,24 @@ import {
   normalizeLanguage,
   stt,
   waitForAbort,
+  waitForWebSocketOpen,
+  waitUntilAborted,
 } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { WebSocket } from 'ws';
-import { PeriodicCollector } from './_utils.js';
+import { PeriodicCollector, startWebSocketHeartbeat } from './_utils.js';
 import type { STTLanguages, STTModels } from './models.js';
 
 export interface STTOptions {
   apiKey?: string;
   language?: STTLanguages | string;
+  /**
+   * Languages to bias recognition toward, sent as the repeatable `language_hint` parameter on the
+   * streaming connection. Deepgram applies the hint only to `nova-3` / `nova-3-general` in
+   * `language: 'multi'` mode; on any other model or language it is kept here but left off the
+   * wire, with one warning.
+   */
+  languageHint?: string[];
   detectLanguage: boolean;
   interimResults: boolean;
   punctuate: boolean;
@@ -80,6 +90,23 @@ const defaultSTTOptions: STTOptions = {
   baseUrl: 'wss://api.deepgram.com',
 };
 
+/** Deepgram applies `language_hint` only in Nova-3 multi language mode. */
+function isMultiLanguage(language: string | undefined): boolean {
+  return (language ?? '').trim().toLowerCase() === 'multi';
+}
+
+/**
+ * The Nova-3 models Deepgram accepts `language_hint` on. Mirrors the gateway's list
+ * (livekit/agent-gateway#1741): a model added elsewhere for another reason must not start
+ * receiving a parameter the vendor may reject.
+ */
+const LANGUAGE_HINT_MODELS = new Set(['nova-3', 'nova-3-general']);
+
+/** Whether the model and the session language together make a `languageHint` applicable. */
+function languageHintApplies(model: string | undefined, language: string | undefined): boolean {
+  return isMultiLanguage(language) && LANGUAGE_HINT_MODELS.has((model ?? '').trim().toLowerCase());
+}
+
 export class STT extends stt.STT {
   #opts: STTOptions;
   #logger = log();
@@ -87,6 +114,7 @@ export class STT extends stt.STT {
   #streams = new Set<WeakRef<SpeechStream>>();
   #userKeyterm: string[];
   #sessionKeyterms: string[] = [];
+  #languageHintWarned = false;
   label = 'deepgram.STT';
   private abortController = new AbortController();
 
@@ -122,6 +150,8 @@ export class STT extends stt.STT {
     } else {
       this.#opts.model = this.#validateModel(this.#opts.model, this.#opts.language);
     }
+
+    this.#warnLanguageHintIgnored();
 
     this.#userKeyterm = [...this.#opts.keyterm];
   }
@@ -193,6 +223,8 @@ export class STT extends stt.STT {
       language,
       model,
     };
+
+    this.#warnLanguageHintIgnored();
   }
 
   override _updateSessionKeyterms(keyterms: string[]): void {
@@ -234,7 +266,6 @@ export class STT extends stt.STT {
         'nova-2-medical',
         'nova-2-drivethru',
         'nova-2-automotive',
-        'nova-3-general',
       ].includes(model)
     ) {
       this.#logger.warn(
@@ -244,6 +275,22 @@ export class STT extends stt.STT {
     }
 
     return model;
+  }
+
+  /**
+   * Warn once per instance that a `languageHint` is being left off the wire, since Deepgram
+   * applies one only to nova-3 in multi language mode. The hint stays in the options, so a later
+   * language change back into `multi` sends it again.
+   */
+  #warnLanguageHintIgnored(): void {
+    if (this.#languageHintWarned) return;
+    if (!this.#opts.languageHint?.length) return;
+    if (languageHintApplies(this.#opts.model, this.#opts.language)) return;
+    this.#languageHintWarned = true;
+    this.#logger.warn(
+      { model: this.#opts.model, language: this.#opts.language },
+      'Ignoring `languageHint`: it only applies to nova-3 with language "multi"',
+    );
   }
 
   stream(options?: { connOptions?: APIConnectOptions }): SpeechStream {
@@ -265,7 +312,6 @@ export class STT extends stt.STT {
 
 export class SpeechStream extends stt.SpeechStream {
   #opts: STTOptions;
-  #audioEnergyFilter: AudioEnergyFilter;
   #logger = log();
   #speaking = false;
   #resetWS = new Future();
@@ -280,7 +326,6 @@ export class SpeechStream extends stt.SpeechStream {
     super(stt, opts.sampleRate, connOptions);
     this.#opts = opts;
     this.closed = false;
-    this.#audioEnergyFilter = new AudioEnergyFilter();
     this.#audioDurationCollector = new PeriodicCollector(
       (duration) => this.onAudioDurationReport(duration),
       { duration: 5.0 },
@@ -316,27 +361,35 @@ export class SpeechStream extends stt.SpeechStream {
         replace: this.#opts.replace,
         search: this.#opts.search,
         language: this.#opts.language,
+        // the hint applies only to nova-3 in multi language mode; Deepgram rejects it anywhere
+        // else. The option itself is never cleared, so a language change back into `multi`
+        // sends it again.
+        language_hint: languageHintApplies(this.#opts.model, this.#opts.language)
+          ? this.#opts.languageHint
+          : undefined,
         mip_opt_out: this.#opts.mipOptOut,
         ...(this.#opts.redact.length > 0 ? { redact: this.#opts.redact } : {}),
       };
       appendSearchParams(streamURL, params);
 
-      ws = new WebSocket(streamURL, {
-        headers: { Authorization: `Token ${this.#opts.apiKey}` },
-      });
+      try {
+        ws = new WebSocket(streamURL, {
+          headers: { Authorization: `Token ${this.#opts.apiKey}` },
+        });
+        await waitForWebSocketOpen(ws, 'Deepgram');
+      } catch (error) {
+        if (error instanceof APIStatusError || error instanceof APIConnectionError) throw error;
+        throw new APIConnectionError({
+          message: `failed to connect to Deepgram (${errorName(error)})`,
+        });
+      }
 
       try {
-        await new Promise((resolve, reject) => {
-          ws.on('open', resolve);
-          ws.on('error', (error) => reject(error));
-          ws.on('close', (code) => reject(`WebSocket returned ${code}`));
-        });
-
         await this.#runWS(ws);
       } catch (e) {
         if (!this.closed && !this.input.closed) {
           if (retries >= maxRetry) {
-            throw new Error(`failed to connect to Deepgram after ${retries} attempts: ${e}`);
+            throw e;
           }
 
           const delay = Math.min(retries * 5, 10);
@@ -380,6 +433,11 @@ export class SpeechStream extends stt.SpeechStream {
   async #runWS(ws: WebSocket) {
     this.#resetWS = new Future();
     let closing = false;
+    // Scoped to this connection. An abandoned `input.next()` stays parked inside the
+    // queue and shifts the next frame off it for a promise nobody awaits, so a sender
+    // left over from a previous attempt steals audio from the current one. The read
+    // has to be cancelled, not merely raced against.
+    const attempt = new AbortController();
 
     const keepalive = setInterval(() => {
       try {
@@ -390,13 +448,29 @@ export class SpeechStream extends stt.SpeechStream {
       }
     }, 5000);
 
+    // the KeepAlive above is an application-level message: it keeps Deepgram from
+    // timing the session out, but it cannot tell us whether the socket is still
+    // there. Only a ping that goes unanswered can.
+    const stopHeartbeat = startWebSocketHeartbeat(ws, () =>
+      this.#logger.warn('Deepgram did not answer a ping in time, terminating the socket'),
+    );
+
     // gets cancelled also when sendTask is complete
     const wsMonitor = Task.from(async (controller) => {
-      const closed = new Promise<void>(async (_, reject) => {
-        ws.once('close', (code, reason) => {
+      const closed = new Promise<void>((_, reject) => {
+        ws.once('close', (code) => {
           if (!closing) {
-            this.#logger.error(`WebSocket closed with code ${code}: ${reason}`);
-            reject(new Error('WebSocket closed'));
+            this.#logger.error({ code }, 'Deepgram WebSocket closed unexpectedly');
+            reject(new APIConnectionError({ message: 'Deepgram WebSocket closed unexpectedly' }));
+          }
+        });
+        ws.once('error', (error) => {
+          if (!closing) {
+            reject(
+              new APIConnectionError({
+                message: `Deepgram WebSocket failed (${errorName(error)})`,
+              }),
+            );
           }
         });
       });
@@ -412,15 +486,13 @@ export class SpeechStream extends stt.SpeechStream {
         samples100Ms,
       );
 
-      // waitForAbort internally sets up an abort listener on the abort signal
-      // we need to put it outside loop to avoid constant re-registration of the listener
-      const abortPromise = waitForAbort(this.abortSignal);
-
       try {
         while (!this.closed) {
-          const result = await Promise.race([this.input.next(), abortPromise]);
-
-          if (result === undefined) return; // aborted
+          const { result, isAborted } = await waitUntilAborted(
+            this.input.next({ signal: attempt.signal }),
+            this.abortSignal,
+          );
+          if (isAborted) return;
           if (result.done) {
             break;
           }
@@ -442,11 +514,9 @@ export class SpeechStream extends stt.SpeechStream {
           }
 
           for await (const frame of frames) {
-            if (this.#audioEnergyFilter.pushFrame(frame)) {
-              const frameDuration = frame.samplesPerChannel / frame.sampleRate;
-              this.#audioDurationCollector.push(frameDuration);
-              ws.send(frame.data.buffer);
-            }
+            const frameDuration = frame.samplesPerChannel / frame.sampleRate;
+            this.#audioDurationCollector.push(frameDuration);
+            ws.send(frame.data.buffer);
           }
 
           if (hasEnded) {
@@ -454,9 +524,14 @@ export class SpeechStream extends stt.SpeechStream {
             ws.send(JSON.stringify({ type: 'Finalize' }));
           }
         }
+      } catch (e) {
+        if (attempt.signal.aborted) return; // teardown, not a failure of this send
+        throw e;
       } finally {
         closing = true;
-        ws.send(JSON.stringify({ type: 'CloseStream' }));
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'CloseStream' }));
+        }
         wsMonitor.cancel();
       }
     };
@@ -574,13 +649,24 @@ export class SpeechStream extends stt.SpeechStream {
       await Promise.race([listenMessage, waitForAbort(controller.signal)]);
     }, this.abortController);
 
-    await Promise.race([
-      this.#resetWS.await,
-      Promise.all([sendTask(), listenTask.result, wsMonitor]),
-    ]);
-    closing = true;
-    ws.close();
-    clearInterval(keepalive);
+    const sendPromise = sendTask();
+    try {
+      await Promise.race([
+        this.#resetWS.await,
+        // wsMonitor.result, not wsMonitor: Task is not thenable, so passing the
+        // object made Promise.all resolve it instantly and the monitor's rejection
+        // was never observed. A dropped socket could not reach the retry below.
+        Promise.all([sendPromise, listenTask.result, wsMonitor.result]),
+      ]);
+    } finally {
+      closing = true;
+      ws.close();
+      clearInterval(keepalive);
+      stopHeartbeat();
+      // settle this attempt's sender before the caller opens the next socket
+      attempt.abort();
+      await sendPromise.catch(() => {});
+    }
   }
 
   private onAudioDurationReport(duration: number) {
@@ -593,6 +679,10 @@ export class SpeechStream extends stt.SpeechStream {
     };
     this.queue.put(usageEvent);
   }
+}
+
+function errorName(error: unknown): string {
+  return error instanceof Error ? error.name : typeof error;
 }
 
 function appendSearchParams(url: URL, params: Record<string, unknown>) {

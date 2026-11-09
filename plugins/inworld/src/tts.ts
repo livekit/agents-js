@@ -31,7 +31,7 @@ const DEFAULT_VOICE = 'Jason';
 const DEFAULT_TEMPERATURE = 1.1;
 const DEFAULT_TIMESTAMP_TRANSPORT_STRATEGY = 'ASYNC';
 const DEFAULT_SPEAKING_RATE = 1.0;
-const DEFAULT_BUFFER_CHAR_THRESHOLD = 100;
+const DEFAULT_BUFFER_CHAR_THRESHOLD = 250;
 const DEFAULT_MAX_BUFFER_DELAY_MS = 3000;
 const NUM_CHANNELS = 1;
 
@@ -44,6 +44,7 @@ export type TimestampTransportStrategy =
   | 'SYNC'
   | 'ASYNC';
 export type DeliveryMode = 'DELIVERY_MODE_UNSPECIFIED' | 'STABLE' | 'BALANCED' | 'CREATIVE';
+type AutoModeStrategy = 'CLIENT_SEGMENTED' | 'SENTENCE_BOUNDARY';
 
 export interface TTSOptions {
   apiKey?: string;
@@ -61,10 +62,19 @@ export interface TTSOptions {
   /** Controls output variation on inworld-tts-2 only. */
   deliveryMode?: DeliveryMode;
   timestampTransportStrategy?: TimestampTransportStrategy;
-  bufferCharThreshold: number;
+  /**
+   * Buffered characters that trigger synthesis. Defaults to 250, or to the server default when the
+   * server splits sentences.
+   */
+  bufferCharThreshold?: number;
   maxBufferDelayMs: number;
   baseURL: string;
   wsURL: string;
+  /**
+   * Splits streamed text into sentences before sending. When unset, inworld-tts-2 models stream
+   * text as it arrives and the server splits it at sentence boundaries; other models use the blingfire
+   * sentence tokenizer.
+   */
   tokenizer?: tokenize.SentenceTokenizer;
 }
 
@@ -96,13 +106,14 @@ interface CreateContextConfig {
   audioConfig: AudioConfig;
   temperature: number;
   language?: string;
-  bufferCharThreshold: number;
+  bufferCharThreshold?: number;
   maxBufferDelayMs: number;
   timestampType?: TimestampType;
   applyTextNormalization?: TextNormalization;
   deliveryMode?: DeliveryMode;
   timestampTransportStrategy?: TimestampTransportStrategy;
   autoMode?: boolean;
+  autoModeStrategy?: AutoModeStrategy;
 }
 
 interface WordAlignment {
@@ -165,11 +176,15 @@ const defaultTTSOptionsBase: Omit<TTSOptions, 'tokenizer'> = {
   speakingRate: DEFAULT_SPEAKING_RATE,
   temperature: DEFAULT_TEMPERATURE,
   timestampTransportStrategy: DEFAULT_TIMESTAMP_TRANSPORT_STRATEGY as TimestampTransportStrategy,
-  bufferCharThreshold: DEFAULT_BUFFER_CHAR_THRESHOLD,
   maxBufferDelayMs: DEFAULT_MAX_BUFFER_DELAY_MS,
   baseURL: DEFAULT_URL,
   wsURL: DEFAULT_WS_URL,
 };
+
+const defaultTokenizer = new tokenize.blingfire.SentenceTokenizer({ retainFormat: true });
+
+// The SENTENCE_BOUNDARY auto-mode strategy is only served by inworld-tts-2 models.
+const supportsSentenceBoundary = (model: string) => model.startsWith('inworld-tts-2');
 
 const CONNECT_TIMEOUT_MS = 10_000; // WebSocket handshake timeout
 
@@ -324,9 +339,6 @@ export class TTS extends tts.TTS {
     });
 
     this.#opts = mergedOpts as TTSOptions;
-    if (!this.#opts.tokenizer) {
-      this.#opts.tokenizer = new tokenize.basic.SentenceTokenizer({ retainFormat: true });
-    }
     this.#authorization = `Basic ${mergedOpts.apiKey}`;
     this.#pool = new WSConnectionPool(this.#opts.wsURL, this.#authorization);
   }
@@ -564,9 +576,16 @@ class SynthesizeStream extends tts.SynthesizeStream {
     this.#cumulativeTime = 0;
     this.#generationEndTime = 0;
 
-    const ws = await this.#tts.pool.getConnection();
+    // one pool object for the whole stream: `updateOptions` can swap the TTS pool mid-synthesis,
+    // and the listener must be removed from the pool that holds it
+    const pool = this.#tts.pool;
+    const ws = await pool.getConnection();
     const bstream = new AudioByteStream(this.#opts.sampleRate, NUM_CHANNELS);
-    const tokenizerStream = this.#opts.tokenizer!.stream();
+    const autoModeStrategy: AutoModeStrategy =
+      !this.#opts.tokenizer && supportsSentenceBoundary(this.#opts.model)
+        ? 'SENTENCE_BOUNDARY'
+        : 'CLIENT_SEGMENTED';
+    const tokenizerStream = (this.#opts.tokenizer ?? defaultTokenizer).stream();
 
     let resolveProcessing: () => void;
     let rejectProcessing: (err: Error) => void;
@@ -728,29 +747,63 @@ class SynthesizeStream extends tts.SynthesizeStream {
       }
     };
 
-    this.#tts.pool.registerListener(this.#contextId, handleMessage);
+    pool.registerListener(this.#contextId, handleMessage);
+
+    // Closing the stream also closes its input, so the input loop below ends and
+    // the reply is abandoned: the context is cancelled instead of closed.
+    const aborted = new Promise<void>((resolve) => {
+      if (this.abortSignal.aborted) resolve();
+      else this.abortSignal.addEventListener('abort', () => resolve(), { once: true });
+    });
 
     const sendLoop = async () => {
       for await (const ev of tokenizerStream) {
+        if (this.abortSignal.aborted) break;
         await this.#sendText(ws, ev.token);
       }
     };
     const sendPromise = sendLoop();
+    // An aborted stream returns without awaiting the sender, so a send that fails
+    // afterwards must not become an unhandled rejection.
+    sendPromise.catch(() => {});
 
     try {
-      await this.#createContext(ws);
+      await this.#createContext(ws, autoModeStrategy);
 
       for await (const text of this.input) {
-        if (text === tts.SynthesizeStream.FLUSH_SENTINEL) {
+        if (autoModeStrategy === 'SENTENCE_BOUNDARY') {
+          // the server buffers partial sentences until it finds a boundary
+          if (text === tts.SynthesizeStream.FLUSH_SENTINEL) {
+            await this.#flushContext(ws);
+          } else if (text) {
+            await this.#sendText(ws, text);
+          }
+        } else if (text === tts.SynthesizeStream.FLUSH_SENTINEL) {
           tokenizerStream.flush();
         } else {
           tokenizerStream.pushText(text);
         }
       }
+      if (this.abortSignal.aborted) {
+        tokenizerStream.close();
+        await this.#cancelContext(ws);
+        return;
+      }
       tokenizerStream.endInput();
       await sendPromise;
+      if (this.abortSignal.aborted) {
+        await this.#cancelContext(ws);
+        return;
+      }
 
-      await this.#flushContext(ws);
+      // endInput() already flushed the server-segmented stream
+      if (autoModeStrategy === 'CLIENT_SEGMENTED') {
+        await this.#flushContext(ws);
+      }
+      if (this.abortSignal.aborted) {
+        await this.#cancelContext(ws);
+        return;
+      }
       await this.#closeContext(ws);
 
       // Wait for the server to finish the context, but bound it so a stalled
@@ -769,9 +822,16 @@ class SynthesizeStream extends tts.SynthesizeStream {
         timer.unref?.();
       });
       try {
-        await Promise.race([processing, timeout]);
+        await Promise.race([processing, timeout, aborted]);
+      } catch (e) {
+        if (e instanceof APITimeoutError) await this.#cancelContext(ws);
+        throw e;
       } finally {
         if (timer) clearTimeout(timer);
+      }
+      if (this.abortSignal.aborted) {
+        await this.#cancelContext(ws);
+        return;
       }
 
       // Flush remaining frames
@@ -785,7 +845,7 @@ class SynthesizeStream extends tts.SynthesizeStream {
       throw e;
     } finally {
       ws.off('close', onClose);
-      this.#tts.pool.unregisterListener(this.#contextId);
+      pool.unregisterListener(this.#contextId);
     }
   }
 
@@ -809,7 +869,7 @@ class SynthesizeStream extends tts.SynthesizeStream {
     });
   }
 
-  #createContext(ws: WebSocket): Promise<void> {
+  #createContext(ws: WebSocket, autoModeStrategy: AutoModeStrategy): Promise<void> {
     const config: CreateContextConfig = {
       voiceId: this.#opts.voice,
       modelId: this.#opts.model,
@@ -821,16 +881,20 @@ class SynthesizeStream extends tts.SynthesizeStream {
       },
       temperature: this.#opts.temperature,
       language: this.#opts.language,
-      bufferCharThreshold: this.#opts.bufferCharThreshold,
+      // with SENTENCE_BOUNDARY the threshold also cuts long sentences, so only a set value is sent
+      bufferCharThreshold:
+        this.#opts.bufferCharThreshold ??
+        (autoModeStrategy === 'SENTENCE_BOUNDARY' ? undefined : DEFAULT_BUFFER_CHAR_THRESHOLD),
       maxBufferDelayMs: this.#opts.maxBufferDelayMs,
       timestampType: this.#opts.timestampType,
       applyTextNormalization: this.#opts.textNormalization,
       deliveryMode: this.#opts.deliveryMode,
       timestampTransportStrategy: this.#opts.timestampTransportStrategy,
-      // Always enable auto_mode since we use sentence tokenizer and don't expose
-      // mid-stream flush_context control to users yet
       autoMode: true,
     };
+    if (autoModeStrategy === 'SENTENCE_BOUNDARY') {
+      config.autoModeStrategy = autoModeStrategy;
+    }
 
     return this.#send(ws, { create: config, contextId: this.#contextId });
   }
@@ -855,5 +919,14 @@ class SynthesizeStream extends tts.SynthesizeStream {
       close_context: {},
       contextId: this.#contextId,
     });
+  }
+
+  // Stops the context and discards text the server has not synthesized yet.
+  async #cancelContext(ws: WebSocket): Promise<void> {
+    try {
+      await this.#send(ws, { cancel_context: {}, contextId: this.#contextId });
+    } catch (e) {
+      log().debug({ error: e }, 'Failed to cancel Inworld context');
+    }
   }
 }

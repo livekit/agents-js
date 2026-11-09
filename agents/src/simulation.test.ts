@@ -112,21 +112,20 @@ describe('SimulationContext', () => {
     const ctx = new SimulationContext(parseSimulationDispatch(dispatchJson()), fakeJobCtx);
     expect(ctx.scenario.instructions).toBe('ask for a refund');
     expect(ctx.jobContext).toBe(fakeJobCtx);
+    expect(ctx.simulationRunId).toBe('SR_1');
+    expect(ctx.simulationJobId).toBe('AJ_1');
   });
 
   it('simulatorVerdict throws before finalize and reads after', () => {
     const ctx = new SimulationContext(parseSimulationDispatch(dispatchJson()), fakeJobCtx);
     expect(() => ctx.simulatorVerdict).toThrow(/onSimulationEnd/);
     const run = new SimulationRun({ id: 'SR_1' });
-    const job = new SimulationRun_Job({ id: 'AJ_1' });
     ctx._beginFinalize({
       simulatorVerdict: { success: true, reason: 'looked good' },
       run,
-      job,
     });
     expect(ctx.simulatorVerdict).toEqual({ success: true, reason: 'looked good' });
     expect(ctx.simulationRun).toBe(run);
-    expect(ctx.simulationJob).toBe(job);
   });
 
   it('fail() records a veto; last call wins; no veto by default', () => {

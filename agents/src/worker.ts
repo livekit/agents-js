@@ -4,9 +4,14 @@
 import type { JobAssignment, JobTermination, TrackSource } from '@livekit/protocol';
 import {
   type AvailabilityRequest,
+  type JobJoinTiming,
+  JobState,
   JobType,
+  MigrateJobRequest,
   ParticipantPermission,
+  JobStatus as ProtoJobStatus,
   ServerMessage,
+  UpdateJobStatus,
   WorkerMessage,
   WorkerStatus,
 } from '@livekit/protocol';
@@ -25,17 +30,29 @@ import { _getLocalInferenceModule } from './inference/_warmup.js';
 import { EOT_INFERENCE_METHOD } from './inference/eot/runner.js';
 import { InferenceRunner } from './inference_runner.js';
 import { InferenceProcExecutor } from './ipc/inference_proc_executor.js';
+import { type JobExecutor, JobStatus } from './ipc/job_executor.js';
+import { monotonicUs } from './ipc/job_trace.js';
 import { ProcPool } from './ipc/proc_pool.js';
 import type { JobAcceptArguments, JobProcess, RunningJobInfo } from './job.js';
 import { JobRequest } from './job.js';
+import { DEFAULT_SESSION_END_TIMEOUT, validateSessionEndTimeout } from './job_lifecycle.js';
 import { log } from './log.js';
+import {
+  type EventLoopMonitor,
+  startMonitoring,
+  stopMonitoring,
+} from './telemetry/loop_monitor.js';
 import { Future, rejectOnAbort } from './utils.js';
 import { version } from './version.js';
 
 const MAX_RECONNECT_ATTEMPTS = 10;
 const ASSIGNMENT_TIMEOUT = 7.5 * 1000;
-const UPDATE_LOAD_INTERVAL = 2.5 * 1000;
+const UPDATE_STATUS_INTERVAL = 1.5 * 1000;
+const UPDATE_LOAD_INTERVAL = 0.5 * 1000;
+// number of load samples averaged by the default load function (2.5s window)
+const LOAD_AVG_SAMPLES = 5;
 const DRAIN_TIMEOUT = 60 * 60 * 1000;
+const MAX_QUEUED_MESSAGES = 128;
 const PROJECT_TYPE = 'nodejs';
 // Mirrors CurrentWorkerProtocol in livekit/protocol. LiveKit Cloud reads this off
 // the /worker endpoint to decide whether the SDK supports agent deployments; a
@@ -118,9 +135,54 @@ const defaultRequestFunc = async (ctx: JobRequest) => {
 
 const cpuMonitor = getCpuMonitor();
 
+/**
+ * Samples CPU every UPDATE_LOAD_INTERVAL in the background and averages the last
+ * LOAD_AVG_SAMPLES samples, so the load can be read without waiting for a sample.
+ */
+class DefaultLoadCalc {
+  static #instance?: DefaultLoadCalc;
+  #samples: number[] = [];
+  #stopped = false;
+
+  private constructor() {
+    this.#run();
+  }
+
+  static get(): DefaultLoadCalc {
+    return (DefaultLoadCalc.#instance ??= new DefaultLoadCalc());
+  }
+
+  /** Stops sampling. The next get() starts a new sampler. */
+  static stop(): void {
+    if (DefaultLoadCalc.#instance) DefaultLoadCalc.#instance.#stopped = true;
+    DefaultLoadCalc.#instance = undefined;
+  }
+
+  async #run(): Promise<void> {
+    while (!this.#stopped) {
+      try {
+        this.#samples.push(await cpuMonitor.cpuPercent(UPDATE_LOAD_INTERVAL));
+        if (this.#samples.length > LOAD_AVG_SAMPLES) this.#samples.shift();
+      } catch {
+        // cpu stats are unreadable; drop old samples so the load does not go stale,
+        // and wait before trying again rather than spin
+        this.#samples = [];
+        await new Promise((resolve) => setTimeout(resolve, UPDATE_LOAD_INTERVAL).unref());
+      }
+    }
+  }
+
+  async load(): Promise<number> {
+    // no samples yet, or the last read failed: measure now, so the caller gets a
+    // real value or the error
+    if (this.#samples.length === 0) return cpuMonitor.cpuPercent(UPDATE_LOAD_INTERVAL);
+    return this.#samples.reduce((a, b) => a + b, 0) / this.#samples.length;
+  }
+}
+
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 const defaultCpuLoad = async (_worker: AgentServer): Promise<number> => {
-  return cpuMonitor.cpuPercent(UPDATE_LOAD_INTERVAL);
+  return DefaultLoadCalc.get().load();
 };
 
 /** Participant permissions to pass to every agent spun up by this worker. */
@@ -166,6 +228,10 @@ export class ServerOptions {
   numIdleProcesses: number;
   drainTimeout: number;
   shutdownProcessTimeout: number;
+  /**
+   * Maximum time to wait for `onSessionEnd`. Defaults to five minutes.
+   */
+  sessionEndTimeout: number;
   initializeProcessTimeout: number;
   permissions: WorkerPermissions;
   agentName: string;
@@ -193,6 +259,7 @@ export class ServerOptions {
     numIdleProcesses = undefined,
     drainTimeout = DRAIN_TIMEOUT,
     shutdownProcessTimeout = 60 * 1000,
+    sessionEndTimeout = DEFAULT_SESSION_END_TIMEOUT,
     initializeProcessTimeout = 10 * 1000,
     permissions = new WorkerPermissions(),
     agentName = '',
@@ -225,6 +292,10 @@ export class ServerOptions {
     /** Number of milliseconds to wait for current jobs to finish upon shutdown. */
     drainTimeout?: number;
     shutdownProcessTimeout?: number;
+    /**
+     * Maximum number of milliseconds to wait for `onSessionEnd`.
+     */
+    sessionEndTimeout?: number;
     initializeProcessTimeout?: number;
     permissions?: WorkerPermissions;
     /**
@@ -265,6 +336,7 @@ export class ServerOptions {
     this.numIdleProcesses = numIdleProcesses || Default.numIdleProcesses(production);
     this.drainTimeout = drainTimeout;
     this.shutdownProcessTimeout = shutdownProcessTimeout;
+    this.sessionEndTimeout = validateSessionEndTimeout(sessionEndTimeout);
     this.initializeProcessTimeout = initializeProcessTimeout;
     this.permissions = permissions;
     // agentNameIsEnv may be passed explicitly when ServerOptions is re-constructed (e.g.
@@ -333,9 +405,13 @@ export class AgentServer {
 
   event = new EventEmitter();
   #session: WebSocket | undefined = undefined;
+  // the connection that registered; until one does, messages wait in the queue
+  #registeredWS: WebSocket | undefined = undefined;
+  #msgQueue: WorkerMessage[] = [];
   #httpServer?: HTTPServer;
   #logger = log().child({ version });
   #inferenceExecutor?: InferenceProcExecutor;
+  #loopMonitor?: EventLoopMonitor;
 
   /* @throws {@link MissingCredentialsError} if URL, API key or API secret are missing */
   constructor(opts: ServerOptions) {
@@ -387,17 +463,20 @@ export class AgentServer {
 
     this.#inferenceExecutor = InferenceProcExecutor.createIfNeeded();
 
-    this.#procPool = new ProcPool(
-      opts.agent,
-      opts.numIdleProcesses,
-      opts.initializeProcessTimeout,
-      opts.shutdownProcessTimeout,
-      this.#inferenceExecutor,
-      opts.jobMemoryWarnMB,
-      opts.jobMemoryLimitMB,
-    );
+    this.#procPool = new ProcPool({
+      agent: opts.agent,
+      numIdleProcesses: opts.numIdleProcesses,
+      initializeTimeout: opts.initializeProcessTimeout,
+      closeTimeout: opts.shutdownProcessTimeout,
+      sessionEndTimeout: opts.sessionEndTimeout,
+      inferenceExecutor: this.#inferenceExecutor,
+      memoryWarnMB: opts.jobMemoryWarnMB,
+      memoryLimitMB: opts.jobMemoryLimitMB,
+      onJobUpdate: (proc, joinTiming) => this.#updateJobStatus(proc, joinTiming),
+    });
 
     this.#opts = opts;
+    this.event.on('worker_msg', (msg: WorkerMessage) => this.#sendMsg(msg));
 
     // Simulations run ephemeral workers side by side; a health endpoint on a fixed port would make
     // concurrent runs collide.
@@ -449,6 +528,7 @@ export class AgentServer {
 
     this.#logger.info('starting worker');
     this.#closed = false;
+    this.#loopMonitor = startMonitoring({ name: 'worker', emitSpans: false });
     this.#procPool.start();
 
     const workerWS = async () => {
@@ -523,6 +603,52 @@ export class AgentServer {
     return this.#procPool.processes
       .filter((proc) => proc.runningJob)
       .map((proc) => proc.runningJob!);
+  }
+
+  #updateJobStatus(proc: JobExecutor, joinTiming?: JobJoinTiming) {
+    const info = proc.runningJob;
+    if (!info) return;
+
+    let status = ProtoJobStatus.JS_RUNNING;
+    if (proc.status === JobStatus.FAILED) {
+      status = ProtoJobStatus.JS_FAILED;
+    } else if (proc.status === JobStatus.SUCCESS) {
+      status = ProtoJobStatus.JS_SUCCESS;
+    }
+
+    this.event.emit(
+      'worker_msg',
+      new WorkerMessage({
+        message: {
+          case: 'updateJob',
+          value: new UpdateJobStatus({ jobId: info.job.id, status, error: '', joinTiming }),
+        },
+      }),
+    );
+  }
+
+  // a reconnected worker reports the jobs it still runs, as they were assigned,
+  // so the server tracks them again
+  #reportActiveJobs() {
+    const jobs = this.activeJobs.map(({ job, acceptArguments }) => {
+      const j = job.clone();
+      j.state = j.state ?? new JobState();
+      j.state.participantIdentity = acceptArguments.identity;
+      return j;
+    });
+    if (jobs.length === 0) return;
+
+    const jobIds = jobs.map((j) => j.id);
+    this.event.emit(
+      'worker_msg',
+      new WorkerMessage({
+        message: {
+          case: 'migrateJob',
+          value: new MigrateJobRequest({ jobIds, jobs }),
+        },
+      }),
+    );
+    this.#logger.child({ jobIds }).debug('reported active jobs after registration');
   }
 
   /** @throws {@link WorkerError} if worker did not drain in time */
@@ -605,21 +731,29 @@ export class AgentServer {
     );
   }
 
+  /** Sends a message on the registered connection, or queues it until a connection registers. */
+  #sendMsg(msg: WorkerMessage) {
+    if (this.#registeredWS?.readyState === WebSocket.OPEN) {
+      this.#registeredWS.send(msg.toBinary());
+      return;
+    }
+    // the next connection sends its own load
+    const kind = msg.message.case;
+    if (kind === 'updateWorker' || kind === 'ping') return;
+    if (this.#msgQueue.length >= MAX_QUEUED_MESSAGES) {
+      this.#logger.child({ kind }).warn('worker message queue full, dropping message');
+      return;
+    }
+    this.#msgQueue.push(msg);
+  }
+
   async #runWS(ws: WebSocket) {
     let closingWS = false;
-
-    const send = (msg: WorkerMessage) => {
-      if (closingWS) {
-        this.event.off('worker_msg', send);
-        return;
-      }
-      ws.send(msg.toBinary());
-    };
-    this.event.on('worker_msg', send);
 
     const close = new ThrowsPromise<void, APIStatusError>((resolve, reject) => {
       ws.addEventListener('close', (event) => {
         closingWS = true;
+        if (this.#registeredWS === ws) this.#registeredWS = undefined;
         if (!this.#closed) {
           reject(
             new APIStatusError({
@@ -692,11 +826,16 @@ export class AgentServer {
             msg.message.value.serverInfo,
           );
           this.#connecting = false;
+          this.#registeredWS = ws;
+          // the server learns the running jobs before their queued updates
+          this.#reportActiveJobs();
+          for (const queued of this.#msgQueue.splice(0)) ws.send(queued.toBinary());
           break;
         }
         case 'availability': {
           if (!msg.message.value.job) return;
-          const task = this.#availability(msg.message.value);
+          // receipt is now, not when the handler gets to run: that delay is dispatch latency
+          const task = this.#availability(msg.message.value, Date.now(), monotonicUs());
           this.#tasks.push(task);
           task.finally(() => {
             const taskIndex = this.#tasks.indexOf(task);
@@ -736,8 +875,8 @@ export class AgentServer {
       }
     });
 
-    this.event.emit(
-      'worker_msg',
+    // register goes first, ahead of the queue
+    ws.send(
       new WorkerMessage({
         message: {
           case: 'register',
@@ -756,29 +895,29 @@ export class AgentServer {
             version,
           },
         },
-      }),
+      }).toBinary(),
     );
 
     let currentStatus = WorkerStatus.WS_AVAILABLE;
     const loadMonitor = setInterval(() => {
       if (closingWS) clearInterval(loadMonitor);
 
+      // keep reporting while draining, so the server does not take a silent
+      // worker for a dead one
       if (this.#draining) {
-        if (currentStatus !== WorkerStatus.WS_FULL) {
-          currentStatus = WorkerStatus.WS_FULL;
-          this.event.emit(
-            'worker_msg',
-            new WorkerMessage({
-              message: {
-                case: 'updateWorker',
-                value: {
-                  load: 1,
-                  status: WorkerStatus.WS_FULL,
-                },
+        currentStatus = WorkerStatus.WS_FULL;
+        this.event.emit(
+          'worker_msg',
+          new WorkerMessage({
+            message: {
+              case: 'updateWorker',
+              value: {
+                load: 1,
+                status: WorkerStatus.WS_FULL,
               },
-            }),
-          );
-        }
+            },
+          }),
+        );
         return;
       }
 
@@ -815,16 +954,23 @@ export class AgentServer {
         .catch((e) => {
           this.#logger.warn({ error: e }, 'failed to measure CPU load');
         });
-    }, UPDATE_LOAD_INTERVAL);
+    }, UPDATE_STATUS_INTERVAL);
 
     try {
       await close;
     } finally {
+      // stop the sampler only after the last status tick, as a tick starts it again
+      clearInterval(loadMonitor);
+      DefaultLoadCalc.stop();
       ws.removeAllListeners();
     }
   }
 
-  async #availability(msg: AvailabilityRequest) {
+  async #availability(
+    msg: AvailabilityRequest,
+    receivedAt: number = Date.now(),
+    receivedMonoUs: number = monotonicUs(),
+  ) {
     let answered = false;
 
     const onReject = async () => {
@@ -845,6 +991,8 @@ export class AgentServer {
 
     const onAccept = async (args: JobAcceptArguments) => {
       answered = true;
+      const acceptedAt = Date.now();
+      const acceptedMonoUs = monotonicUs();
 
       this.event.emit(
         'worker_msg',
@@ -890,6 +1038,12 @@ export class AgentServer {
             workerId: this.id,
             apiKey: this.#opts.apiKey,
             apiSecret: this.#opts.apiSecret,
+            receivedAt,
+            acceptedAt,
+            assignedAt: Date.now(),
+            receivedMonoUs,
+            acceptedMonoUs,
+            assignedMonoUs: monotonicUs(),
           });
         } catch (e) {
           this.#logger.child({ requestId: req.id }).error(e, 'error launching job');
@@ -901,12 +1055,22 @@ export class AgentServer {
 
     const req = new JobRequest(msg.job!, onReject, onAccept);
     this.#logger
-      .child({ jobId: msg.job?.id, resuming: msg.resuming, agentName: this.#opts.agentName })
+      .child({
+        jobId: msg.job?.id,
+        room_id: msg.job?.room?.sid,
+        resuming: msg.resuming,
+        agentName: this.#opts.agentName,
+      })
       .info('received job request');
 
     if (this.#draining) {
       this.#logger
-        .child({ jobId: msg.job?.id, resuming: msg.resuming, agentName: this.#opts.agentName })
+        .child({
+          jobId: msg.job?.id,
+          room_id: msg.job?.room?.sid,
+          resuming: msg.resuming,
+          agentName: this.#opts.agentName,
+        })
         .info('Worker is draining and no longer available, rejecting job');
       await req.reject();
       return;
@@ -959,6 +1123,8 @@ export class AgentServer {
     this.#logger.debug('shutting down worker');
 
     this.#closed = true;
+    if (this.#loopMonitor) stopMonitoring(this.#loopMonitor);
+    this.#loopMonitor = undefined;
 
     await this.#inferenceExecutor?.close();
     await this.#procPool.close();

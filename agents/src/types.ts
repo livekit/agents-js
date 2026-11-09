@@ -27,6 +27,12 @@ export const ATTRIBUTE_SIMULATOR_DISPATCH = 'lk.simulator.dispatch';
 /** Telemetry metadata key marking the session as a simulation. */
 export const ATTRIBUTE_SIMULATION_ENABLED = 'lk.simulation.enabled';
 
+/** Telemetry metadata key naming the simulation run this session belongs to. */
+export const ATTRIBUTE_SIMULATION_RUN_ID = 'lk.simulation.run_id';
+
+/** Telemetry metadata key naming the simulation run job behind this session. */
+export const ATTRIBUTE_SIMULATION_JOB_ID = 'lk.simulation.job_id';
+
 /** Telemetry metadata key requesting PII redaction for the session. */
 export const ATTRIBUTE_REDACTION_ENABLED = 'lk.redaction.enabled';
 
@@ -86,7 +92,7 @@ export interface SessionConnectOptions {
   llmConnOptions?: Partial<APIConnectOptions>;
   /** Connection options for text-to-speech. */
   ttsConnOptions?: Partial<APIConnectOptions>;
-  /** Maximum number of consecutive unrecoverable errors from LLM or TTS before closing the session. Default: 3 */
+  /** Maximum number of consecutive unrecoverable errors from STT, LLM, or TTS before closing the session. Default: 3 */
   maxUnrecoverableErrors?: number;
 }
 

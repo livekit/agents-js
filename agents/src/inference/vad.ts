@@ -118,6 +118,7 @@ class InferenceVADStream extends BaseVADStream {
   private _inputSampleRate = 0;
   private _resampler: AudioResampler | undefined;
   private _speechBuffer: Int16Array | null = null;
+  private _speechBufferIndex = 0;
   private _speechBufferMaxReached = false;
   private _prefixPaddingSamples = 0;
   private _pumpTask: Promise<void>;
@@ -163,6 +164,9 @@ class InferenceVADStream extends BaseVADStream {
       resized.set(this._speechBuffer.subarray(0, Math.min(this._speechBuffer.length, bufferSize)));
       this._speechBuffer = resized;
 
+      // Resizing may discard samples that the write cursor still counted.
+      this._speechBufferIndex = Math.min(this._speechBufferIndex, this._speechBuffer.length);
+
       if (this._opts.maxBufferedSpeech > oldMaxBufferedSpeech) {
         this._speechBufferMaxReached = false;
       }
@@ -181,31 +185,25 @@ class InferenceVADStream extends BaseVADStream {
     let inferenceFrames: AudioFrame[] = [];
     let inputCopyRemainingFrac = 0;
     let extraInferenceTime = 0;
-    // Write cursor into `_speechBuffer`. The buffer holds:
-    //   [ ...prefix-padding (sliding pre-roll) ..., ...active speech... ]
-    // and is reset on END_OF_SPEECH (and on silence while idle) so the next
-    // turn starts from a fresh pre-roll window.
-    let speechBufferIndex = 0;
-
     const resetWriteCursor = () => {
       if (this._speechBuffer === null) return;
-      if (speechBufferIndex <= this._prefixPaddingSamples) return;
+      if (this._speechBufferIndex <= this._prefixPaddingSamples) return;
       // Slide the most-recent `prefixPaddingSamples` samples to the head
       // of the buffer so the next utterance has continuous pre-roll
       // context (the audio that immediately preceded START_OF_SPEECH).
       const paddingData = this._speechBuffer.subarray(
-        speechBufferIndex - this._prefixPaddingSamples,
-        speechBufferIndex,
+        this._speechBufferIndex - this._prefixPaddingSamples,
+        this._speechBufferIndex,
       );
       this._speechBuffer.set(paddingData, 0);
-      speechBufferIndex = this._prefixPaddingSamples;
+      this._speechBufferIndex = this._prefixPaddingSamples;
       this._speechBufferMaxReached = false;
     };
 
     const resetState = () => {
       this._nativeVad?.reset();
 
-      speechBufferIndex = 0;
+      this._speechBufferIndex = 0;
       this._speechBufferMaxReached = false;
       this._speechBuffer?.fill(0);
 
@@ -240,10 +238,10 @@ class InferenceVADStream extends BaseVADStream {
         return new AudioFrame(new Int16Array(0), this._inputSampleRate, 1, 0);
       }
       return new AudioFrame(
-        this._speechBuffer.subarray(0, speechBufferIndex),
+        this._speechBuffer.slice(0, this._speechBufferIndex),
         this._inputSampleRate,
         1,
-        speechBufferIndex,
+        this._speechBufferIndex,
       );
     };
 
@@ -315,11 +313,14 @@ class InferenceVADStream extends BaseVADStream {
         // speech buffer so START_OF_SPEECH / END_OF_SPEECH events can
         // hand downstream consumers (STT, transcription) the prefix-
         // padded audio they need.
-        const availableSpace = this._speechBuffer.length - speechBufferIndex;
+        const availableSpace = this._speechBuffer.length - this._speechBufferIndex;
         const toCopyBuffer = Math.min(toCopyInt, availableSpace);
         if (toCopyBuffer > 0) {
-          this._speechBuffer.set(inputFrame.data.subarray(0, toCopyBuffer), speechBufferIndex);
-          speechBufferIndex += toCopyBuffer;
+          this._speechBuffer.set(
+            inputFrame.data.subarray(0, toCopyBuffer),
+            this._speechBufferIndex,
+          );
+          this._speechBufferIndex += toCopyBuffer;
         } else if (!this._speechBufferMaxReached) {
           this._speechBufferMaxReached = true;
           this._logger.warn(
@@ -334,7 +335,7 @@ class InferenceVADStream extends BaseVADStream {
         if (inferenceDuration > SLOW_INFERENCE_THRESHOLD_MS) {
           this._logger.warn(
             { extraInferenceTimeMs: extraInferenceTime },
-            'VAD slower than realtime',
+            'VAD inference is slower than realtime',
           );
         }
 

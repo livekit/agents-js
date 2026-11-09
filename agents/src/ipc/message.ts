@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import type { JsonValue } from '@bufbuild/protobuf';
 import type { RunningJobInfo } from '../job.js';
 import type { LoggerOptions } from '../log.js';
 
@@ -12,6 +13,7 @@ export type IPCMessage =
         pingInterval?: number;
         pingTimeout?: number;
         highPingThreshold?: number;
+        sessionEndTimeout?: number;
       };
     }
   | {
@@ -35,6 +37,14 @@ export type IPCMessage =
       value: { reason?: string };
     }
   | {
+      case: 'shutdownRequestAck';
+      value: undefined;
+    }
+  | {
+      case: 'shuttingDown';
+      value: undefined;
+    }
+  | {
       case: 'inferenceRequest';
       value: { method: string; requestId: string; data: unknown };
     }
@@ -44,9 +54,14 @@ export type IPCMessage =
     }
   | {
       case: 'exiting';
-      value: { reason?: string };
+      value: { reason: string };
     }
   | {
       case: 'done';
       value: undefined;
+    }
+  | {
+      // the job connected: its join instants, a JobJoinTiming as JSON, for the worker to report
+      case: 'joinTiming';
+      value: JsonValue;
     };

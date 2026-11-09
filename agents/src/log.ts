@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { Writable } from 'node:stream';
+import { fileURLToPath } from 'node:url';
 import type { DestinationStream, Logger } from 'pino';
 import { multistream, pino } from 'pino';
 import { build as pinoPretty } from 'pino-pretty';
@@ -16,17 +17,83 @@ type GlobalState = {
 
 const globals = globalThis as typeof globalThis & GlobalState;
 
+// LiveKit Cloud injects this into deployed agents. Child processes inherit it.
+const deployedRegion = process.env.LIVEKIT_REGION_NAME || undefined;
+
 export { log, loggerOptions, type LoggerOptions };
+
+const CALLSITE_PATTERN = /^\s*at (?:(.*?) \()?(.+?):(\d+):\d+\)?$/;
+const PINO_FRAME_PATTERN =
+  /[\\/]node_modules[\\/](?:pino|@opentelemetry[\\/]instrumentation-pino)[\\/]/;
+
+function codeAttributes(): Record<string, string | number> {
+  try {
+    const holder: { stack?: string } = {};
+    Error.captureStackTrace(holder, logMixin);
+    const frames = holder.stack?.split('\n').slice(1) ?? [];
+    for (const frame of frames) {
+      const match = CALLSITE_PATTERN.exec(frame);
+      if (!match || PINO_FRAME_PATTERN.test(match[2]!)) continue;
+
+      let filePath = match[2]!;
+      if (filePath.startsWith('file:')) filePath = fileURLToPath(filePath);
+      return {
+        'code.file.path': filePath,
+        'code.function.name': match[1] || '<anonymous>',
+        'code.line.number': Number(match[3]),
+      };
+    }
+  } catch {
+    return {};
+  }
+  return {};
+}
+
+/** Add current process context and defaults without replacing a logger's own bindings. */
+function logFields(
+  logger: Logger,
+  defaults: Record<string, unknown> = {},
+): Record<string, unknown> {
+  const fields: Record<string, unknown> = {
+    ...defaults,
+    ...(deployedRegion && { region: deployedRegion }),
+    // The root logger gains job context after prewarm loggers have already been created.
+    ...log().bindings(),
+  };
+  for (const key of Object.keys(logger.bindings())) {
+    delete fields[key];
+  }
+  return fields;
+}
+
+// Pino 8 passes the logger as a third argument, but its types only declare two arguments.
+function logMixin(_mergeObject: object, _level: number, logger = log()): Record<string, unknown> {
+  return logFields(logger, codeAttributes());
+}
 
 const createLogger = ({ pretty, level }: LoggerOptions): Logger => {
   const logLevel = level || 'info';
   const streams: { stream: DestinationStream; level: string }[] = [
-    { stream: pretty ? pinoPretty({ colorize: true }) : process.stdout, level: logLevel },
+    {
+      stream: pretty
+        ? pinoPretty({
+            colorize: true,
+            ...(process.platform === 'win32' && process.stdout.isTTY
+              ? { destination: process.stdout }
+              : {}),
+          })
+        : process.stdout,
+      level: logLevel,
+    },
     { stream: new OtelDestination(), level: 'debug' },
   ];
 
   return pino(
-    { level: logLevel, serializers: { error: pino.stdSerializers.err } },
+    {
+      level: logLevel,
+      serializers: { error: pino.stdSerializers.err },
+      mixin: pretty ? (_mergeObject, _level, logger = log()) => logFields(logger) : logMixin,
+    },
     multistream(streams),
   );
 };

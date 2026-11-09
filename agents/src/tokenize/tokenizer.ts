@@ -10,6 +10,11 @@ export const PUNCTUATIONS = [
   '…',
 ]
 
+/** Whether a character is punctuation, including non-ASCII punctuation. */
+export function isPunctuation(character: string): boolean {
+  return PUNCTUATIONS.includes(character) || /^\p{P}$/u.test(character);
+}
+
 export interface TokenData {
   segmentId: string;
   token: string;

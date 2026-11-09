@@ -48,6 +48,10 @@ export interface RealtimeCapabilities {
   messageTruncation: boolean;
   /** Whether the model emits server-side speech start and stop events for turn taking. */
   turnDetection: boolean;
+  /** Whether client-side turn handling may disable the model's default server turn detection. */
+  canDisableTurnDetection?: boolean;
+  /** Whether the model may speak over the caller and decides when to yield. Defaults to false. */
+  supportsOverlappingSpeech?: boolean;
   /** Whether the model emits user audio transcription events. */
   userTranscription: boolean;
   /** Whether the model automatically generates a reply after receiving tool results. */
@@ -87,6 +91,8 @@ export interface InputTranscriptionCompleted {
   itemId: string;
   transcript: string;
   isFinal: boolean;
+  /** Confidence in the user transcript, when the provider supplies it. */
+  confidence?: number;
   /**
    * When the turn this transcript belongs to began, in milliseconds since epoch.
    *
@@ -100,19 +106,24 @@ export interface InputTranscriptionCompleted {
 export interface RealtimeSessionReconnectedEvent {}
 
 /**
- * Initial configuration for a {@link RealtimeSession}.
+ * Options for {@link RealtimeModel.session}.
  *
- * The framework passes these when creating a session so that providers whose
- * configuration is fixed at connect time (e.g. tools serialized into the
- * connection setup frame) can apply it to the very first connection instead of
- * reconnecting once the same values arrive through `_updateSession`.
+ * The framework passes the agent's instructions, chat context, and tools when it creates a
+ * session. A provider that fixes them at connect time (for example, Gemini Live sends tools in
+ * its setup message) applies them to the first connection. It then does not need to reconnect
+ * when the same values arrive through `_updateSession`.
  */
 export interface RealtimeSessionOptions {
+  /**
+   * Disable server-side turn detection for this session. Only providers that report
+   * `canDisableTurnDetection` honor it.
+   */
+  turnDetectionDisabled?: boolean;
   /** Initial system instructions. */
   instructions?: string;
   /** Initial chat context. */
   chatCtx?: ChatContext;
-  /** Initial tool context. */
+  /** Initial tools. */
   tools?: ToolContext;
 }
 

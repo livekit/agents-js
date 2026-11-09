@@ -1,0 +1,512 @@
+// SPDX-FileCopyrightText: 2026 LiveKit, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+import { EventEmitter } from 'node:events';
+import type { Logger } from 'pino';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { type JobContext, getJobContext } from './job.js';
+import {
+  finalizeSession,
+  flushJobLogs,
+  flushJobMetrics,
+  flushJobTraces,
+  runShutdownCallbacks,
+  waitForEntrypointShutdown,
+} from './job_lifecycle.js';
+import { flushCloudMetrics, flushCloudTraces, flushOtelLogs } from './telemetry/index.js';
+import { ATTRIBUTE_SIMULATOR } from './types.js';
+import { Agent } from './voice/agent.js';
+import { AgentSession } from './voice/agent_session.js';
+import { AgentSessionEventTypes, CloseReason } from './voice/events.js';
+import type { SessionHost } from './voice/remote_session.js';
+
+vi.mock('./telemetry/index.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./telemetry/index.js')>()),
+  flushOtelLogs: vi.fn(),
+  flushCloudMetrics: vi.fn(),
+  flushCloudTraces: vi.fn(),
+}));
+
+const flushOtelLogsMock = vi.mocked(flushOtelLogs);
+const flushCloudMetricsMock = vi.mocked(flushCloudMetrics);
+const flushCloudTracesMock = vi.mocked(flushCloudTraces);
+
+function createLogger(): Logger {
+  return {
+    debug: vi.fn(),
+    error: vi.fn(),
+    warn: vi.fn(),
+  } as unknown as Logger;
+}
+
+function createJobContext(
+  onSessionEnd: () => Promise<void>,
+  session?: Pick<AgentSession, '_closeImpl'>,
+): JobContext {
+  return { _onSessionEnd: onSessionEnd, _primaryAgentSession: session } as unknown as JobContext;
+}
+
+afterEach(() => {
+  vi.clearAllMocks();
+  vi.useRealTimers();
+});
+
+describe('waitForEntrypointShutdown', () => {
+  it('logs an entrypoint error during shutdown', async () => {
+    const error = new TypeError('entrypoint failed');
+    const logger = createLogger();
+
+    await waitForEntrypointShutdown(Promise.reject(error), logger);
+
+    expect(logger.error).toHaveBeenCalledWith({ error }, 'error in entry function');
+  });
+
+  it('continues after 15 seconds and safely handles a later rejection', async () => {
+    vi.useFakeTimers();
+    const error = new Error('late entrypoint failure');
+    const logger = createLogger();
+    let rejectEntrypoint!: (error: Error) => void;
+    const entrypoint = new Promise<void>((_, reject) => {
+      rejectEntrypoint = reject;
+    });
+    const completion = waitForEntrypointShutdown(entrypoint, logger);
+
+    await vi.advanceTimersByTimeAsync(15_000);
+    await completion;
+
+    expect(logger.warn).toHaveBeenCalledWith(
+      { timeout: 15_000 },
+      'entrypoint did not exit in time; proceeding with session cleanup',
+    );
+
+    rejectEntrypoint(error);
+    await vi.waitFor(() =>
+      expect(logger.debug).toHaveBeenCalledWith(
+        { error },
+        'entrypoint rejected after shutdown timeout',
+      ),
+    );
+  });
+});
+
+describe('finalizeSession', () => {
+  it('closes the primary session before the application callback', async () => {
+    const calls: string[] = [];
+    const ctx = createJobContext(
+      async () => {
+        calls.push('internal');
+      },
+      {
+        _closeImpl: async () => {
+          calls.push('close');
+        },
+      },
+    );
+
+    await finalizeSession(
+      ctx,
+      () => {
+        calls.push('application');
+      },
+      1000,
+      createLogger(),
+    );
+
+    expect(calls).toEqual(['close', 'application', 'internal']);
+  });
+
+  it('closes the primary session as JOB_SHUTDOWN', async () => {
+    const session = new AgentSession({ vad: null });
+    const agent = new Agent({ instructions: 'test' });
+    const onExit = vi.spyOn(agent, 'onExit');
+    const onClose = vi.fn();
+    session.on(AgentSessionEventTypes.Close, onClose);
+    await session.start({ agent });
+    const ctx = createJobContext(async () => {}, session);
+
+    try {
+      expect(session._activity).toBeDefined();
+      await finalizeSession(ctx, undefined, 1000, createLogger());
+
+      expect(onExit).toHaveBeenCalledOnce();
+      expect(onClose).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ reason: CloseReason.JOB_SHUTDOWN }),
+      );
+      expect(session._activity).toBeUndefined();
+    } finally {
+      await session.close();
+    }
+  });
+
+  it('skips the application callback when the primary session fails to close', async () => {
+    const error = new Error('close failed');
+    const applicationCallback = vi.fn();
+    const internalCleanup = vi.fn(async () => {});
+    const logger = createLogger();
+    const ctx = createJobContext(internalCleanup, {
+      _closeImpl: async () => {
+        throw error;
+      },
+    });
+
+    await finalizeSession(ctx, applicationCallback, 1000, logger);
+
+    expect(applicationCallback).not.toHaveBeenCalled();
+    expect(internalCleanup).toHaveBeenCalledOnce();
+    expect(logger.error).toHaveBeenCalledWith(
+      { error },
+      'AgentSession.close() failed; proceeding with shutdown without running onSessionEnd.',
+    );
+  });
+
+  it('skips the application callback when the primary session close times out', async () => {
+    vi.useFakeTimers();
+    const applicationCallback = vi.fn();
+    const internalCleanup = vi.fn(async () => {});
+    const logger = createLogger();
+    const ctx = createJobContext(internalCleanup, {
+      _closeImpl: () => new Promise<void>(() => {}),
+    });
+    const completion = finalizeSession(ctx, applicationCallback, 1000, logger);
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    await completion;
+
+    expect(applicationCallback).not.toHaveBeenCalled();
+    expect(internalCleanup).toHaveBeenCalledOnce();
+    expect(logger.error).toHaveBeenCalledWith(
+      { timeout: 60_000 },
+      'AgentSession.close() timed out; proceeding with shutdown without running onSessionEnd.',
+    );
+  });
+
+  it('runs the application callback before internal session cleanup', async () => {
+    const calls: string[] = [];
+    const ctx = createJobContext(async () => {
+      calls.push('internal');
+    });
+
+    await finalizeSession(
+      ctx,
+      () => {
+        calls.push('application');
+      },
+      1000,
+      createLogger(),
+    );
+
+    expect(calls).toEqual(['application', 'internal']);
+  });
+
+  it('keeps the job context active through application and internal cleanup', async () => {
+    const ctx: JobContext = createJobContext(async () => {
+      expect(getJobContext()).toBe(ctx);
+    });
+
+    await finalizeSession(
+      ctx,
+      () => {
+        expect(getJobContext()).toBe(ctx);
+      },
+      1000,
+      createLogger(),
+    );
+  });
+
+  it('continues internal cleanup when the application callback rejects', async () => {
+    const error = new TypeError('callback failed');
+    const internalCleanup = vi.fn(async () => {});
+    const logger = createLogger();
+
+    await finalizeSession(
+      createJobContext(internalCleanup),
+      async () => {
+        throw error;
+      },
+      1000,
+      logger,
+    );
+
+    expect(internalCleanup).toHaveBeenCalledOnce();
+    expect(logger.error).toHaveBeenCalledWith(
+      { error },
+      'error while executing the onSessionEnd callback',
+    );
+  });
+
+  it('continues internal cleanup when the application callback times out', async () => {
+    vi.useFakeTimers();
+    const internalCleanup = vi.fn(async () => {});
+    const logger = createLogger();
+    const completion = finalizeSession(
+      createJobContext(internalCleanup),
+      () => new Promise<void>(() => {}),
+      1000,
+      logger,
+    );
+
+    await vi.advanceTimersByTimeAsync(1000);
+    await completion;
+
+    expect(internalCleanup).toHaveBeenCalledOnce();
+    expect(logger.error).toHaveBeenCalledWith(
+      { timeout: 1000 },
+      'onSessionEnd timed out; proceeding with internal session cleanup',
+    );
+  });
+
+  it('logs a callback error that arrives after its timeout', async () => {
+    vi.useFakeTimers();
+    const error = new Error('late callback failure');
+    const logger = createLogger();
+    let rejectCallback!: (error: Error) => void;
+    const callback = new Promise<void>((_, reject) => {
+      rejectCallback = reject;
+    });
+    const completion = finalizeSession(
+      createJobContext(async () => {}),
+      () => callback,
+      1000,
+      logger,
+    );
+
+    await vi.advanceTimersByTimeAsync(1000);
+    await completion;
+    rejectCallback(error);
+
+    await vi.waitFor(() =>
+      expect(logger.debug).toHaveBeenCalledWith(
+        { error },
+        'onSessionEnd rejected after shutdown timeout',
+      ),
+    );
+  });
+
+  it('logs internal cleanup errors', async () => {
+    const error = new Error('session report failed');
+    const logger = createLogger();
+
+    await finalizeSession(
+      createJobContext(async () => {
+        throw error;
+      }),
+      undefined,
+      1000,
+      logger,
+    );
+
+    expect(logger.error).toHaveBeenCalledWith({ error }, 'error in ctx._onSessionEnd');
+  });
+
+  it('does not apply the application callback timeout to internal cleanup', async () => {
+    vi.useFakeTimers();
+    let resolveCleanup!: () => void;
+    const cleanup = new Promise<void>((resolve) => {
+      resolveCleanup = resolve;
+    });
+    let completed = false;
+    const completion = finalizeSession(
+      createJobContext(() => cleanup),
+      undefined,
+      1000,
+      createLogger(),
+    );
+    void completion.then(() => {
+      completed = true;
+    });
+
+    await vi.advanceTimersByTimeAsync(900_000);
+    expect(completed).toBe(false);
+
+    resolveCleanup();
+    await completion;
+    expect(completed).toBe(true);
+  });
+});
+
+class FakeRoom extends EventEmitter {
+  isConnected = true;
+  remoteParticipants = new Map<string, { attributes: Record<string, string> }>([
+    ['simulator', { attributes: { [ATTRIBUTE_SIMULATOR]: '1' } }],
+  ]);
+}
+
+function createSimulationJobContext(room: FakeRoom) {
+  let finalize!: () => void;
+  const finalized = new Promise<void>((resolve) => {
+    finalize = resolve;
+  });
+  const sessionHost = {
+    _waitForSimulationFinalized: () => finalized,
+    close: vi.fn(async () => {}),
+  };
+  const ctx = {
+    _onSessionEnd: async () => {},
+    _sessionHost: sessionHost as unknown as SessionHost,
+    room,
+    simulationContext: () => ({}),
+  } as unknown as JobContext;
+  return { ctx, sessionHost, finalize };
+}
+
+describe('finalizeSession under a simulation', () => {
+  it('keeps the session host up until the simulator finalizes', async () => {
+    const { ctx, sessionHost, finalize } = createSimulationJobContext(new FakeRoom());
+    const done = finalizeSession(ctx, undefined, 10_000, createLogger());
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(sessionHost.close).not.toHaveBeenCalled();
+
+    finalize();
+    await done;
+    expect(sessionHost.close).toHaveBeenCalledOnce();
+  });
+
+  it('stops waiting when the simulator leaves, even if others stay', async () => {
+    const room = new FakeRoom();
+    room.remoteParticipants.set('sip', { attributes: {} });
+    const { ctx, sessionHost } = createSimulationJobContext(room);
+    const done = finalizeSession(ctx, undefined, 10_000, createLogger());
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(sessionHost.close).not.toHaveBeenCalled();
+
+    room.remoteParticipants.delete('simulator');
+    room.emit('participantDisconnected');
+    await done;
+    expect(sessionHost.close).toHaveBeenCalledOnce();
+  });
+
+  it('does not wait once the room is gone', async () => {
+    const room = new FakeRoom();
+    room.isConnected = false;
+    const { ctx, sessionHost } = createSimulationJobContext(room);
+    await finalizeSession(ctx, undefined, 10_000, createLogger());
+    expect(sessionHost.close).toHaveBeenCalledOnce();
+  });
+
+  it('does not let a session host that never closes hold up shutdown', async () => {
+    vi.useFakeTimers();
+    const room = new FakeRoom();
+    room.isConnected = false;
+    const { ctx, sessionHost } = createSimulationJobContext(room);
+    sessionHost.close.mockReturnValue(new Promise(() => {}));
+    const done = finalizeSession(ctx, undefined, 10_000, createLogger());
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    await done;
+  });
+
+  it('gives up after the session end timeout', async () => {
+    const logger = createLogger();
+    const { ctx, sessionHost } = createSimulationJobContext(new FakeRoom());
+    await finalizeSession(ctx, undefined, 50, logger);
+    expect(logger.warn).toHaveBeenCalledWith({ timeout: 50 }, 'simulator did not finalize in time');
+    expect(sessionHost.close).toHaveBeenCalledOnce();
+  });
+});
+
+describe('runShutdownCallbacks', () => {
+  it('logs callback errors', async () => {
+    const error = new TypeError('shutdown callback failed');
+    const logger = createLogger();
+
+    await runShutdownCallbacks(
+      [
+        async () => {
+          throw error;
+        },
+      ],
+      logger,
+    );
+
+    expect(logger.error).toHaveBeenCalledWith({ error }, 'error while running shutdown callback');
+  });
+});
+
+describe('flushJobLogs', () => {
+  it('flushes pending OTEL logs', async () => {
+    flushOtelLogsMock.mockResolvedValue();
+    await flushJobLogs(createLogger());
+    expect(flushOtelLogsMock).toHaveBeenCalledOnce();
+  });
+
+  it('stops waiting after the log flush timeout', async () => {
+    vi.useFakeTimers();
+    flushOtelLogsMock.mockReturnValue(new Promise<void>(() => {}));
+    const logger = createLogger();
+    const completion = flushJobLogs(logger);
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    await completion;
+
+    expect(logger.error).toHaveBeenCalledWith(
+      { timeout: 10_000 },
+      'OTEL log flush timed out; proceeding with job shutdown',
+    );
+  });
+
+  it('continues after logging log exporter errors', async () => {
+    const error = new Error('exporter failed');
+    const logger = createLogger();
+    flushOtelLogsMock.mockRejectedValue(error);
+
+    await flushJobLogs(logger);
+
+    expect(logger.error).toHaveBeenCalledWith({ error }, 'Failed to flush OTEL logs');
+  });
+});
+
+describe('flushJobMetrics', () => {
+  it('exports the pending cloud metrics', async () => {
+    flushCloudMetricsMock.mockResolvedValue();
+    await flushJobMetrics(createLogger());
+    expect(flushCloudMetricsMock).toHaveBeenCalledOnce();
+  });
+
+  it('stops waiting after the metric flush timeout', async () => {
+    vi.useFakeTimers();
+    flushCloudMetricsMock.mockReturnValue(new Promise<void>(() => {}));
+    const logger = createLogger();
+    const completion = flushJobMetrics(logger);
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    await completion;
+
+    expect(logger.error).toHaveBeenCalledWith(
+      { timeout: 10_000 },
+      'OTEL metric flush timed out; proceeding with job shutdown',
+    );
+  });
+
+  it('continues after logging metric exporter errors', async () => {
+    const error = new Error('exporter failed');
+    const logger = createLogger();
+    flushCloudMetricsMock.mockRejectedValue(error);
+
+    await flushJobMetrics(logger);
+
+    expect(logger.error).toHaveBeenCalledWith({ error }, 'Failed to flush OTEL metrics');
+  });
+});
+
+describe('flushJobTraces', () => {
+  it('exports the remaining spans', async () => {
+    flushCloudTracesMock.mockResolvedValue();
+    await flushJobTraces(createLogger());
+    expect(flushCloudTracesMock).toHaveBeenCalledOnce();
+  });
+
+  it('stops waiting after the trace flush timeout', async () => {
+    vi.useFakeTimers();
+    flushCloudTracesMock.mockReturnValue(new Promise<void>(() => {}));
+    const logger = createLogger();
+    const completion = flushJobTraces(logger);
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    await completion;
+
+    expect(logger.error).toHaveBeenCalledWith(
+      { timeout: 10_000 },
+      'OTEL trace flush timed out; proceeding with job shutdown',
+    );
+  });
+});

@@ -1,18 +1,25 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { beforeAll, describe, expect, it } from 'vitest';
+import { once } from 'node:events';
+import type { AddressInfo } from 'node:net';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { WebSocketServer } from 'ws';
+import { APIStatusError } from '../_exceptions.js';
 import * as agents from '../index.js';
-import { normalizeLanguage } from '../language.js';
-import { initializeLogger } from '../log.js';
+import { asLanguageCode, normalizeLanguage } from '../language.js';
+import { AgentHandoffItem, ChatMessage } from '../llm/index.js';
+import { initializeLogger, log } from '../log.js';
 import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import { VAD, type VADStream } from '../vad.js';
+import { createConversationItemAddedEvent } from '../voice/events.js';
 import {
   SpeechStream as InferenceSpeechStream,
   STT,
   type STTFallbackModel,
   type STTModels,
+  type STTOptions,
   type XaiSTTModels,
   normalizeSTTFallback,
   parseSTTModelString,
@@ -33,6 +40,16 @@ function makeStt(overrides: Record<string, unknown> = {}) {
     baseURL: 'https://example.livekit.cloud',
   };
   return new STT({ ...defaults, ...overrides });
+}
+
+function makeAssemblyStt(overrides: Record<string, unknown> = {}) {
+  return makeStt({ model: 'assemblyai/universal-3-5-pro', ...overrides });
+}
+
+function assistantItemEvent(text: string) {
+  return createConversationItemAddedEvent(
+    ChatMessage.create({ role: 'assistant', content: [text] }),
+  );
 }
 
 function makeSpeechStream() {
@@ -426,6 +443,112 @@ describe('STT diarization capabilities', () => {
   });
 });
 
+describe('STT agent_context forwarding', () => {
+  it('enables chat context for AssemblyAI U3 Pro family models', () => {
+    for (const model of [
+      'assemblyai/u3-rt-pro',
+      'assemblyai/universal-3-5-pro',
+      'assemblyai/universal-3-6-pro',
+    ] as const) {
+      const stt = makeAssemblyStt({ model });
+      expect(stt.capabilities.chatContext).toBe(true);
+    }
+  });
+
+  it('disables chat context for unsupported AssemblyAI models', () => {
+    const stt = makeAssemblyStt({ model: 'assemblyai/universal-streaming' });
+
+    expect(stt.capabilities.chatContext).toBe(false);
+  });
+
+  it('disables chat context for non-AssemblyAI models', () => {
+    const stt = makeAssemblyStt({ model: 'deepgram/nova-3' });
+    expect(stt.capabilities.chatContext).toBe(false);
+  });
+
+  it('derives chatContext capability from model support only', () => {
+    const stt = makeAssemblyStt({ modelOptions: { previous_context_n_turns: 0 } });
+    expect(stt.capabilities.chatContext).toBe(true);
+  });
+
+  it('emits active carryover shaping in the session.update wire payload', () => {
+    const stt = makeAssemblyStt();
+    const stream = stt.stream();
+    const sent: string[] = [];
+    Reflect.set(stream, 'activeWs', {
+      readyState: 1,
+      send: (payload: string) => sent.push(payload),
+    });
+
+    stt._pushConversationItem(assistantItemEvent('Your room is booked for Tuesday.'));
+
+    expect(stt['opts'].modelOptions).toHaveProperty(
+      'agent_context',
+      'Your room is booked for Tuesday.',
+    );
+    expect(sent).toHaveLength(1);
+    expect(JSON.parse(sent[0]!)).toMatchObject({
+      type: 'session.update',
+      settings: {
+        extra: {
+          agent_context: 'Your room is booked for Tuesday.',
+        },
+      },
+    });
+    stream.close();
+  });
+
+  it('truncates oversize replies keeping the tail', () => {
+    const text = 'a'.repeat(2000) + 'b'.repeat(1750);
+    const stt = makeAssemblyStt();
+    stt._pushConversationItem(assistantItemEvent(text));
+    expect(stt['opts'].modelOptions).toHaveProperty('agent_context', 'b'.repeat(1750));
+  });
+
+  it('ignores non-assistant items', () => {
+    const stt = makeAssemblyStt();
+
+    stt._pushConversationItem(
+      createConversationItemAddedEvent(ChatMessage.create({ role: 'user', content: ['hi there'] })),
+    );
+    expect(stt['opts'].modelOptions).not.toHaveProperty('agent_context');
+
+    stt._pushConversationItem(
+      createConversationItemAddedEvent(ChatMessage.create({ role: 'assistant', content: [] })),
+    );
+    expect(stt['opts'].modelOptions).not.toHaveProperty('agent_context');
+  });
+
+  it('ignores agent handoff items', () => {
+    const stt = makeAssemblyStt();
+    stt._pushConversationItem(
+      createConversationItemAddedEvent(AgentHandoffItem.create({ newAgentId: 'agent-2' })),
+    );
+    expect(stt['opts'].modelOptions).not.toHaveProperty('agent_context');
+  });
+
+  it('preserves explicit agent_context and later overwrites it with carryover', () => {
+    const stt = makeAssemblyStt({
+      modelOptions: { agent_context: 'The agent asked for a booking date.' },
+    });
+    expect(stt['opts'].modelOptions).toHaveProperty(
+      'agent_context',
+      'The agent asked for a booking date.',
+    );
+
+    stt._pushConversationItem(assistantItemEvent('And your zip code?'));
+    expect(stt['opts'].modelOptions).toHaveProperty('agent_context', 'And your zip code?');
+  });
+
+  it('re-evaluates chat context capability on model update', () => {
+    const stt = makeAssemblyStt({ model: 'assemblyai/universal-streaming' });
+    expect(stt.capabilities.chatContext).toBe(false);
+
+    stt.updateOptions({ model: 'assemblyai/universal-3-5-pro' });
+    expect(stt.capabilities.chatContext).toBe(true);
+  });
+});
+
 describe('STT aligned transcript capability', () => {
   it('agrees with the Cartesia Ink-2 plugin capability', () => {
     const gatewayStt = makeStt({ model: 'cartesia/ink-2' });
@@ -439,6 +562,9 @@ describe('STT aligned transcript capability', () => {
     expect(
       makeStt({ model: 'assemblyai/universal-streaming' }).capabilities.alignedTranscript,
     ).toBe('word');
+    expect(makeStt({ model: 'assemblyai/universal-3-6-pro' }).capabilities.alignedTranscript).toBe(
+      'word',
+    );
     expect(makeStt({ model: 'auto' }).capabilities.alignedTranscript).toBe(false);
     expect(makeStt({ model: 'inworld/inworld-stt-1' }).capabilities.alignedTranscript).toBe(false);
   });
@@ -602,6 +728,1330 @@ describe('STT VAD handling for Speechmatics models', () => {
   });
 });
 
+describe('Inference STT connection lifecycle', () => {
+  it('sends session keyterms to speechmatics/linden-1', async () => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const address = server.address() as AddressInfo;
+    let extra: Record<string, unknown> = {};
+
+    server.on('connection', (socket) => {
+      socket.on('message', (raw) => {
+        const event = JSON.parse(raw.toString()) as {
+          type: string;
+          settings?: { extra?: Record<string, unknown> };
+        };
+        if (event.type === 'session.create') {
+          extra = event.settings?.extra ?? {};
+        } else if (event.type === 'session.finalize') {
+          socket.send(
+            JSON.stringify({ type: 'final_transcript', transcript: 'hi', language: 'en' }),
+          );
+          socket.send(JSON.stringify({ type: 'session.closed' }));
+        }
+      });
+    });
+
+    try {
+      const userEntry = { content: 'gnocchi', sounds_like: ['nyohki'] };
+      const stt = makeStt({
+        model: 'speechmatics/linden-1',
+        modelOptions: { additional_vocab: [userEntry] },
+        baseURL: `http://127.0.0.1:${address.port}`,
+        connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1_000 },
+      });
+      expect(stt.capabilities.keyterms).toBe(true);
+      stt._updateSessionKeyterms(['gnocchi', 'LiveKit']);
+      const stream = stt.stream();
+
+      try {
+        stream.endInput();
+        for await (const _ of stream) {
+          /* drain */
+        }
+      } finally {
+        stream.close();
+      }
+
+      expect(extra.additional_vocab).toEqual([userEntry, { content: 'LiveKit' }]);
+    } finally {
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('drops the Deepgram Nova-3 language hint when the language is not multi', async () => {
+    const warn = vi.spyOn(log(), 'warn');
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const address = server.address() as AddressInfo;
+    let settings: { language?: string; extra?: Record<string, unknown> } = {};
+
+    server.on('connection', (socket) => {
+      socket.on('message', (raw) => {
+        const event = JSON.parse(raw.toString()) as {
+          type: string;
+          settings?: { language?: string; extra?: Record<string, unknown> };
+        };
+        if (event.type === 'session.create') {
+          settings = event.settings ?? {};
+        } else if (event.type === 'session.finalize') {
+          socket.send(
+            JSON.stringify({ type: 'final_transcript', transcript: 'hi', language: 'en' }),
+          );
+          socket.send(JSON.stringify({ type: 'session.closed' }));
+        }
+      });
+    });
+
+    try {
+      const stt = makeStt({
+        model: 'deepgram/nova-3',
+        language: 'en',
+        modelOptions: { language_hint: ['en', 'es'] } satisfies STTOptions<'deepgram/nova-3'>,
+        baseURL: `http://127.0.0.1:${address.port}`,
+        connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1_000 },
+      });
+      const stream = stt.stream();
+
+      try {
+        stream.endInput();
+        for await (const _ of stream) {
+          /* drain */
+        }
+      } finally {
+        stream.close();
+      }
+
+      expect(settings.extra).not.toHaveProperty('language_hint');
+      expect(warn).toHaveBeenCalledWith(
+        'Ignoring `language_hint` for deepgram/nova-3: it only applies with language "multi" (session language "en")',
+      );
+      // the drop is per session, not a rewrite of what the caller configured
+      expect(stt['opts'].modelOptions).toHaveProperty('language_hint', ['en', 'es']);
+    } finally {
+      warn.mockRestore();
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('sends the Deepgram Nova-3 language hint alongside multi language', async () => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const address = server.address() as AddressInfo;
+    let settings: { language?: string; extra?: Record<string, unknown> } = {};
+
+    server.on('connection', (socket) => {
+      socket.on('message', (raw) => {
+        const event = JSON.parse(raw.toString()) as {
+          type: string;
+          settings?: { language?: string; extra?: Record<string, unknown> };
+        };
+        if (event.type === 'session.create') {
+          settings = event.settings ?? {};
+        } else if (event.type === 'session.finalize') {
+          socket.send(
+            JSON.stringify({ type: 'final_transcript', transcript: 'hi', language: 'en' }),
+          );
+          socket.send(JSON.stringify({ type: 'session.closed' }));
+        }
+      });
+    });
+
+    try {
+      const stt = makeStt({
+        model: 'deepgram/nova-3',
+        language: 'multi',
+        modelOptions: { language_hint: ['en', 'es'] } satisfies STTOptions<'deepgram/nova-3'>,
+        baseURL: `http://127.0.0.1:${address.port}`,
+        connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1_000 },
+      });
+      const stream = stt.stream();
+
+      try {
+        stream.endInput();
+        for await (const _ of stream) {
+          /* drain */
+        }
+      } finally {
+        stream.close();
+      }
+
+      expect(settings.language).toBe('multi');
+      expect(settings.extra).toMatchObject({ language_hint: ['en', 'es'] });
+    } finally {
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('keeps the language hint for Deepgram Flux under a non-multi language', async () => {
+    const warn = vi.spyOn(log(), 'warn');
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const address = server.address() as AddressInfo;
+    let settings: { language?: string; extra?: Record<string, unknown> } = {};
+
+    server.on('connection', (socket) => {
+      socket.on('message', (raw) => {
+        const event = JSON.parse(raw.toString()) as {
+          type: string;
+          settings?: { language?: string; extra?: Record<string, unknown> };
+        };
+        if (event.type === 'session.create') {
+          settings = event.settings ?? {};
+        } else if (event.type === 'session.finalize') {
+          socket.send(
+            JSON.stringify({ type: 'final_transcript', transcript: 'hi', language: 'en' }),
+          );
+          socket.send(JSON.stringify({ type: 'session.closed' }));
+        }
+      });
+    });
+
+    try {
+      const stt = makeStt({
+        model: 'deepgram/flux-general-multi',
+        language: 'en',
+        modelOptions: {
+          language_hint: ['en', 'es'],
+        } satisfies STTOptions<'deepgram/flux-general-multi'>,
+        baseURL: `http://127.0.0.1:${address.port}`,
+        connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1_000 },
+      });
+      const stream = stt.stream();
+
+      try {
+        stream.endInput();
+        for await (const _ of stream) {
+          /* drain */
+        }
+      } finally {
+        stream.close();
+      }
+
+      expect(settings.extra).toMatchObject({ language_hint: ['en', 'es'] });
+      const hintWarnings = warn.mock.calls.filter(
+        ([message]) => typeof message === 'string' && message.includes('language_hint'),
+      );
+      expect(hintWarnings).toEqual([]);
+    } finally {
+      warn.mockRestore();
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  // The key is the caller's for a provider that never asked for it: only Deepgram's models have
+  // language rules that make it ours to withhold.
+  it('leaves a non-Deepgram model its language_hint', async () => {
+    const warn = vi.spyOn(log(), 'warn');
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const address = server.address() as AddressInfo;
+    const created: Array<{ extra?: Record<string, unknown> }> = [];
+    const updates: Array<{ extra?: Record<string, unknown> }> = [];
+    let resolveSessionCreated!: () => void;
+    const sessionCreated = new Promise<void>((resolve) => {
+      resolveSessionCreated = resolve;
+    });
+
+    server.on('connection', (socket) => {
+      socket.on('message', (raw) => {
+        const event = JSON.parse(raw.toString()) as {
+          type: string;
+          settings?: { extra?: Record<string, unknown> };
+        };
+        if (event.type === 'session.create') {
+          created.push(event.settings ?? {});
+          resolveSessionCreated();
+        }
+        if (event.type === 'session.update') updates.push(event.settings ?? {});
+        if (event.type === 'session.finalize') {
+          socket.send(
+            JSON.stringify({ type: 'final_transcript', transcript: 'hi', language: 'en' }),
+          );
+          socket.send(JSON.stringify({ type: 'session.closed' }));
+        }
+      });
+    });
+
+    try {
+      const stt = makeStt({
+        model: 'assemblyai/universal-streaming',
+        language: 'en',
+        modelOptions: { language_hint: ['en', 'es'] },
+        baseURL: `http://127.0.0.1:${address.port}`,
+        connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1_000 },
+      });
+      const stream = stt.stream();
+
+      try {
+        await sessionCreated;
+        expect(created[0]?.extra).toMatchObject({ language_hint: ['en', 'es'] });
+
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        stream.updateOptions({
+          modelOptions: { language_hint: ['en', 'es'] },
+        });
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        stream.endInput();
+        for await (const _ of stream) {
+          /* drain */
+        }
+      } finally {
+        stream.close();
+      }
+
+      expect(updates).toHaveLength(1);
+      expect(updates[0]?.extra).toMatchObject({ language_hint: ['en', 'es'] });
+      const hintWarnings = warn.mock.calls.filter(
+        ([message]) => typeof message === 'string' && message.includes('language_hint'),
+      );
+      expect(hintWarnings).toEqual([]);
+    } finally {
+      warn.mockRestore();
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('drops the hint and warns once across a reconnect', async () => {
+    const warn = vi.spyOn(log(), 'warn');
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const address = server.address() as AddressInfo;
+    const frames: Array<Record<string, unknown>> = [];
+    let connectionCount = 0;
+    let resolveSecondConnection!: () => void;
+    const secondConnection = new Promise<void>((resolve) => {
+      resolveSecondConnection = resolve;
+    });
+
+    server.on('connection', (socket) => {
+      connectionCount += 1;
+      const connection = connectionCount;
+      if (connection === 2) resolveSecondConnection();
+      socket.on('message', (raw) => {
+        const event = JSON.parse(raw.toString()) as {
+          type: string;
+          settings?: { extra?: Record<string, unknown> };
+        };
+        if (event.type === 'session.create') {
+          frames.push(event.settings?.extra ?? {});
+          if (connection === 1) {
+            socket.send(JSON.stringify({ type: 'session.closed' }), () => socket.close());
+          }
+        }
+        if (connection === 2 && event.type === 'session.finalize') {
+          socket.send(
+            JSON.stringify({ type: 'final_transcript', transcript: 'final words', language: 'en' }),
+          );
+          socket.send(JSON.stringify({ type: 'session.closed' }));
+        }
+      });
+    });
+
+    try {
+      const stt = makeStt({
+        model: 'deepgram/nova-3',
+        language: 'en',
+        modelOptions: { language_hint: ['en', 'es'] } satisfies STTOptions<'deepgram/nova-3'>,
+        baseURL: `http://127.0.0.1:${address.port}`,
+        connOptions: { maxRetry: 1, retryIntervalMs: 1, timeoutMs: 1_000 },
+      });
+      const stream = stt.stream();
+
+      try {
+        await secondConnection;
+        stream.endInput();
+        for await (const _ of stream) {
+          /* drain */
+        }
+      } finally {
+        stream.close();
+      }
+
+      expect(connectionCount).toBe(2);
+      expect(frames).toHaveLength(2);
+      for (const extra of frames) {
+        expect(extra).not.toHaveProperty('language_hint');
+      }
+      // `log()` is a shared singleton, so the spy also sees the framework's own retry warning
+      const hintWarnings = warn.mock.calls.filter(
+        ([message]) => typeof message === 'string' && message.includes('language_hint'),
+      );
+      expect(hintWarnings).toHaveLength(1);
+    } finally {
+      warn.mockRestore();
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('drops a language hint added mid-session while the language is not multi', async () => {
+    const warn = vi.spyOn(log(), 'warn');
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const address = server.address() as AddressInfo;
+    const updates: Array<Record<string, unknown>> = [];
+    let resolveSessionCreated!: () => void;
+    const sessionCreated = new Promise<void>((resolve) => {
+      resolveSessionCreated = resolve;
+    });
+
+    server.on('connection', (socket) => {
+      socket.on('message', (raw) => {
+        const event = JSON.parse(raw.toString()) as {
+          type: string;
+          settings?: { extra?: Record<string, unknown> };
+        };
+        if (event.type === 'session.create') resolveSessionCreated();
+        if (event.type === 'session.update') updates.push(event.settings?.extra ?? {});
+        if (event.type === 'session.finalize') {
+          socket.send(
+            JSON.stringify({ type: 'final_transcript', transcript: 'hi', language: 'en' }),
+          );
+          socket.send(JSON.stringify({ type: 'session.closed' }));
+        }
+      });
+    });
+
+    try {
+      const stt = makeStt({
+        model: 'deepgram/nova-3',
+        language: 'en',
+        baseURL: `http://127.0.0.1:${address.port}`,
+        connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1_000 },
+      });
+      const stream = stt.stream();
+
+      try {
+        await sessionCreated;
+        // let run() install the socket before updating it
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        stream.updateOptions({
+          modelOptions: { language_hint: ['en', 'es'] } satisfies STTOptions<'deepgram/nova-3'>,
+        });
+        stream.endInput();
+        for await (const _ of stream) {
+          /* drain */
+        }
+      } finally {
+        stream.close();
+      }
+
+      expect(updates).toHaveLength(1);
+      expect(updates[0]).not.toHaveProperty('language_hint');
+      // the drop applies to the frame, not to what the caller configured
+      expect(stream['opts'].modelOptions).toHaveProperty('language_hint', ['en', 'es']);
+      const hintWarnings = warn.mock.calls.filter(
+        ([message]) => typeof message === 'string' && message.includes('language_hint'),
+      );
+      expect(hintWarnings).toHaveLength(1);
+      expect(hintWarnings[0]?.[0]).toBe(
+        'Ignoring `language_hint` for deepgram/nova-3: it only applies with language "multi" (session language "en")',
+      );
+    } finally {
+      warn.mockRestore();
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('does not warn again when a later update repeats an already dropped hint', async () => {
+    const warn = vi.spyOn(log(), 'warn');
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const address = server.address() as AddressInfo;
+    const updates: Array<Record<string, unknown>> = [];
+    let resolveSessionCreated!: () => void;
+    const sessionCreated = new Promise<void>((resolve) => {
+      resolveSessionCreated = resolve;
+    });
+
+    server.on('connection', (socket) => {
+      socket.on('message', (raw) => {
+        const event = JSON.parse(raw.toString()) as {
+          type: string;
+          settings?: { extra?: Record<string, unknown> };
+        };
+        if (event.type === 'session.create') resolveSessionCreated();
+        if (event.type === 'session.update') updates.push(event.settings?.extra ?? {});
+        if (event.type === 'session.finalize') {
+          socket.send(
+            JSON.stringify({ type: 'final_transcript', transcript: 'hi', language: 'en' }),
+          );
+          socket.send(JSON.stringify({ type: 'session.closed' }));
+        }
+      });
+    });
+
+    try {
+      const stt = makeStt({
+        model: 'deepgram/nova-3',
+        language: 'en',
+        modelOptions: { language_hint: ['en', 'es'] } satisfies STTOptions<'deepgram/nova-3'>,
+        baseURL: `http://127.0.0.1:${address.port}`,
+        connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1_000 },
+      });
+      const stream = stt.stream();
+
+      try {
+        await sessionCreated;
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        stream.updateOptions({
+          modelOptions: { language_hint: ['en', 'es'] } satisfies STTOptions<'deepgram/nova-3'>,
+        });
+        stream.endInput();
+        for await (const _ of stream) {
+          /* drain */
+        }
+      } finally {
+        stream.close();
+      }
+
+      expect(updates).toHaveLength(1);
+      expect(updates[0]).not.toHaveProperty('language_hint');
+      const hintWarnings = warn.mock.calls.filter(
+        ([message]) => typeof message === 'string' && message.includes('language_hint'),
+      );
+      // the connect-time drop already spoke for this session
+      expect(hintWarnings).toHaveLength(1);
+    } finally {
+      warn.mockRestore();
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('keeps a mid-session hint when the same update switches to multi language', async () => {
+    const warn = vi.spyOn(log(), 'warn');
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const address = server.address() as AddressInfo;
+    const updates: Array<{ language?: string; extra?: Record<string, unknown> }> = [];
+    let resolveSessionCreated!: () => void;
+    const sessionCreated = new Promise<void>((resolve) => {
+      resolveSessionCreated = resolve;
+    });
+
+    server.on('connection', (socket) => {
+      socket.on('message', (raw) => {
+        const event = JSON.parse(raw.toString()) as {
+          type: string;
+          settings?: { language?: string; extra?: Record<string, unknown> };
+        };
+        if (event.type === 'session.create') resolveSessionCreated();
+        if (event.type === 'session.update') updates.push(event.settings ?? {});
+        if (event.type === 'session.finalize') {
+          socket.send(
+            JSON.stringify({ type: 'final_transcript', transcript: 'hi', language: 'en' }),
+          );
+          socket.send(JSON.stringify({ type: 'session.closed' }));
+        }
+      });
+    });
+
+    try {
+      const stt = makeStt({
+        model: 'deepgram/nova-3',
+        language: 'en',
+        baseURL: `http://127.0.0.1:${address.port}`,
+        connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1_000 },
+      });
+      const stream = stt.stream();
+
+      try {
+        await sessionCreated;
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        stream.updateOptions({
+          language: asLanguageCode('multi'),
+          modelOptions: { language_hint: ['en', 'es'] } satisfies STTOptions<'deepgram/nova-3'>,
+        });
+        stream.endInput();
+        for await (const _ of stream) {
+          /* drain */
+        }
+      } finally {
+        stream.close();
+      }
+
+      expect(updates).toHaveLength(1);
+      expect(updates[0]?.language).toBe('multi');
+      expect(updates[0]?.extra).toMatchObject({ language_hint: ['en', 'es'] });
+      const hintWarnings = warn.mock.calls.filter(
+        ([message]) => typeof message === 'string' && message.includes('language_hint'),
+      );
+      expect(hintWarnings).toEqual([]);
+    } finally {
+      warn.mockRestore();
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  // The hint is the caller's configuration, not a one-shot: a session that starts on a language
+  // that cannot use it has to send it once the language can, without a new `modelOptions`.
+  it('sends the hint again when the effective language returns to multi', async () => {
+    const warn = vi.spyOn(log(), 'warn');
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const address = server.address() as AddressInfo;
+    const created: Array<{ extra?: Record<string, unknown> }> = [];
+    const updates: Array<{ language?: string; extra?: Record<string, unknown> }> = [];
+    let resolveSessionCreated!: () => void;
+    const sessionCreated = new Promise<void>((resolve) => {
+      resolveSessionCreated = resolve;
+    });
+
+    server.on('connection', (socket) => {
+      socket.on('message', (raw) => {
+        const event = JSON.parse(raw.toString()) as {
+          type: string;
+          settings?: { language?: string; extra?: Record<string, unknown> };
+        };
+        if (event.type === 'session.create') {
+          created.push(event.settings ?? {});
+          resolveSessionCreated();
+        }
+        if (event.type === 'session.update') updates.push(event.settings ?? {});
+        if (event.type === 'session.finalize') {
+          socket.send(
+            JSON.stringify({ type: 'final_transcript', transcript: 'hi', language: 'en' }),
+          );
+          socket.send(JSON.stringify({ type: 'session.closed' }));
+        }
+      });
+    });
+
+    try {
+      const modelOptions = { language_hint: ['en', 'es'] } satisfies STTOptions<'deepgram/nova-3'>;
+      const stt = makeStt({
+        model: 'deepgram/nova-3',
+        language: 'en',
+        modelOptions,
+        baseURL: `http://127.0.0.1:${address.port}`,
+        connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1_000 },
+      });
+      const stream = stt.stream();
+
+      try {
+        await sessionCreated;
+        expect(created[0]?.extra).not.toHaveProperty('language_hint');
+
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        stream.updateOptions({ language: asLanguageCode('multi') });
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        stream.endInput();
+        for await (const _ of stream) {
+          /* drain */
+        }
+      } finally {
+        stream.close();
+      }
+
+      expect(updates).toHaveLength(1);
+      expect(updates[0]?.language).toBe('multi');
+      expect(updates[0]?.extra).toMatchObject({ language_hint: ['en', 'es'] });
+      // the gate is on the frames, never on what the caller configured
+      expect(modelOptions.language_hint).toEqual(['en', 'es']);
+      expect(stt['opts'].modelOptions).toBe(modelOptions);
+      const hintWarnings = warn.mock.calls.filter(
+        ([message]) => typeof message === 'string' && message.includes('language_hint'),
+      );
+      expect(hintWarnings).toHaveLength(1);
+    } finally {
+      warn.mockRestore();
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  // A `modelOptions` update carries the caller's keys alone, so a configured hint that no earlier
+  // frame could send has to be added to this one — and only that key, since the rest of the
+  // merged options are not what the caller asked to change.
+  it('adds the configured hint to a modelOptions update that can now carry it', async () => {
+    const warn = vi.spyOn(log(), 'warn');
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const address = server.address() as AddressInfo;
+    const created: Array<{ language?: string; extra?: Record<string, unknown> }> = [];
+    const updates: Array<{ language?: string; extra?: Record<string, unknown> }> = [];
+    let resolveSessionCreated!: () => void;
+    const sessionCreated = new Promise<void>((resolve) => {
+      resolveSessionCreated = resolve;
+    });
+
+    server.on('connection', (socket) => {
+      socket.on('message', (raw) => {
+        const event = JSON.parse(raw.toString()) as {
+          type: string;
+          settings?: { language?: string; extra?: Record<string, unknown> };
+        };
+        if (event.type === 'session.create') {
+          created.push(event.settings ?? {});
+          resolveSessionCreated();
+        }
+        if (event.type === 'session.update') updates.push(event.settings ?? {});
+        if (event.type === 'session.finalize') {
+          socket.send(
+            JSON.stringify({ type: 'final_transcript', transcript: 'hi', language: 'en' }),
+          );
+          socket.send(JSON.stringify({ type: 'session.closed' }));
+        }
+      });
+    });
+
+    try {
+      const stt = makeStt({
+        model: 'deepgram/nova-3',
+        language: 'en',
+        modelOptions: {
+          language_hint: ['en', 'es'],
+          endpointing: 500,
+        } satisfies STTOptions<'deepgram/nova-3'>,
+        baseURL: `http://127.0.0.1:${address.port}`,
+        connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1_000 },
+      });
+      const stream = stt.stream();
+
+      try {
+        await sessionCreated;
+        expect(created[0]?.extra).not.toHaveProperty('language_hint');
+
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        stream.updateOptions({
+          language: asLanguageCode('multi'),
+          modelOptions: { keyterm: ['LiveKit'] } satisfies STTOptions<'deepgram/nova-3'>,
+        });
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        stream.endInput();
+        for await (const _ of stream) {
+          /* drain */
+        }
+      } finally {
+        stream.close();
+      }
+
+      expect(updates).toHaveLength(1);
+      expect(updates[0]?.language).toBe('multi');
+      expect(updates[0]?.extra).toMatchObject({
+        keyterm: ['LiveKit'],
+        language_hint: ['en', 'es'],
+      });
+      expect(Object.keys(updates[0]?.extra ?? {}).sort()).toEqual(['keyterm', 'language_hint']);
+      const hintWarnings = warn.mock.calls.filter(
+        ([message]) => typeof message === 'string' && message.includes('language_hint'),
+      );
+      // the connect-time drop already spoke for this session
+      expect(hintWarnings).toHaveLength(1);
+    } finally {
+      warn.mockRestore();
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('keeps receiving transcripts after session.finalized', async () => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const address = server.address() as AddressInfo;
+    const messageTypes: string[] = [];
+    const transcripts: string[] = [];
+    let closeBeforeTranscript = false;
+    let transcriptSent = false;
+    let requestUrl: string | undefined;
+    let resolveSessionCreated!: () => void;
+    const sessionCreated = new Promise<void>((resolve) => {
+      resolveSessionCreated = resolve;
+    });
+    let resolveFinalizeReceived!: () => void;
+    const finalizeReceived = new Promise<void>((resolve) => {
+      resolveFinalizeReceived = resolve;
+    });
+    let resolveSocketClosed!: () => void;
+    const socketClosed = new Promise<void>((resolve) => {
+      resolveSocketClosed = resolve;
+    });
+
+    server.on('connection', (socket, request) => {
+      requestUrl = request.url;
+      socket.on('close', resolveSocketClosed);
+      socket.on('message', (raw) => {
+        const event = JSON.parse(raw.toString()) as { type: string };
+        messageTypes.push(event.type);
+        if (event.type === 'session.create') resolveSessionCreated();
+        if (event.type === 'session.finalize') {
+          resolveFinalizeReceived();
+          socket.send(JSON.stringify({ type: 'session.finalized' }));
+          setTimeout(() => {
+            if (socket.readyState !== 1) return;
+            socket.send(
+              JSON.stringify({
+                type: 'final_transcript',
+                transcript: 'final words',
+                language: 'en',
+              }),
+            );
+            transcriptSent = true;
+          }, 25);
+        }
+        if (event.type === 'session.close') {
+          closeBeforeTranscript = !transcriptSent;
+        }
+      });
+    });
+
+    const stt = makeStt({
+      model: 'deepgram/nova-3',
+      baseURL: `http://127.0.0.1:${address.port}`,
+      connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1_000 },
+    });
+    const stream = stt.stream();
+    let resolveTranscript!: () => void;
+    const transcriptReceived = new Promise<void>((resolve) => {
+      resolveTranscript = resolve;
+    });
+    const outputTask = (async () => {
+      for await (const event of stream) {
+        if (event.type === SpeechEventType.FINAL_TRANSCRIPT) {
+          transcripts.push(event.alternatives![0].text);
+          resolveTranscript();
+        }
+      }
+    })();
+
+    try {
+      await sessionCreated;
+      vi.useFakeTimers();
+      stream.endInput();
+      await finalizeReceived;
+      await vi.advanceTimersByTimeAsync(25);
+      await transcriptReceived;
+      await vi.advanceTimersByTimeAsync(3_000);
+      await outputTask;
+      await socketClosed;
+
+      expect(new URL(requestUrl!, 'ws://127.0.0.1').searchParams.get('model')).toBe(
+        'deepgram/nova-3',
+      );
+      expect(messageTypes).toEqual(['session.create', 'session.finalize', 'session.close']);
+      expect(transcripts).toEqual(['final words']);
+      expect(closeBeforeTranscript).toBe(false);
+    } finally {
+      vi.useRealTimers();
+      stream.close();
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('closes the socket when the stream is closed while connecting', async () => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const address = server.address() as AddressInfo;
+    const messageTypes: string[] = [];
+    let resolveSocketClosed!: () => void;
+    const socketClosed = new Promise<void>((resolve) => {
+      resolveSocketClosed = resolve;
+    });
+
+    const stt = makeStt({
+      baseURL: `http://127.0.0.1:${address.port}`,
+      connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1_000 },
+    });
+    const stream = stt.stream();
+
+    server.on('connection', (socket) => {
+      // The server sees the upgrade before the client's `open` fires, so this
+      // lands while connectWs is still pending.
+      stream.close();
+      socket.on('close', resolveSocketClosed);
+      socket.on('message', (raw) => {
+        messageTypes.push((JSON.parse(raw.toString()) as { type: string }).type);
+      });
+    });
+
+    try {
+      const closedInTime = await Promise.race([
+        socketClosed.then(() => true),
+        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 2_000)),
+      ]);
+
+      expect(closedInTime).toBe(true);
+      expect(messageTypes).toEqual(['session.create', 'session.close']);
+    } finally {
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('finishes when session.closed follows input end', async () => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const address = server.address() as AddressInfo;
+    const messageTypes: string[] = [];
+    const transcripts: string[] = [];
+    let sessionClosedSent = false;
+    let socketClosedBeforeSessionClosed = false;
+    let resolveSocketClosed!: () => void;
+    const socketClosed = new Promise<void>((resolve) => {
+      resolveSocketClosed = resolve;
+    });
+
+    server.on('connection', (socket) => {
+      socket.on('close', () => {
+        socketClosedBeforeSessionClosed = !sessionClosedSent;
+        resolveSocketClosed();
+      });
+      socket.on('message', (raw) => {
+        const event = JSON.parse(raw.toString()) as { type: string };
+        messageTypes.push(event.type);
+        if (event.type !== 'session.finalize') return;
+        socket.send(
+          JSON.stringify({
+            type: 'final_transcript',
+            transcript: 'final words',
+            language: 'en',
+          }),
+        );
+        sessionClosedSent = true;
+        socket.send(JSON.stringify({ type: 'session.closed' }));
+      });
+    });
+
+    const stt = makeStt({
+      baseURL: `http://127.0.0.1:${address.port}`,
+      connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1_000 },
+    });
+    const stream = stt.stream();
+
+    try {
+      stream.endInput();
+      for await (const event of stream) {
+        if (event.type === SpeechEventType.FINAL_TRANSCRIPT) {
+          transcripts.push(event.alternatives![0].text);
+        }
+      }
+      await socketClosed;
+
+      expect(messageTypes).toEqual(['session.create', 'session.finalize']);
+      expect(transcripts).toEqual(['final words']);
+      expect(socketClosedBeforeSessionClosed).toBe(false);
+    } finally {
+      stream.close();
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('accepts a socket close after input ends', async () => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const address = server.address() as AddressInfo;
+    let connectionCount = 0;
+
+    server.on('connection', (socket) => {
+      connectionCount += 1;
+      socket.on('message', (raw) => {
+        const event = JSON.parse(raw.toString()) as { type: string };
+        if (event.type === 'session.finalize') socket.close(1011, 'finalization interrupted');
+      });
+    });
+
+    const stt = makeStt({
+      baseURL: `http://127.0.0.1:${address.port}`,
+      connOptions: { maxRetry: 3, retryIntervalMs: 1, timeoutMs: 1_000 },
+    });
+    const errors: Error[] = [];
+    stt.on('error', ({ error }) => errors.push(error));
+    const stream = stt.stream();
+
+    try {
+      stream.endInput();
+      for await (const _ of stream) {
+        /* drain */
+      }
+
+      expect(connectionCount).toBe(1);
+      expect(errors).toHaveLength(0);
+    } finally {
+      stream.close();
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('reconnects when the socket closes before input ends', async () => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const address = server.address() as AddressInfo;
+    let connectionCount = 0;
+    let resolveSecondConnection!: () => void;
+    const secondConnection = new Promise<void>((resolve) => {
+      resolveSecondConnection = resolve;
+    });
+
+    server.on('connection', (socket) => {
+      connectionCount += 1;
+      const connection = connectionCount;
+      if (connection === 2) resolveSecondConnection();
+      socket.on('message', (raw) => {
+        const event = JSON.parse(raw.toString()) as { type: string };
+        if (connection === 1 && event.type === 'session.create') {
+          socket.send(JSON.stringify({ type: 'session.closed' }), () => socket.close());
+        }
+        if (connection === 2 && event.type === 'session.finalize') {
+          socket.send(
+            JSON.stringify({
+              type: 'final_transcript',
+              transcript: 'final words',
+              language: 'en',
+            }),
+          );
+          socket.send(JSON.stringify({ type: 'session.closed' }));
+        }
+      });
+    });
+
+    const stt = makeStt({
+      baseURL: `http://127.0.0.1:${address.port}`,
+      connOptions: { maxRetry: 1, retryIntervalMs: 1, timeoutMs: 1_000 },
+    });
+    const stream = stt.stream();
+    const transcripts: string[] = [];
+    const outputTask = (async () => {
+      for await (const event of stream) {
+        if (event.type === SpeechEventType.FINAL_TRANSCRIPT) {
+          transcripts.push(event.alternatives![0].text);
+        }
+      }
+    })();
+
+    try {
+      await secondConnection;
+      stream.endInput();
+      await outputTask;
+
+      expect(connectionCount).toBe(2);
+      expect(transcripts).toEqual(['final words']);
+    } finally {
+      stream.close();
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('does not require a final transcript after an interim', async () => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const address = server.address() as AddressInfo;
+    const messageTypes: string[] = [];
+    let resolveSessionCreated!: () => void;
+    const sessionCreated = new Promise<void>((resolve) => {
+      resolveSessionCreated = resolve;
+    });
+
+    server.on('connection', (socket) => {
+      socket.on('message', (raw) => {
+        const event = JSON.parse(raw.toString()) as { type: string };
+        messageTypes.push(event.type);
+        if (event.type === 'session.create') resolveSessionCreated();
+        if (event.type === 'session.finalize') {
+          socket.send(
+            JSON.stringify({
+              type: 'interim_transcript',
+              transcript: 'interim words',
+              language: 'en',
+            }),
+          );
+        }
+      });
+    });
+
+    const stt = makeStt({
+      baseURL: `http://127.0.0.1:${address.port}`,
+      connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1_000 },
+    });
+    const stream = stt.stream();
+    let resolveTranscript!: () => void;
+    const transcriptReceived = new Promise<void>((resolve) => {
+      resolveTranscript = resolve;
+    });
+    const outputTask = (async () => {
+      for await (const event of stream) {
+        if (event.type === SpeechEventType.INTERIM_TRANSCRIPT) resolveTranscript();
+      }
+    })();
+
+    try {
+      await sessionCreated;
+      vi.useFakeTimers();
+      stream.endInput();
+      await transcriptReceived;
+      await vi.advanceTimersByTimeAsync(30_000);
+      await outputTask;
+
+      expect(messageTypes).toEqual(['session.create', 'session.finalize', 'session.close']);
+    } finally {
+      vi.useRealTimers();
+      stream.close();
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it(
+    'does not let empty interims after finalize hold the stream open',
+    { timeout: 15_000 },
+    async () => {
+      // the sequence recorded from the gateway for xai/stt-1: finals during the audio, then
+      // after session.finalize an acknowledgment and an empty interim every second, for as long
+      // as the socket is open. Real timers: the 3 s wait after a final is a fixed constant, and
+      // the interims have to arrive over the socket while it runs
+      const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+      await once(server, 'listening');
+      const address = server.address() as AddressInfo;
+      const messageTypes: string[] = [];
+      let emptyInterims = 0;
+      let interimTimer: ReturnType<typeof setInterval> | undefined;
+      let finalizedAt = 0;
+      let resolveSessionCreated!: () => void;
+      const sessionCreated = new Promise<void>((resolve) => {
+        resolveSessionCreated = resolve;
+      });
+
+      server.on('connection', (socket) => {
+        socket.on('close', () => clearInterval(interimTimer));
+        socket.on('message', (raw) => {
+          const event = JSON.parse(raw.toString()) as { type: string };
+          messageTypes.push(event.type);
+          if (event.type === 'session.create') {
+            resolveSessionCreated();
+            socket.send(
+              JSON.stringify({
+                type: 'final_transcript',
+                transcript: 'final words',
+                language: 'en',
+              }),
+            );
+          }
+          if (event.type === 'session.finalize') {
+            finalizedAt = Date.now();
+            socket.send(JSON.stringify({ type: 'session.finalized' }));
+            interimTimer = setInterval(() => {
+              if (socket.readyState !== 1) return;
+              emptyInterims++;
+              socket.send(
+                JSON.stringify({
+                  type: 'interim_transcript',
+                  transcript: '',
+                  start: 50.753,
+                  duration: 1.21,
+                  language: 'en',
+                }),
+              );
+            }, 700);
+          }
+        });
+      });
+
+      const stt = makeStt({
+        model: 'xai/stt-1',
+        baseURL: `http://127.0.0.1:${address.port}`,
+        connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1_000 },
+      });
+      const stream = stt.stream();
+      const transcripts: string[] = [];
+      let resolveTranscript!: () => void;
+      const transcriptReceived = new Promise<void>((resolve) => {
+        resolveTranscript = resolve;
+      });
+      const outputTask = (async () => {
+        for await (const event of stream) {
+          if (event.type === SpeechEventType.FINAL_TRANSCRIPT) {
+            transcripts.push(event.alternatives![0].text);
+            resolveTranscript();
+          }
+        }
+      })();
+
+      try {
+        await sessionCreated;
+        await transcriptReceived;
+        stream.endInput();
+        await outputTask;
+        const endedAfter = Date.now() - finalizedAt;
+
+        expect(messageTypes).toEqual(['session.create', 'session.finalize', 'session.close']);
+        expect(transcripts).toEqual(['final words']);
+        // interims kept arriving through the wait, and did not extend it past its 3 s
+        expect(emptyInterims).toBeGreaterThanOrEqual(3);
+        expect(endedAfter).toBeGreaterThanOrEqual(2_500);
+        expect(endedAfter).toBeLessThan(5_000);
+      } finally {
+        clearInterval(interimTimer);
+        stream.close();
+        for (const client of server.clients) client.terminate();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      }
+    },
+  );
+
+  it('sends session.close and closes the socket when the stream closes', async () => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const address = server.address() as AddressInfo;
+    const messageTypes: string[] = [];
+    let resolveSessionCreated!: () => void;
+    const sessionCreated = new Promise<void>((resolve) => {
+      resolveSessionCreated = resolve;
+    });
+    let resolveSocketClosed!: () => void;
+    const socketClosed = new Promise<void>((resolve) => {
+      resolveSocketClosed = resolve;
+    });
+
+    server.on('connection', (socket) => {
+      socket.on('close', resolveSocketClosed);
+      socket.on('message', (raw) => {
+        const event = JSON.parse(raw.toString()) as { type: string };
+        messageTypes.push(event.type);
+        if (event.type === 'session.create') resolveSessionCreated();
+      });
+    });
+
+    const stt = makeStt({
+      baseURL: `http://127.0.0.1:${address.port}`,
+      connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1_000 },
+    });
+    const stream = stt.stream();
+
+    try {
+      await sessionCreated;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      stream.close();
+      await socketClosed;
+
+      expect(messageTypes).toEqual(['session.create', 'session.close']);
+    } finally {
+      stream.close();
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('does not retry an inactivity timeout', async () => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const address = server.address() as AddressInfo;
+    let connectionCount = 0;
+
+    server.on('connection', (socket) => {
+      connectionCount += 1;
+      socket.on('message', (raw) => {
+        const event = JSON.parse(raw.toString()) as { type: string };
+        if (event.type !== 'session.finalize') return;
+        socket.send(
+          JSON.stringify({
+            type: 'error',
+            code: 2007,
+            message: 'customer content must not reach the API error',
+          }),
+        );
+      });
+    });
+
+    const stt = makeStt({
+      baseURL: `http://127.0.0.1:${address.port}`,
+      connOptions: { maxRetry: 3, retryIntervalMs: 1, timeoutMs: 1_000 },
+    });
+    const errors: Error[] = [];
+    stt.on('error', ({ error }) => errors.push(error));
+    const stream = stt.stream();
+
+    try {
+      stream.endInput();
+      for await (const _ of stream) {
+        /* drain */
+      }
+
+      expect(connectionCount).toBe(1);
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toBeInstanceOf(APIStatusError);
+      expect(errors[0]).toMatchObject({
+        message: 'LiveKit STT returned an error',
+        statusCode: 2007,
+        body: { code: 2007 },
+        retryable: false,
+      });
+    } finally {
+      stream.close();
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+});
+
+describe('Inference STT errors', () => {
+  async function receiveGatewayError(gatewayError: Record<string, unknown>): Promise<Error> {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const { port } = server.address() as AddressInfo;
+
+    server.on('connection', (socket) => {
+      socket.once('message', () => {
+        setImmediate(() => socket.send(JSON.stringify(gatewayError)));
+      });
+    });
+
+    const stt = makeStt({ baseURL: `http://127.0.0.1:${port}` });
+    const errorPromise = new Promise<Error>((resolve) => {
+      stt.once('error', ({ error }) => resolve(error));
+    });
+    const stream = stt.stream({
+      connOptions: { maxRetry: 0, retryIntervalMs: 0, timeoutMs: 1_000 },
+    });
+
+    try {
+      return await errorPromise;
+    } finally {
+      stream.close();
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  }
+
+  it.each([
+    {
+      gatewayError: {
+        type: 'error',
+        message: 'STT connection limit exceeded',
+        code: 429,
+        category: 'MaxConcurrentGatewaySTT',
+        remaining_limit: 0,
+      },
+      statusCode: 429,
+    },
+    {
+      gatewayError: { type: 'error', message: 'unknown gateway failure' },
+      statusCode: -1,
+    },
+  ])('surfaces a mid-session gateway error with status $statusCode', async (testCase) => {
+    const error = await receiveGatewayError(testCase.gatewayError);
+
+    expect(error).toBeInstanceOf(APIStatusError);
+    expect(error).toMatchObject({
+      message: `LiveKit Inference STT returned error: ${testCase.gatewayError.message}`,
+      statusCode: testCase.statusCode,
+      body: testCase.gatewayError,
+      retryable: true,
+    });
+  });
+});
+
 describeLiveKitInference('LiveKit Inference STT integration', agents, async (harness) => {
   for (const model of [
     'deepgram/nova-3',
@@ -609,8 +2059,14 @@ describeLiveKitInference('LiveKit Inference STT integration', agents, async (har
     'assemblyai/universal-streaming',
     'xai/stt-1',
   ] as const) {
-    describe(model, async () => {
-      await harness.stt(new STT({ model }), new InferenceVAD(), {
+    // each model is an independent gateway session: run the models, and both sample rates of
+    // each, at the same time instead of one 50 s clip after another
+    describe(model, { retry: 1, concurrent: true }, async () => {
+      const stt =
+        model === 'assemblyai/universal-streaming'
+          ? new STT({ model, modelOptions: { format_turns: true } })
+          : new STT({ model });
+      await harness.stt(stt, new InferenceVAD(), {
         nonStreaming: false,
       });
     });

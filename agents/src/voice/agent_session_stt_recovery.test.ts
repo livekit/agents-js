@@ -1,0 +1,373 @@
+// SPDX-FileCopyrightText: 2026 LiveKit, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+import type { Room } from '@livekit/rtc-node';
+import { EventEmitter } from 'node:events';
+import { ReadableStream } from 'node:stream/web';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { APIConnectionError } from '../_exceptions.js';
+import type { InferenceExecutor } from '../ipc/inference_executor.js';
+import {
+  JobContext,
+  type JobProcess,
+  type RunningJobInfo,
+  runWithJobContextAsync,
+} from '../job.js';
+import { log } from '../log.js';
+import { STT, type SpeechEvent, SpeechEventType, SpeechStream } from '../stt/stt.js';
+import type { APIConnectOptions } from '../types.js';
+import { Future } from '../utils.js';
+import { Agent } from './agent.js';
+import { AgentSession } from './agent_session.js';
+import { AgentSessionEventTypes, CloseReason } from './events.js';
+
+class ControlledSTT extends STT {
+  label = 'controlled-stt';
+  streams: ControlledStream[] = [];
+
+  constructor() {
+    super({ streaming: true, interimResults: true });
+  }
+
+  protected async _recognize(): Promise<SpeechEvent> {
+    throw new Error('Use stream()');
+  }
+
+  stream(options?: { connOptions?: APIConnectOptions }): ControlledStream {
+    const stream = new ControlledStream(this, undefined, options?.connOptions);
+    this.streams.push(stream);
+    return stream;
+  }
+}
+
+class ControlledStream extends SpeechStream {
+  label = 'controlled-stream';
+  started = new Future<void>();
+  failure = new Future<void>();
+
+  emitTranscript() {
+    this.queue.put({
+      type: SpeechEventType.INTERIM_TRANSCRIPT,
+      alternatives: [{ text: 'hello', startTime: 0, endTime: 0, confidence: 1 }],
+    });
+  }
+
+  protected async run(): Promise<void> {
+    this.started.resolve();
+    if (this.abortSignal.aborted) return;
+    const onAbort = () => this.failure.resolve();
+    this.abortSignal.addEventListener('abort', onAbort, { once: true });
+    try {
+      await this.failure.await;
+    } finally {
+      this.abortSignal.removeEventListener('abort', onAbort);
+    }
+  }
+}
+
+function createSession(stt: ControlledSTT, maxUnrecoverableErrors = 1) {
+  return new AgentSession({
+    stt,
+    vad: null,
+    connOptions: { sttConnOptions: { maxRetry: 0 }, maxUnrecoverableErrors },
+    turnHandling: { turnDetection: 'stt', interruption: { enabled: false } },
+  });
+}
+
+async function waitForStream(stt: ControlledSTT, index: number) {
+  await vi.waitFor(() => expect(stt.streams).toHaveLength(index + 1));
+  const stream = stt.streams[index]!;
+  await stream.started.await;
+  return stream;
+}
+
+afterEach(() => vi.restoreAllMocks());
+
+describe('AgentSession STT recovery', () => {
+  it('closes on a startup STT failure while room connection is still pending', async () => {
+    const room = Object.assign(new EventEmitter(), {
+      name: 'test-room',
+      isConnected: false,
+      remoteParticipants: new Map(),
+      registerByteStreamHandler: vi.fn(),
+    });
+    const context = new JobContext(
+      {} as JobProcess,
+      {
+        acceptArguments: { name: 'agent', identity: 'agent', metadata: '' },
+        job: { id: 'job-id', room: { name: 'test-room' }, attributes: {} },
+        workerId: 'worker-id',
+      } as RunningJobInfo,
+      room as unknown as Room,
+      () => {},
+      () => {},
+      {} as InferenceExecutor,
+    );
+    const connected = new Future<void>();
+    const connect = vi.spyOn(context, 'connect').mockReturnValue(connected.await);
+    const stt = new ControlledSTT();
+    const session = createSession(stt);
+    const agent = new Agent({ instructions: 'test' });
+    const error = new Error('STT node failed to start');
+    const sttNode = vi.spyOn(agent, 'sttNode').mockRejectedValue(error);
+    const startup = runWithJobContextAsync(context, () =>
+      session.start({
+        agent,
+        room: room as unknown as Room,
+        record: false,
+        inputOptions: { audioEnabled: false, textEnabled: false },
+        outputOptions: { audioEnabled: false, transcriptionEnabled: false },
+      }),
+    ).catch((failure: unknown) => failure);
+    try {
+      await vi.waitFor(() => expect(sttNode).toHaveBeenCalledOnce());
+      await vi.waitFor(() => expect(session._closingSignal.aborted).toBe(true));
+      await session.close();
+      expect(await startup).toBe(error);
+      expect(connect).toHaveBeenCalledOnce();
+      expect(connected.done).toBe(false);
+      expect(session._activity).toBeUndefined();
+      connected.resolve();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(session._started).toBe(false);
+      expect(room.registerByteStreamHandler).not.toHaveBeenCalled();
+    } finally {
+      connected.resolve();
+      await startup;
+      await session.close();
+    }
+  });
+
+  it.each([
+    new Error('STT node failed to start'),
+    new APIConnectionError({ message: 'STT node failed to start' }),
+  ])('closes on a fatal node error during session startup (%s)', async (error) => {
+    const stt = new ControlledSTT();
+    const session = createSession(stt, 0);
+    const agent = new Agent({ instructions: 'test' });
+    const sttNode = vi.spyOn(agent, 'sttNode').mockRejectedValue(error);
+    const onError = vi.fn();
+    session.on(AgentSessionEventTypes.Error, onError);
+    try {
+      await expect(session.start({ agent })).rejects.toBe(error);
+      await session.close();
+      expect(session._started).toBe(false);
+      expect(session._activity).toBeUndefined();
+      expect(onError).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ error: expect.objectContaining({ error }) }),
+      );
+      expect(sttNode).toHaveBeenCalledOnce();
+    } finally {
+      await session.close();
+    }
+  });
+
+  it('resumes transcripts after a custom STT node startup connection failure', async () => {
+    const stt = new ControlledSTT();
+    const session = createSession(stt);
+    const agent = new Agent({ instructions: 'test' });
+    const error = new APIConnectionError({ message: 'STT node failed to start' });
+    const sttNode = vi.spyOn(agent, 'sttNode').mockRejectedValueOnce(error);
+    const onError = vi.fn();
+    const onClose = vi.fn();
+    const onTranscript = vi.fn();
+    session.on(AgentSessionEventTypes.Error, onError);
+    session.on(AgentSessionEventTypes.Close, onClose);
+    session.on(AgentSessionEventTypes.UserInputTranscribed, onTranscript);
+    try {
+      await session.start({ agent });
+      const stream = await waitForStream(stt, 0);
+      stream.emitTranscript();
+      await vi.waitFor(() =>
+        expect(onTranscript).toHaveBeenCalledWith(
+          expect.objectContaining({ transcript: 'hello', isFinal: false }),
+        ),
+      );
+      expect(sttNode).toHaveBeenCalledTimes(2);
+      expect(onError).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ error: expect.objectContaining({ error }), source: stt }),
+      );
+      expect(onClose).not.toHaveBeenCalled();
+    } finally {
+      await session.close();
+    }
+  });
+
+  it.each(['throw', 'reject', 'read'] as const)(
+    'closes after custom STT node failures exhaust recovery (%s)',
+    async (failure) => {
+      const stt = new ControlledSTT();
+      const session = createSession(stt);
+      const agent = new Agent({ instructions: 'test' });
+      const error =
+        failure === 'read'
+          ? new Error('STT node failed while reading')
+          : new APIConnectionError({ message: 'STT node failed to start' });
+      let failRead: (() => void) | undefined;
+      const sttNode = vi.spyOn(agent, 'sttNode').mockImplementation(() => {
+        if (failure === 'throw') throw error;
+        if (failure === 'reject') return Promise.reject(error);
+        return Promise.resolve(
+          new ReadableStream<SpeechEvent | string>({
+            start(controller) {
+              failRead = () => controller.error(error);
+            },
+          }),
+        );
+      });
+      const onClose = vi.fn();
+      session.on(AgentSessionEventTypes.Close, onClose);
+      try {
+        await session.start({ agent });
+        failRead?.();
+        await vi.waitFor(() =>
+          expect(onClose).toHaveBeenCalledExactlyOnceWith(
+            expect.objectContaining({
+              reason: CloseReason.ERROR,
+              error: expect.objectContaining({ error }),
+            }),
+          ),
+        );
+        expect(sttNode).toHaveBeenCalledTimes(failure === 'read' ? 1 : 2);
+        expect(stt.streams).toHaveLength(0);
+      } finally {
+        await session.close();
+      }
+    },
+  );
+
+  it.each(['none', 'observer', 'throwing'] as const)(
+    'resumes transcripts after a provider failure with a %s error listener',
+    async (listener) => {
+      const stt = new ControlledSTT();
+      const session = createSession(stt);
+      const listenerError = new Error('error listener failed');
+      const onError = vi.fn(() => {
+        if (listener === 'throwing') throw listenerError;
+      });
+      if (listener !== 'none') session.on(AgentSessionEventTypes.Error, onError);
+      const onClose = vi.fn();
+      const onTranscript = vi.fn();
+      session.on(AgentSessionEventTypes.Close, onClose);
+      session.on(AgentSessionEventTypes.UserInputTranscribed, onTranscript);
+      const errorLog = vi.spyOn(log(), 'error');
+
+      try {
+        await session.start({ agent: new Agent({ instructions: 'test' }) });
+        const firstStream = await waitForStream(stt, 0);
+        const providerError = new APIConnectionError({ message: 'connection dropped' });
+        firstStream.failure.reject(providerError);
+
+        const recoveredStream = await waitForStream(stt, 1);
+        expect(firstStream.terminalError).toBe(providerError);
+        recoveredStream.emitTranscript();
+        await vi.waitFor(() =>
+          expect(onTranscript).toHaveBeenCalledWith(
+            expect.objectContaining({ transcript: 'hello', isFinal: false }),
+          ),
+        );
+        expect(onClose).not.toHaveBeenCalled();
+        if (listener !== 'none') {
+          expect(onError).toHaveBeenCalledExactlyOnceWith(
+            expect.objectContaining({
+              error: expect.objectContaining({ error: providerError, recoverable: false }),
+              source: stt,
+            }),
+          );
+        }
+        if (listener === 'throwing') {
+          expect(errorLog).toHaveBeenCalledWith(
+            { err: listenerError },
+            'Error in session error listener',
+          );
+        } else {
+          expect(errorLog).not.toHaveBeenCalled();
+        }
+      } finally {
+        await session.close();
+      }
+    },
+  );
+
+  it('closes after the STT recovery budget is exhausted without an error listener', async () => {
+    const stt = new ControlledSTT();
+    const session = createSession(stt);
+    const onClose = vi.fn();
+    session.on(AgentSessionEventTypes.Close, onClose);
+
+    try {
+      await session.start({ agent: new Agent({ instructions: 'test' }) });
+      const firstStream = await waitForStream(stt, 0);
+      firstStream.failure.reject(new APIConnectionError({ message: 'first failure' }));
+      const secondStream = await waitForStream(stt, 1);
+      const lastError = new APIConnectionError({ message: 'second failure' });
+      secondStream.failure.reject(lastError);
+
+      await vi.waitFor(() =>
+        expect(onClose).toHaveBeenCalledExactlyOnceWith(
+          expect.objectContaining({
+            reason: CloseReason.ERROR,
+            error: expect.objectContaining({ error: lastError }),
+          }),
+        ),
+      );
+      expect(stt.streams).toHaveLength(2);
+    } finally {
+      await session.close();
+    }
+  });
+
+  it.each([false, true])(
+    'closes on a provider error the pipeline cannot retry (error listener: %s)',
+    async (hasListener) => {
+      const stt = new ControlledSTT();
+      const session = createSession(stt);
+      if (hasListener) session.on(AgentSessionEventTypes.Error, vi.fn());
+      const onClose = vi.fn();
+      session.on(AgentSessionEventTypes.Close, onClose);
+      const errorLog = vi.spyOn(log(), 'error');
+      const providerError = new Error('invalid provider response');
+      const onSessionError = vi.spyOn(session, '_onError');
+
+      try {
+        await session.start({ agent: new Agent({ instructions: 'test' }) });
+        const stream = await waitForStream(stt, 0);
+        stream.failure.reject(providerError);
+
+        await vi.waitFor(() =>
+          expect(onClose).toHaveBeenCalledExactlyOnceWith(
+            expect.objectContaining({
+              reason: CloseReason.ERROR,
+              error: expect.objectContaining({ error: providerError }),
+            }),
+          ),
+        );
+        expect(stt.streams).toHaveLength(1);
+        expect(onSessionError).toHaveBeenCalledOnce();
+        expect(errorLog).toHaveBeenCalledWith(
+          expect.objectContaining({ error: providerError }),
+          'AgentSession is closing due to an unrecoverable error',
+        );
+      } finally {
+        await session.close();
+      }
+    },
+  );
+
+  it('stops the provider stream on shutdown without reporting an error', async () => {
+    const stt = new ControlledSTT();
+    const session = createSession(stt);
+    const errorLog = vi.spyOn(log(), 'error');
+    try {
+      await session.start({ agent: new Agent({ instructions: 'test' }) });
+      const stream = await waitForStream(stt, 0);
+      await session.close();
+      expect(stream.failure.done).toBe(true);
+      expect(stream.terminalError).toBeUndefined();
+      expect(stt.streams).toHaveLength(1);
+      expect(errorLog).not.toHaveBeenCalled();
+    } finally {
+      await session.close();
+    }
+  });
+});

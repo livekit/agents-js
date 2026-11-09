@@ -6,41 +6,22 @@ import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
+import { GEN_AI_PII_ATTRIBUTES, isPIIAttribute } from './redaction.js';
 import * as traceTypes from './trace_types.js';
 
 const PII_SEGMENT_RE = /(^|\.)pii(\.|$)/i;
 const LOG_METHODS = new Set(['child', 'debug', 'error', 'fatal', 'info', 'trace', 'warn']);
 const SENSITIVE_LOG_FIELDS = new Set([
   'arguments',
-  'avatarIdentity',
-  'avatarParticipantIdentity',
-  'callerIdentity',
-  'callerRoom',
   'chatCtx',
   'chat_ctx',
-  'destinationIdentity',
-  'expectedIdentities',
-  'humanAgentIdentity',
-  'humanAgentRoomName',
-  'identity',
   'interimTranscript',
   'interim_transcript',
-  'mintedIdentity',
-  'participant',
-  'participantIdentity',
-  'participantValue',
-  'participant_identity',
-  'publishOnBehalf',
   'progressMessage',
   'progress_message',
   'rawArguments',
   'raw_arguments',
   'repaired',
-  'requestedIdentity',
-  'room',
-  'roomName',
-  'room_name',
-  'senderIdentity',
   'transcript',
 ]);
 
@@ -129,8 +110,13 @@ const SAFE_KEYS = new Set([
   'lk.agent_name',
   'lk.cloud_agent_id',
   'lk.deployment_id',
+  // Input delta markers: a flag, a count, and a span id.
+  'lk.input.delta',
+  'lk.input.base_span_id',
+  'lk.input.dropped_from_base',
   'lk.session_options',
   'lk.generation_id',
+  'lk.generation_count',
   'lk.parent_generation_id',
   'lk.interrupted',
   // LLM node metadata
@@ -154,6 +140,7 @@ const SAFE_KEYS = new Set([
   'lk.eou.source',
   'lk.eou.from_cache',
   'lk.eou.detection_delay',
+  'lk.stt.events',
   'lk.transcript_confidence',
   'lk.transcription_delay',
   'lk.end_of_turn_delay',
@@ -162,6 +149,68 @@ const SAFE_KEYS = new Set([
   'lk.tts_metrics',
   'lk.realtime_model_metrics',
   'lk.e2e_latency',
+  // join keys, dispatch timeline, room/track ids, lifecycle enums (no content)
+  'lk.room_sid',
+  'lk.dispatch_id',
+  'lk.job.worker_id',
+  'lk.job.agent_id',
+  'lk.sip.',
+  'lk.job.accept_latency',
+  'lk.job.assignment_latency',
+  'lk.job.launch_latency',
+  'lk.job.entrypoint_latency',
+  'lk.job.dispatch_latency',
+  'lk.keyterms.count',
+  'lk.keyterms.added',
+  'lk.keyterms.removed',
+  'lk.room.auto_subscribe',
+  'lk.room.e2ee',
+  'lk.room.remote_participant_count',
+  'lk.room_io.participant_filter',
+  'lk.track_sid',
+  'lk.track_source',
+  'lk.first_frame_delay',
+  'lk.pre_connect_audio.duration',
+  'lk.connection_state',
+  'lk.disconnect_reason',
+  'lk.old_state',
+  'lk.new_state',
+  // rpc (semconv names, ids, sizes, codes; the payload keys are tagged)
+  'rpc.method',
+  'lk.rpc.request_id',
+  'lk.rpc.caller_identity',
+  'lk.rpc.destination_identity',
+  'lk.rpc.payload_size',
+  'lk.rpc.response_size',
+  'lk.rpc.response_timeout',
+  'lk.rpc.error_code',
+  'lk.close_reason',
+  'lk.close.drain',
+  'lk.shutdown.reason',
+  'lk.shutdown.user_initiated',
+  'lk.callback.name',
+  // eou_wait / speech scheduling (timings and enums)
+  'lk.eou.outcome',
+  'lk.eou.wait_duration',
+  'lk.eou.rearm_count',
+  'lk.eou.not_committed_count',
+  'lk.eou.resume_count',
+  'lk.on_user_turn_completed_delay',
+  'lk.speech.queue_wait',
+  // Event loop blocking
+  'lk.blocking.duration',
+  'lk.blocking.threshold',
+  'lk.blocking.severity',
+  'lk.blocking.cause',
+  'lk.blocking.task',
+  'lk.blocking.stack',
+  'lk.blocking.gc_time',
+  'lk.blocking.cpu_time',
+  'lk.blocking.import',
+  'lk.blocking.suppressed',
+  'lk.blocking.count',
+  'lk.blocking.total_duration',
+  'lk.blocking.max_duration',
   // OpenTelemetry GenAI attributes and event names
   'gen_ai.operation.name',
   'gen_ai.request.model',
@@ -193,16 +242,50 @@ const SAFE_KEYS = new Set([
   'lk.amd.delay',
   // Adaptive interruption
   'lk.is_interruption',
+  // interruptions, handoff, fallback (enums, labels, sizes)
+  'lk.interruption.source',
+  'lk.playout.position',
+  'lk.previous_agent_label',
+  'lk.fallback.label',
+  'lk.fallback.index',
   'lk.interruption.probability',
   'lk.interruption.total_duration',
   'lk.interruption.prediction_duration',
   'lk.interruption.detection_delay',
+  // -- OTel GenAI semantic conventions --
+  // identifiers, enums, counts and sampling settings; nothing free-form. The
+  // content-bearing gen_ai attributes live in GEN_AI_PII_ATTRIBUTES instead, because their
+  // names are fixed by the convention and cannot carry the `lk.pii.` marker.
+  'error.type',
+  'gen_ai.agent.name',
+  'gen_ai.conversation.id',
+  'gen_ai.output.type',
+  'gen_ai.request.stream',
+  'gen_ai.response.finish_reasons',
+  'gen_ai.response.id',
+  'gen_ai.response.model',
+  'gen_ai.response.time_to_first_chunk',
+  'gen_ai.tool.call.id',
+  'gen_ai.tool.name',
+  'gen_ai.tool.type',
+  'gen_ai.usage.audio.input_tokens',
+  'gen_ai.usage.audio.output_tokens',
+  'gen_ai.usage.cache_read.input_tokens',
+  'gen_ai.usage.cache_write.input_tokens',
+  'gen_ai.usage.reasoning.output_tokens',
+  'gen_ai.usage.reasoning_tokens',
+  'gen_ai.usage.text.input_tokens',
+  'gen_ai.usage.text.output_tokens',
+  'gen_ai.workflow.name',
+  // GenAI event and metric names (not attribute keys)
+  'gen_ai.client.inference.operation.details',
 ]);
 
 function declaredKeys(): Record<string, string> {
   return Object.fromEntries(
     Object.entries(traceTypes).filter((entry): entry is [string, string] => {
-      return typeof entry[1] === 'string';
+      // metric names are not attribute keys: they carry no values to classify
+      return typeof entry[1] === 'string' && !entry[0].startsWith('METRIC_');
     }),
   );
 }
@@ -211,7 +294,8 @@ describe('telemetry key PII classification', () => {
   it('classifies every declared key as safe or PII-bearing', () => {
     const unclassified = Object.fromEntries(
       Object.entries(declaredKeys()).filter(
-        ([, value]) => !SAFE_KEYS.has(value) && !PII_SEGMENT_RE.test(value),
+        ([, value]) =>
+          !SAFE_KEYS.has(value) && !PII_SEGMENT_RE.test(value) && !isPIIAttribute(value),
       ),
     );
 
@@ -219,16 +303,23 @@ describe('telemetry key PII classification', () => {
   });
 
   it('does not mark safe keys as PII-bearing', () => {
-    const conflicting = [...SAFE_KEYS].filter((key) => PII_SEGMENT_RE.test(key)).sort();
+    const conflicting = [...SAFE_KEYS]
+      .filter((key) => PII_SEGMENT_RE.test(key) || isPIIAttribute(key))
+      .sort();
 
     expect(conflicting).toEqual([]);
   });
 
-  it('does not retain stale safe-list entries', () => {
-    const declared = new Set(Object.values(declaredKeys()));
-    const stale = [...SAFE_KEYS].filter((key) => !declared.has(key)).sort();
+  it('agrees with the in-process stripper', () => {
+    // an integrator's own exporter never reaches the LiveKit Cloud collector, so every
+    // pii-marked key must be stripped in-process too
+    const marked = Object.values(declaredKeys()).filter((value) => PII_SEGMENT_RE.test(value));
+    expect(marked.length).toBeGreaterThan(0);
+    expect(marked.filter((key) => !isPIIAttribute(key))).toEqual([]);
 
-    expect(stale).toEqual([]);
+    // a rename must not silently drop an attribute out of the stripped set
+    const declared = new Set(Object.values(declaredKeys()));
+    expect([...GEN_AI_PII_ATTRIBUTES].filter((key) => !declared.has(key)).sort()).toEqual([]);
   });
 
   it('tags sensitive literal structured-log fields as PII', () => {

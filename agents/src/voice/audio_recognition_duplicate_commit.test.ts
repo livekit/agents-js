@@ -66,7 +66,8 @@ describe('AudioRecognition duplicate EOU commit', () => {
     const committedTranscripts: string[] = [];
 
     const hooks: RecognitionHooks = {
-      onInterruption: vi.fn(),
+      interruptionByAudioActivityEnabled: false,
+      onOverlapSpeech: vi.fn(),
       onBackchannelConfirmed: vi.fn(),
       onStartOfSpeech: vi.fn(),
       onVADInferenceDone: vi.fn(),

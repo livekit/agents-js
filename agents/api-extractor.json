@@ -16,5 +16,17 @@
    * DEFAULT VALUE: ""
    */
   "extends": "../api-extractor-shared.json",
-  "mainEntryPointFilePath": "./dist/index.d.ts"
+  "mainEntryPointFilePath": "./dist/index.d.ts",
+  "messages": {
+    "extractorMessageReporting": {
+      /**
+       * Exports are not release-tagged in this package; the warning for every untagged symbol
+       * only buries the real changes in the API report.
+       */
+      "ae-missing-release-tag": {
+        "logLevel": "none",
+        "addToApiReportFile": false
+      }
+    }
+  }
 }

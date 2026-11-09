@@ -15,7 +15,7 @@ import * as openai from '@livekit/agents-plugin-openai';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
-const taskTts = 'elevenlabs/eleven_turbo_v2_5';
+const taskTts = 'deepgram/aura-2';
 
 class CollectNameTask extends voice.AgentTask<string> {
   constructor() {
