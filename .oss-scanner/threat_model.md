@@ -101,10 +101,12 @@ framework handles what participants send here. The Python framework
   Participants that publish on the agent's behalf, or whose kind isn't
   accepted, must not become the linked participant.
 - **Session host:** a session started with a room registers a session host.
-  Room participants can observe and drive the session through it by design.
-  Requests must not reach more than their documented
-  effect, for example by leaking secrets or API keys or reading another
-  session's state.
+  While no participant is linked, any room participant can send requests,
+  and responses and events are broadcast to the room. Once a participant is
+  linked, only that identity may send requests, and responses and events
+  must target that identity. Bypassing this identity filter is a finding.
+  Requests must not exceed their documented effect, for example by leaking
+  secrets or API keys or reading another session's state.
 - **Tool boundaries:** the LLM can call only the tools registered on the
   current agent. For Zod-schema tools, arguments must pass Zod validation.
   Tools defined with raw JSON schemas, including MCP tools, receive parsed
@@ -155,9 +157,9 @@ room, or treating LLM output as trusted code or paths.
 - **Low / not a finding:** prompt injection that stays within the registered
   tools and their schemas; raw JSON-schema/MCP tools receiving arguments without
   framework schema validation; information the session host returns to
-  participants by design; issues that need the developer's code, config, or
-  secrets; malformed messages only the LiveKit server can send; examples and
-  tests; provider-side bugs.
+  permitted participants by design; issues that need the developer's code,
+  config, or secrets; malformed messages only the LiveKit server can send;
+  examples and tests; provider-side bugs.
 
 ## Testing
 
