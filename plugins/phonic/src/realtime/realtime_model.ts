@@ -510,16 +510,23 @@ export class RealtimeSession extends llm.RealtimeSession {
       (PHONIC_INPUT_SAMPLE_RATE * PHONIC_INPUT_FRAME_MS) / 1000,
     );
 
-    // Seed before connect() starts: the config message waits on instructionsReady and toolsReady,
-    // and the update paths apply synchronously before config is sent.
-    if (sessionOptions?.instructions !== undefined) {
-      void this.updateInstructions(sessionOptions.instructions);
-    }
-    if (sessionOptions?.chatCtx !== undefined) {
-      void this.updateChatCtx(sessionOptions.chatCtx);
-    }
-    if (sessionOptions?.tools !== undefined) {
-      void this.updateTools(sessionOptions.tools);
+    // Phonic sends its config after it has the instructions and the tools. Seeded options are the
+    // whole initial config: a value left out keeps its default, so connect() does not wait for it.
+    // The updates below apply before connect() starts, because config is not sent yet.
+    if (
+      sessionOptions?.instructions !== undefined ||
+      sessionOptions?.chatCtx !== undefined ||
+      sessionOptions?.tools !== undefined
+    ) {
+      if (sessionOptions.chatCtx !== undefined) {
+        void this.updateChatCtx(sessionOptions.chatCtx);
+      }
+      if (sessionOptions.instructions !== undefined) {
+        void this.updateInstructions(sessionOptions.instructions);
+      } else {
+        this.instructionsReady.resolve();
+      }
+      void this.updateTools(sessionOptions.tools ?? llm.ToolContext.empty());
     }
 
     this.connectTask = this.connect().catch((error: unknown) => {

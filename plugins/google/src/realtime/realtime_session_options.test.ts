@@ -7,6 +7,8 @@ import { llm } from '@livekit/agents';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { RealtimeModel, type RealtimeSession } from './realtime_api.js';
 
+type SessionInternals = { options: { instructions?: string; voice?: string } };
+
 /** Stands in for the SDK's Live.connect against a server that confirms every setup. */
 function fakeServer() {
   return vi
@@ -76,5 +78,37 @@ describe('Google Realtime initial session options', () => {
 
     await session._updateSession(config.instructions, config.chatCtx, config.tools);
     await vi.waitFor(() => expect(connect).toHaveBeenCalledTimes(2));
+  });
+
+  it('keeps instructions and options per session', async () => {
+    fakeServer();
+    const model = new RealtimeModel({ apiKey: 'test-key', instructions: 'model default' });
+    const first = open(model, { instructions: 'first agent' });
+    const second = open(model);
+
+    await first.updateInstructions('first agent, updated');
+    first.updateOptions({ voice: 'Kore' });
+
+    expect(model._options.instructions).toBe('model default');
+    expect(model._options.voice).not.toBe('Kore');
+    const secondOptions = (second as unknown as SessionInternals).options;
+    expect(secondOptions.instructions).toBe('model default');
+    expect(secondOptions.voice).toBe(model._options.voice);
+  });
+
+  it('forwards model option updates to open sessions', async () => {
+    const connect = fakeServer();
+    const model = new RealtimeModel({ apiKey: 'test-key' });
+    const session = open(model);
+    const closed = open(model);
+    await vi.waitFor(() => expect(connect).toHaveBeenCalledTimes(2));
+    await closed.close();
+
+    model.updateOptions({ voice: 'Kore' });
+
+    expect((session as unknown as SessionInternals).options.voice).toBe('Kore');
+    expect((closed as unknown as SessionInternals).options.voice).not.toBe('Kore');
+    // A new voice needs a new connection, as in the Python plugin.
+    await vi.waitFor(() => expect(connect).toHaveBeenCalledTimes(3));
   });
 });

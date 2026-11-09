@@ -53,6 +53,13 @@ describe('Phonic initial session options', () => {
     expect(JSON.stringify(config.tools)).toContain('lookup');
   });
 
+  it('does not wait for tools the seeded options leave out', async () => {
+    session = new RealtimeModel({ apiKey: 'test-key' }).session({ instructions: 'be brief' });
+
+    await vi.waitFor(() => expect(sentConfigs).toHaveLength(1));
+    expect((sentConfigs[0] as SentConfig).system_prompt).toBe('be brief');
+  });
+
   it('waits for the framework to configure a session created without options', async () => {
     session = new RealtimeModel({ apiKey: 'test-key' }).session();
     await new Promise((resolve) => setTimeout(resolve, 20));

@@ -247,6 +247,7 @@ export class RealtimeModel extends llm.RealtimeModel {
   #logger = log();
   /** @internal */
   _options: RealtimeOptions;
+  #sessions = new Set<RealtimeSession>();
 
   get model(): string {
     return this._options.model;
@@ -519,7 +520,14 @@ export class RealtimeModel extends llm.RealtimeModel {
   session(options?: llm.RealtimeSessionOptions) {
     // Gemini drives manual turns through activity start/end, so turnDetectionDisabled is not
     // honored yet (canDisableTurnDetection is false).
-    return new RealtimeSession(this, options);
+    const session = new RealtimeSession(this, options);
+    this.#sessions.add(session);
+    return session;
+  }
+
+  /** @internal */
+  _removeSession(session: RealtimeSession): void {
+    this.#sessions.delete(session);
   }
 
   /**
@@ -542,10 +550,13 @@ export class RealtimeModel extends llm.RealtimeModel {
     }
     if (options.toolResponseScheduling !== undefined) {
       this._options.toolResponseScheduling = options.toolResponseScheduling;
-      if (this._options.vertexai) warnVertexSchedulingUnsupported();
+      // an open session warns when it applies the change
+      if (this._options.vertexai && this.#sessions.size === 0) warnVertexSchedulingUnsupported();
     }
 
-    // TODO: Notify active sessions of option changes
+    for (const session of this.#sessions) {
+      session.updateOptions(options);
+    }
   }
 
   /**
@@ -605,7 +616,9 @@ export class RealtimeSession extends llm.RealtimeSession {
   constructor(realtimeModel: RealtimeModel, sessionOptions?: llm.RealtimeSessionOptions) {
     super(realtimeModel);
 
-    this.options = realtimeModel._options;
+    // Each session changes its own instructions and options. The model forwards its
+    // updateOptions calls to open sessions.
+    this.options = { ...realtimeModel._options };
 
     // The first connection sends the tools and instructions in its setup message. Seed them before
     // #mainTask connects, so the same values from _updateSession do not force a reconnect.
@@ -1096,6 +1109,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   async close(): Promise<void> {
     super.close();
     this.#closed = true;
+    (this.realtimeModel as RealtimeModel)._removeSession(this);
 
     this.sessionShouldClose.set();
     this.inputResampler?.close();
