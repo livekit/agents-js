@@ -1,0 +1,21 @@
+agents/package.json
+  s_9dc60d915e2121::t_e53b57d07285ba 70
+plugins/silero/package.json
+  s_9dc60d915e2121::t_c919e151c8b5a4 38
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7ca1fd7b7d270151ea2d28de7b52b6f344d63139",
+  "prompts": {},
+  "sessions": {
+    "s_9dc60d915e2121": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3bb7b518-e716-431d-8b0e-9b5f73deb748",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
