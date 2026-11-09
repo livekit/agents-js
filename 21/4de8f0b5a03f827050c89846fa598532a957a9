@@ -1,0 +1,21 @@
+plugins/phonic/src/realtime/realtime_model.test.ts
+  s_0eb607992d36c3::t_28981af33c3e05 63,75-91
+plugins/phonic/src/realtime/realtime_model.ts
+  s_0eb607992d36c3::t_e984d8fa9b32d3 471-472,516-517,554,730,749,1001,1014
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "214de8f0b5a03f827050c89846fa598532a957a9",
+  "prompts": {},
+  "sessions": {
+    "s_0eb607992d36c3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_0eb607992d36c3",
+        "model": "unknown"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
