@@ -404,8 +404,10 @@ class RealtimeModel_4 extends llm.RealtimeModel {
     _options: RealtimeOptions_2;
     // (undocumented)
     get provider(): string;
+    // @internal
+    _removeSession(session: RealtimeSession_4): void;
     // Warning: (ae-forgotten-export) The symbol "RealtimeSession_4" needs to be exported by the entry point index.d.ts
-    session(): RealtimeSession_4;
+    session(options?: llm.RealtimeSessionOptions): RealtimeSession_4;
     updateOptions(options: {
         voice?: Voice_2 | string;
         temperature?: number;
@@ -578,7 +580,7 @@ type Voice_2 = 'Achernar' | 'Achird' | 'Algenib' | 'Algieba' | 'Alnilam' | 'Aoed
 // Warnings were encountered during analysis:
 //
 // src/aiplatform_llm.ts:176:5 - (ae-forgotten-export) The symbol "APIConnectOptions" needs to be exported by the entry point index.d.ts
-// src/realtime/realtime_api.ts:359:7 - (ae-forgotten-export) The symbol "DEFAULT_IMAGE_ENCODE_OPTIONS" needs to be exported by the entry point index.d.ts
+// src/realtime/realtime_api.ts:360:7 - (ae-forgotten-export) The symbol "DEFAULT_IMAGE_ENCODE_OPTIONS" needs to be exported by the entry point index.d.ts
 
 // (No @packageDocumentation comment for this package)
 

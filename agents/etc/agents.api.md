@@ -5051,6 +5051,7 @@ declare namespace llm {
         MessageGeneration,
         RealtimeCapabilities,
         RealtimeModelError,
+        RealtimeSessionOptions,
         RealtimeSessionReconnectedEvent,
         RemoteChatContext,
         computeChatCtxDiff,
@@ -6237,9 +6238,7 @@ export abstract class RealtimeModel {
     // (undocumented)
     get provider(): string;
     // (undocumented)
-    abstract session(options?: {
-        turnDetectionDisabled?: boolean;
-    }): RealtimeSession;
+    abstract session(options?: RealtimeSessionOptions): RealtimeSession;
 }
 
 // Warning: (ae-forgotten-export) The symbol "RealtimeModel_3" needs to be exported by the entry point index.d.ts
@@ -6258,9 +6257,7 @@ class RealtimeModel_2 extends RealtimeModel_3 {
     // (undocumented)
     get provider(): string;
     // (undocumented)
-    session(options?: {
-        turnDetectionDisabled?: boolean;
-    }): RealtimeSession_3;
+    session(options?: llm_2.RealtimeSessionOptions): RealtimeSession_3;
 }
 
 // @public (undocumented)
@@ -6388,9 +6385,7 @@ export abstract class RealtimeSession extends EventEmitter {
 //
 // @public (undocumented)
 class RealtimeSession_3 extends RealtimeSession_2 {
-    constructor(realtimeModel: RealtimeModel_2, options?: {
-        turnDetectionDisabled?: boolean;
-    });
+    constructor(realtimeModel: RealtimeModel_2, options?: llm_2.RealtimeSessionOptions);
     // (undocumented)
     close(): Promise<void>;
     // (undocumented)
@@ -6421,6 +6416,14 @@ class RealtimeSession_3 extends RealtimeSession_2 {
     protected isFatalError(error: unknown): boolean;
     // (undocumented)
     protected resetInputTurnState(): void;
+}
+
+// @public
+export interface RealtimeSessionOptions {
+    chatCtx?: ChatContext;
+    instructions?: string;
+    tools?: ToolContext;
+    turnDetectionDisabled?: boolean;
 }
 
 // @public (undocumented)
