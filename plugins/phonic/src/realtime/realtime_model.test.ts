@@ -60,7 +60,7 @@ describe('Phonic initial session options', () => {
     expect((sentConfigs[0] as SentConfig).system_prompt).toBe('be brief');
   });
 
-  it('waits for instructions that neither the options nor the model provide', async () => {
+  it('waits for instructions that the options leave out', async () => {
     session = new RealtimeModel({ apiKey: 'test-key' }).session({
       tools: new llm.ToolContext([lookup]),
     });
@@ -70,6 +70,23 @@ describe('Phonic initial session options', () => {
     await session.updateInstructions('be brief');
     await vi.waitFor(() => expect(sentConfigs).toHaveLength(1));
     expect(JSON.stringify((sentConfigs[0] as SentConfig).tools)).toContain('lookup');
+  });
+
+  it('keeps instructions per session', async () => {
+    const model = new RealtimeModel({ apiKey: 'test-key' });
+    const first = model.session({ instructions: 'first' });
+    const second = model.session({ instructions: 'second' });
+    // a session without instructions must not take another session's
+    const third = model.session({ tools: new llm.ToolContext([lookup]) });
+    try {
+      await vi.waitFor(() => expect(sentConfigs).toHaveLength(2));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      const prompts = (sentConfigs as SentConfig[]).map((config) => config.system_prompt).sort();
+      expect(prompts).toEqual(['first', 'second']);
+      expect(model._options.instructions).toBeUndefined();
+    } finally {
+      await Promise.all([first.close(), second.close(), third.close()]);
+    }
   });
 
   it('waits for the framework to configure a session created without options', async () => {
