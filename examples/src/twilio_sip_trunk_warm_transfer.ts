@@ -33,8 +33,8 @@ type CallerId = { sipNumber?: string; sipHeaders?: Record<string, string> };
 
 // Shows the supervisor the inbound caller's number. Reads X-Twilio-CallToken from the caller's
 // SIP leg and forwards it as-is with the caller's number from the same call. Falls back to the
-// business number when either is unavailable. RPC responses are recorded in traces as PII (`lk.pii.rpc.response`), so keep
-// PII redaction on if you export traces.
+// business number when either is unavailable. RPC responses are recorded in traces as PII
+// (`lk.pii.rpc.response`), so keep PII redaction on if you export traces.
 // https://www.twilio.com/en-us/changelog/elastic-sip-trunking---immutable-call-forwarding-with-calltoken-
 async function twilioCallerId(caller: RemoteParticipant | undefined): Promise<CallerId> {
   const fallback: CallerId = { sipNumber: SIP_NUMBER };
