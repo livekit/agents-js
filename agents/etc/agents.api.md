@@ -470,6 +470,12 @@ export class AgentSession<UserData = UnknownUserData> extends AgentSession_base 
     clearUserTurn(): void;
     // (undocumented)
     close(): Promise<void>;
+    // @internal
+    _closeImpl(input: {
+        reason: ShutdownReason;
+        drain?: boolean;
+        error?: RealtimeModelError | STTError | TTSError | LLMError | null;
+    }): Promise<void>;
     // @internal (undocumented)
     _closeSoon(input: {
         reason: ShutdownReason;
@@ -4765,6 +4771,10 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
     // (undocumented)
     get agent(): LocalParticipant | undefined;
     connect(e2ee?: E2EEOptions, autoSubscribe?: AutoSubscribe, rtcConfig?: RtcConfiguration): Promise<void>;
+    // @internal
+    _connectCalledMonoUs: number;
+    // @internal
+    _connectedMonoUs: number;
     deleteRoom(roomName?: string): Promise<void>;
     // (undocumented)
     get inferenceExecutor(): InferenceExecutor;
@@ -4809,6 +4819,8 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
     get sessionDirectory(): string;
     // @internal (undocumented)
     _sessionDirectory: string;
+    // @internal
+    _sessionHost?: SessionHost;
     shutdown(reason?: string): void;
     // @internal (undocumented)
     shutdownCallbacks: (() => Promise<void>)[];
@@ -5039,6 +5051,7 @@ declare namespace llm {
         MessageGeneration,
         RealtimeCapabilities,
         RealtimeModelError,
+        RealtimeSessionOptions,
         RealtimeSessionReconnectedEvent,
         RemoteChatContext,
         computeChatCtxDiff,
@@ -6225,9 +6238,7 @@ export abstract class RealtimeModel {
     // (undocumented)
     get provider(): string;
     // (undocumented)
-    abstract session(options?: {
-        turnDetectionDisabled?: boolean;
-    }): RealtimeSession;
+    abstract session(options?: RealtimeSessionOptions): RealtimeSession;
 }
 
 // Warning: (ae-forgotten-export) The symbol "RealtimeModel_3" needs to be exported by the entry point index.d.ts
@@ -6246,9 +6257,7 @@ class RealtimeModel_2 extends RealtimeModel_3 {
     // (undocumented)
     get provider(): string;
     // (undocumented)
-    session(options?: {
-        turnDetectionDisabled?: boolean;
-    }): RealtimeSession_3;
+    session(options?: llm_2.RealtimeSessionOptions): RealtimeSession_3;
 }
 
 // @public (undocumented)
@@ -6376,9 +6385,7 @@ export abstract class RealtimeSession extends EventEmitter {
 //
 // @public (undocumented)
 class RealtimeSession_3 extends RealtimeSession_2 {
-    constructor(realtimeModel: RealtimeModel_2, options?: {
-        turnDetectionDisabled?: boolean;
-    });
+    constructor(realtimeModel: RealtimeModel_2, options?: llm_2.RealtimeSessionOptions);
     // (undocumented)
     close(): Promise<void>;
     // (undocumented)
@@ -6409,6 +6416,14 @@ class RealtimeSession_3 extends RealtimeSession_2 {
     protected isFatalError(error: unknown): boolean;
     // (undocumented)
     protected resetInputTurnState(): void;
+}
+
+// @public
+export interface RealtimeSessionOptions {
+    chatCtx?: ChatContext;
+    instructions?: string;
+    tools?: ToolContext;
+    turnDetectionDisabled?: boolean;
 }
 
 // @public (undocumented)
@@ -6516,11 +6531,12 @@ export type RemoteSessionCallbacks = {
     eot_prediction: (ev: AgentSession_2.AgentSessionEvent_EotPrediction) => void;
     session_usage: (ev: AgentSession_2.AgentSessionEvent_SessionUsageUpdated) => void;
     debug_message: (ev: AgentSession_2.DebugMessage) => void;
+    session_closed: (ev: AgentSession_2.AgentSessionEvent_SessionClosed) => void;
     error: (ev: AgentSession_2.AgentSessionEvent_Error) => void;
 };
 
 // @public (undocumented)
-export type RemoteSessionEventTypes = 'agent_false_interruption' | 'agent_state_changed' | 'user_state_changed' | 'conversation_item_added' | 'user_input_transcribed' | 'function_tools_executed' | 'overlapping_speech' | 'amd_prediction' | 'eot_prediction' | 'session_usage' | 'debug_message' | 'error';
+export type RemoteSessionEventTypes = 'agent_false_interruption' | 'agent_state_changed' | 'user_state_changed' | 'conversation_item_added' | 'user_input_transcribed' | 'function_tools_executed' | 'overlapping_speech' | 'amd_prediction' | 'eot_prediction' | 'session_usage' | 'debug_message' | 'session_closed' | 'error';
 
 // @public (undocumented)
 function replace(replacements: Record<string, string>, options?: {
@@ -6766,6 +6782,11 @@ export type RunningJobInfo = {
     acceptedAt?: number;
     assignedAt?: number;
     launchedAt?: number;
+    receivedMonoUs?: number;
+    acceptedMonoUs?: number;
+    assignedMonoUs?: number;
+    launchedMonoUs?: number;
+    launchedWarm?: boolean;
 };
 
 // @public
@@ -7036,18 +7057,21 @@ export interface SessionConnectOptions {
     ttsConnOptions?: Partial<APIConnectOptions>;
 }
 
-// @public (undocumented)
+// @public
 export class SessionHost {
     constructor(transport: SessionTransport, audioInput?: TcpAudioInput, audioOutput?: TcpAudioOutput);
+    get attachedSession(): AgentSession | undefined;
     close(): Promise<void>;
     // @internal
     _onAmdPrediction(event: AMDPredictionEvent): void;
     // @internal
     _onEotPrediction(event: EotPredictionEvent): void;
-    // (undocumented)
     registerSession(session: AgentSession): void;
     // (undocumented)
     start(): Promise<void>;
+    unregisterSession(): void;
+    // @internal
+    _waitForSimulationFinalized(): Promise<void>;
 }
 
 // @public (undocumented)
@@ -9872,7 +9896,7 @@ interface XaiOptions {
 type XAIRealtimeModels = 'xai/grok-voice' | 'xai/grok-voice-latest' | 'xai/grok-voice-3.0';
 
 // @public (undocumented)
-type XaiSTTModels = 'xai/stt-1';
+type XaiSTTModels = 'xai/stt-1' | 'xai/stt-2';
 
 // @public (undocumented)
 type XaiTTSModels = 'xai/tts-1';
@@ -9902,10 +9926,10 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 // src/stt/stt.ts:395:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "STT"
 // src/utils.ts:468:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "cancelled"
 // src/voice/agent_session.ts:411:3 - (ae-unresolved-link) The @link reference could not be resolved: This type of declaration is not supported yet by the resolver
-// src/voice/agent_session.ts:1091:5 - (ae-forgotten-export) The symbol "RecordingOptions" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1809:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1809:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1809:5 - (ae-forgotten-export) The symbol "LLMError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1089:5 - (ae-forgotten-export) The symbol "RecordingOptions" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1810:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1810:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1810:5 - (ae-forgotten-export) The symbol "LLMError" needs to be exported by the entry point index.d.ts
 // src/voice/amd.ts:315:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "waitForTrackPublication" has more than one declaration; you need to add a TSDoc member reference selector
 // src/voice/amd.ts:315:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "gateListening"
 // src/voice/amd.ts:323:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "aclose"
