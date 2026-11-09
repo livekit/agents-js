@@ -15,7 +15,9 @@ import {
 } from './job_lifecycle.js';
 import { flushCloudMetrics, flushCloudTraces, flushOtelLogs } from './telemetry/index.js';
 import { ATTRIBUTE_SIMULATOR } from './types.js';
-import type { AgentSession } from './voice/agent_session.js';
+import { Agent } from './voice/agent.js';
+import { AgentSession } from './voice/agent_session.js';
+import { AgentSessionEventTypes, CloseReason } from './voice/events.js';
 import type { SessionHost } from './voice/remote_session.js';
 
 vi.mock('./telemetry/index.js', async (importOriginal) => ({
@@ -39,7 +41,7 @@ function createLogger(): Logger {
 
 function createJobContext(
   onSessionEnd: () => Promise<void>,
-  session?: Pick<AgentSession, 'close'>,
+  session?: Pick<AgentSession, '_closeImpl'>,
 ): JobContext {
   return { _onSessionEnd: onSessionEnd, _primaryAgentSession: session } as unknown as JobContext;
 }
@@ -95,7 +97,7 @@ describe('finalizeSession', () => {
         calls.push('internal');
       },
       {
-        close: async () => {
+        _closeImpl: async () => {
           calls.push('close');
         },
       },
@@ -113,13 +115,36 @@ describe('finalizeSession', () => {
     expect(calls).toEqual(['close', 'application', 'internal']);
   });
 
+  it('closes the primary session as JOB_SHUTDOWN', async () => {
+    const session = new AgentSession({ vad: null });
+    const agent = new Agent({ instructions: 'test' });
+    const onExit = vi.spyOn(agent, 'onExit');
+    const onClose = vi.fn();
+    session.on(AgentSessionEventTypes.Close, onClose);
+    await session.start({ agent });
+    const ctx = createJobContext(async () => {}, session);
+
+    try {
+      expect(session._activity).toBeDefined();
+      await finalizeSession(ctx, undefined, 1000, createLogger());
+
+      expect(onExit).toHaveBeenCalledOnce();
+      expect(onClose).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ reason: CloseReason.JOB_SHUTDOWN }),
+      );
+      expect(session._activity).toBeUndefined();
+    } finally {
+      await session.close();
+    }
+  });
+
   it('skips the application callback when the primary session fails to close', async () => {
     const error = new Error('close failed');
     const applicationCallback = vi.fn();
     const internalCleanup = vi.fn(async () => {});
     const logger = createLogger();
     const ctx = createJobContext(internalCleanup, {
-      close: async () => {
+      _closeImpl: async () => {
         throw error;
       },
     });
@@ -140,7 +165,7 @@ describe('finalizeSession', () => {
     const internalCleanup = vi.fn(async () => {});
     const logger = createLogger();
     const ctx = createJobContext(internalCleanup, {
-      close: () => new Promise<void>(() => {}),
+      _closeImpl: () => new Promise<void>(() => {}),
     });
     const completion = finalizeSession(ctx, applicationCallback, 1000, logger);
 
