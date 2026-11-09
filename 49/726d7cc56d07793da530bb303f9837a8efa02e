@@ -1,0 +1,23 @@
+.changeset/google-realtime-single-connect.md
+  s_5c4d00d3aa6a61::t_dbff3aa32aa09b 8
+agents/src/llm/openai_realtime/realtime_model.test.ts
+  s_5c4d00d3aa6a61::t_dc1ad8b6b6f794 1196,1198-1205
+agents/src/llm/openai_realtime/realtime_model.ts
+  s_5c4d00d3aa6a61::t_763e60733a1187 528-534
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "49726d7cc56d07793da530bb303f9837a8efa02e",
+  "prompts": {},
+  "sessions": {
+    "s_5c4d00d3aa6a61": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_5c4d00d3aa6a61",
+        "model": "unknown"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
