@@ -137,6 +137,7 @@ export interface STTOptions {
     keyterms?: string[];
     // (undocumented)
     languageCode?: string;
+    livenessPingIntervalMs?: number;
     // (undocumented)
     model?: ElevenLabsSTTModels | string;
     // @deprecated (undocumented)
