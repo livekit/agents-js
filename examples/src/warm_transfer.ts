@@ -6,7 +6,6 @@ import {
   ServerOptions,
   cli,
   defineAgent,
-  getJobContext,
   inference,
   llm,
   log,
@@ -14,79 +13,14 @@ import {
   workflows,
 } from '@livekit/agents';
 import { BackgroundVoiceCancellation } from '@livekit/noise-cancellation-node';
-import { ParticipantKind, type RemoteParticipant, RoomEvent } from '@livekit/rtc-node';
 import { fileURLToPath } from 'node:url';
 
 const SIP_TRUNK_ID = process.env.LIVEKIT_SIP_OUTBOUND_TRUNK;
 const SUPERVISOR_PHONE_NUMBER = process.env.LIVEKIT_SUPERVISOR_PHONE_NUMBER;
 const SIP_NUMBER = process.env.LIVEKIT_SIP_NUMBER;
 
-type CallerId = { sipNumber?: string; sipHeaders?: Record<string, string> };
-
-// Shows the supervisor the inbound caller's number on Twilio Elastic SIP Trunking (Twilio's
-// CallToken beta). Reads X-Twilio-CallToken from the caller's SIP leg and forwards it as-is with
-// the caller's number from the same call. Falls back to the business number when either is
-// unavailable. RPC responses are recorded in traces as PII (`lk.pii.rpc.response`), so keep
-// PII redaction on if you export traces.
-// https://www.twilio.com/en-us/changelog/elastic-sip-trunking---immutable-call-forwarding-with-calltoken-
-async function twilioCallerId(caller: RemoteParticipant | undefined): Promise<CallerId> {
-  const fallback: CallerId = { sipNumber: SIP_NUMBER };
-  const callerNumber = caller?.attributes['sip.phoneNumber'];
-  const localParticipant = getJobContext().room.localParticipant;
-  if (caller?.kind !== ParticipantKind.SIP || !callerNumber || !localParticipant) {
-    return fallback;
-  }
-  try {
-    const response = await localParticipant.performRpc({
-      destinationIdentity: caller.identity,
-      method: 'lk.sip.GetRemoteHeaders',
-      payload: JSON.stringify({ include: ['X-Twilio-CallToken'] }),
-    });
-    const headers: Record<string, string> = JSON.parse(response).headers ?? {};
-    const callToken = Object.entries(headers).find(
-      ([name]) => name.toLowerCase() === 'x-twilio-calltoken',
-    )?.[1];
-    return callToken
-      ? { sipNumber: callerNumber, sipHeaders: { 'X-Twilio-CallToken': callToken } }
-      : fallback;
-  } catch {
-    log().warn('could not read SIP headers, using the business number');
-    return fallback;
-  }
-}
-
-// Waits for the participant the session would link by default: SIP, standard or connector, and
-// not publishing on the agent's behalf (an avatar, for example). Egress participants are skipped,
-// unlike ctx.waitForParticipant(), which returns any non-agent participant.
-function waitForCaller(ctx: JobContext): Promise<RemoteParticipant> {
-  const agentIdentity = ctx.room.localParticipant?.identity;
-  const isCaller = (p: RemoteParticipant) =>
-    voice.DEFAULT_PARTICIPANT_KINDS.includes(p.kind) &&
-    p.attributes['lk.publish_on_behalf'] !== agentIdentity;
-
-  const present = [...ctx.room.remoteParticipants.values()].find(isCaller);
-  if (present) return Promise.resolve(present);
-  return new Promise((resolve, reject) => {
-    const onConnected = (p: RemoteParticipant) => {
-      if (!isCaller(p)) return;
-      cleanup();
-      resolve(p);
-    };
-    const onDisconnected = () => {
-      cleanup();
-      reject(new Error('room disconnected before the caller joined'));
-    };
-    const cleanup = () => {
-      ctx.room.off(RoomEvent.ParticipantConnected, onConnected);
-      ctx.room.off(RoomEvent.Disconnected, onDisconnected);
-    };
-    ctx.room.on(RoomEvent.ParticipantConnected, onConnected);
-    ctx.room.on(RoomEvent.Disconnected, onDisconnected);
-  });
-}
-
 class SupportAgent extends voice.Agent {
-  constructor(caller: RemoteParticipant | undefined) {
+  constructor() {
     super({
       instructions: INSTRUCTIONS,
       tools: [
@@ -122,7 +56,7 @@ Examples on when the tool should be called:
               const result = await new workflows.WarmTransferTask({
                 sipCallTo: SUPERVISOR_PHONE_NUMBER,
                 sipTrunkId: SIP_TRUNK_ID,
-                ...(await twilioCallerId(caller)),
+                sipNumber: SIP_NUMBER,
                 chatCtx: ctx.session.history,
                 // Give up if the supervisor doesn't pick up within 25s with
                 // `ringingTimeout: 25000`.
@@ -176,17 +110,11 @@ export default defineAgent({
       }),
     });
 
-    // Link the session to the caller explicitly so the transfer reads the same participant.
-    // Console mode has no room participant, so the business number is used there.
-    await ctx.connect();
-    const caller = ctx.room.isConnected ? await waitForCaller(ctx) : undefined;
-
     await session.start({
-      agent: new SupportAgent(caller),
+      agent: new SupportAgent(),
       room: ctx.room,
       inputOptions: {
         noiseCancellation: BackgroundVoiceCancellation(),
-        participantIdentity: caller?.identity,
       },
     });
   },
