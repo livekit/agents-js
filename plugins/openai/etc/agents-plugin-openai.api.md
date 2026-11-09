@@ -1311,9 +1311,7 @@ class RealtimeModel_3 extends llm_2.RealtimeModel {
     // (undocumented)
     sampleRate: number;
     // (undocumented)
-    session(options?: {
-        turnDetectionDisabled?: boolean;
-    }): RealtimeSession_2;
+    session(options?: llm_2.RealtimeSessionOptions): RealtimeSession_2;
     static withAzure(input: {
         azureDeployment: string;
         azureEndpoint?: string;
@@ -1340,9 +1338,7 @@ export type RealtimeModels = 'gpt-realtime' | 'gpt-realtime-1.5' | 'gpt-realtime
 //
 // @public
 class RealtimeSession_2 extends llm_2.RealtimeSession {
-    constructor(realtimeModel: RealtimeModel_3, options?: {
-        turnDetectionDisabled?: boolean;
-    });
+    constructor(realtimeModel: RealtimeModel_3, options?: llm_2.RealtimeSessionOptions);
     // (undocumented)
     get chatCtx(): llm_2.ChatContext;
     // (undocumented)
@@ -2245,6 +2241,7 @@ export interface TTSOptions {
     instructions?: string;
     // (undocumented)
     model: TTSModels | string;
+    sampleRate?: number;
     // (undocumented)
     speed: number;
     // (undocumented)

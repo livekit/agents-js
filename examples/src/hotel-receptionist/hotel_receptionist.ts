@@ -33,6 +33,7 @@ import {
   speakUsd,
 } from './hotel_db.js';
 import { buildLookupPolicyTool } from './policies.js';
+import { SuggestedReplies } from './suggested_replies.js';
 
 type UserData = {
   db: HotelDB;
@@ -745,6 +746,12 @@ export default defineAgent({
       userData,
       maxToolSteps: 8,
     });
+
+    new SuggestedReplies(
+      session,
+      ctx.room,
+      new inference.LLM({ model: 'google/gemma-4-31b-it' }),
+    ).attach();
 
     await session.start({
       agent: new HotelReceptionistAgent(),

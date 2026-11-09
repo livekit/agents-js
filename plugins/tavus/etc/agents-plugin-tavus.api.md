@@ -47,6 +47,7 @@ export class AvatarSession extends voice.AvatarSession {
     conversationId: string | null;
     // (undocumented)
     get provider(): string;
+    setEmotion(emotion: Emotion): Promise<void>;
     // (undocumented)
     start(agentSession: voice.AgentSession, room: Room, options?: StartOptions): Promise<void>;
 }
@@ -94,6 +95,12 @@ export interface CreatePersonaOptions {
 
 // @public (undocumented)
 export const DEFAULT_API_URL = "https://tavusapi.com/v2";
+
+// @public
+export type Emotion = (typeof EMOTIONS)[number];
+
+// @public
+export const EMOTIONS: readonly ["neutral", "happiness", "sadness", "anger", "fear", "surprise", "disgust", "contempt"];
 
 // @public
 export interface StartOptions {

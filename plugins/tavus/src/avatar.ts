@@ -18,6 +18,30 @@ const ATTRIBUTE_PUBLISH_ON_BEHALF = 'lk.publish_on_behalf';
 const SAMPLE_RATE = 24000;
 const AVATAR_AGENT_IDENTITY = 'tavus-avatar-agent';
 const AVATAR_AGENT_NAME = 'tavus-avatar-agent';
+const APP_MESSAGES_TOPIC = 'app_messages';
+
+/**
+ * The facial emotions the Tavus avatar can express, e.g. for a tool's `z.enum(EMOTIONS)`.
+ *
+ * @public
+ */
+export const EMOTIONS = [
+  'neutral',
+  'happiness',
+  'sadness',
+  'anger',
+  'fear',
+  'surprise',
+  'disgust',
+  'contempt',
+] as const;
+
+/**
+ * A facial emotion the Tavus avatar can express.
+ *
+ * @public
+ */
+export type Emotion = (typeof EMOTIONS)[number];
 
 /**
  * Options for configuring an AvatarSession.
@@ -73,6 +97,7 @@ export class AvatarSession extends voice.AvatarSession {
   private avatarParticipantIdentity: string;
   private avatarParticipantName: string;
   private api: TavusAPI;
+  private room?: Room;
 
   conversationId: string | null = null;
 
@@ -107,6 +132,7 @@ export class AvatarSession extends voice.AvatarSession {
     options: StartOptions = {},
   ): Promise<void> {
     await super.start(agentSession, room);
+    this.room = room;
 
     const livekitUrl = options.livekitUrl || process.env.LIVEKIT_URL;
     const livekitApiKey = options.livekitApiKey || process.env.LIVEKIT_API_KEY;
@@ -166,5 +192,33 @@ export class AvatarSession extends voice.AvatarSession {
       sampleRate: SAMPLE_RATE,
       waitRemoteTrack: TrackKind.KIND_VIDEO,
     });
+  }
+
+  /**
+   * Set the avatar's facial emotion. The avatar keeps it until the next call;
+   * an unsupported emotion sets `'neutral'`. Call it after `waitForJoin()`: an
+   * emotion sent before the avatar joins the room is dropped.
+   *
+   * @param emotion - The emotion to express, e.g. `'neutral'`, `'happiness'`, `'sadness'`.
+   */
+  async setEmotion(emotion: Emotion): Promise<void> {
+    if (!this.room?.localParticipant) {
+      this.#logger.warn('setEmotion() called before start()');
+      return;
+    }
+
+    const message = {
+      message_type: 'conversation',
+      event_type: 'conversation.set_emotion',
+      properties: { emotion },
+    };
+    await this.room.localParticipant.publishData(
+      new TextEncoder().encode(JSON.stringify(message)),
+      {
+        reliable: true,
+        topic: APP_MESSAGES_TOPIC,
+        destination_identities: [this.avatarIdentity],
+      },
+    );
   }
 }

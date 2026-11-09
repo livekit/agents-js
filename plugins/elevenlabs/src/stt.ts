@@ -23,7 +23,7 @@ import {
   stt,
   waitForAbort,
 } from '@livekit/agents';
-import type { AudioFrame } from '@livekit/rtc-node';
+import { AudioFrame } from '@livekit/rtc-node';
 import { type RawData, WebSocket } from 'ws';
 import { PeriodicCollector } from './_utils.js';
 import type { STTRealtimeSampleRates } from './models.js';
@@ -704,6 +704,10 @@ export class SpeechStream extends stt.SpeechStream {
           const audioByteStream = new AudioByteStream(this.#opts.sampleRate, 1, samplesPerChunk);
           const abortPromise = waitForAbort(controller.signal);
           const streamAbortPromise = waitForAbort(this.abortSignal);
+          // Scribe closes the session on a commit with less than 300ms of audio since the
+          // previous commit or the connect
+          const minCommitSamples = (this.#opts.sampleRate * 3) / 10;
+          let uncommittedSamples = 0;
           let hasEnded = false;
 
           try {
@@ -720,8 +724,13 @@ export class SpeechStream extends stt.SpeechStream {
               let frames: AudioFrame[];
               if (data === SpeechStream.FLUSH_SENTINEL) {
                 frames = audioByteStream.flush();
+                const missing = minCommitSamples - uncommittedSamples;
+                if (missing > 0) {
+                  frames.push(AudioFrame.create(this.#opts.sampleRate, 1, missing));
+                }
                 hasEnded = true;
               } else {
+                uncommittedSamples += data.samplesPerChannel;
                 frames = audioByteStream.write(data.data);
               }
 
@@ -752,6 +761,7 @@ export class SpeechStream extends stt.SpeechStream {
                     sample_rate: this.#opts.sampleRate,
                   }),
                 );
+                uncommittedSamples = 0;
                 hasEnded = false;
               }
             }

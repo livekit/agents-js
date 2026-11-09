@@ -9,11 +9,49 @@ import {
 } from '@livekit/agents';
 import { STT } from '@livekit/agents-plugin-openai';
 import { tts as testTts } from '@livekit/agents-plugins-test';
-import { once } from 'node:events';
+import { EventEmitter, once } from 'node:events';
 import type { AddressInfo } from 'node:net';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { type WebSocket, WebSocketServer } from 'ws';
-import { type FluxTTSEncoding, TTSv2 } from './tts_v2.js';
+import { type FluxTTSEncoding, TTSv2, type TTSv2Options } from './tts_v2.js';
+
+const httpRequestPaths = vi.hoisted(() => [] as string[]);
+
+vi.mock('node:https', () => ({
+  request: (
+    options: { path?: string },
+    callback: (
+      response: EventEmitter & { statusCode: number; statusMessage: string; resume: () => void },
+    ) => void,
+  ) => {
+    httpRequestPaths.push(options.path ?? '');
+    const req = new EventEmitter() as EventEmitter & {
+      setTimeout: (_timeout: number, _callback: () => void) => typeof req;
+      destroy: (error?: Error) => void;
+      write: (_chunk: string) => void;
+      end: () => void;
+    };
+    req.setTimeout = () => req;
+    req.destroy = (error) => {
+      if (error) req.emit('error', error);
+      req.emit('close');
+    };
+    req.write = () => {};
+    req.end = () => {
+      const response = Object.assign(new EventEmitter(), {
+        statusCode: 200,
+        statusMessage: 'OK',
+        resume: () => {},
+      });
+      callback(response);
+      queueMicrotask(() => {
+        response.emit('data', PCM_CHUNK);
+        response.emit('close');
+      });
+    };
+    return req;
+  },
+}));
 
 const SAMPLE_RATE = 24000;
 // One 10ms frame of silence, the shape Flux streams back between SpeechStarted and
@@ -26,6 +64,8 @@ interface FakeFluxServer {
   spoken: string[];
   /** Number of accepted WebSocket connections — 1 means the pool reused its socket. */
   connections: number;
+  /** Request URL of every accepted WebSocket connection. */
+  requestUrls: string[];
   close(): Promise<void>;
 }
 
@@ -41,14 +81,16 @@ async function startFakeFluxServer(options: { failWith?: string } = {}): Promise
     baseUrl: `http://127.0.0.1:${(wss.address() as AddressInfo).port}`,
     spoken: [],
     connections: 0,
+    requestUrls: [],
     close: async () => {
       for (const client of wss.clients) client.close();
       await new Promise<void>((resolve) => wss.close(() => resolve()));
     },
   };
 
-  wss.on('connection', (ws: WebSocket) => {
+  wss.on('connection', (ws: WebSocket, request) => {
     server.connections += 1;
+    server.requestUrls.push(request.url ?? '');
     ws.on('error', () => {});
     ws.send(JSON.stringify({ type: 'Connected', request_id: 'req-1' }));
 
@@ -103,6 +145,17 @@ async function synthesizeTurn(
   return { audio, endOfStreamCount };
 }
 
+async function synthesizeBatch(ttsv2: TTSv2, text: string): Promise<void> {
+  const stream = ttsv2.synthesize(text);
+  try {
+    for await (const _event of stream) {
+      // Consume the response so the request completes.
+    }
+  } finally {
+    stream.close();
+  }
+}
+
 describe('Deepgram TTSv2 (Flux) streaming', () => {
   let cleanup: (() => Promise<void>)[] = [];
 
@@ -111,12 +164,17 @@ describe('Deepgram TTSv2 (Flux) streaming', () => {
     cleanup = [];
   });
 
-  const setup = async (serverOptions: { failWith?: string } = {}) => {
+  const setup = async (
+    serverOptions: { failWith?: string } = {},
+    ttsOptions: Partial<TTSv2Options> = {},
+  ) => {
+    httpRequestPaths.length = 0;
     const server = await startFakeFluxServer(serverOptions);
     const ttsv2 = new TTSv2({
       apiKey: 'test-key',
       baseUrl: server.baseUrl,
       sampleRate: SAMPLE_RATE,
+      ...ttsOptions,
     });
     cleanup.push(() => server.close());
     cleanup.push(() => ttsv2.close());
@@ -180,6 +238,64 @@ describe('Deepgram TTSv2 (Flux) streaming', () => {
     expect(server.spoken).toEqual(['first ', 'turn ', 'second ', 'turn ']);
   });
 
+  it('sends speed on WebSocket and HTTP requests', async () => {
+    const { server, ttsv2 } = await setup({}, { speed: 1.15 });
+
+    await synthesizeTurn(ttsv2, 'streaming');
+    await synthesizeBatch(ttsv2, 'batch');
+
+    expect(new URL(server.requestUrls[0]!, server.baseUrl).searchParams.get('speed')).toBe('1.15');
+    expect(new URL(httpRequestPaths[0]!, server.baseUrl).searchParams.get('speed')).toBe('1.15');
+  });
+
+  it('leaves speed out unless set', async () => {
+    const { server, ttsv2 } = await setup();
+
+    await synthesizeTurn(ttsv2, 'streaming');
+    await synthesizeBatch(ttsv2, 'batch');
+
+    expect(new URL(server.requestUrls[0]!, server.baseUrl).searchParams.has('speed')).toBe(false);
+    expect(new URL(httpRequestPaths[0]!, server.baseUrl).searchParams.has('speed')).toBe(false);
+  });
+
+  it.each([
+    [1.00000001, '1'],
+    [0.1 * 3 * 5, '1.5'],
+  ])('sends near-step speed %s as the exact step', async (speed, sent) => {
+    const { server, ttsv2 } = await setup();
+    ttsv2.updateOptions({ speed });
+
+    await synthesizeTurn(ttsv2, 'streaming');
+    await synthesizeBatch(ttsv2, 'batch');
+
+    expect(new URL(server.requestUrls[0]!, server.baseUrl).searchParams.get('speed')).toBe(sent);
+    expect(new URL(httpRequestPaths[0]!, server.baseUrl).searchParams.get('speed')).toBe(sent);
+  });
+
+  it('invalidates the pooled connection when speed changes or is cleared', async () => {
+    const { server, ttsv2 } = await setup();
+
+    ttsv2.updateOptions({ speed: 0.9 });
+    await synthesizeTurn(ttsv2, 'slow');
+    ttsv2.updateOptions({ speed: null });
+    await synthesizeTurn(ttsv2, 'normal');
+
+    expect(server.connections).toBe(2);
+    expect(new URL(server.requestUrls[0]!, server.baseUrl).searchParams.get('speed')).toBe('0.9');
+    expect(new URL(server.requestUrls[1]!, server.baseUrl).searchParams.has('speed')).toBe(false);
+  });
+
+  it('leaves speed unset after a rejected update', async () => {
+    const { server, ttsv2 } = await setup();
+
+    expect(() => ttsv2.updateOptions({ speed: 1.12 })).toThrow(/speed/);
+    await synthesizeTurn(ttsv2, 'streaming');
+    await synthesizeBatch(ttsv2, 'batch');
+
+    expect(new URL(server.requestUrls[0]!, server.baseUrl).searchParams.has('speed')).toBe(false);
+    expect(new URL(httpRequestPaths[0]!, server.baseUrl).searchParams.has('speed')).toBe(false);
+  });
+
   // The base SynthesizeStream swallows the thrown error to avoid an unhandled rejection
   // and reports it on the TTS `error` event instead, so that is what a caller observes.
   it('surfaces a server Error message as an APIError on the error event', async () => {
@@ -217,6 +333,19 @@ describe('Deepgram TTSv2 encoding validation', () => {
   it('rejects a compressed encoding passed to updateOptions', () => {
     const ttsv2 = new TTSv2({ apiKey: 'test-key' });
     expect(() => ttsv2.updateOptions({ encoding: invalid('mp3') })).toThrow(/unsupported/);
+  });
+});
+
+describe('Deepgram TTSv2 speed validation', () => {
+  it.each([0.5, 1.15, 1.5])('accepts %s', (speed) => {
+    expect(() => new TTSv2({ apiKey: 'test-key', speed })).not.toThrow();
+  });
+
+  it.each([0.45, 1.55, Infinity, -Infinity, NaN, 1e308, 1.12])('rejects %s', (speed) => {
+    expect(() => new TTSv2({ apiKey: 'test-key', speed })).toThrow(/speed/);
+
+    const ttsv2 = new TTSv2({ apiKey: 'test-key' });
+    expect(() => ttsv2.updateOptions({ speed })).toThrow(/speed/);
   });
 });
 

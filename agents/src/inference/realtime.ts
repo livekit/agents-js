@@ -181,7 +181,7 @@ export class RealtimeModel extends OpenAIRealtimeModel {
     return new RealtimeModel({ model });
   }
 
-  override session(options?: { turnDetectionDisabled?: boolean }): RealtimeSession {
+  override session(options?: llm.RealtimeSessionOptions): RealtimeSession {
     return new RealtimeSession(this, options);
   }
 }
@@ -191,7 +191,7 @@ export class RealtimeSession extends OpenAIRealtimeSession {
   private pendingTranscription?: apiProto.ConversationItemInputAudioTranscriptionCompletedEvent;
   private responseSpoke = false;
 
-  constructor(realtimeModel: RealtimeModel, options?: { turnDetectionDisabled?: boolean }) {
+  constructor(realtimeModel: RealtimeModel, options?: llm.RealtimeSessionOptions) {
     super(realtimeModel, options);
     this.isXAI = realtimeModel._inferenceOptions.isXAI;
   }
@@ -302,7 +302,7 @@ export class RealtimeSession extends OpenAIRealtimeSession {
     if (previousItemId && !this.remoteChatCtx.get(previousItemId)) {
       log().warn(
         { itemId: event.item.id, previousItemId },
-        'xAI anchored an item to one it never announced, appending it instead',
+        'xAI placed a chat history item after an unknown item; appended it instead',
       );
       previousItemId = '';
     }
