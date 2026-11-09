@@ -60,10 +60,6 @@ export interface STTOptions {
   diarize: boolean;
   numerals: boolean;
   mipOptOut: boolean;
-  /**
-   * Usage tags, sent as repeated `tag` query params. Each tag is at most 128 characters.
-   * See https://developers.deepgram.com/guides/fundamentals/tagging-your-usage-data
-   */
   tags?: string[];
   baseUrl: string;
 }
