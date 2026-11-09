@@ -106,9 +106,12 @@ framework handles what participants send here. The Python framework
   effect, for example by leaking secrets or API keys or reading another
   session's state.
 - **Tool boundaries:** the LLM can call only the tools registered on the
-  current agent. For Zod-schema tools, arguments must pass the schema.
-  Repaired or malformed arguments must not bypass validation or select an
-  unregistered tool. Framework context such as `RunContext` is passed outside
+  current agent. For Zod-schema tools, arguments must pass Zod validation.
+  Tools defined with raw JSON schemas, including MCP tools, receive parsed
+  arguments without framework schema validation by design. The developer's
+  tool handler or the MCP server is responsible for validating those arguments.
+  Repaired or malformed arguments must not bypass Zod validation or select
+  an unregistered tool. Framework context such as `RunContext` is passed outside
   the LLM arguments, and the arguments must not be able to replace it.
 - **Parsing:** protobuf, JSON, audio, and image input from participants or
   providers must not crash the worker, block the event loop, or allocate
@@ -132,15 +135,15 @@ framework handles what participants send here. The Python framework
 
 Prompt injection is inherent to LLMs. "The LLM can be talked into calling a
 tool or saying something" is not a finding. It becomes one when the framework
-itself mishandles the boundary: running a tool that isn't registered, passing
-arguments that skip the tool's schema, leaking secrets into the prompt or the
+itself mishandles the boundary: running a tool that isn't registered, bypassing
+Zod-schema argument validation, leaking secrets into the prompt or the
 room, or treating LLM output as trusted code or paths.
 
 - **Critical:** remote code execution or arbitrary file read/write in the
   worker or a child process from a room participant or provider response.
 - **High:** a room participant drives or reads a session the framework says it
   can't (an identity-filter bypass); tool-call handling that runs an
-  unregistered tool or skips schema validation; prototype pollution reachable
+  unregistered tool or skips Zod-schema validation; prototype pollution reachable
   from participant or provider input; API secrets or provider keys leaked to
   the room, logs, or health output; a crash or hang of the worker or the shared
   inference process (not just one job) reachable from a participant or
@@ -150,7 +153,8 @@ room, or treating LLM output as trusted code or paths.
   while redaction is on; unauthenticated health endpoints exposing more than
   status and worker info.
 - **Low / not a finding:** prompt injection that stays within the registered
-  tools and their schemas; information the session host returns to
+  tools and their schemas; raw JSON-schema/MCP tools receiving arguments without
+  framework schema validation; information the session host returns to
   participants by design; issues that need the developer's code, config, or
   secrets; malformed messages only the LiveKit server can send; examples and
   tests; provider-side bugs.
@@ -163,7 +167,10 @@ the image build, so every package has a `dist/`. `npm_config_offline` and
 `pnpm_config_offline` are set. For both turn-detector revisions, the ONNX model
 and `languages.json` are in
 `/root/.cache/huggingface/hub/models--livekit--turn-detector`, and the
-tokenizer is in the transformers.js default cache. Native addons
+tokenizers are in the transformers.js default cache. The default-revision
+tokenizer metadata is also cached because transformers.js 4.2 probes it even
+when loading a pinned revision. The image build verifies that both turn
+detectors and their language files load with networking disabled. Native addons
 (`@livekit/rtc-node`, `@livekit/local-inference`, `@livekit/blingfire`,
 `@livekit/av` with its bundled ffmpeg, `sharp`, `onnxruntime-node`) use
 prebuilt binaries. No provider API keys are present.

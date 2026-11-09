@@ -26,11 +26,47 @@ RUN pnpm install --frozen-lockfile --ignore-scripts
 ARG BUILD_CONCURRENCY=4
 RUN pnpm exec turbo run build --concurrency=${BUILD_CONCURRENCY}
 
-# The turn detector loads its model and tokenizer only from local caches at runtime.
-# download-files exits non-zero if any plugin fails to import, so check for the model instead.
-RUN (cd examples && node ../agents/dist/bin/livekit-agents.js download-files) \
-        || echo 'WARNING: download-files reported failures'; \
-    test -d /root/.cache/huggingface/hub/models--livekit--turn-detector
+# Download only the turn detector's assets; any failure must stop the build.
+RUN cd plugins/livekit && node --input-type=module <<'JS'
+import { AutoTokenizer } from '@huggingface/transformers';
+import { Plugin, initializeLogger } from '@livekit/agents';
+import './dist/index.js';
+
+initializeLogger({ pretty: false });
+for (const plugin of Plugin.registeredPlugins) {
+    if (plugin.package === '@livekit/agents-plugin-livekit') {
+        await plugin.downloadFiles();
+    }
+}
+// Transformers.js 4.2 probes tokenizer metadata at main even for a pinned revision.
+await AutoTokenizer.from_pretrained('livekit/turn-detector');
+JS
+
+# Load both models, tokenizers, and language files without network access.
+RUN --network=none cd plugins/livekit && node --input-type=module <<'JS'
+import { initializeLogger } from '@livekit/agents';
+import { readFileSync } from 'node:fs';
+import { downloadFileToCacheDir } from './dist/index.js';
+import { HG_MODEL_REPO, MODEL_REVISIONS } from './dist/turn_detector/constants.js';
+import { EOURunnerEn } from './dist/turn_detector/english.js';
+import { EUORunnerMultilingual } from './dist/turn_detector/multilingual.js';
+
+initializeLogger({ pretty: false });
+for (const revision of Object.values(MODEL_REVISIONS)) {
+    const path = await downloadFileToCacheDir({
+        repo: HG_MODEL_REPO, path: 'languages.json', revision, localFileOnly: true,
+    });
+    JSON.parse(readFileSync(path, 'utf8'));
+}
+for (const Runner of [EOURunnerEn, EUORunnerMultilingual]) {
+    const runner = new Runner();
+    try {
+        await runner.initialize();
+    } finally {
+        await runner.close();
+    }
+}
+JS
 
 ENV npm_config_offline=true \
     pnpm_config_offline=true
