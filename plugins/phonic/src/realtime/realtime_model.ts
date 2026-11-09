@@ -511,7 +511,8 @@ export class RealtimeSession extends llm.RealtimeSession {
     );
 
     // Phonic sends its config after it has the instructions and the tools. Seeded options are the
-    // whole initial config: a value left out keeps its default, so connect() does not wait for it.
+    // whole initial config: tools left out start empty, and instructions left out come from the
+    // model options. Without either, connect() waits for updateInstructions().
     // The updates below apply before connect() starts, because config is not sent yet.
     if (
       sessionOptions?.instructions !== undefined ||
@@ -523,7 +524,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       }
       if (sessionOptions.instructions !== undefined) {
         void this.updateInstructions(sessionOptions.instructions);
-      } else {
+      } else if (this.options.instructions !== undefined) {
         this.instructionsReady.resolve();
       }
       void this.updateTools(sessionOptions.tools ?? llm.ToolContext.empty());

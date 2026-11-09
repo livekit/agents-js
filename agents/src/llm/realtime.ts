@@ -112,6 +112,9 @@ export interface RealtimeSessionReconnectedEvent {}
  * session. A provider that fixes them at connect time (for example, Gemini Live sends tools in
  * its setup message) applies them to the first connection. It then does not need to reconnect
  * when the same values arrive through `_updateSession`.
+ *
+ * The framework still applies all of these values with `_updateSession` after creation. A
+ * provider can ignore a value that it does not need before it connects.
  */
 export interface RealtimeSessionOptions {
   /**

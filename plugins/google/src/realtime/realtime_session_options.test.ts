@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { LiveCallbacks, LiveConnectParameters, Session } from '@google/genai';
 import { Live } from '@google/genai';
-import { llm } from '@livekit/agents';
+import { DEFAULT_API_CONNECT_OPTIONS, llm } from '@livekit/agents';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { RealtimeModel, type RealtimeSession } from './realtime_api.js';
 
@@ -110,5 +110,23 @@ describe('Google Realtime initial session options', () => {
     expect((closed as unknown as SessionInternals).options.voice).not.toBe('Kore');
     // A new voice needs a new connection, as in the Python plugin.
     await vi.waitFor(() => expect(connect).toHaveBeenCalledTimes(3));
+  });
+
+  it('stops forwarding model option updates after the connection loop ends', async () => {
+    const connect = vi.spyOn(Live.prototype, 'connect').mockRejectedValue(new Error('refused'));
+    const model = new RealtimeModel({
+      apiKey: 'test-key',
+      connOptions: { ...DEFAULT_API_CONNECT_OPTIONS, maxRetry: 0 },
+    });
+    const session = open(model);
+    const errors: llm.RealtimeModelError[] = [];
+    session.on('error', (error: llm.RealtimeModelError) => errors.push(error));
+    await vi.waitFor(() => expect(errors.some((error) => !error.recoverable)).toBe(true));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    model.updateOptions({ voice: 'Kore' });
+
+    expect((session as unknown as SessionInternals).options.voice).not.toBe('Kore');
+    expect(connect).toHaveBeenCalledTimes(1);
   });
 });

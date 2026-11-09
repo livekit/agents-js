@@ -509,7 +509,8 @@ export class RealtimeSession extends llm.RealtimeSession {
     if (options?.turnDetectionDisabled) {
       this._options.turnDetection = null;
     }
-    // Seed before the first session.update, so the instructions go in it.
+    // Seed before the first session.update, so the instructions go in it. Sending them again
+    // through updateInstructions or updateTools only replaces the same values.
     if (options?.instructions !== undefined) {
       this.instructions = options.instructions;
     }
@@ -524,11 +525,9 @@ export class RealtimeSession extends llm.RealtimeSession {
     if (Object.keys(this._tools.functionTools).length > 0) {
       this.sendEvent(this.createToolsUpdateEvent(this._tools));
     }
-    if (options?.chatCtx !== undefined && options.chatCtx.items.length > 0) {
-      void this.updateChatCtx(options.chatCtx).catch((error) => {
-        this.#logger.error(error, 'failed to apply the initial chat context');
-      });
-    }
+    // options.chatCtx is not seeded. The server accepts history at any time, so seeding gains
+    // nothing. updateChatCtx diffs against acknowledged items only, so a seeded copy that is not
+    // acknowledged within its timeout would be sent again by the framework's update.
   }
 
   private hasInflightResponse(): boolean {

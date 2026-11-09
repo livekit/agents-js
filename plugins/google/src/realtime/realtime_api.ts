@@ -525,7 +525,11 @@ export class RealtimeModel extends llm.RealtimeModel {
     return session;
   }
 
-  /** @internal */
+  /**
+   * Stop forwarding `updateOptions()` to a session. A session calls this when it closes or when
+   * its connection loop ends.
+   * @internal
+   */
   _removeSession(session: RealtimeSession): void {
     this.#sessions.delete(session);
   }
@@ -665,7 +669,8 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     this.#client = new GoogleGenAI(clientOptions);
 
-    this.#task = this.#mainTask();
+    // A session whose connection loop ended can no longer apply option updates.
+    this.#task = this.#mainTask().finally(() => realtimeModel._removeSession(this));
   }
 
   private async closeActiveSession(): Promise<void> {

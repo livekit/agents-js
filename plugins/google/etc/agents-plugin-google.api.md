@@ -404,7 +404,7 @@ class RealtimeModel_4 extends llm.RealtimeModel {
     _options: RealtimeOptions_2;
     // (undocumented)
     get provider(): string;
-    // @internal (undocumented)
+    // @internal
     _removeSession(session: RealtimeSession_4): void;
     // Warning: (ae-forgotten-export) The symbol "RealtimeSession_4" needs to be exported by the entry point index.d.ts
     session(options?: llm.RealtimeSessionOptions): RealtimeSession_4;

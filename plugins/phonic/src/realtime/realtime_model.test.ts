@@ -60,6 +60,18 @@ describe('Phonic initial session options', () => {
     expect((sentConfigs[0] as SentConfig).system_prompt).toBe('be brief');
   });
 
+  it('waits for instructions that neither the options nor the model provide', async () => {
+    session = new RealtimeModel({ apiKey: 'test-key' }).session({
+      tools: new llm.ToolContext([lookup]),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(sentConfigs).toHaveLength(0);
+
+    await session.updateInstructions('be brief');
+    await vi.waitFor(() => expect(sentConfigs).toHaveLength(1));
+    expect(JSON.stringify((sentConfigs[0] as SentConfig).tools)).toContain('lookup');
+  });
+
   it('waits for the framework to configure a session created without options', async () => {
     session = new RealtimeModel({ apiKey: 'test-key' }).session();
     await new Promise((resolve) => setTimeout(resolve, 20));
