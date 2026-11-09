@@ -1,0 +1,29 @@
+.changeset/google-realtime-single-connect.md
+  s_f8cb6f3866b6ce::t_1f0e5fdef4da41 9-10
+plugins/google/etc/agents-plugin-google.api.md
+  s_f8cb6f3866b6ce::t_947bf3bdfd4d74 407-408
+plugins/google/src/realtime/realtime_api.ts
+  s_f8cb6f3866b6ce::t_a297cef2cac9c0 250,523-530,553-554,557-559,619-621,1112
+plugins/google/src/realtime/realtime_session_options.test.ts
+  s_f8cb6f3866b6ce::t_661668ad38ea33 10-11,82-113
+plugins/phonic/src/realtime/realtime_model.test.ts
+  s_f8cb6f3866b6ce::t_729e8f23e9236b 56-62
+plugins/phonic/src/realtime/realtime_model.ts
+  s_f8cb6f3866b6ce::t_5edbb9635dec6c 513-529
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3bd4323716496b3b6b8f9a51ce4882fa89aceed1",
+  "prompts": {},
+  "sessions": {
+    "s_f8cb6f3866b6ce": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_f8cb6f3866b6ce",
+        "model": "unknown"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
