@@ -7,6 +7,9 @@ import type OpenAI from 'openai';
 import { OpenAITool } from '../tools.js';
 
 export {
+  type DecisionEventEnvelope,
+  type DecisionsOptions,
+  type DecisionsTrigger,
   type GPTLiveDelegation,
   type GPTLiveModelOptions,
   GPTLiveSession,
