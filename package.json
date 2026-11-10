@@ -45,6 +45,7 @@
     "eslint-plugin-tsdoc": "^0.2.17",
     "prettier": "^3.2.5",
     "tsup": "^8.4.0",
+    "tsx": "^4.23.1",
     "turbo": "2.9.14",
     "typedoc": "^0.25.13",
     "typescript": "^5.9.3",
