@@ -1015,12 +1015,18 @@ export class GPTLiveSession extends llm.DuplexSession<{
     } satisfies ClientEvent);
   }
 
-  /** Evaluate the Decisions delegation's questions and return the command event id. */
+  /**
+   * Evaluate the Decisions delegation's questions on the current connection.
+   * Returns the command event id. Requests are not replayed after reconnecting.
+   * Throws if the connection is draining or the session is closing or closed.
+   */
   createDecision(): string {
     if (this.opts.delegation !== 'decisions')
       throw new Error('manual evaluation requires Decisions delegation');
+    if (this.closing || this.connectionDraining)
+      throw new Error('manual evaluation is unavailable while the session is closing or closed');
     const eventId = shortuuid('decision_');
-    this.sendEvent({ type: 'decision.create', event_id: eventId } satisfies ClientEvent);
+    this.queueEvent({ type: 'decision.create', event_id: eventId } satisfies ClientEvent, false);
     return eventId;
   }
 

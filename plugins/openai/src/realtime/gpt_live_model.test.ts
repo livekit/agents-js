@@ -544,6 +544,74 @@ describe('GPTLiveModel', () => {
     await expect(session._updateTools(tools)).rejects.toThrow('no tool channel');
   });
 
+  it('rejects manual Decisions evaluation while a connection drains', async () => {
+    server.autoClose = false;
+    const session = create({
+      delegation: 'decisions',
+      decisionsOptions: { model: 'gpt-6-luna' },
+      maxSessionDuration: 300,
+    });
+    try {
+      await ready(session);
+      await vi.waitFor(() => expect(server.events().at(-1)?.type).toBe('session.close'));
+      expect(() => session.createDecision()).toThrow('closing');
+      await server.send(session, { type: 'session.closed', reason: 'expired' });
+      await vi.waitFor(() => expect(session.sessionId).toBe('live_1'));
+      const eventId = session.createDecision();
+      await vi.waitFor(() =>
+        expect(server.events(1)).toContainEqual({ type: 'decision.create', event_id: eventId }),
+      );
+      expect(server.events(1)).toMatchObject([
+        { type: 'session.start' },
+        { type: 'decision.create', event_id: eventId },
+      ]);
+    } finally {
+      server.autoClose = true;
+      const closing = session.close();
+      for (const socket of server.sockets) {
+        if (socket.readyState === WebSocket.OPEN)
+          socket.send(JSON.stringify({ type: 'session.closed' }));
+      }
+      await closing;
+    }
+  });
+
+  it('rejects manual Decisions evaluation while the session closes and after closing', async () => {
+    const session = create({
+      delegation: 'decisions',
+      decisionsOptions: { model: 'gpt-6-luna' },
+    });
+    await ready(session);
+    const closing = session.close();
+    expect(() => session.createDecision()).toThrow('closing');
+    await closing;
+    expect(() => session.createDecision()).toThrow('closing');
+    expect(server.events().some((event) => event.type === 'decision.create')).toBe(false);
+  });
+
+  it('does not replay manual Decisions evaluation after a failed startup', async () => {
+    server.autoStart = false;
+    const session = create({
+      delegation: 'decisions',
+      decisionsOptions: { model: 'gpt-6-luna' },
+      connOptions: { maxRetry: 1, retryIntervalMs: 10, timeoutMs: 1000 },
+    });
+    await session._updateSession();
+    await waitCount(1);
+    session.createDecision();
+    server.sockets[0]!.terminate();
+    await waitCount(1, 1);
+    const eventId = session.createDecision();
+    await server.send(session, { type: 'session.started', session: { id: 'live_1' } });
+    await vi.waitFor(() =>
+      expect(server.events(1)).toContainEqual({ type: 'decision.create', event_id: eventId }),
+    );
+    expect(server.events(1)).toMatchObject([
+      { type: 'session.start' },
+      { type: 'decision.create', event_id: eventId },
+    ]);
+  });
+
   it.each(['client', 'responses'] as const)(
     'serializes Decisions triggers but rejects manual evaluation under %s delegation',
     async (delegation) => {
