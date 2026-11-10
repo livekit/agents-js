@@ -2,64 +2,158 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { Job } from '@livekit/protocol';
-import { Room } from '@livekit/rtc-node';
-import { EventEmitter } from 'node:events';
-import { describe, expect, it, vi } from 'vitest';
-import { JobProcess, type RunningJobInfo } from '../job.js';
-import { initializeLogger, log } from '../log.js';
-import { Future } from '../utils.js';
-import { startJob } from './job_proc_lazy_main.js';
+import { DisconnectReason } from '@livekit/rtc-node';
+import { fork } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { describe, expect, it } from 'vitest';
+import { initializeLogger } from '../log.js';
+import { JobStatus } from './job_executor.js';
+import { JobProcExecutor } from './job_proc_executor.js';
 
 initializeLogger({ pretty: false, level: 'silent' });
 
-const jobInfo = {
-  acceptArguments: { name: 'n', identity: 'i', metadata: '' },
-  job: new Job({ id: 'AJ_1' }),
-  url: 'wss://example.com',
-  token: 'token',
-  workerId: 'W_1',
-  fakeJob: true,
-} as RunningJobInfo;
+// Exercise the actual child entrypoint and exit code, without depending on a prior build.
+class TestJobProcExecutor extends JobProcExecutor {
+  scenario?: string;
+
+  createProcess() {
+    return fork(
+      new URL('./job_proc_lazy_main.ts', import.meta.url),
+      [
+        fileURLToPath(new URL('./job_proc_lazy_main_test_agent.ts', import.meta.url)),
+        this.scenario ?? '',
+      ],
+      {
+        execArgv: [
+          // The build and Vitest normally supply this compile-time constant.
+          '--import',
+          'data:text/javascript,globalThis.__PACKAGE_VERSION__="0.0.0-test"',
+          '--import',
+          import.meta.resolve('tsx'),
+        ],
+        env: {
+          ...process.env,
+          LIVEKIT_AGENTS_PRELOAD_LOCAL_INFERENCE: '0',
+        },
+      },
+    );
+  }
+}
 
 describe('job entrypoint failures', () => {
   it.each([
-    ['raise before connect', true, false],
-    ['raise after connect', true, true],
-    ['shutdown then raise', false, true],
-    ['normal shutdown', false, true],
-  ])('reports %s correctly', async (scenario, expectedFailure, connect) => {
-    const disconnect = vi.spyOn(Room.prototype, 'disconnect').mockResolvedValue();
-    let shutdownCallbacks = 0;
-    const closeEvent = new EventEmitter();
-    const join = new Future();
-    const job = startJob(
-      new JobProcess(),
-      async (ctx) => {
-        ctx.addShutdownCallback(async () => {
-          shutdownCallbacks++;
+    ['raise before connect', JobStatus.FAILED, 1],
+    ['raise after connect', JobStatus.FAILED, 1],
+    ['connect rejects', JobStatus.FAILED, 1],
+    ['synchronous throw', JobStatus.FAILED, 1],
+    ['shutdown then raise', JobStatus.SUCCESS, 0],
+    ['normal shutdown', JobStatus.SUCCESS, 0],
+  ])(
+    'reports %s after cleanup',
+    async (scenario, status, exitCode) => {
+      const proc = new TestJobProcExecutor({
+        agent: 'unused',
+        initializeTimeout: 10_000,
+        closeTimeout: 1000,
+        memoryWarnMB: 0,
+        memoryLimitMB: 0,
+        pingInterval: 2500,
+        pingTimeout: 60_000,
+        highPingThreshold: 500,
+      });
+      const messages: string[] = [];
+      let disconnectReason: DisconnectReason | undefined;
+
+      try {
+        await proc.start();
+        proc.proc!.on('message', (message: { case: string; reason?: DisconnectReason }) => {
+          messages.push(message.case);
+          if (message.case === 'testDisconnect') disconnectReason = message.reason;
         });
-        if (scenario === 'raise before connect')
-          throw new Error('entrypoint failed before connect');
-        if (connect) await ctx.connect();
-        if (scenario === 'raise after connect') throw new Error('entrypoint failed after connect');
-        ctx.shutdown();
-        if (scenario === 'shutdown then raise') throw new Error('entrypoint failed after shutdown');
-      },
-      jobInfo,
-      closeEvent,
-      log(),
-      join,
-      1000,
-    );
+        await proc.initialize({ sessionEndTimeout: 1000 });
+        await proc.launchJob({
+          acceptArguments: { name: 'n', identity: 'i', metadata: '' },
+          job: new Job({ id: 'AJ_1', metadata: scenario }),
+          url: 'wss://example.com',
+          token: 'token',
+          workerId: 'W_1',
+          fakeJob: scenario !== 'connect rejects',
+        });
+        await proc.join();
 
-    try {
-      await job.task;
+        expect(proc.status).toBe(status);
+        expect(proc.proc!.exitCode).toBe(exitCode);
+        expect(proc.proc!.signalCode).toBeNull();
+        expect(proc.proc!.killed).toBe(false);
+        expect(disconnectReason).toBe(
+          status === JobStatus.FAILED
+            ? DisconnectReason.AGENT_ERROR
+            : DisconnectReason.CLIENT_INITIATED,
+        );
+        expect(messages).toEqual([
+          'initializeResponse',
+          'exiting',
+          'testSessionEnd',
+          'shuttingDown',
+          'testDisconnect',
+          'testShutdownCallback',
+          'done',
+        ]);
+      } finally {
+        await proc.close();
+      }
+    },
+    20_000,
+  );
 
-      expect(job.failed).toBe(expectedFailure);
-      expect(shutdownCallbacks).toBe(1);
-      expect(disconnect).toHaveBeenCalledOnce();
-    } finally {
-      disconnect.mockRestore();
-    }
-  });
+  it.each([
+    ['telemetry setup rejects', JobStatus.FAILED, 1],
+    ['root span creation throws', JobStatus.FAILED, 1],
+    ['job startup throws', JobStatus.FAILED, 1],
+    ['setup rejects after shutdown', JobStatus.SUCCESS, 0],
+  ])(
+    'ends %s without starting the entrypoint',
+    async (scenario, status, exitCode) => {
+      const proc = new TestJobProcExecutor({
+        agent: 'unused',
+        initializeTimeout: 10_000,
+        closeTimeout: 1000,
+        memoryWarnMB: 0,
+        memoryLimitMB: 0,
+        pingInterval: 10_000,
+        pingTimeout: 3000,
+        highPingThreshold: 500,
+      });
+      proc.scenario = scenario;
+      const messages: string[] = [];
+
+      try {
+        await proc.start();
+        proc.proc!.on('message', (message: { case: string }) => messages.push(message.case));
+        await proc.initialize({ sessionEndTimeout: 1000 });
+        await proc.launchJob({
+          acceptArguments: { name: 'n', identity: 'i', metadata: '' },
+          job: new Job({ id: 'AJ_setup_failure' }),
+          url: 'wss://example.com',
+          token: 'token',
+          workerId: 'W_1',
+          fakeJob: true,
+        });
+        await proc.join();
+
+        expect(proc.status).toBe(status);
+        expect(proc.proc!.exitCode).toBe(exitCode);
+        expect(proc.proc!.signalCode).toBeNull();
+        expect(proc.proc!.killed).toBe(false);
+        expect(messages).not.toContain('testEntrypoint');
+        if (scenario !== 'job startup throws') {
+          expect(messages.filter((message) => message === 'testCleanup')).toHaveLength(1);
+          expect(messages.at(-1)).toBe('done');
+        }
+      } finally {
+        await proc.close();
+      }
+    },
+    15_000,
+  );
 });
