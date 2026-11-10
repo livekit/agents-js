@@ -1179,6 +1179,11 @@ export class AgentSession<
   }
 
   updateAgent(agent: Agent): void {
+    // reject before touching state: a failed handoff would leave turns blocked
+    if (agent._agentActivity && agent._agentActivity !== this.activity) {
+      throw new Error('Cannot update agent: the agent is already running');
+    }
+
     this.agent = agent;
 
     if (!this.started) {
