@@ -782,6 +782,45 @@ describe('Vartaloop partial audio', () => {
     }
   });
 
+  it('retries a 503 of the only utterance in flight on the same socket', async () => {
+    const { wss, baseURL } = await startWebSocketServer();
+    let busy = true;
+    const server = serveVartaloop(wss, {
+      onUtterance: (ws, utterance) => {
+        if (busy) {
+          busy = false;
+          ws.send(
+            JSON.stringify({
+              type: 'error',
+              request_id: utterance.request_id,
+              error: 'all workers busy',
+              status: 503,
+            }),
+          );
+          return false;
+        }
+        return true;
+      },
+    });
+
+    const vartaloop = new TTS({ apiKey: 'test-key', baseUrl: baseURL });
+    try {
+      const events = await synthesizeTurn(vartaloop, ['Ek hi vaakya.'], {
+        ...DEFAULT_API_CONNECT_OPTIONS,
+        maxRetry: 1,
+        retryIntervalMs: 0,
+      });
+
+      // The server ended only the failed utterance: the retry reuses the healthy socket.
+      expect(server.connectionCount()).toBe(1);
+      expect(server.utterances.map((u) => u.text)).toEqual(['Ek hi vaakya.', 'Ek hi vaakya.']);
+      expect(audioOf(events)).toHaveLength(2 * FRAME_BYTES);
+    } finally {
+      await vartaloop.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
   it('keeps the segment id when a 503 before any audio is retried on a new socket', async () => {
     const { wss, baseURL } = await startWebSocketServer();
     const server = serveVartaloop(wss, {

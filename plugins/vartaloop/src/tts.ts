@@ -580,6 +580,8 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     // Set once the sender has nothing more to send (or the sender failed).
     let senderDone = false;
     let attemptOver = false;
+    // A server error that ended only its utterance: the turn fails, the socket is kept.
+    let utteranceError: APIStatusError | undefined;
     const SENDER_DONE = Symbol('SENDER_DONE');
     // Everything the receive loop reacts to: server messages, and the sender finishing.
     type Incoming = { data: RawData; isBinary: boolean } | typeof SENDER_DONE;
@@ -644,7 +646,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       };
       try {
         for await (const event of tokenizer) {
-          if (this.abortController.signal.aborted || attemptOver) break;
+          if (this.abortController.signal.aborted || attemptOver || utteranceError) break;
           const text = event.token.trim();
           if (!text) continue;
           const utteranceId = shortuuid();
@@ -790,10 +792,14 @@ export class SynthesizeStream extends tts.SynthesizeStream {
             // Only our own utterance's error, or an untagged connection-level one, fails the
             // turn; an error left over from a previous turn on a pooled socket is dropped.
             if (event.request_id && event.request_id !== head?.utteranceId) continue;
-            throw statusError(event.status ?? 500, event.error ?? 'unknown error', {
+            const error = statusError(event.status ?? 500, event.error ?? 'unknown error', {
               requestId: event.request_id ?? requestId,
               retryAfter: event.retry_after,
             });
+            // The server ends only the failed utterance and keeps the session; `run` decides
+            // below whether the socket can go back to the pool.
+            utteranceError = error;
+            throw new UtteranceError();
           }
 
           if (!head || event.request_id !== head.utteranceId) {
@@ -881,10 +887,22 @@ export class SynthesizeStream extends tts.SynthesizeStream {
             throw new APIConnectionError({ message: 'Vartaloop pooled websocket is not open' });
           }
           socket = ws;
-          await Promise.all([inputTask(), sendTask(ws), recvTask(ws)]);
+          const tasks = [inputTask(), sendTask(ws), recvTask(ws)];
+          try {
+            await Promise.all(tasks);
+          } catch (e) {
+            if (!(e instanceof UtteranceError)) throw e;
+            // Stop the sender first: a sentence it sent meanwhile is still owed an answer
+            // on this socket, which then must not serve the next turn.
+            attemptOver = true;
+            this.#wakeInputReaders();
+            await Promise.allSettled(tasks);
+            if (pending.length > 1) throw utteranceError;
+          }
         },
         { timeout: this.connOptions.timeoutMs, signal: this.abortSignal },
       );
+      if (utteranceError) throw utteranceError;
     } catch (e) {
       if (this.abortSignal.aborted) {
         return;
@@ -902,6 +920,9 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     }
   }
 }
+
+// Ends the receive loop on an error that left the socket usable (see `utteranceError`).
+class UtteranceError extends Error {}
 
 // The same error, marked not retryable, for a failure after audio was already heard.
 const asFinalError = (error: APIError): APIError => {
