@@ -31,6 +31,20 @@ import type { STTRealtimeSampleRates } from './models.js';
 const API_BASE_URL_V1 = 'https://api.elevenlabs.io/v1';
 const AUTHORIZATION_HEADER = 'xi-api-key';
 
+/**
+ * How often the realtime socket must answer a ping. Nothing else notices a socket that dies without
+ * closing, and the stream would stay deaf for the rest of the call.
+ */
+const LIVENESS_PING_INTERVAL_MS = 2000;
+
+/**
+ * Most audio held for replay. Audio stays until a committed transcript acknowledges it, since a
+ * dead socket loses everything it had not committed however long ago it was sent and frames can
+ * arrive faster than realtime. Past this the oldest audio is dropped to bound memory, and a
+ * redial can no longer recover it.
+ */
+const REPLAY_MAX_SECONDS = 60;
+
 export interface VADOptions {
   vadSilenceThresholdSecs?: number | null;
   vadThreshold?: number | null;
@@ -87,6 +101,8 @@ export interface STTOptions {
   includeLanguageDetection?: boolean;
   noVerbatim?: boolean;
   enableLogging?: boolean;
+  /** How often the realtime socket must answer a ping before it is terminated and redialed, in ms. */
+  livenessPingIntervalMs?: number;
 }
 
 interface ResolvedSTTOptions {
@@ -104,6 +120,7 @@ interface ResolvedSTTOptions {
   includeLanguageDetection?: boolean;
   noVerbatim: boolean;
   enableLogging: boolean;
+  livenessPingIntervalMs: number;
 }
 
 export interface STTRecognizeOptions {
@@ -321,6 +338,7 @@ export class STT extends stt.STT {
       includeLanguageDetection,
       noVerbatim: opts.noVerbatim ?? false,
       enableLogging: opts.enableLogging ?? true,
+      livenessPingIntervalMs: opts.livenessPingIntervalMs ?? LIVENESS_PING_INTERVAL_MS,
     };
     this.#session = opts.httpSession ?? {};
   }
@@ -602,6 +620,13 @@ export class SpeechStream extends stt.SpeechStream {
   #speaking = false;
   #lastPartialText = '';
   #audioDurationCollector: PeriodicCollector<number>;
+  /**
+   * Chunks sent since the last committed transcript, base64 as they were sent, with their duration
+   * and whether they commit: what a socket that died silently swallowed, for the next one.
+   */
+  #replay: { audioBase64: string; commit: boolean; seconds: number }[] = [];
+  #replaySeconds = 0;
+  #droppedCommits = 0;
   #logger = log();
 
   label = 'elevenlabs.SpeechStream';
@@ -655,6 +680,31 @@ export class SpeechStream extends stt.SpeechStream {
     }
   }
 
+  #remember(audioBase64: string, commit: boolean, seconds: number): void {
+    this.#replay.push({ audioBase64, commit, seconds });
+    this.#replaySeconds += seconds;
+    while (this.#replay.length > 1 && this.#replaySeconds > REPLAY_MAX_SECONDS) {
+      const dropped = this.#replay.shift()!;
+      this.#replaySeconds -= dropped.seconds;
+      if (dropped.commit) this.#droppedCommits++;
+    }
+  }
+
+  /**
+   * A committed transcript answers the oldest commit still pending, so only the chunks up to it are
+   * done; later ones were sent after it and are still owed. Server VAD commits at a point the
+   * client cannot see, so without a pending commit everything sent so far is treated as covered.
+   */
+  #forgetCommitted(): void {
+    if (this.#droppedCommits > 0) {
+      this.#droppedCommits--;
+      return;
+    }
+    const commitIndex = this.#replay.findIndex((chunk) => chunk.commit);
+    this.#replay.splice(0, commitIndex === -1 ? this.#replay.length : commitIndex + 1);
+    this.#replaySeconds = this.#replay.reduce((total, chunk) => total + chunk.seconds, 0);
+  }
+
   #onAudioDurationReport(duration: number): void {
     this.queue.put({
       type: stt.SpeechEventType.RECOGNITION_USAGE,
@@ -676,11 +726,31 @@ export class SpeechStream extends stt.SpeechStream {
     while (!this.closed && !this.input.closed) {
       let ws: WebSocket | null = null;
       let closingWs = false;
+      let liveness: ReturnType<typeof setInterval> | undefined;
       const sessionController = new AbortController();
 
       try {
         ws = await this.#connectWs();
         this.#lastPartialText = '';
+        this.#droppedCommits = 0;
+
+        const socket = ws;
+        let awaitingPong = false;
+        socket.on('pong', () => {
+          awaitingPong = false;
+        });
+        liveness = setInterval(() => {
+          if (socket.readyState !== WebSocket.OPEN) return;
+          if (awaitingPong) {
+            this.#logger.warn(
+              'ElevenLabs STT WebSocket stopped answering pings; terminating and redialing',
+            );
+            socket.terminate();
+            return;
+          }
+          awaitingPong = true;
+          socket.ping();
+        }, this.#opts.livenessPingIntervalMs);
 
         const keepaliveTask = Task.from(async (controller) => {
           while (!controller.signal.aborted) {
@@ -702,22 +772,38 @@ export class SpeechStream extends stt.SpeechStream {
             (this.#opts.sampleRate * this.#opts.audioChunkDuration) / 1000,
           );
           const audioByteStream = new AudioByteStream(this.#opts.sampleRate, 1, samplesPerChunk);
-          const abortPromise = waitForAbort(controller.signal);
-          const streamAbortPromise = waitForAbort(this.abortSignal);
           // Scribe closes the session on a commit with less than 300ms of audio since the
           // previous commit or the connect
           const minCommitSamples = (this.#opts.sampleRate * 3) / 10;
           let uncommittedSamples = 0;
           let hasEnded = false;
 
+          for (const entry of this.#replay) {
+            if (ws?.readyState !== WebSocket.OPEN) break;
+            ws.send(
+              JSON.stringify({
+                message_type: 'input_audio_chunk',
+                audio_base_64: entry.audioBase64,
+                commit: entry.commit,
+                sample_rate: this.#opts.sampleRate,
+              }),
+            );
+          }
+
           try {
             while (!this.closed) {
-              const result = await Promise.race([
-                this.input.next(),
-                abortPromise,
-                streamAbortPromise,
-              ]);
-              if (result === undefined) return;
+              // Scoped to this connection: a read left pending by a race would outlive a drop and take
+              // the next frame, which then reaches neither the dead socket nor its replacement.
+              let result: IteratorResult<AudioFrame | typeof SpeechStream.FLUSH_SENTINEL>;
+              try {
+                result = await this.input.next({ signal: controller.signal });
+              } catch (error) {
+                if (controller.signal.aborted || this.abortSignal.aborted) return;
+                if (error instanceof APIError) throw error;
+                throw new APIConnectionError({
+                  message: `ElevenLabs STT input failed: ${error instanceof Error ? error.message : String(error)}`,
+                });
+              }
               if (result.done) break;
 
               const data = result.value;
@@ -741,6 +827,7 @@ export class SpeechStream extends stt.SpeechStream {
                   frame.data.byteOffset,
                   frame.data.byteLength,
                 ).toString('base64');
+                this.#remember(audioBase64, false, frame.samplesPerChannel / frame.sampleRate);
                 ws?.send(
                   JSON.stringify({
                     message_type: 'input_audio_chunk',
@@ -753,6 +840,7 @@ export class SpeechStream extends stt.SpeechStream {
 
               if (hasEnded) {
                 this.#audioDurationCollector.flush();
+                this.#remember('', true, 0);
                 ws?.send(
                   JSON.stringify({
                     message_type: 'input_audio_chunk',
@@ -773,6 +861,9 @@ export class SpeechStream extends stt.SpeechStream {
         const recvTask = Task.from(async (controller) => {
           const receiveMessages = new Promise<void>((resolve, reject) => {
             const onMessage = (msg: RawData, isBinary: boolean) => {
+              // An abandoned connection has handed what it had not committed to the replacement, so a
+              // late message from it is about audio another socket now owns.
+              if (sessionController.signal.aborted) return;
               if (isBinary) {
                 this.#logger.warn('unexpected ElevenLabs STT binary message');
                 return;
@@ -827,6 +918,7 @@ export class SpeechStream extends stt.SpeechStream {
       } finally {
         closingWs = true;
         sessionController.abort();
+        clearInterval(liveness);
         ws?.close();
       }
     }
@@ -989,6 +1081,7 @@ export class SpeechStream extends stt.SpeechStream {
       }
     } else if (messageType === this.#finalMessageType) {
       this.#lastPartialText = '';
+      this.#forgetCommitted();
 
       if (text) {
         if (!this.#speaking) {
