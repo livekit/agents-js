@@ -21,7 +21,6 @@ export const HOSTED_LOGS_JOBS_DIR_ENV = 'LIVEKIT_HOSTED_LOGS_JOBS_DIR';
 export const HANDED_OFF_ENV = 'LIVEKIT_HOSTED_LOGS_HANDED_OFF';
 
 const REDACTION_ATTRIBUTE = 'lk.redaction.enabled';
-const REDACTED_JOB_FIELDS = new Set(['room']);
 
 /** The session's logs decision, as named in `job-<id>.<decision>.log`. */
 export enum LogsDecision {
@@ -82,11 +81,11 @@ function redactException(value: unknown): unknown {
   return { type: exception.type, message: REDACTED_EXCEPTION_MESSAGE };
 }
 
-/** The record without PII fields, the room name or exception details, marked as redacted. */
+/** The record without PII fields or exception details, marked as redacted. */
 export function redactRecord(record: Record<string, unknown>): Record<string, unknown> {
   const redacted: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(record)) {
-    if (isPIIAttribute(key) || REDACTED_JOB_FIELDS.has(key)) continue;
+    if (isPIIAttribute(key)) continue;
     redacted[key] = key === 'err' || key === 'error' ? redactException(value) : value;
   }
   redacted[REDACTION_ATTRIBUTE] = true;

@@ -516,8 +516,8 @@ describe('JobContext hosted log decision', () => {
     redaction: true,
   };
 
-  function withOutput(enableRedaction = false) {
-    const { ctx } = createJobContextWithRoom({}, { enableRedaction });
+  function withOutput(enableRedaction = false, enableRecording = false) {
+    const { ctx } = createJobContextWithRoom({}, { enableRedaction, enableRecording });
     const decide = vi.fn();
     const output = { decided: false, decide };
     ctx._hostedOutput = output as unknown as NonNullable<JobContext['_hostedOutput']>;
@@ -553,10 +553,13 @@ describe('JobContext hosted log decision', () => {
     expect(decide).toHaveBeenCalledWith({ logs: false, redaction: true });
   });
 
-  it('exports at cleanup with the project redaction when no session decided', () => {
-    const { ctx, decide } = withOutput(true);
-    ctx._recordingInitialized = true;
-    ctx._onCleanup();
-    expect(decide).toHaveBeenCalledWith({ logs: true, redaction: true });
-  });
+  it.each([true, false])(
+    'follows the job recording at cleanup when no session decided (recording %s)',
+    (recording) => {
+      const { ctx, decide } = withOutput(true, recording);
+      ctx._recordingInitialized = true;
+      ctx._onCleanup();
+      expect(decide).toHaveBeenCalledWith({ logs: recording, redaction: true });
+    },
+  );
 });

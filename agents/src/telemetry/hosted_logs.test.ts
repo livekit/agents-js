@@ -145,7 +145,12 @@ describe('job output', () => {
     out.close();
     const lines = readFileSync(join(jobsDir, 'job-AJ_1.export.log'), 'utf8').trim().split('\n');
     const [before, after] = lines.map((l) => JSON.parse(l));
-    expect(before).toEqual({ level: 30, msg: 'before', 'lk.redaction.enabled': true });
+    expect(before).toEqual({
+      level: 30,
+      msg: 'before',
+      room: 'alice',
+      'lk.redaction.enabled': true,
+    });
     expect(after.err).toEqual({ type: 'Error', message: 'exception details redacted' });
     expect(after['lk.redaction.enabled']).toBe(true);
   });

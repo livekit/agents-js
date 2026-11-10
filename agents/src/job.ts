@@ -441,7 +441,10 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
   _onCleanup(): void {
     if (this._hostedOutput && !this._hostedOutput.decided) {
       this._hostedOutput.decide(
-        this._rejectedRecording ?? { logs: true, redaction: Boolean(this.job.enableRedaction) },
+        this._rejectedRecording ?? {
+          logs: Boolean(this.job.enableRecording),
+          redaction: Boolean(this.job.enableRedaction),
+        },
       );
     }
     if (!this._recordingInitialized) {
