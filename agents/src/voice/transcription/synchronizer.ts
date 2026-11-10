@@ -180,6 +180,8 @@ class SegmentSynchronizerImpl {
   private pausedDuration: number = 0;
   /** Gate held closed while paused; the main task awaits it between words. */
   private outputEnabledFuture: Future<void> = new Future();
+  /** The segment's audio was cleared, so a resume must not release its words again. */
+  private audioCleared: boolean = false;
 
   private logger = log();
 
@@ -362,8 +364,19 @@ class SegmentSynchronizerImpl {
       }
       this.pausedWallTime = undefined;
     }
-    if (!this.outputEnabledFuture.done) {
+    if (!this.outputEnabledFuture.done && !this.audioCleared) {
       this.outputEnabledFuture.resolve();
+    }
+  }
+
+  /** Stops the words of a segment whose audio was cleared; close() still releases the gate. */
+  clearAudio(): void {
+    if (this.closed || this.audioData.pushedDuration === 0) {
+      return;
+    }
+    this.audioCleared = true;
+    if (this.outputEnabledFuture.done) {
+      this.outputEnabledFuture = new Future();
     }
   }
 
@@ -432,7 +445,8 @@ class SegmentSynchronizerImpl {
     for await (const wordToken of this.textData.wordStream) {
       const word = wordToken.token;
 
-      if (!this.outputEnabledFuture.done) {
+      // loop: the gate can close again before this task wakes up (a clear right after a resume)
+      while (!this.outputEnabledFuture.done) {
         await this.outputEnabledFuture.await;
         if (this.interrupted) {
           return;
@@ -881,6 +895,8 @@ class SyncedAudioOutput extends AudioOutput {
   }
 
   clearBuffer() {
+    // the cleared audio is never heard, so its words must not go out, even after a resume
+    this.synchronizer._impl.clearAudio();
     this.nextInChainAudio.clearBuffer();
   }
 
