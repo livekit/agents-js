@@ -615,6 +615,8 @@ export class AgentActivity implements RecognitionHooks {
   private realtimeSession?: RealtimeSession;
   private realtimeOnEnterScopes = new Set<{ toolsUpdated: boolean }>();
   private realtimeSpans?: Map<string, Span>; // Maps response_id to OTEL span for metrics recording
+  private realtimeUserInputAnsweredAt = 0;
+  private unansweredUserMetrics?: MetricsReport;
   private turnDetectionMode?: TurnDetectionMode;
   private rtTurnDetectionEnabled = false;
   private rtOverlappingSpeechEnabled = false;
@@ -1935,8 +1937,37 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   clearUserTurn() {
-    this.audioRecognition?.clearUserTurn();
-    this.realtimeSession?.clearAudio();
+    const recognition = this.audioRecognition;
+    const endOfTurnTask = recognition?.endOfTurnTask;
+    const manualCommitPending =
+      this.turnDetection === 'manual' && endOfTurnTask !== undefined && !endOfTurnTask.done;
+    const lastSpeakingTime = this.lastUserSpeakingTime;
+    if (
+      this.realtimeSession &&
+      manualCommitPending &&
+      lastSpeakingTime !== undefined &&
+      lastSpeakingTime > this.realtimeUserInputAnsweredAt
+    ) {
+      this.unansweredUserMetrics = { stoppedSpeakingAt: lastSpeakingTime / 1000 };
+    }
+    recognition?.clearUserTurn();
+    if (this.realtimeSession) {
+      this.realtimeSession.clearAudio();
+      if (!manualCommitPending) {
+        this.realtimeUserInputAnsweredAt = Date.now();
+        this.unansweredUserMetrics = undefined;
+      }
+    }
+  }
+
+  private get lastUserSpeakingTime(): number | undefined {
+    const recognition = this.audioRecognition;
+    if (recognition?.lastUserSpeakingTime !== undefined) {
+      return recognition.lastUserSpeakingTime;
+    }
+    if (recognition?.userSpeechStarted) return undefined;
+    const stoppedSpeakingAt = this.unansweredUserMetrics?.stoppedSpeakingAt;
+    return stoppedSpeakingAt !== undefined ? stoppedSpeakingAt * 1000 : undefined;
   }
 
   say(
@@ -3433,6 +3464,8 @@ export class AgentActivity implements RecognitionHooks {
       }
       if (this.realtimeSession) {
         if (info.skipReply) {
+          this.realtimeUserInputAnsweredAt = Date.now();
+          this.unansweredUserMetrics = undefined;
           this.commitSkippedUserTurn(info);
           return;
         }
@@ -3443,6 +3476,10 @@ export class AgentActivity implements RecognitionHooks {
     // The reply is being driven elsewhere (e.g. AMD leaving a voicemail). Commit the
     // user turn to chat context but don't generate or interrupt anything.
     if (info.skipReply) {
+      if (this.realtimeSession) {
+        this.realtimeUserInputAnsweredAt = Date.now();
+        this.unansweredUserMetrics = undefined;
+      }
       this.commitSkippedUserTurn(info);
       return;
     }
@@ -3569,6 +3606,7 @@ export class AgentActivity implements RecognitionHooks {
       userMetricsReport.endOfTurnDelay = info.endOfUtteranceDelay / 1000; // ms -> seconds
     }
     userMetricsReport.onUserTurnCompletedDelay = callbackDuration / 1000; // ms -> seconds
+    if (this.realtimeSession) this.unansweredUserMetrics = userMetricsReport;
     if (userMessage) {
       userMessage.metrics = userMetricsReport;
     }
@@ -4724,6 +4762,7 @@ export class AgentActivity implements RecognitionHooks {
     modelSettings: ModelSettings,
     replyAbortController: AbortController,
     addToChatCtx: boolean = true,
+    userStoppedSpeakingAt?: number,
   ): Promise<void> {
     return withAgentTurn(
       stateLease.speechHandle,
@@ -4739,6 +4778,7 @@ export class AgentActivity implements RecognitionHooks {
             addToChatCtx,
             span,
             inferenceSpan,
+            userStoppedSpeakingAt,
           });
         } finally {
           inferenceSpan.end();
@@ -4755,6 +4795,7 @@ export class AgentActivity implements RecognitionHooks {
     addToChatCtx,
     span,
     inferenceSpan,
+    userStoppedSpeakingAt,
   }: {
     stateLease: AgentStateLease;
     ev: GenerationCreatedEvent;
@@ -4763,6 +4804,7 @@ export class AgentActivity implements RecognitionHooks {
     addToChatCtx: boolean;
     span: Span;
     inferenceSpan: Span;
+    userStoppedSpeakingAt?: number;
   }): Promise<void> {
     const { speechHandle } = stateLease;
 
@@ -4828,9 +4870,30 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     let startedSpeakingAt: number | undefined;
+    let e2eLatency: number | undefined;
+    let e2eLatencyAttached = false;
     const onFirstFrame = (startedAt: number = Date.now()) => {
       if (startedSpeakingAt !== undefined) return;
       startedSpeakingAt = startedAt;
+      if (speechHandle.inputDetails.modality === 'audio') {
+        const liveSpeakingTime = this.lastUserSpeakingTime;
+        const lastSpeakingTime =
+          liveSpeakingTime !== undefined &&
+          (userStoppedSpeakingAt === undefined || liveSpeakingTime > userStoppedSpeakingAt)
+            ? liveSpeakingTime
+            : userStoppedSpeakingAt;
+        if (
+          lastSpeakingTime !== undefined &&
+          (userStoppedSpeakingAt !== undefined ||
+            lastSpeakingTime > this.realtimeUserInputAnsweredAt) &&
+          lastSpeakingTime <= startedAt
+        ) {
+          e2eLatency = (startedAt - lastSpeakingTime) / 1000;
+          span.setAttribute(traceTypes.ATTR_E2E_LATENCY, e2eLatency);
+        }
+        this.realtimeUserInputAnsweredAt = Math.max(this.realtimeUserInputAnsweredAt, startedAt);
+        this.unansweredUserMetrics = undefined;
+      }
       if (!this.tryStartAgentSpeech(stateLease, startedAt)) return;
       if (this.audioRecognition) {
         this.audioRecognition.onStartOfAgentSpeech(startedAt);
@@ -5101,6 +5164,10 @@ export class AgentActivity implements RecognitionHooks {
           }
           if (startedSpeakingAt !== undefined) {
             assistantMetrics.startedSpeakingAt = startedSpeakingAt / 1000; // ms -> seconds
+          }
+          if (e2eLatency !== undefined && !e2eLatencyAttached) {
+            assistantMetrics.e2eLatency = e2eLatency;
+            e2eLatencyAttached = true;
           }
 
           const message = ChatMessage.create({
@@ -5622,6 +5689,8 @@ export class AgentActivity implements RecognitionHooks {
       }
 
       const generateReplyAbortController = new AbortController();
+      const userStoppedSpeakingAt =
+        speechHandle.inputDetails.modality === 'audio' ? this.lastUserSpeakingTime : undefined;
       const generationPromise = this.realtimeSession.generateReply(
         instructions !== undefined
           ? renderInstructions(instructions, speechHandle.inputDetails.modality)
@@ -5642,6 +5711,8 @@ export class AgentActivity implements RecognitionHooks {
         generationEvent,
         { toolChoice },
         abortController,
+        true,
+        userStoppedSpeakingAt,
       );
     } finally {
       if (onEnterScope) this.realtimeOnEnterScopes.delete(onEnterScope);
