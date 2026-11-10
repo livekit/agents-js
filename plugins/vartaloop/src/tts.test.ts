@@ -782,6 +782,35 @@ describe('Vartaloop partial audio', () => {
     }
   });
 
+  it('reconnects after an error that is not tagged with an utterance', async () => {
+    const { wss, baseURL } = await startWebSocketServer();
+    let failed = false;
+    const server = serveVartaloop(wss, {
+      onUtterance: (ws) => {
+        if (failed) return true;
+        failed = true;
+        // The session's own error, not one utterance's: the socket must not be reused.
+        ws.send(JSON.stringify({ type: 'error', error: 'upstream closed', status: 500 }));
+        return false;
+      },
+    });
+
+    const vartaloop = new TTS({ apiKey: 'test-key', baseUrl: baseURL });
+    try {
+      const events = await synthesizeTurn(vartaloop, ['Ek hi vaakya.'], {
+        ...DEFAULT_API_CONNECT_OPTIONS,
+        maxRetry: 1,
+        retryIntervalMs: 0,
+      });
+
+      expect(server.connectionCount()).toBe(2);
+      expect(audioOf(events)).toHaveLength(2 * FRAME_BYTES);
+    } finally {
+      await vartaloop.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
   it('retries a 503 of the only utterance in flight on the same socket', async () => {
     const { wss, baseURL } = await startWebSocketServer();
     let busy = true;

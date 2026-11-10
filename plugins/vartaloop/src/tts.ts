@@ -796,6 +796,8 @@ export class SynthesizeStream extends tts.SynthesizeStream {
               requestId: event.request_id ?? requestId,
               retryAfter: event.retry_after,
             });
+            // Untagged: the session itself failed, so the socket is dropped.
+            if (!event.request_id) throw error;
             // The server ends only the failed utterance and keeps the session; `run` decides
             // below whether the socket can go back to the pool.
             utteranceError = error;
