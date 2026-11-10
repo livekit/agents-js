@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { Room, RoomEvent, dispose } from '@livekit/rtc-node';
+import { DisconnectReason, Room, RoomEvent, dispose } from '@livekit/rtc-node';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
-import { context as otelContext, trace } from '@opentelemetry/api';
+import { type Span, context as otelContext, trace } from '@opentelemetry/api';
 import { EventEmitter, once } from 'node:events';
 import { pathToFileURL } from 'node:url';
 import type { Logger } from 'pino';
@@ -120,8 +120,7 @@ class InfClient implements InferenceExecutor {
   }
 }
 
-/** @internal */
-export const startJob = (
+const startJob = (
   proc: JobProcess,
   func: (ctx: JobContext) => Promise<void>,
   info: RunningJobInfo,
@@ -170,37 +169,40 @@ export const startJob = (
     let closeReason = '';
     // listen before the first await: a shutdown request that lands while the trace pipeline
     // is being prepared would otherwise emit `close` to nobody, and the job would never end
-    const closePromise = once(closeEvent, 'close').then((close) => {
-      logger.debug('shutting down');
-      shutdown = true;
-      closeReason = String(close[0] ?? '');
-      safeSend({
-        case: 'exiting',
-        value: { reason: close[0] },
+    const closePromise = new Promise<void>((resolve) => {
+      closeEvent.once('close', (reason: string) => {
+        logger.debug('shutting down');
+        // Record the request synchronously, before a setup rejection can mark the job failed.
+        shutdown = true;
+        closeReason = String(reason ?? '');
+        safeSend({ case: 'exiting', value: { reason } });
+        resolve();
       });
     });
 
-    // before the first span: without a provider the job's root would not record
-    await ctx._prepareTelemetry();
-
-    // the job's root span, from the availability request to the end of shutdown; the
-    // entrypoint returning is an event on it. A close that arrived while the pipeline was
-    // being prepared skips the entrypoint (below), so its start is not a stage of this job
-    if (!shutdown) entrypointStartedMonoUs = monotonicUs();
-    const jobSpan = startJobSpan(ctx, shutdown ? null : Date.now());
-    const jobSpanContext = trace.setSpan(otelContext.active(), jobSpan);
-    ctx._jobSpanContext = jobSpanContext;
-
-    const unconnectedTimeout = setTimeout(() => {
-      if (!(connect || shutdown)) {
-        logger.warn(
-          'room not connect after job_entry was called after 10 seconds, ',
-          'did you forget to call ctx.connect()?',
-        );
-      }
-    }, 10000);
-
+    let span: Span | undefined;
     try {
+      // before the first span: without a provider the job's root would not record
+      await ctx._prepareTelemetry();
+
+      // the job's root span, from the availability request to the end of shutdown; the
+      // entrypoint returning is an event on it. A close that arrived while the pipeline was
+      // being prepared skips the entrypoint (below), so its start is not a stage of this job
+      if (!shutdown) entrypointStartedMonoUs = monotonicUs();
+      const jobSpan = startJobSpan(ctx, shutdown ? null : Date.now());
+      span = jobSpan;
+      const jobSpanContext = trace.setSpan(otelContext.active(), jobSpan);
+      ctx._jobSpanContext = jobSpanContext;
+
+      const unconnectedTimeout = setTimeout(() => {
+        if (!(connect || shutdown)) {
+          logger.warn(
+            'room not connect after job_entry was called after 10 seconds, ',
+            'did you forget to call ctx.connect()?',
+          );
+        }
+      }, 10000);
+
       try {
         let entrypointPromise: Promise<void>;
         if (shutdown) {
@@ -256,7 +258,9 @@ export const startJob = (
             await tracer.startActiveSpan(
               async (span) => {
                 try {
-                  await room.disconnect();
+                  await room.disconnect(
+                    failed ? DisconnectReason.AGENT_ERROR : DisconnectReason.CLIENT_INITIATED,
+                  );
                   logger.debug('disconnected from room');
                 } catch (error) {
                   recordException(span, error instanceof Error ? error : new Error(String(error)));
@@ -278,11 +282,15 @@ export const startJob = (
           },
         ),
       );
+    } catch (error) {
+      // Setup can fail before the entrypoint promise exists.
+      if (!shutdown) failed = true;
+      logger.error({ error }, 'error in job task');
     } finally {
-      // whatever happened above, the job ends: root span, per-job telemetry state, flushes
-      jobSpan.end();
-      ctx._onCleanup();
       try {
+        // Setup may have failed before a span was created; per-job telemetry still needs cleanup.
+        span?.end();
+        ctx._onCleanup();
         await flushJobTraces(logger);
         await flushJobLogs(logger);
       } finally {
@@ -302,7 +310,7 @@ export const startJob = (
 };
 
 (async () => {
-  if (process.send && process.argv[2]) {
+  if (process.send) {
     const join = new Future();
 
     const moduleFile = process.argv[2];
