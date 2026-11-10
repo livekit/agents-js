@@ -499,6 +499,23 @@ describe('TranscriptionSynchronizer pause, clear and resume', () => {
     },
   );
 
+  it('holds a due word when the clear lands after the resume', async () => {
+    const { synchronizer, downstreamAudio, downstreamText } = await startPausedSegment();
+
+    // AgentActivity order: the resume runs first, and the clear lands while the main task
+    // sleeps before its next word
+    synchronizer.audioOutput.resume();
+    await sleep(50);
+    const beforeClear = downstreamText.captured.join('');
+    synchronizer.audioOutput.clearBuffer();
+    await sleep(300);
+    expect(downstreamText.captured.join('')).toBe(beforeClear);
+
+    downstreamAudio.onPlaybackFinished({ playbackPosition: 0.6, interrupted: true });
+    await synchronizer.close();
+    expect(downstreamText.captured.join('')).toBe(beforeClear);
+  });
+
   it('releases the remaining words when a paused segment resumes without a clear', async () => {
     const { synchronizer, downstreamText } = await startPausedSegment();
     const beforeResume = downstreamText.captured.join('');
