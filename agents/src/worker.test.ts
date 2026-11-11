@@ -16,11 +16,13 @@ import {
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import { setTimeout as delay, setImmediate } from 'node:timers/promises';
+import { pino } from 'pino';
 import { describe, expect, it, vi } from 'vitest';
 import { WebSocketServer } from 'ws';
 import { type JobExecutor, JobStatus } from './ipc/job_executor.js';
 import { JobProcExecutor } from './ipc/job_proc_executor.js';
 import { ProcPool } from './ipc/proc_pool.js';
+import { log, loggerOptions, setLoggerState } from './log_core.js';
 import { Future } from './utils.js';
 import { AgentServer, ServerOptions } from './worker.js';
 
@@ -48,6 +50,40 @@ describe('AgentServer connection failures', () => {
       await server.close();
       await server.close();
     }
+  });
+});
+
+describe('AgentServer close', () => {
+  it('logs the shutdown line at info level', async () => {
+    const lines: { level: number; msg: string }[] = [];
+    const previousLogger = log();
+    const previousOptions = loggerOptions()!;
+    setLoggerState(
+      pino({ level: 'info' }, { write: (line: string) => lines.push(JSON.parse(line)) }),
+      { pretty: false, level: 'info' },
+    );
+
+    try {
+      const server = new AgentServer(
+        new ServerOptions({
+          agent: 'test-agent.js',
+          wsURL: 'ws://127.0.0.1:1',
+          apiKey: 'devkey',
+          apiSecret: 'devsecret',
+          maxRetry: 0,
+          numIdleProcesses: 0,
+          simulation: true,
+        }),
+      );
+      await expect(server.run()).rejects.toThrow(/failed to connect/);
+      await server.close();
+    } finally {
+      setLoggerState(previousLogger, previousOptions);
+    }
+
+    expect(lines).toContainEqual(
+      expect.objectContaining({ level: 30, msg: 'shutting down worker' }),
+    );
   });
 });
 
