@@ -865,8 +865,8 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
   private abortHandoff?: () => void;
   private pendingUpdateAcks = 0;
   private updateUncertain = false;
-  private handoffAudioOffset = 0;
-  private connectionAudioDuration = 0;
+  private handoffAudioOffsetInS = 0;
+  private connectionAudioDurationInS = 0;
   private retryHandoffOpts?: InferenceSTTOptions<TModel>;
   private retryHandoffKeyterms?: string[];
 
@@ -1010,8 +1010,8 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
   }
 
   protected async run(): Promise<void> {
-    this.handoffAudioOffset = 0;
-    this.connectionAudioDuration = 0;
+    this.handoffAudioOffsetInS = 0;
+    this.connectionAudioDurationInS = 0;
     while (true) {
       const vad = await this.stt.vadPromise;
       // Create fresh resources for each connection attempt
@@ -1061,7 +1061,7 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
                 encoded: JSON.stringify({ type: 'input_audio', audio }),
                 onSent: () => {
                   this.speechDuration += frame.samplesPerChannel / frame.sampleRate;
-                  this.connectionAudioDuration += frame.samplesPerChannel / frame.sampleRate;
+                  this.connectionAudioDurationInS += frame.samplesPerChannel / frame.sampleRate;
                 },
               });
             }
@@ -1176,7 +1176,7 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
         const base64 = Buffer.from(frame.data.buffer).toString('base64');
         this.sendOrBuffer({ type: 'input_audio', audio: base64 }, () => {
           this.speechDuration += frame.samplesPerChannel / frame.sampleRate;
-          this.connectionAudioDuration += frame.samplesPerChannel / frame.sampleRate;
+          this.connectionAudioDurationInS += frame.samplesPerChannel / frame.sampleRate;
         });
       };
 
@@ -1449,8 +1449,8 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
               ws = replacementWs;
               replacementWs = undefined;
               attachSocket?.(this.activeWs);
-              this.handoffAudioOffset += this.connectionAudioDuration;
-              this.connectionAudioDuration = 0;
+              this.handoffAudioOffsetInS += this.connectionAudioDurationInS;
+              this.connectionAudioDurationInS = 0;
               if (handoffTimer) clearTimeout(handoffTimer);
               this.abortHandoff = undefined;
               this.requestedHandoffId = undefined;
@@ -1644,8 +1644,8 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
 
       const speechData: SpeechData = {
         language,
-        startTime: this.startTimeOffset + this.handoffAudioOffset + data.start,
-        endTime: this.startTimeOffset + this.handoffAudioOffset + data.start + data.duration,
+        startTime: this.startTimeOffset + this.handoffAudioOffsetInS + data.start,
+        endTime: this.startTimeOffset + this.handoffAudioOffsetInS + data.start + data.duration,
         confidence: data.confidence,
         text,
         speakerId: data.speaker_id ?? undefined,
@@ -1653,9 +1653,9 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
           (word): TimedString =>
             createTimedString({
               text: word.word,
-              startTime: word.start + this.startTimeOffset + this.handoffAudioOffset,
-              endTime: word.end + this.startTimeOffset + this.handoffAudioOffset,
-              startTimeOffset: this.startTimeOffset + this.handoffAudioOffset,
+              startTime: word.start + this.startTimeOffset + this.handoffAudioOffsetInS,
+              endTime: word.end + this.startTimeOffset + this.handoffAudioOffsetInS,
+              startTimeOffset: this.startTimeOffset + this.handoffAudioOffsetInS,
               confidence: word.confidence,
               speakerId: word.speaker_id ?? undefined,
             }),

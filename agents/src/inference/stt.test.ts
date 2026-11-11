@@ -63,7 +63,7 @@ function makeSpeechStream() {
     speaking: false,
     requestId: 'req-1',
     speechDuration: 0,
-    handoffAudioOffset: 0,
+    handoffAudioOffsetInS: 0,
     _startTimeOffset: 0,
     _pendingExtra: undefined,
     opts: { language: 'en' },
