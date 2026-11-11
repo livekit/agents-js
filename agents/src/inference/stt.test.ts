@@ -1077,7 +1077,7 @@ describe('Inference STT connection lifecycle', () => {
     await once(server, 'listening');
     const address = server.address() as AddressInfo;
     const originalSend = WebSocket.prototype.send;
-    let candidate: WebSocket | undefined;
+    const candidates = new WeakSet<WebSocket>();
     let failed = false;
     const sendSpy = vi.spyOn(WebSocket.prototype, 'send').mockImplementation(function (
       this: WebSocket,
@@ -1086,8 +1086,8 @@ describe('Inference STT connection lifecycle', () => {
       const data = args[0];
       if (typeof data === 'string') {
         const event = JSON.parse(data) as { type?: string; handoff_probe?: unknown };
-        if (event.type === 'session.create' && event.handoff_probe) candidate = this;
-        if (event.type === 'input_audio' && this === candidate && !failed) {
+        if (event.type === 'session.create' && event.handoff_probe) candidates.add(this);
+        if (event.type === 'input_audio' && candidates.has(this) && !failed) {
           failed = true;
           throw new Error('simulated replacement write failure');
         }
