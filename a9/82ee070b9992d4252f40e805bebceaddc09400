@@ -1,0 +1,25 @@
+agents/src/worker.test.ts
+  s_0e00a4a4b25aa3::t_20a760552a57e2 56-89
+  s_0e00a4a4b25aa3::t_a36d5e25524300 19
+  s_0e00a4a4b25aa3::t_1ade5e8a03d548 25
+.changeset/worker-shutdown-info-log.md
+  s_0e00a4a4b25aa3::t_e1f9f17d35a39f 1-5
+agents/src/worker.ts
+  s_0e00a4a4b25aa3::t_44de1058a64829 1123-1124
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a982ee070b9992d4252f40e805bebceaddc09400",
+  "prompts": {},
+  "sessions": {
+    "s_0e00a4a4b25aa3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d26ea2a4-89d0-4caf-af15-a7503563d7c7",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
