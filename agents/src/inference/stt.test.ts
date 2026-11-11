@@ -730,6 +730,31 @@ describe('STT VAD handling for Speechmatics models', () => {
   });
 });
 
+describe('Inference STT handoff replay', () => {
+  it('keeps the whole replay queue when a write fails partway', () => {
+    const { stream } = makeSpeechStream();
+    const sent: string[] = [];
+    const onSent = vi.fn();
+    stream['handoffWrites'] = ['a', 'b', 'c'].map((encoded) => ({ encoded, onSent }));
+
+    const failing = {
+      readyState: 1,
+      send: (encoded: string) => {
+        if (encoded === 'b') throw new Error('closed');
+      },
+    } as unknown as WebSocket;
+    expect(() => stream['releaseHandoffWrites'](failing)).toThrow();
+    expect(stream['handoffWrites'].map((w) => w.encoded)).toEqual(['a', 'b', 'c']);
+    expect(onSent).not.toHaveBeenCalled();
+
+    const fresh = { readyState: 1, send: (encoded: string) => sent.push(encoded) };
+    stream['releaseHandoffWrites'](fresh as unknown as WebSocket);
+    expect(sent).toEqual(['a', 'b', 'c']);
+    expect(stream['handoffWrites']).toEqual([]);
+    expect(onSent).toHaveBeenCalledTimes(3);
+  });
+});
+
 describe('Inference STT connection lifecycle', () => {
   it('buffers audio until a replacement session accepts a coordinated handoff', async () => {
     const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });

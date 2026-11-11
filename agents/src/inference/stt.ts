@@ -894,9 +894,14 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
     onSent?.();
   }
 
+  /**
+   * Replays writes buffered during a handoff to `socket`. The queue empties only after every
+   * write is sent: a failed write leaves it whole, because the retry dials a fresh session that
+   * needs the full replay. `onSent` callbacks run once, after the last write.
+   */
   private releaseHandoffWrites(socket: WebSocket): void {
-    while (this.handoffWrites.length > 0) {
-      const next = this.handoffWrites[0]!;
+    const writes = this.handoffWrites;
+    for (const next of writes) {
       if (socket.readyState !== 1)
         throw new APIConnectionError({ message: 'STT WebSocket is closed' });
       try {
@@ -904,9 +909,9 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
       } catch {
         throw new APIConnectionError({ message: 'STT WebSocket write failed' });
       }
-      this.handoffWrites.shift();
-      next.onSent?.();
     }
+    this.handoffWrites = [];
+    for (const next of writes) next.onSent?.();
   }
 
   #logger = log();
@@ -1450,10 +1455,13 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
               this.abortHandoff = undefined;
               this.requestedHandoffId = undefined;
               this.handoffId = undefined;
-              this.releaseHandoffWrites(this.activeWs);
+              try {
+                this.releaseHandoffWrites(this.activeWs);
+              } finally {
+                old.close();
+              }
               this.retryHandoffOpts = undefined;
               this.retryHandoffKeyterms = undefined;
-              old.close();
               continue;
             }
 
