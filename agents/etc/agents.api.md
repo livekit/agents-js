@@ -2512,7 +2512,7 @@ class CloudTransport implements StreamingTurnDetectionTransport {
     // (undocumented)
     protected _numRetries: number;
     // (undocumented)
-    onStartOfTurn(_elapsed: number): void;
+    onStartOfTurn(elapsed: number): void;
     // Warning: (ae-forgotten-export) The symbol "BaseStreamingTurnDetectorOptions" needs to be exported by the entry point index.d.ts
     //
     // (undocumented)
@@ -2538,6 +2538,7 @@ class CloudTransport implements StreamingTurnDetectionTransport {
     protected _streamRef: WeakRef<BaseStreamingTurnDetectorStream> | undefined;
     // @internal
     transportReady(): boolean;
+    protected _turnSamples: number;
     // Warning: (ae-forgotten-export) The symbol "CloudWebSocket" needs to be exported by the entry point index.d.ts
     //
     // (undocumented)
@@ -5272,7 +5273,7 @@ class LLMStream_2 extends llm_2.LLMStream {
     protected run(): Promise<void>;
 }
 
-// @public (undocumented)
+// @public
 const LOCAL_LANGUAGES: Readonly<Record<string, number>>;
 
 // @public

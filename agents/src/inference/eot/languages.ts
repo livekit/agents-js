@@ -6,11 +6,12 @@
  * Per-language `unlikely` thresholds for the mini detector.
  *
  * The cloud `turn-detector-v1` model receives calibrated defaults from the
- * inference gateway (via the `SessionCreated` message); only the local
- * `turn-detector-v1-mini` model ships a hardcoded table here.
+ * inference gateway (via the `SessionCreated` message); the local
+ * `turn-detector-v1-mini` model reads its table from `@livekit/local-inference`.
  */
 import { APIError } from '../../_exceptions.js';
 import type { LanguageCode } from '../../language.js';
+import { _getLocalInferenceModule } from '../_warmup.js';
 
 /** Full model name (used for telemetry/billing via `detector.model`). */
 export type TurnDetectorModel = 'turn-detector-v1' | 'turn-detector-v1-mini';
@@ -18,22 +19,32 @@ export type TurnDetectorModel = 'turn-detector-v1' | 'turn-detector-v1-mini';
 /** Public `version` constructor argument; maps to a {@link TurnDetectorModel}. */
 export type TurnDetectorVersion = 'v1' | 'v1-mini';
 
-export const LOCAL_LANGUAGES: Readonly<Record<string, number>> = {
-  ar: 0.2596,
-  de: 0.1812,
-  en: 0.2499,
-  es: 0.3,
-  fr: 0.2284,
-  hi: 0.2464,
-  id: 0.1396,
-  it: 0.1918,
-  ja: 0.2185,
-  ko: 0.3109,
-  nl: 0.1503,
-  pt: 0.3074,
-  tr: 0.2123,
-  zh: 0.29,
-};
+const localThresholds: Record<string, number> = {};
+let localThresholdsLoaded = false;
+
+function loadLocalThresholds(): Record<string, number> {
+  if (!localThresholdsLoaded) {
+    localThresholdsLoaded = true;
+    Object.assign(localThresholds, _getLocalInferenceModule()?.EOT_THRESHOLDS);
+    Object.freeze(localThresholds);
+  }
+  return localThresholds;
+}
+
+/**
+ * Default thresholds of the bundled `turn-detector-v1-mini` model, read from
+ * `@livekit/local-inference` on first access. Empty when the native binding
+ * cannot load.
+ */
+export const LOCAL_LANGUAGES: Readonly<Record<string, number>> = new Proxy(localThresholds, {
+  get: (_, key) => Reflect.get(loadLocalThresholds(), key),
+  has: (_, key) => Reflect.has(loadLocalThresholds(), key),
+  ownKeys: () => Reflect.ownKeys(loadLocalThresholds()),
+  getOwnPropertyDescriptor: (_, key) =>
+    Reflect.getOwnPropertyDescriptor(loadLocalThresholds(), key),
+  defineProperty: () => false,
+  deleteProperty: () => false,
+});
 
 /**
  * BCP-47 language tag (or human-readable name) → ISO 639-1 two-letter code.
