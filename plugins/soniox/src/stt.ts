@@ -12,6 +12,7 @@ import {
   stt,
   waitForAbort,
 } from '@livekit/agents';
+import type { AudioFrame } from '@livekit/rtc-node';
 import { WebSocket } from 'ws';
 import { type SonioxMessage, newProcessMessageState, processMessage } from './_internal.js';
 
@@ -154,6 +155,7 @@ export class SpeechStream extends stt.SpeechStream {
     let ws: WebSocket | undefined;
     try {
       ws = await this.#connectWS();
+      this.restartProviderClock();
       await this.#runWS(ws);
     } catch (error) {
       if (error instanceof APIError) {
@@ -228,6 +230,8 @@ export class SpeechStream extends stt.SpeechStream {
 
   async #runWS(ws: WebSocket): Promise<void> {
     let closing = false;
+    const attemptController = new AbortController();
+    const attemptSignal = AbortSignal.any([this.abortSignal, attemptController.signal]);
     const state = newProcessMessageState();
     const options = {
       isTranslationMode: this.#opts.translation !== undefined,
@@ -281,7 +285,7 @@ export class SpeechStream extends stt.SpeechStream {
     // connection (per Soniox protocol: an empty frame ends the session). We then
     // let `listenTask` observe that final response rather than tearing down the
     // moment the input runs dry.
-    const sendTask = this.#sendAudio(ws);
+    const sendTask = this.#sendAudio(ws, attemptSignal);
     const finalize = sendTask.then(() => {
       if (this.abortSignal.aborted || ws.readyState !== WebSocket.OPEN) {
         return;
@@ -301,18 +305,23 @@ export class SpeechStream extends stt.SpeechStream {
       ]);
     } finally {
       closing = true;
+      attemptController.abort();
       clearInterval(keepalive);
       ws.close();
+      await sendTask.catch(() => {});
     }
   }
 
-  async #sendAudio(ws: WebSocket): Promise<void> {
-    const abortPromise = waitForAbort(this.abortSignal);
+  async #sendAudio(ws: WebSocket, signal: AbortSignal): Promise<void> {
     while (!this.closed) {
-      const result = await Promise.race([this.input.next(), abortPromise]);
-      if (result === undefined || result.done) {
-        break;
+      let result: IteratorResult<AudioFrame | typeof SpeechStream.FLUSH_SENTINEL>;
+      try {
+        result = await this.input.next({ signal });
+      } catch (error) {
+        if (signal.aborted) return;
+        throw error;
       }
+      if (result.done) break;
 
       const data = result.value;
       if (data === SpeechStream.FLUSH_SENTINEL) {

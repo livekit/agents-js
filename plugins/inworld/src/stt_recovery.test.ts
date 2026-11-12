@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { APIConnectionError, APIError, APIStatusError, log, type stt } from '@livekit/agents';
+import { APIConnectionError, APIError, APIStatusError, log, stt } from '@livekit/agents';
 import { AudioFrame } from '@livekit/rtc-node';
 import { once } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -61,6 +61,40 @@ afterEach(async () => {
 });
 
 describe('inworld STT recovery', () => {
+  it('requests word timestamps and reports their speech end boundary', async () => {
+    await startServer();
+    let config: Record<string, unknown> | undefined;
+    server.on('connection', (socket) => {
+      socket.on('message', (raw) => {
+        const message = JSON.parse(raw.toString());
+        if (!message.transcribeConfig) return;
+        config = message.transcribeConfig;
+        socket.send(JSON.stringify({ result: { speechStarted: {} } }));
+        socket.send(
+          JSON.stringify({
+            result: {
+              transcription: {
+                transcript: 'hello',
+                isFinal: true,
+                wordTimestamps: [{ word: 'hello', startTimeMs: 100, endTimeMs: 400 }],
+              },
+            },
+          }),
+        );
+      });
+    });
+    const started = startStream();
+    stream = started.stream;
+    stream.startTimeOffset = 7;
+    for await (const event of stream) {
+      if (event.type === stt.SpeechEventType.END_OF_SPEECH) {
+        expect(config).toMatchObject({ includeWordTimestamps: true });
+        expect(event.alternatives?.[0]?.endTime).toBeCloseTo(7.4);
+        break;
+      }
+    }
+  });
+
   it.each([1000, 1006, 1011])(
     'preserves an API error after unexpected closure %i',
     async (code) => {

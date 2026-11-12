@@ -122,6 +122,7 @@ export class SpeechStream extends stt.SpeechStream {
 
       try {
         await waitForWebSocketOpen(ws, 'Baseten');
+        this.restartProviderClock();
 
         await this.#runWS(ws);
       } catch (e) {

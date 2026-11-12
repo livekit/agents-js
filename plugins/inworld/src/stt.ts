@@ -264,6 +264,7 @@ export class SpeechStream extends stt.SpeechStream {
 
       try {
         await waitForWebSocketOpen(ws, 'Inworld');
+        this.restartProviderClock();
 
         await this.#runWS(ws);
         retries = 0;
@@ -306,6 +307,7 @@ export class SpeechStream extends stt.SpeechStream {
           sampleRateHertz: this.#opts.sampleRate,
           numberOfChannels: this.#opts.numChannels,
           language: this.#opts.language,
+          includeWordTimestamps: true,
           voiceProfileConfig: {
             enableVoiceProfile: this.#opts.enableVoiceProfile,
             topN: this.#opts.voiceProfileTopN,
@@ -430,6 +432,13 @@ export class SpeechStream extends stt.SpeechStream {
             if (result.transcription) {
               const { transcript, isFinal, wordTimestamps, voiceProfile } = result.transcription;
               const metadata = voiceProfile ? { voiceProfile: voiceProfile } : undefined;
+              const timedWords = wordTimestampsToTimedStrings(
+                wordTimestamps ?? [],
+                this.startTimeOffset,
+              );
+              const lastWordEnd = rawWordEnd(wordTimestamps?.at(-1));
+              const firstWordStart = rawWordStart(wordTimestamps?.[0]);
+              const hasTiming = lastWordEnd > 0;
 
               if (!this.#speaking && transcript) {
                 this.#speaking = true;
@@ -445,13 +454,10 @@ export class SpeechStream extends stt.SpeechStream {
                       {
                         text: transcript,
                         language: normalizeLanguage(this.#opts.language),
-                        startTime: this.startTimeOffset,
-                        endTime: this.startTimeOffset,
+                        startTime: hasTiming ? firstWordStart + this.startTimeOffset : 0,
+                        endTime: hasTiming ? lastWordEnd + this.startTimeOffset : 0,
                         confidence: 1,
-                        words: wordTimestampsToTimedStrings(
-                          wordTimestamps ?? [],
-                          this.startTimeOffset,
-                        ),
+                        words: timedWords,
                         metadata,
                       },
                     ],
@@ -459,7 +465,23 @@ export class SpeechStream extends stt.SpeechStream {
                 }
                 if (this.#speaking) {
                   this.#speaking = false;
-                  this.queue.put({ type: stt.SpeechEventType.END_OF_SPEECH });
+                  this.queue.put({
+                    type: stt.SpeechEventType.END_OF_SPEECH,
+                    requestId: this.#requestId,
+                    ...(hasTiming
+                      ? {
+                          alternatives: [
+                            {
+                              text: '',
+                              language: normalizeLanguage(this.#opts.language),
+                              startTime: 0,
+                              endTime: lastWordEnd + this.startTimeOffset,
+                              confidence: 0,
+                            },
+                          ] as [stt.SpeechData],
+                        }
+                      : {}),
+                  });
                 }
               } else if (transcript) {
                 this.queue.put({
@@ -469,13 +491,10 @@ export class SpeechStream extends stt.SpeechStream {
                     {
                       text: transcript,
                       language: normalizeLanguage(this.#opts.language),
-                      startTime: this.startTimeOffset,
-                      endTime: this.startTimeOffset,
+                      startTime: hasTiming ? firstWordStart + this.startTimeOffset : 0,
+                      endTime: hasTiming ? lastWordEnd + this.startTimeOffset : 0,
                       confidence: 0,
-                      words: wordTimestampsToTimedStrings(
-                        wordTimestamps ?? [],
-                        this.startTimeOffset,
-                      ),
+                      words: timedWords,
                       metadata,
                     },
                   ],
@@ -522,6 +541,16 @@ export class SpeechStream extends stt.SpeechStream {
       });
     }
   }
+}
+
+function rawWordStart(word: WordTimestamp | undefined): number {
+  if (!word) return 0;
+  return word.startTimeMs !== undefined ? word.startTimeMs / 1000 : word.startTime ?? 0;
+}
+
+function rawWordEnd(word: WordTimestamp | undefined): number {
+  if (!word) return 0;
+  return word.endTimeMs !== undefined ? word.endTimeMs / 1000 : word.endTime ?? 0;
 }
 
 function wordTimestampsToTimedStrings(

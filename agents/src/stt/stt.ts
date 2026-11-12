@@ -128,6 +128,57 @@ export interface SpeechEvent {
  * before it has been pushed.
  */
 export const _FLUSH_MARKER = Symbol('stt_flush_marker');
+class TimedInputQueue<TFlush extends symbol> extends AsyncIterableQueue<AudioFrame | TFlush> {
+  inputStartedAt?: number;
+  #startTimeOffset = 0;
+  #firstFrameAt?: number;
+  #pushedAt: number[] = [];
+  #queuedDuration = 0;
+  #lastPushedAt = 0;
+
+  get startTimeOffset(): number {
+    return this.#startTimeOffset;
+  }
+
+  set startTimeOffset(value: number) {
+    this.inputStartedAt = Date.now() - value * 1000;
+    this.#startTimeOffset =
+      this.#firstFrameAt === undefined ? value : (this.#firstFrameAt - this.inputStartedAt) / 1000;
+  }
+
+  restartProviderClock(): void {
+    this.#firstFrameAt = undefined;
+  }
+
+  override put(value: AudioFrame | TFlush): void {
+    super.put(value);
+    if (typeof value !== 'symbol') {
+      this.#lastPushedAt = Date.now();
+      this.#pushedAt.push(this.#lastPushedAt);
+      this.#queuedDuration += (value.samplesPerChannel / value.sampleRate) * 1000;
+    }
+  }
+
+  override async next(
+    options: { signal?: AbortSignal } = {},
+  ): Promise<IteratorResult<AudioFrame | TFlush>> {
+    const result = await super.next(options);
+    if (!result.done && typeof result.value !== 'symbol') {
+      const duration = (result.value.samplesPerChannel / result.value.sampleRate) * 1000;
+      const pushedAt = this.#pushedAt.shift()!;
+      if (this.#firstFrameAt === undefined) {
+        this.#firstFrameAt = Math.min(
+          pushedAt - duration,
+          this.#lastPushedAt - this.#queuedDuration,
+        );
+        this.inputStartedAt ??= this.#firstFrameAt;
+        this.#startTimeOffset = (this.#firstFrameAt - this.inputStartedAt) / 1000;
+      }
+      this.#queuedDuration -= duration;
+    }
+    return result;
+  }
+}
 
 /**
  * Describes the capabilities of the STT provider.
@@ -336,7 +387,9 @@ export abstract class STT extends (EventEmitter as new () => TypedEmitter<STTCal
  */
 export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent> {
   protected static readonly FLUSH_SENTINEL = Symbol('FLUSH_SENTINEL');
-  protected input = new AsyncIterableQueue<AudioFrame | typeof SpeechStream.FLUSH_SENTINEL>();
+  private timedInput = new TimedInputQueue<typeof SpeechStream.FLUSH_SENTINEL>();
+  protected input: AsyncIterableQueue<AudioFrame | typeof SpeechStream.FLUSH_SENTINEL> =
+    this.timedInput;
   protected output = new AsyncIterableQueue<SpeechEvent>();
   protected queue = new AsyncIterableQueue<SpeechEvent>();
   protected neededSampleRate?: number;
@@ -348,7 +401,6 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
   private deferredInputStream: DeferredReadableStream<AudioFrame>;
   private logger = log();
   private _connOptions: APIConnectOptions;
-  private _startTimeOffset: number = 0;
   private _numRetries: number = 0;
 
   protected abortController = new AbortController();
@@ -401,11 +453,11 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
     // exhaust it and permanently stop recognizing on long sessions.
     while (this._numRetries <= this._connOptions.maxRetry) {
       try {
-        // Keep provider-relative transcript timestamps linear across reconnect attempts.
-        this._startTimeOffset += (Date.now() - lastStartTime) / 1000;
         lastStartTime = Date.now();
         return await this.run();
       } catch (error) {
+        // The next attempt's provider timeline begins with the next frame it consumes.
+        this.timedInput.restartProviderClock();
         // If the stream was intentionally aborted (e.g. session shutdown), exit
         // silently. Downstream listeners may already be detached by this point,
         // and emitting an `error` event here would trigger ERR_UNHANDLED_ERROR
@@ -543,14 +595,27 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
   }
 
   get startTimeOffset(): number {
-    return this._startTimeOffset;
+    return (this.timedInput ?? (this.input as TimedInputQueue<typeof SpeechStream.FLUSH_SENTINEL>))
+      .startTimeOffset;
   }
 
   set startTimeOffset(value: number) {
     if (value < 0) {
       throw new Error('startTimeOffset must be non-negative');
     }
-    this._startTimeOffset = value;
+    (
+      this.timedInput ?? (this.input as TimedInputQueue<typeof SpeechStream.FLUSH_SENTINEL>)
+    ).startTimeOffset = value;
+  }
+
+  /** @internal Re-anchor provider-relative timestamps on the next audio frame consumed. */
+  protected restartProviderClock(): void {
+    this.timedInput.restartProviderClock();
+  }
+
+  /** @internal Wall-clock start of the caller's input timeline, in milliseconds. */
+  protected get inputStartedAt(): number | undefined {
+    return this.timedInput.inputStartedAt;
   }
 
   updateInputStream(audioStream: ReadableStream<AudioFrame>) {

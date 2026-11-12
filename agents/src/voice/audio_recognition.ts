@@ -449,6 +449,8 @@ export class AudioRecognition {
   private sttPipeline?: STTPipeline;
   /** Whether this turn already asked a manual-flush STT for its final transcript. */
   private sttFlushRequested = false;
+  /** Whether STT has closed the current turn. */
+  private sttTurnEnded = false;
   private vad?: VAD;
   private turnDetector?: _TurnDetector | BaseStreamingTurnDetector;
   private turnDetectorStream?: BaseStreamingTurnDetectorStream;
@@ -1411,10 +1413,9 @@ export class AudioRecognition {
     // Prefer STT timing when no VAD anchor exists. In STT turn detection, a real
     // timestamp or an explicit end-of-speech event owns the turn boundary too.
     const useSTTSpeakingTime =
-      this.vad === undefined ||
+      (this.vad === undefined && !this.sttTurnEnded) ||
       this.lastSpeakingTime === undefined ||
-      (this.turnDetectionMode === 'stt' &&
-        (hasAbsoluteSpeechEndTime || hasSTTEndTime || ev.type === SpeechEventType.END_OF_SPEECH));
+      (this.turnDetectionMode === 'stt' && (hasAbsoluteSpeechEndTime || hasSTTEndTime));
 
     switch (ev.type) {
       case SpeechEventType.FINAL_TRANSCRIPT:
@@ -1547,6 +1548,7 @@ export class AudioRecognition {
         break;
       case SpeechEventType.START_OF_SPEECH:
         if (this.turnDetectionMode !== 'stt') break;
+        this.sttTurnEnded = false;
         {
           const speechStartTime = Date.now();
           this.endEouWaitSpan('user_resumed', speechStartTime);
@@ -1577,6 +1579,7 @@ export class AudioRecognition {
         break;
       case SpeechEventType.END_OF_SPEECH:
         if (this.turnDetectionMode !== 'stt') break;
+        this.sttTurnEnded = true;
         {
           const speechEndTime = Date.now();
           const span = this.ensureUserTurnSpan();
@@ -1626,7 +1629,7 @@ export class AudioRecognition {
           // Clamp provider clock skew so endpointing sleep cannot be extended
           // by an anchor that lies in the future.
           this.lastSpeakingTime = Math.min(ev.speechEndTime, Date.now());
-        } else if (useSTTSpeakingTime) {
+        } else {
           this.lastSpeakingTime = sttLastSpeakingTime;
         }
 
@@ -2566,6 +2569,7 @@ export class AudioRecognition {
   clearUserTurn() {
     this.bounceEOUTask?.cancel();
     this.sttFlushRequested = false;
+    this.sttTurnEnded = false;
     this.audioTranscript = '';
     this.audioInterimTranscript = '';
     this.audioPreflightTranscript = '';

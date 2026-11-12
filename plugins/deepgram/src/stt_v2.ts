@@ -361,6 +361,7 @@ class SpeechStreamv2 extends stt.SpeechStream {
             headers: { Authorization: `Token ${this.#opts.apiKey}` },
           });
           await waitForWebSocketOpen(this.#ws, 'Deepgram');
+          this.restartProviderClock();
         } catch (error) {
           if (error instanceof APIStatusError || error instanceof APIConnectionError) throw error;
           throw new APIConnectionError({
@@ -580,11 +581,24 @@ class SpeechStreamv2 extends stt.SpeechStream {
         if (!this.#speaking) return;
 
         this.#speaking = false;
-        this.#sendTranscriptEvent(stt.SpeechEventType.FINAL_TRANSCRIPT, data);
+        const alternatives = this.#sendTranscriptEvent(stt.SpeechEventType.FINAL_TRANSCRIPT, data);
+        const words = (data.words as Array<Record<string, unknown>> | undefined) ?? [];
+        const lastWordEnd = (words.at(-1)?.end as number | undefined) ?? 0;
 
         this.queue.put({
           type: stt.SpeechEventType.END_OF_SPEECH,
           requestId: this.#requestId,
+          ...(lastWordEnd > 0 && alternatives.length > 0
+            ? {
+                alternatives: [
+                  { ...alternatives[0]!, endTime: this.startTimeOffset + lastWordEnd },
+                  ...alternatives.slice(1).map((alt) => ({
+                    ...alt,
+                    endTime: this.startTimeOffset + lastWordEnd,
+                  })),
+                ] as [stt.SpeechData, ...stt.SpeechData[]],
+              }
+            : {}),
         });
         this.#onEndOfSpeech();
       }
@@ -595,7 +609,10 @@ class SpeechStreamv2 extends stt.SpeechStream {
     }
   }
 
-  #sendTranscriptEvent(eventType: stt.SpeechEventType, data: Record<string, unknown>) {
+  #sendTranscriptEvent(
+    eventType: stt.SpeechEventType,
+    data: Record<string, unknown>,
+  ): stt.SpeechData[] {
     const alts = parseTranscription(this.#opts.language || 'en', data, this.startTimeOffset);
 
     if (alts.length > 0) {
@@ -605,6 +622,7 @@ class SpeechStreamv2 extends stt.SpeechStream {
         alternatives: [alts[0]!, ...alts.slice(1)],
       });
     }
+    return alts;
   }
 
   #onAudioDurationReport(duration: number) {
