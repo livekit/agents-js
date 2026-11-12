@@ -77,6 +77,28 @@ const stt = new sarvam.STT({
 
 Set the `SARVAM_API_KEY` environment variable or pass `apiKey` directly.
 
+### STT (Realtime)
+
+```typescript
+import * as sarvam from '@livekit/agents-plugin-sarvam';
+
+const stt = new sarvam.STTRealtime({
+  language: 'en-IN',
+  streamType: 'balanced',
+  endpointing: 'vad',
+});
+```
+
+`STTRealtime` connects to Sarvam's realtime API (`saaras:v3-realtime`, not configurable), which
+streams partial transcripts and uses Sarvam's own VAD for turn detection by default. Set
+`endpointing: 'manual'` to delimit turns from your application instead — the plugin then emits
+`START_OF_SPEECH` on the first audio frame of a turn and `END_OF_SPEECH` when you flush the
+stream.
+
+Realtime streams don't reconnect after a socket failure, because Sarvam bills per connection —
+`stream()` forces `connOptions.maxRetry` to `0`. Create a new stream (or restart the session) if
+the connection drops.
+
 ## STT Models
 
 | Model                 | Endpoint                    | Languages   | Modes | Prompt |
