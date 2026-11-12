@@ -209,13 +209,24 @@ function replaceWrite(stream: NodeJS.WriteStream, write: (text: string) => void)
   }) as typeof stream.write;
 }
 
+/** The path of a job's new file, after removing any file an earlier attempt left. */
+function newJobFile(dir: string, jobId: string): string {
+  for (const decided of ['', `.${LogsDecision.EXPORT}`, `.${LogsDecision.PRIVATE}`]) {
+    for (const done of ['', '.done']) {
+      rmSync(join(dir, `job-${jobId}${decided}${done}.log`), { force: true });
+    }
+  }
+  return join(dir, `job-${jobId}.log`);
+}
+
 /** Send this job process's stdout and stderr, and so its log records, to the job's file. */
 export function redirectJobOutput(jobId: string, redaction: boolean): JobOutput | undefined {
   const dir = jobsDir();
   if (!logsHandedOff() || dir === undefined) return undefined;
-  const path = join(dir, `job-${jobId}.log`);
+  let path: string;
   let fd: number;
   try {
+    path = newJobFile(dir, jobId);
     fd = openSync(path, 'a', 0o644);
   } catch {
     process.stderr.write(

@@ -9,6 +9,8 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  statSync,
+  writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -209,6 +211,26 @@ describe('redirectJobOutput', () => {
 
   it('does nothing without a hand-off', () => {
     expect(redirectJobOutput('AJ_1', false)).toBeUndefined();
+  });
+
+  it('gives a retried job a new file', () => {
+    handOffLogs();
+    const stale = join(jobsDir, 'job-AJ_1.log');
+    writeFileSync(stale, 'earlier attempt\n');
+    writeFileSync(join(jobsDir, 'job-AJ_1.export.done.log'), 'older attempt\n');
+    const oldInode = statSync(stale).ino;
+    const write = { out: process.stdout.write, err: process.stderr.write };
+    let out: JobOutput | undefined;
+    try {
+      out = redirectJobOutput('AJ_1', false);
+    } finally {
+      process.stdout.write = write.out;
+      process.stderr.write = write.err;
+    }
+    expect(jobFiles()).toEqual(['job-AJ_1.log']);
+    expect(readFileSync(stale, 'utf8')).toBe('');
+    expect(statSync(stale).ino).not.toBe(oldInode);
+    out!.close();
   });
 });
 
