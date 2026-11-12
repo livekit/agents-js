@@ -9,12 +9,20 @@ import {
   type TimedString,
   asError,
   createTimedString,
+  getJobContext,
   llm,
   log,
   shortuuid,
   stream,
 } from '@livekit/agents';
-import { AudioFrame, AudioResampler } from '@livekit/rtc-node';
+import {
+  AudioFrame,
+  AudioResampler,
+  ParticipantKind,
+  type RemoteParticipant,
+  type Room,
+  RoomEvent,
+} from '@livekit/rtc-node';
 import type { Phonic } from 'phonic';
 import { PhonicClient } from 'phonic';
 import type { ServerEvent, Voice } from './api_proto.js';
@@ -26,6 +34,9 @@ const PHONIC_INPUT_FRAME_MS = 20;
 const DEFAULT_MODEL = 'merritt';
 const WS_CLOSE_NORMAL = 1000;
 const TOOL_CALL_OUTPUT_TIMEOUT_MS = 60_000;
+// Caller keypad presses are buffered and sent as one user turn once the caller pauses.
+const KEYPAD_INTER_DIGIT_TIMEOUT_MS = 2000;
+const KEYPAD_MAX_DIGITS = 32;
 const TOOL_CALL_OUTPUT_MAX_CHARS_FOR_HISTORY = 16_000;
 const CONVERSATION_HISTORY_PREFIX =
   '\n\nThis conversation is being continued from an existing ' +
@@ -495,6 +506,9 @@ export class RealtimeSession extends llm.RealtimeSession {
   private generateReplyRequestId = 0;
   private systemPromptPostfix = '';
   private pendingUserText?: string;
+  private room?: Room;
+  private keypadDigits = '';
+  private keypadFlushTimer?: ReturnType<typeof setTimeout>;
 
   constructor(realtimeModel: RealtimeModel, sessionOptions?: llm.RealtimeSessionOptions) {
     super(realtimeModel);
@@ -506,6 +520,8 @@ export class RealtimeSession extends llm.RealtimeSession {
       baseUrl: this.options.baseUrl,
       reconnectConversationOnAbnormalDisconnect: true,
     });
+    this.room = getJobContext(false)?.room;
+    this.room?.on(RoomEvent.DtmfReceived, this.onDtmfReceived);
     this.bstream = new AudioByteStream(
       PHONIC_INPUT_SAMPLE_RATE,
       PHONIC_NUM_CHANNELS,
@@ -930,6 +946,39 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.socket.sendGenerateReply({ type: 'generate_reply', system_message: systemMessage });
   }
 
+  private onDtmfReceived = (_code: number, digit: string, participant: RemoteParticipant) => {
+    if (participant.kind !== ParticipantKind.SIP) {
+      return;
+    }
+    // Every key, including * and #, is part of what the caller typed.
+    this.keypadDigits += digit;
+    clearTimeout(this.keypadFlushTimer);
+    if (this.keypadDigits.length >= KEYPAD_MAX_DIGITS) {
+      this.flushKeypadDigits();
+    } else {
+      this.keypadFlushTimer = setTimeout(this.flushKeypadDigits, KEYPAD_INTER_DIGIT_TIMEOUT_MS);
+    }
+  };
+
+  private flushKeypadDigits = () => {
+    this.keypadFlushTimer = undefined;
+    const digits = this.keypadDigits;
+    this.keypadDigits = '';
+    if (!digits || this.closed) {
+      return;
+    }
+    void this.readyToStart.await.then(() => {
+      if (this.closed || !this.socket) {
+        return;
+      }
+      this.#logger.info('Sending caller keypad input');
+      this.socket.sendGenerateReply({
+        type: 'generate_reply',
+        user_message: `(User pressed ${digits} on the keypad)`,
+      });
+    });
+  };
+
   async commitAudio(): Promise<void> {
     this.#logger.warn('commitAudio is not supported by the Phonic realtime model.');
   }
@@ -949,6 +998,8 @@ export class RealtimeSession extends llm.RealtimeSession {
 
   async close(): Promise<void> {
     this.closed = true;
+    this.room?.off(RoomEvent.DtmfReceived, this.onDtmfReceived);
+    clearTimeout(this.keypadFlushTimer);
     if (this.phonicModel._activeSession === this) {
       this.phonicModel._activeSession = undefined;
     }
