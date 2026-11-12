@@ -32,7 +32,7 @@ export interface TurnDetectorOptions {
    * auto-selects `'v1'` on hosted/dev environments (falling back to `'v1-mini'`
    * if cloud creds are missing) and `'v1-mini'` otherwise. The worker still
    * preloads the mini weights unless `LIVEKIT_AGENTS_PRELOAD_LOCAL_INFERENCE=0`
-   * is set.
+   * is set. The shared inference process holds approximately 450 MB of mini model weights.
    */
   version?: TurnDetectorVersion;
   unlikelyThreshold?: number | Record<string, number>;
@@ -427,7 +427,6 @@ export class TurnDetectorStreamImpl extends BaseStreamingTurnDetectorStream {
           return;
         }
         this._onLocalFailure(e);
-        return;
       }
     }
   }

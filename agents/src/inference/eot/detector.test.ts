@@ -25,6 +25,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { APIConnectionError, APIError } from '../../_exceptions.js';
 import type { InferenceExecutor } from '../../ipc/inference_executor.js';
 import * as job from '../../job.js';
+import type { ChatContext } from '../../llm/chat_context.js';
 import { log } from '../../log.js';
 import { DEFAULT_API_CONNECT_OPTIONS } from '../../types.js';
 import type { Task } from '../../utils.js';
@@ -56,12 +57,12 @@ async function waitFor(predicate: () => boolean, ticks = 50): Promise<void> {
 }
 
 interface ScriptedTransportOptions {
-  runBehavior?: 'idle' | 'raise' | 'return';
+  runBehavior?: 'idle' | 'raise' | 'return' | 'drain';
   runExc?: Error;
 }
 
 class ScriptedTransport implements StreamingTurnDetectionTransport {
-  runBehavior: 'idle' | 'raise' | 'return';
+  runBehavior: 'idle' | 'raise' | 'return' | 'drain';
   runExc: Error | undefined;
   runCalls = 0;
   events: Array<[string, unknown]> = [];
@@ -79,9 +80,14 @@ class ScriptedTransport implements StreamingTurnDetectionTransport {
     this.runCalls += 1;
     if (this.runBehavior === 'raise') {
       if (!this.runExc) throw new Error('runExc not set');
+      this.runBehavior = 'return';
       throw this.runExc;
     }
     if (this.runBehavior === 'return') {
+      return;
+    }
+    if (this.runBehavior === 'drain') {
+      await this._stream?._drainAudioChannel();
       return;
     }
     // idle — wait until cancelled (resolved by `detach()` via the
@@ -89,11 +95,14 @@ class ScriptedTransport implements StreamingTurnDetectionTransport {
     // cancels via `aclose`).
     await new Promise(() => undefined);
   }
-  runInference(requestId: string): void {
+  runInference(requestId: string, _chatCtx?: ChatContext): void {
     this.events.push(['run_inference', requestId]);
   }
   async pushFrame(frame: AudioFrame): Promise<void> {
     this.events.push(['push_frame', frame]);
+  }
+  onStartOfTurn(elapsed: number): void {
+    this.events.push(['on_start_of_turn', elapsed]);
   }
   async flush(sentinel: FlushSentinel): Promise<void> {
     this.events.push(['flush', sentinel]);
@@ -342,7 +351,7 @@ describe('Fallback', () => {
 
 describe('LocalFallbackDisabled', () => {
   it('keeps the cloud transport active after prediction timeouts', async () => {
-    const transport = new ScriptedTransport();
+    const transport = new ScriptedTransport({ runBehavior: 'drain' });
     const stream = makeStreamWithTransport(transport, { localFallback: false });
     stream.thresholdsOptions._updateDefaults(
       { ...SERVER_THRESHOLDS },
@@ -358,7 +367,10 @@ describe('LocalFallbackDisabled', () => {
       }
 
       const prediction = stream.predict();
-      const requestId = transport.events.at(-1)![1] as string;
+      await waitFor(() => transport.events.some(([name]) => name === 'run_inference'));
+      const requestId = transport.events.findLast(
+        ([name]) => name === 'run_inference',
+      )![1] as string;
       stream._resolvePrediction(requestId, 0.75);
       expect((await prediction.await).endOfTurnProbability).toBe(0.75);
       expect(stream.model).toBe('turn-detector-v1');
@@ -491,7 +503,36 @@ describe('LocalFailureRetry', () => {
     expect(stream.isFallback).toBe(false);
     expect(stream.warnedLocalFailure).toBe(true);
     expect(stream.transport).toBe(transport);
+    expect(transport.runCalls).toBe(2);
     await stream.aclose();
+  });
+
+  it('keeps serving queued requests after the local drain fails', async () => {
+    class FlakyTransport extends ScriptedTransport {
+      private failed = false;
+
+      override async pushFrame(frame: AudioFrame): Promise<void> {
+        await super.pushFrame(frame);
+        if (!this.failed) {
+          this.failed = true;
+          throw new Error('local boom');
+        }
+      }
+    }
+
+    const transport = new FlakyTransport({ runBehavior: 'drain' });
+    const stream = makeStreamWithTransport(transport, { model: 'turn-detector-v1-mini' });
+    try {
+      stream.pushAudio(new AudioFrame(new Int16Array(160), 16000, 1, 160));
+      await waitFor(() => stream.warnedLocalFailure);
+      stream.pushAudio(new AudioFrame(new Int16Array(160), 16000, 1, 160));
+      stream.predict();
+      await waitFor(() => transport.events.some(([name]) => name === 'run_inference'));
+      expect(transport.events.filter(([name]) => name === 'run_inference')).toHaveLength(1);
+      expect(transport.runCalls).toBe(2);
+    } finally {
+      await stream.aclose();
+    }
   });
 });
 
@@ -859,11 +900,13 @@ describe('LocalModelExecutor', () => {
 
   async function predictOnce(detector: TurnDetector): Promise<number> {
     const stream = detector.stream();
+    const drain = stream._drainAudioChannel();
     try {
       stream.pushAudio(pcmFrame());
       return (await stream.predict().await).endOfTurnProbability;
     } finally {
       await stream.aclose();
+      await drain;
     }
   }
 
@@ -911,6 +954,7 @@ describe('LocalModelExecutor', () => {
       const warnSpy = vi.spyOn(log(), 'warn');
       const detector = new TurnDetector({ version: 'v1-mini', executor, localFallback });
       const stream = detector.stream();
+      const drain = stream._drainAudioChannel();
       try {
         stream.pushAudio(pcmFrame());
         const ev = await stream.predict().await;
@@ -923,6 +967,7 @@ describe('LocalModelExecutor', () => {
         }
       } finally {
         await stream.aclose();
+        await drain;
         warnSpy.mockRestore();
       }
     },
@@ -933,11 +978,13 @@ describe('LocalModelExecutor', () => {
     // (throws outside a job) → executor stays undefined.
     const detector = new TurnDetector({ version: 'v1-mini', executor: undefined });
     const stream = detector.stream();
+    const drain = stream._drainAudioChannel();
     try {
       const ev = await stream.predict().await;
       expect(ev.endOfTurnProbability).toBe(1.0);
     } finally {
       await stream.aclose();
+      await drain;
     }
   });
 });

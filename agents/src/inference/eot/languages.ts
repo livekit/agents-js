@@ -7,10 +7,11 @@
  *
  * The cloud `turn-detector-v1` model receives calibrated defaults from the
  * inference gateway (via the `SessionCreated` message); only the local
- * `turn-detector-v1-mini` model ships a hardcoded table here.
+ * `turn-detector-v1-mini` model reads the table bundled with its native model.
  */
 import { APIError } from '../../_exceptions.js';
 import type { LanguageCode } from '../../language.js';
+import { _getLocalInferenceModule } from '../_warmup.js';
 
 /** Full model name (used for telemetry/billing via `detector.model`). */
 export type TurnDetectorModel = 'turn-detector-v1' | 'turn-detector-v1-mini';
@@ -18,7 +19,7 @@ export type TurnDetectorModel = 'turn-detector-v1' | 'turn-detector-v1-mini';
 /** Public `version` constructor argument; maps to a {@link TurnDetectorModel}. */
 export type TurnDetectorVersion = 'v1' | 'v1-mini';
 
-export const LOCAL_LANGUAGES: Readonly<Record<string, number>> = {
+const FALLBACK_LOCAL_LANGUAGES: Readonly<Record<string, number>> = {
   ar: 0.35,
   de: 0.245,
   en: 0.36,
@@ -34,6 +35,24 @@ export const LOCAL_LANGUAGES: Readonly<Record<string, number>> = {
   tr: 0.255,
   zh: 0.355,
 };
+
+function localLanguages(): Readonly<Record<string, number>> {
+  return _getLocalInferenceModule()?.EOT_THRESHOLDS ?? FALLBACK_LOCAL_LANGUAGES;
+}
+
+// Resolve lazily so importing the SDK does not load the optional native binding before logging
+// is initialized. ThresholdOptions materializes this table when a detector is constructed.
+export const LOCAL_LANGUAGES: Readonly<Record<string, number>> = new Proxy(
+  {},
+  {
+    get: (_target, property) => localLanguages()[property as string],
+    ownKeys: () => Reflect.ownKeys(localLanguages()),
+    getOwnPropertyDescriptor: (_target, property) => {
+      const value = localLanguages()[property as string];
+      return value === undefined ? undefined : { configurable: true, enumerable: true, value };
+    },
+  },
+);
 
 /**
  * BCP-47 language tag (or human-readable name) → ISO 639-1 two-letter code.

@@ -13,6 +13,7 @@ import { AudioResampler, AudioResamplerQuality } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { EventEmitter } from 'node:events';
 import type { LanguageCode } from '../../language.js';
+import { ChatContext } from '../../llm/chat_context.js';
 import { log } from '../../log.js';
 import type { EOTInferenceMetrics } from '../../metrics/base.js';
 import { type StreamChannel, createStreamChannel } from '../../stream/stream_channel.js';
@@ -60,8 +61,34 @@ export interface FlushSentinel {
   reason?: string;
 }
 
+export interface StartOfTurnSentinel {
+  readonly kind: 'start_of_turn';
+  /** Milliseconds from the turn start to the end of the audio queued before this marker. */
+  elapsed: number;
+}
+
+export interface InferenceSentinel {
+  readonly kind: 'inference';
+  requestId: string;
+  chatCtx?: ChatContext;
+}
+
 export function isFlushSentinel(value: unknown): value is FlushSentinel {
   return typeof value === 'object' && value !== null && (value as FlushSentinel).kind === 'flush';
+}
+
+function isStartOfTurnSentinel(value: unknown): value is StartOfTurnSentinel {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    (value as StartOfTurnSentinel).kind === 'start_of_turn'
+  );
+}
+
+function isInferenceSentinel(value: unknown): value is InferenceSentinel {
+  return (
+    typeof value === 'object' && value !== null && (value as InferenceSentinel).kind === 'inference'
+  );
 }
 
 /**
@@ -73,8 +100,9 @@ export function isFlushSentinel(value: unknown): value is FlushSentinel {
 export interface StreamingTurnDetectionTransport {
   attach(stream: BaseStreamingTurnDetectorStream): void;
   run(): Promise<void>;
-  runInference(requestId: string): void;
+  runInference(requestId: string, chatCtx?: ChatContext): void;
   pushFrame(frame: AudioFrame): Promise<void>;
+  onStartOfTurn(elapsed: number): void;
   flush(sentinel: FlushSentinel): Promise<void>;
   detach(): void;
 }
@@ -177,7 +205,9 @@ export class BaseStreamingTurnDetectorStream {
   private _audioInputSampleRate: number | undefined;
   private _audioInputNumChannels: number | undefined;
   private _audioResampler: AudioResampler | undefined;
-  private _audioChannel: StreamChannel<AudioFrame | FlushSentinel> = createStreamChannel();
+  private _audioChannel: StreamChannel<
+    AudioFrame | FlushSentinel | StartOfTurnSentinel | InferenceSentinel
+  > = createStreamChannel();
   private _degraded = false;
 
   /** Id of the in-flight inference request, or `undefined` when idle. */
@@ -248,7 +278,7 @@ export class BaseStreamingTurnDetectorStream {
 
   /** Start a new inference request and return its future, superseding any
    * previous request. */
-  predict(): Future<TurnDetectionEvent> {
+  predict(chatCtx?: ChatContext): Future<TurnDetectionEvent> {
     if (this._degraded || this._audioChannel.closed) {
       const fut = new Future<TurnDetectionEvent>();
       fut.resolve(BaseStreamingTurnDetectorStream._defaultEvent(1.0));
@@ -259,11 +289,11 @@ export class BaseStreamingTurnDetectorStream {
     const fut = new Future<TurnDetectionEvent>();
     this._requestId = shortuuid('turn_request_');
     this._requestFut = fut;
-    // A transport may resolve synchronously (e.g. the local no-executor path
-    // defaults to 1.0 inline), which clears `_requestFut` via
-    // `_resolvePrediction`. Hold a local reference so we still return the
-    // resolved future rather than `undefined`.
-    this._transport.runInference(this._requestId);
+    void this._audioChannel.write({
+      kind: 'inference',
+      requestId: this._requestId,
+      chatCtx: chatCtx === undefined ? undefined : new ChatContext([...chatCtx.items]),
+    });
     return fut;
   }
 
@@ -322,6 +352,14 @@ export class BaseStreamingTurnDetectorStream {
     for (const resampled of this._resampleAudioFrame(frame)) {
       void this._audioChannel.write(resampled);
     }
+  }
+
+  onStartOfTurn(startedAt: number): void {
+    if (this._degraded || this._audioChannel.closed) return;
+    void this._audioChannel.write({
+      kind: 'start_of_turn',
+      elapsed: Math.max(0, Date.now() - startedAt),
+    });
   }
 
   endInput(): void {
@@ -486,6 +524,12 @@ export class BaseStreamingTurnDetectorStream {
         if (done) return;
         if (isFlushSentinel(value)) {
           await this._transport.flush(value);
+        } else if (isStartOfTurnSentinel(value)) {
+          this._transport.onStartOfTurn(value.elapsed);
+        } else if (isInferenceSentinel(value)) {
+          if (value.requestId === this._requestId) {
+            this._transport.runInference(value.requestId, value.chatCtx);
+          }
         } else {
           await this._transport.pushFrame(value);
         }
