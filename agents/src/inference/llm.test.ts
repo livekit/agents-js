@@ -503,7 +503,7 @@ describeLiveKitInference('LiveKit Inference LLM integration', agents, async (har
   for (const model of [
     'google/gemma-4-31b-it',
     'openai/gpt-4.1-mini',
-    'google/gemini-2.5-flash',
+    'google/gemini-3.6-flash',
     'openai/gpt-oss-120b',
   ] as const) {
     describe(model, async () => {
