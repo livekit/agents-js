@@ -45,6 +45,13 @@ import { CloudTransport, LocalTransport } from './transports.js';
 const SERVER_THRESHOLDS: Record<string, number> = { en: 0.56, ja: 0.37, fr: 0.575 };
 const SERVER_DEFAULT_THRESHOLD = 0.5;
 
+// Stand-in for the per-language defaults `@livekit/local-inference` ships for the mini model.
+const LOCAL_THRESHOLDS: Readonly<Record<string, number>> = Object.freeze({
+  en: 0.25,
+  ja: 0.22,
+  fr: 0.23,
+});
+
 // Backchannel defaults a gateway returns alongside the EOT defaults.
 const SERVER_BACKCHANNEL_THRESHOLDS: Record<string, number> = { en: 0.62, ja: 0.7 };
 const SERVER_BACKCHANNEL_DEFAULT = 0.6;
@@ -210,11 +217,19 @@ function withEnv(
 // Stub `LocalTransport.run` so the fallback FSM doesn't hang on a real
 // drain loop. The behavior under test is the swap, not the post-swap I/O.
 let runSpy: ReturnType<typeof vi.spyOn>;
+// Stand-in for the native module, so these tests do not depend on the binding loading on
+// the host. `LOCAL_LANGUAGES` reads its table from it.
+let localInferenceSpy: ReturnType<typeof vi.spyOn>;
 beforeEach(() => {
   runSpy = vi.spyOn(LocalTransport.prototype, 'run').mockImplementation(async () => undefined);
+  localInferenceSpy = vi.spyOn(warmup, '_getLocalInferenceModule').mockReturnValue({
+    EOT_THRESHOLDS: LOCAL_THRESHOLDS,
+    EOT_MAX_SAMPLES: 32000,
+  } as unknown as ReturnType<typeof warmup._getLocalInferenceModule>);
 });
 afterEach(() => {
   runSpy.mockRestore();
+  localInferenceSpy.mockRestore();
 });
 
 describe.each([undefined, false])('AutoSelect (localFallback=%s)', (localFallback) => {
@@ -831,6 +846,40 @@ describe('UpdateOptions', () => {
     detector.updateOptions({ unlikelyThreshold: 0.42 });
     expect(await detector.unlikelyThreshold('en')).toBeCloseTo(0.42);
     await detector.aclose();
+  });
+});
+
+describe('LocalLanguages', () => {
+  it('mirrors the thresholds bundled with the native model', () => {
+    expect({ ...LOCAL_LANGUAGES }).toEqual(LOCAL_THRESHOLDS);
+    expect(Object.keys(LOCAL_LANGUAGES)).toEqual(Object.keys(LOCAL_THRESHOLDS));
+    expect(LOCAL_LANGUAGES.en).toBe(LOCAL_THRESHOLDS.en);
+    expect('en' in LOCAL_LANGUAGES).toBe(true);
+    expect('xx' in LOCAL_LANGUAGES).toBe(false);
+  });
+
+  it('is empty without the native binding', async () => {
+    localInferenceSpy.mockReturnValue(undefined);
+
+    expect({ ...LOCAL_LANGUAGES }).toEqual({});
+    expect('en' in LOCAL_LANGUAGES).toBe(false);
+    // no table to resolve against: the mini model supports a language only through a
+    // scalar override
+    expect(new ThresholdOptions('turn-detector-v1-mini').supports('en')).toBe(false);
+    const overridden = new ThresholdOptions('turn-detector-v1-mini', 0.4);
+    expect(overridden.lookup('en')).toBe(0.4);
+    expect(overridden.supports('ja')).toBe(true);
+  });
+
+  it('is read-only', () => {
+    const table = LOCAL_LANGUAGES as Record<string, number>;
+    expect(() => {
+      table.en = 1;
+    }).toThrow(TypeError);
+    expect(() => {
+      delete table.en;
+    }).toThrow(TypeError);
+    expect(LOCAL_LANGUAGES.en).toBe(LOCAL_THRESHOLDS.en);
   });
 });
 

@@ -5315,7 +5315,7 @@ class LLMStream_2 extends llm_2.LLMStream {
     protected run(): Promise<void>;
 }
 
-// @public (undocumented)
+// @public
 const LOCAL_LANGUAGES: Readonly<Record<string, number>>;
 
 // @public

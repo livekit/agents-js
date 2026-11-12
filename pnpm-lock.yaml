@@ -1450,8 +1450,8 @@ importers:
         specifier: workspace:*
         version: link:../../agents
       '@livekit/local-inference':
-        specifier: ^0.2.7
-        version: 0.2.7
+        specifier: ^0.3.0
+        version: 0.3.0
       '@livekit/rtc-node':
         specifier: 'catalog:'
         version: 1.2.2
@@ -2484,19 +2484,9 @@ packages:
   '@livekit/changesets-changelog-github@0.2.0':
     resolution: {integrity: sha512-HWgR0biITeIaLeBRIUpqYJ0Wacmx7JJjlqhiJtqYrGItqw0kRUe6tTB6vN0fU7tK1oh08hlgr3iYdGLNLNbrNQ==}
 
-  '@livekit/local-inference-darwin-arm64@0.2.7':
-    resolution: {integrity: sha512-di4SAKcV/i9tCozvbtwZLBtRPAJYWCcLNNVWduqAQSaV2/klT2CZsGpoN0s7t8NamvL78q1LxzL2iJVc6pc75g==}
-    cpu: [arm64]
-    os: [darwin]
-
   '@livekit/local-inference-darwin-arm64@0.3.0':
     resolution: {integrity: sha512-gHfdwfUgYnb/kFMcrkki801+ejbQ9v/hurmhV4tOF32SQqr3zK8hZh3IS6esbsqSyFMgTRgeRhufWPUv3Ypfcg==}
     cpu: [arm64]
-    os: [darwin]
-
-  '@livekit/local-inference-darwin-x64@0.2.7':
-    resolution: {integrity: sha512-5e2HnjLSOwh1QfHQKbAgy0HDxAZhpOMLpwcUSXWIPeQEGOu+iu0s1f8xsRvz/LWxPOsZJn0bxFkfadnh5dvPMg==}
-    cpu: [x64]
     os: [darwin]
 
   '@livekit/local-inference-darwin-x64@0.3.0':
@@ -2504,19 +2494,9 @@ packages:
     cpu: [x64]
     os: [darwin]
 
-  '@livekit/local-inference-linux-arm64-gnu@0.2.7':
-    resolution: {integrity: sha512-zUP9RverLt66kQ9slr+T3FY1Ad9IwJ3BPnJsEB/NxUeflq5g0dbUjIjGvjBCL6DktqLRyXixEJx1J5QUKUWUsw==}
-    cpu: [arm64]
-    os: [linux]
-
   '@livekit/local-inference-linux-arm64-gnu@0.3.0':
     resolution: {integrity: sha512-f+CbEmH1Xxde++s1AMvHDdquROvd3gQyNHYoF8JskA7ChdrbAjRFblbnm001oECDt3WDXq4o7sOmC4roasAjBQ==}
     cpu: [arm64]
-    os: [linux]
-
-  '@livekit/local-inference-linux-x64-gnu@0.2.7':
-    resolution: {integrity: sha512-QG/0k0BwqnSz/qMU+Z/k0411iXkbVEdZ8XMBPjZGOorVYTQuMlovYd9hkSZvgnD84o/xeAMJekC6NcXv45FlGg==}
-    cpu: [x64]
     os: [linux]
 
   '@livekit/local-inference-linux-x64-gnu@0.3.0':
@@ -2524,19 +2504,10 @@ packages:
     cpu: [x64]
     os: [linux]
 
-  '@livekit/local-inference-win32-x64-msvc@0.2.7':
-    resolution: {integrity: sha512-8KB0xfDgYstfvOtAshRsL0zRkwGOIGzOI4NqGMq1HBr+3wMuCrVEjspjpHvuMHCYVzihprE9L/ivYqpXBAGrXw==}
-    cpu: [x64]
-    os: [win32]
-
   '@livekit/local-inference-win32-x64-msvc@0.3.0':
     resolution: {integrity: sha512-UjvDUREkCPd0UrWIM/BIaHJkpqKhoEcHH8pNBzMp7uxohEGkhVRHQSMN2lZK00IQInMrf5K3iL1HyFa4Myx3tA==}
     cpu: [x64]
     os: [win32]
-
-  '@livekit/local-inference@0.2.7':
-    resolution: {integrity: sha512-3XniFtpZHiIlAgVibhIU1YDaHbh8uScYojwtqaI1Em440w+fzix3wPXLv+IPePAmuusJzvHLrEFaTwojaBLk4w==}
-    engines: {node: '>=18.0.0'}
 
   '@livekit/local-inference@0.3.0':
     resolution: {integrity: sha512-OmBMpPv3AI9SrYDeoMchGe1rWeJKSn2xqndqoiDQ95juIEOjdisq7391Rf93O6P3JDV4toUNABJxtgC5ldAApA==}
@@ -6978,45 +6949,20 @@ snapshots:
       '@changesets/types': 6.1.0
       dotenv: 8.6.0
 
-  '@livekit/local-inference-darwin-arm64@0.2.7':
-    optional: true
-
   '@livekit/local-inference-darwin-arm64@0.3.0':
-    optional: true
-
-  '@livekit/local-inference-darwin-x64@0.2.7':
     optional: true
 
   '@livekit/local-inference-darwin-x64@0.3.0':
     optional: true
 
-  '@livekit/local-inference-linux-arm64-gnu@0.2.7':
-    optional: true
-
   '@livekit/local-inference-linux-arm64-gnu@0.3.0':
-    optional: true
-
-  '@livekit/local-inference-linux-x64-gnu@0.2.7':
     optional: true
 
   '@livekit/local-inference-linux-x64-gnu@0.3.0':
     optional: true
 
-  '@livekit/local-inference-win32-x64-msvc@0.2.7':
-    optional: true
-
   '@livekit/local-inference-win32-x64-msvc@0.3.0':
     optional: true
-
-  '@livekit/local-inference@0.2.7':
-    dependencies:
-      node-gyp-build: 4.8.4
-    optionalDependencies:
-      '@livekit/local-inference-darwin-arm64': 0.2.7
-      '@livekit/local-inference-darwin-x64': 0.2.7
-      '@livekit/local-inference-linux-arm64-gnu': 0.2.7
-      '@livekit/local-inference-linux-x64-gnu': 0.2.7
-      '@livekit/local-inference-win32-x64-msvc': 0.2.7
 
   '@livekit/local-inference@0.3.0':
     dependencies:

@@ -19,38 +19,34 @@ export type TurnDetectorModel = 'turn-detector-v1' | 'turn-detector-v1-mini';
 /** Public `version` constructor argument; maps to a {@link TurnDetectorModel}. */
 export type TurnDetectorVersion = 'v1' | 'v1-mini';
 
-const FALLBACK_LOCAL_LANGUAGES: Readonly<Record<string, number>> = {
-  ar: 0.35,
-  de: 0.245,
-  en: 0.36,
-  es: 0.35,
-  fr: 0.285,
-  hi: 0.305,
-  id: 0.345,
-  it: 0.23,
-  ja: 0.295,
-  ko: 0.4,
-  nl: 0.2,
-  pt: 0.32,
-  tr: 0.255,
-  zh: 0.355,
-};
+const NO_LOCAL_LANGUAGES: Readonly<Record<string, number>> = Object.freeze({});
 
 function localLanguages(): Readonly<Record<string, number>> {
-  return _getLocalInferenceModule()?.EOT_THRESHOLDS ?? FALLBACK_LOCAL_LANGUAGES;
+  return _getLocalInferenceModule()?.EOT_THRESHOLDS ?? NO_LOCAL_LANGUAGES;
 }
 
-// Resolve lazily so importing the SDK does not load the optional native binding before logging
-// is initialized. ThresholdOptions materializes this table when a detector is constructed.
+/**
+ * Default thresholds of the bundled `turn-detector-v1-mini` model, read from
+ * `@livekit/local-inference` so they always match the model it ships. Empty when
+ * the native binding cannot load.
+ *
+ * Resolved on access, not at import: importing the SDK must not load the optional
+ * native binding before logging is initialized.
+ */
 export const LOCAL_LANGUAGES: Readonly<Record<string, number>> = new Proxy(
   {},
   {
-    get: (_target, property) => localLanguages()[property as string],
+    get: (_target, property) => Reflect.get(localLanguages(), property),
+    has: (_target, property) => Reflect.has(localLanguages(), property),
     ownKeys: () => Reflect.ownKeys(localLanguages()),
     getOwnPropertyDescriptor: (_target, property) => {
-      const value = localLanguages()[property as string];
-      return value === undefined ? undefined : { configurable: true, enumerable: true, value };
+      const descriptor = Reflect.getOwnPropertyDescriptor(localLanguages(), property);
+      // the proxy target is an empty object, so a reported property must be configurable
+      return descriptor === undefined ? undefined : { ...descriptor, configurable: true };
     },
+    set: () => false,
+    defineProperty: () => false,
+    deleteProperty: () => false,
   },
 );
 
