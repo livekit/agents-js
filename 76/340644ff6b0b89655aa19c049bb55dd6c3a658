@@ -1,0 +1,27 @@
+.changeset/console-local-eot-runner.md
+  s_2da0db22ac1a96::t_9aae1242560728 1-5
+agents/etc/agents.api.md
+  s_2da0db22ac1a96::t_360548930fa151 5459-5461
+agents/src/console.test.ts
+  s_2da0db22ac1a96::t_784a4789b762d9 1-48
+agents/src/console.ts
+  s_2da0db22ac1a96::t_60e6ccc5424fdd 22,141
+agents/src/worker.ts
+  s_2da0db22ac1a96::t_e342b6f26ede05 68-69,71,464
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "76340644ff6b0b89655aa19c049bb55dd6c3a658",
+  "prompts": {},
+  "sessions": {
+    "s_2da0db22ac1a96": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_2da0db22ac1a96",
+        "model": "unknown"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
