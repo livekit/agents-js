@@ -1283,6 +1283,8 @@ describe('AMD', () => {
       llm: session.llm,
       suppressCompatibilityWarning: true,
     });
+    const onPrediction = vi.fn();
+    amd.on('amd_prediction', onPrediction);
     const promise = amd.execute();
     await waitForListening(amd);
     (
@@ -1292,9 +1294,12 @@ describe('AMD', () => {
     ).settle(AMDCategory.HUMAN, 'short_greeting');
     const result = await promise;
 
+    expect(room.listenerCount(RoomEvent.ParticipantDisconnected)).toBe(0);
     room.emit(RoomEvent.ParticipantDisconnected, participant);
 
     expect(result).toMatchObject({ category: AMDCategory.HUMAN, reason: 'short_greeting' });
+    expect(onPrediction).toHaveBeenCalledTimes(1);
+    expect(onPrediction).toHaveBeenCalledWith(result);
     await amd.aclose();
   });
 
