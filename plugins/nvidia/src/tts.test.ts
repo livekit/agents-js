@@ -1,3 +1,4 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES.
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
@@ -10,29 +11,53 @@ import {
   type metrics,
   type tts,
 } from '@livekit/agents';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { RivaSpeechSynthesis } from './proto.js';
-import { TTS } from './tts.js';
+import { TTS, type TTSOptions } from './tts.js';
 
 type ProtoRecord = Record<string, unknown>;
 
 type SynthesizeCall = grpc.ServerWritableStream<ProtoRecord, ProtoRecord>;
+type OfflineSynthesizeCall = grpc.ServerUnaryCall<ProtoRecord, ProtoRecord>;
 
 let server: grpc.Server | undefined;
 let instance: TTS | undefined;
 let stream: tts.SynthesizeStream | undefined;
 const sessions: AgentSession[] = [];
 
-async function startServer(synthesizeOnline: (call: SynthesizeCall) => void): Promise<TTS> {
+async function startServer(
+  synthesizeOnline: (call: SynthesizeCall) => void,
+  options: Partial<TTSOptions> = {},
+  synthesize?: (call: OfflineSynthesizeCall, callback: grpc.sendUnaryData<ProtoRecord>) => void,
+  getConfig?: (call: OfflineSynthesizeCall, callback: grpc.sendUnaryData<ProtoRecord>) => void,
+): Promise<TTS> {
   server = new grpc.Server();
   const { service } = RivaSpeechSynthesis as unknown as grpc.ServiceClientConstructor;
-  server.addService(service, { SynthesizeOnline: synthesizeOnline });
+  server.addService(service, {
+    SynthesizeOnline: synthesizeOnline,
+    Synthesize:
+      synthesize ??
+      ((_call: OfflineSynthesizeCall, callback: grpc.sendUnaryData<ProtoRecord>) =>
+        callback({ code: grpc.status.UNIMPLEMENTED }, null)),
+    GetRivaSynthesisConfig:
+      getConfig ??
+      ((_call: OfflineSynthesizeCall, callback: grpc.sendUnaryData<ProtoRecord>) =>
+        callback(null, { modelConfig: [] })),
+  });
   const port = await new Promise<number>((resolve, reject) =>
     server!.bindAsync('127.0.0.1:0', grpc.ServerCredentials.createInsecure(), (error, port) =>
       error ? reject(error) : resolve(port),
     ),
   );
-  instance = new TTS({ server: `127.0.0.1:${port}`, useSsl: false, apiKey: 'test-key' });
+  instance = new TTS({
+    server: `127.0.0.1:${port}`,
+    useSsl: false,
+    apiKey: 'test-key',
+    ...options,
+  });
   return instance;
 }
 
@@ -59,7 +84,116 @@ afterEach(async () => {
 });
 
 describe('NVIDIA TTS', () => {
-  it('sends flushed text in one logical segment and reports all text and audio', async () => {
+  it.each([
+    ['Magpie-Multilingual.EN-US.Leo', 'Magpie-Multilingual'],
+    ['Chatterbox', 'Chatterbox'],
+  ])('reports the model family for %s', async (voice, family) => {
+    instance = new TTS({ apiKey: 'test', voice });
+    expect(instance.model).toBe(family);
+  });
+
+  it.each(['online', 'offline'] as const)('supports %s synthesis', async (inferenceMode) => {
+    const requests: ProtoRecord[] = [];
+    const provider = await startServer(
+      (call) => {
+        requests.push(call.request);
+        call.write({ audio: Buffer.alloc(3200) });
+        call.end();
+      },
+      {
+        inferenceMode,
+        options: {
+          customDictionary: 'LiveKit  live kit',
+          customConfiguration: { exaggeration_factor: '0.5' },
+        },
+      },
+      (call, callback) => {
+        requests.push(call.request);
+        callback(null, { audio: Buffer.alloc(3200) });
+      },
+    );
+    const audio: tts.SynthesizedAudio[] = [];
+    for await (const item of provider.synthesize(' hello ')) audio.push(item);
+    expect(audio).toHaveLength(1);
+    expect(requests).toEqual([
+      expect.objectContaining({
+        text: 'hello',
+        encoding: 1,
+        customDictionary: 'LiveKit  live kit',
+        customConfiguration: { exaggeration_factor: '0.5' },
+      }),
+    ]);
+  });
+
+  it('normalizes voice listings into individual locale entries without duplicates', async () => {
+    const provider = await startServer(
+      (call) => call.end(),
+      {},
+      undefined,
+      (_call, callback) =>
+        callback(null, {
+          modelConfig: [
+            {
+              modelName: 'magpie',
+              parameters: {
+                language_code: 'en-US, es-US',
+                voice_name: 'Magpie',
+                subvoices: 'Leo:male,Leo:male',
+              },
+            },
+          ],
+        }),
+    );
+    await expect(provider.listVoices()).resolves.toEqual({
+      'en-US': { voices: ['Magpie.Leo'] },
+      'es-US': { voices: ['Magpie.Leo'] },
+    });
+  });
+
+  it('sends zero-shot prompt audio and quality using the wire protocol', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'nvidia-tts-'));
+    const prompt = join(directory, 'prompt.wav');
+    const pcm = Buffer.alloc(320);
+    const wav = Buffer.alloc(44 + pcm.length);
+    wav.write('RIFF', 0);
+    wav.writeUInt32LE(wav.length - 8, 4);
+    wav.write('WAVEfmt ', 8);
+    wav.writeUInt32LE(16, 16);
+    wav.writeUInt16LE(1, 20);
+    wav.writeUInt16LE(1, 22);
+    wav.writeUInt32LE(16000, 24);
+    wav.writeUInt32LE(32000, 28);
+    wav.writeUInt16LE(2, 32);
+    wav.writeUInt16LE(16, 34);
+    wav.write('data', 36);
+    wav.writeUInt32LE(pcm.length, 40);
+    pcm.copy(wav, 44);
+    writeFileSync(prompt, wav);
+    try {
+      let request: ProtoRecord | undefined;
+      const provider = await startServer(
+        (call) => {
+          request = call.request;
+          call.write({ audio: Buffer.alloc(3200) });
+          call.end();
+        },
+        { audioPromptFile: prompt, quality: 30 },
+      );
+      for await (const _item of provider.synthesize('hello')) {
+        // Drain synthesized audio so the request completes.
+      }
+      expect(request!['zeroShotData']).toMatchObject({
+        audioPrompt: pcm,
+        sampleRateHz: 16000,
+        encoding: 1,
+        quality: 30,
+      });
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('completes after flush while text input remains open', async () => {
     const requests: ProtoRecord[] = [];
     const metadata: grpc.Metadata[] = [];
     const defaultMaxRetry = DEFAULT_API_CONNECT_OPTIONS.maxRetry;
@@ -76,8 +210,6 @@ describe('NVIDIA TTS', () => {
     stream = provider.stream();
     stream.pushText('Hello there.');
     stream.flush();
-    stream.pushText('See you later.');
-    stream.endInput();
     const audio = await collect(stream);
 
     expect(requests).toEqual([
@@ -88,16 +220,15 @@ describe('NVIDIA TTS', () => {
         sampleRateHz: 16000,
         voiceName: 'Magpie-Multilingual.EN-US.Leo',
       }),
-      expect.objectContaining({ text: 'See you later.' }),
     ]);
     expect(metadata[0]!.get('authorization')).toEqual([]);
     expect(metadata[0]!.get('function-id')).toEqual([]);
 
     expect(new Set(audio.map((item) => item.segmentId)).size).toBe(1);
-    expect(audio.map((item) => item.final)).toEqual([false, false, true]);
-    expect(audio.map((item) => item.frame.samplesPerChannel)).toEqual([1600, 1600, 200]);
-    expect(collected.map((value) => value.charactersCount)).toEqual([26]);
-    expect(collected.map((value) => value.audioDurationMs)).toEqual([213]);
+    expect(audio.map((item) => item.final)).toEqual([false, true]);
+    expect(audio.map((item) => item.frame.samplesPerChannel)).toEqual([1600, 100]);
+    expect(collected.map((value) => value.charactersCount)).toEqual([12]);
+    expect(collected.map((value) => value.audioDurationMs)).toEqual([106]);
     expect(DEFAULT_API_CONNECT_OPTIONS.maxRetry).toBe(defaultMaxRetry);
   });
 
@@ -121,7 +252,7 @@ describe('NVIDIA TTS', () => {
     expect(connOptions.maxRetry).toBe(3);
   });
 
-  it('preserves audio and continues after a failed sentence', async () => {
+  it('preserves audio and stops after a failed sentence', async () => {
     const texts: string[] = [];
     const provider = await startServer((call) => {
       texts.push(call.request['text'] as string);
@@ -135,16 +266,12 @@ describe('NVIDIA TTS', () => {
     const errors: unknown[] = [];
     provider.on('error', (error) => errors.push(error));
     stream = provider.stream();
-    for (const text of ['First sentence.', 'Second sentence.', 'Third sentence.']) {
-      stream.pushText(text);
-      stream.flush();
-    }
+    stream.pushText('First sentence. Second sentence. Third sentence.');
     stream.endInput();
     const audio = await collect(stream);
-    expect(texts).toEqual(['First sentence.', 'Second sentence.', 'Third sentence.']);
-    expect(audio.map((item) => item.frame.data[0])).toEqual([257, 771]);
-    expect(audio.map((item) => item.final)).toEqual([false, true]);
-    expect(errors).toEqual([]);
+    expect(texts).toEqual(['First sentence. Second sentence.', 'Third sentence.']);
+    expect(audio.map((item) => item.frame.data[0])).toEqual([257]);
+    expect(errors).toMatchObject([{ recoverable: false }]);
   });
 
   it('reuses the same connection across synthesis streams', async () => {
@@ -280,7 +407,7 @@ describe('NVIDIA TTS', () => {
     expect(audio).toEqual([]);
   });
 
-  it('synthesizes complete text one sentence per request', async () => {
+  it('synthesizes complete text in one request', async () => {
     const first = 'This is the first sentence of the reply.';
     const second = 'This is the second sentence of the reply.';
     const texts: string[] = [];
@@ -295,11 +422,11 @@ describe('NVIDIA TTS', () => {
     const audio: tts.SynthesizedAudio[] = [];
     for await (const item of provider.synthesize(`${first} ${second}`)) audio.push(item);
 
-    expect(texts).toEqual([first, second]);
+    expect(texts).toEqual([`${first} ${second}`]);
     expect(new Set(audio.map((item) => item.requestId)).size).toBe(1);
-    expect(audio.map((item) => item.frame.samplesPerChannel)).toEqual([1600, 1600, 200]);
-    expect(audio.map((item) => item.final)).toEqual([false, false, true]);
-    expect(collected.map((value) => value.audioDurationMs)).toEqual([213]);
+    expect(audio.map((item) => item.frame.samplesPerChannel)).toEqual([1600, 100]);
+    expect(audio.map((item) => item.final)).toEqual([false, true]);
+    expect(collected.map((value) => value.audioDurationMs)).toEqual([106]);
   });
 
   it('retries a chunked request only when no audio was produced', async () => {

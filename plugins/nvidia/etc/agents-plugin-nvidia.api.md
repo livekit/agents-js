@@ -28,12 +28,31 @@ export class ChunkedStream extends tts.ChunkedStream {
     protected run(): Promise<void>;
 }
 
+// Warning: (ae-missing-release-tag) "EndpointingConfig" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export interface EndpointingConfig {
+    mode?: 'lowLatency';
+    // (undocumented)
+    startHistory?: number;
+    // (undocumented)
+    startThreshold?: number;
+    // (undocumented)
+    stopHistory?: number;
+    // (undocumented)
+    stopHistoryEou?: number;
+    // (undocumented)
+    stopThreshold?: number;
+    // (undocumented)
+    stopThresholdEou?: number;
+}
+
 // Warning: (ae-forgotten-export) The symbol "stt" needs to be exported by the entry point index.d.ts
 // Warning: (ae-missing-release-tag) "SpeechStream" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
 export class SpeechStream extends stt.SpeechStream {
-    constructor(instance: STT, opts: STTOptions, connOptions?: APIConnectOptions);
+    constructor(instance: STT, opts: STTOptions, streamingConfig: object, connOptions?: APIConnectOptions);
     // (undocumented)
     label: string;
     // (undocumented)
@@ -45,6 +64,7 @@ export class SpeechStream extends stt.SpeechStream {
 // @public
 export class STT extends stt.STT {
     constructor(opts?: Partial<STTOptions>);
+    // (undocumented)
     close(): Promise<void>;
     // (undocumented)
     label: string;
@@ -58,27 +78,70 @@ export class STT extends stt.STT {
     // Warning: (ae-forgotten-export) The symbol "AudioBuffer_2" needs to be exported by the entry point index.d.ts
     //
     // (undocumented)
-    _recognize(_buffer: AudioBuffer_2): Promise<stt.SpeechEvent>;
+    protected _recognize(buffer: AudioBuffer_2, abortSignal?: AbortSignal): Promise<stt.SpeechEvent>;
     stream(options?: {
         language?: string;
         connOptions?: APIConnectOptions;
     }): SpeechStream;
 }
 
+// Warning: (ae-missing-release-tag) "STTInferenceMode" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+export type STTInferenceMode = 'auto' | 'streaming' | 'offline';
+
 // Warning: (ae-missing-release-tag) "STTOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
 export interface STTOptions {
+    // (undocumented)
     apiKey?: string;
+    // (undocumented)
+    boostedLmScore: number;
+    // (undocumented)
+    boostedLmWords?: string[];
+    // (undocumented)
     enableDiarization: boolean;
+    // (undocumented)
+    enableWordTimeOffsets: boolean;
+    // (undocumented)
+    endpointing?: EndpointingConfig;
+    // (undocumented)
     functionId: string;
+    // (undocumented)
+    inferenceMode: STTInferenceMode;
+    // (undocumented)
+    interimResults: boolean;
+    // (undocumented)
     languageCode: string;
+    // (undocumented)
     maxSpeakerCount: number;
+    // (undocumented)
     model: string;
+    // (undocumented)
+    options: STTProviderOptions;
+    // (undocumented)
+    profanityFilter: boolean;
+    // (undocumented)
     punctuate: boolean;
+    // (undocumented)
     sampleRate: number;
+    // (undocumented)
     server: string;
+    // (undocumented)
     useSsl: boolean;
+    // (undocumented)
+    verbatimTranscripts: boolean;
+}
+
+// Warning: (ae-missing-release-tag) "STTProviderOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export interface STTProviderOptions {
+    // (undocumented)
+    customConfiguration?: Record<string, string>;
+    // (undocumented)
+    recognitionConfig?: Record<string, unknown>;
 }
 
 // Warning: (ae-missing-release-tag) "SynthesizeStream" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -119,17 +182,40 @@ export class TTS extends tts.TTS {
     synthesize(text: string, connOptions?: APIConnectOptions, abortSignal?: AbortSignal): ChunkedStream;
 }
 
+// Warning: (ae-missing-release-tag) "TTSInferenceMode" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+export type TTSInferenceMode = 'online' | 'offline';
+
 // Warning: (ae-missing-release-tag) "TTSOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
 export interface TTSOptions {
     apiKey?: string;
+    audioPromptFile?: string;
     functionId: string;
+    // (undocumented)
+    inferenceMode: TTSInferenceMode;
     languageCode: string;
+    // (undocumented)
+    options: TTSProviderOptions;
+    quality?: number;
     sampleRate: number;
     server: string;
     useSsl: boolean;
     voice: string;
+}
+
+// Warning: (ae-missing-release-tag) "TTSProviderOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export interface TTSProviderOptions {
+    // (undocumented)
+    customConfiguration?: Record<string, string>;
+    // (undocumented)
+    customDictionary?: string;
+    // (undocumented)
+    enableWordTimeOffsets?: boolean;
 }
 
 // (No @packageDocumentation comment for this package)

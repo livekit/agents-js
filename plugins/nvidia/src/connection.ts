@@ -1,25 +1,56 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES.
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 import * as grpc from '@grpc/grpc-js';
-import { APIConnectionError, ConnectionPool } from '@livekit/agents';
+import {
+  APIConnectionError,
+  type APIError,
+  APIStatusError,
+  APITimeoutError,
+  ConnectionPool,
+} from '@livekit/agents';
 import type { RivaClientConstructor } from './proto.js';
 
-/** gRPC statuses that a retry cannot fix: bad requests and rejected credentials. */
-const FATAL_STATUSES: ReadonlySet<grpc.status> = new Set([
-  grpc.status.INVALID_ARGUMENT,
-  grpc.status.PERMISSION_DENIED,
-  grpc.status.UNAUTHENTICATED,
+const STATUS_CODES: Partial<Record<grpc.status, number>> = {
+  [grpc.status.INVALID_ARGUMENT]: 400,
+  [grpc.status.NOT_FOUND]: 404,
+  [grpc.status.ALREADY_EXISTS]: 409,
+  [grpc.status.PERMISSION_DENIED]: 403,
+  [grpc.status.RESOURCE_EXHAUSTED]: 429,
+  [grpc.status.FAILED_PRECONDITION]: 400,
+  [grpc.status.ABORTED]: 503,
+  [grpc.status.OUT_OF_RANGE]: 400,
+  [grpc.status.UNIMPLEMENTED]: 501,
+  [grpc.status.INTERNAL]: 500,
+  [grpc.status.UNAVAILABLE]: 503,
+  [grpc.status.DATA_LOSS]: 500,
+  [grpc.status.UNAUTHENTICATED]: 401,
+};
+
+const RETRYABLE_STATUSES: ReadonlySet<grpc.status> = new Set([
+  grpc.status.UNKNOWN,
+  grpc.status.RESOURCE_EXHAUSTED,
+  grpc.status.ABORTED,
+  grpc.status.INTERNAL,
+  grpc.status.UNAVAILABLE,
 ]);
 
-/** Convert a failed Riva call into an error that is retryable unless its status is fatal. */
-export function toAPIConnectionError(
-  error: grpc.ServiceError,
-  message: string,
-): APIConnectionError {
-  return new APIConnectionError({
-    message: `${message}: ${error.message}`,
-    options: { retryable: !FATAL_STATUSES.has(error.code) },
+/** Convert a failed NVIDIA Speech call into the matching LiveKit API error. */
+export function toAPIError(error: grpc.ServiceError, message: string): APIError {
+  const details = error.details || error.message;
+  if (error.code === grpc.status.DEADLINE_EXCEEDED) {
+    return new APITimeoutError({ message: `${message} timed out: ${details}` });
+  }
+  if (error.code === grpc.status.CANCELLED) {
+    return new APIConnectionError({ message: `${message} was cancelled by NVIDIA Speech` });
+  }
+  return new APIStatusError({
+    message: `${message}: ${details}`,
+    options: {
+      statusCode: STATUS_CODES[error.code] ?? -1,
+      retryable: RETRYABLE_STATUSES.has(error.code),
+    },
   });
 }
 

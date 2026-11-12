@@ -1,9 +1,16 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES.
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { initializeLogger } from '@livekit/agents';
+import * as grpc from '@grpc/grpc-js';
+import {
+  APIConnectionError,
+  APIStatusError,
+  APITimeoutError,
+  initializeLogger,
+} from '@livekit/agents';
 import { afterEach, beforeAll, expect, it, vi } from 'vitest';
-import { RivaConnection } from './connection.js';
+import { RivaConnection, toAPIError } from './connection.js';
 import { RivaSpeechSynthesis } from './proto.js';
 import { STT } from './stt.js';
 import { TTS } from './tts.js';
@@ -44,4 +51,24 @@ it('reads the API key at construction when the option is undefined', async () =>
   vi.stubEnv('NVIDIA_API_KEY', '');
   expect(() => new STT()).toThrow('NVIDIA API key is required');
   expect(() => new TTS()).toThrow('NVIDIA API key is required');
+});
+
+it.each([
+  [grpc.status.ABORTED, 503, true],
+  [grpc.status.UNAVAILABLE, 503, true],
+  [grpc.status.INVALID_ARGUMENT, 400, false],
+  [grpc.status.UNAUTHENTICATED, 401, false],
+] as const)('maps gRPC status %s to a status error', (code, statusCode, retryable) => {
+  const error = toAPIError({ code, details: 'provider failure' } as grpc.ServiceError, 'test');
+  expect(error).toBeInstanceOf(APIStatusError);
+  expect(error).toMatchObject({ statusCode, retryable });
+});
+
+it('maps cancellation and deadlines to connection errors', () => {
+  expect(toAPIError({ code: grpc.status.CANCELLED } as grpc.ServiceError, 'test')).toBeInstanceOf(
+    APIConnectionError,
+  );
+  expect(
+    toAPIError({ code: grpc.status.DEADLINE_EXCEEDED } as grpc.ServiceError, 'test'),
+  ).toBeInstanceOf(APITimeoutError);
 });
