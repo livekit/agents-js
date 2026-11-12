@@ -1,0 +1,23 @@
+agents/package.json
+  s_ba259c0f480170::t_022b7557133d39 70
+plugins/silero/package.json
+  s_ba259c0f480170::t_977cd6a12c05e1 38
+pnpm-lock.yaml
+  s_ba259c0f480170::t_b7f82e51858ec6 140-141,1453-1454,2487-2488,2492-2493,2497-2498,2502-2503,2507-2508,2512-2513,6952,6955,6958,6961,6964,6967,6971-6975
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "11cf499ced7e730d38c771c74f22cd13b3825ad3",
+  "prompts": {},
+  "sessions": {
+    "s_ba259c0f480170": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_ba259c0f480170",
+        "model": "unknown"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
