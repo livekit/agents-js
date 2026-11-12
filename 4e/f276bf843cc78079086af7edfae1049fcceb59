@@ -1,0 +1,21 @@
+.changeset/settle-amd-disconnect.md
+  s_8479ec38083581::t_cbd539128f1ee1 5
+agents/src/voice/amd.test.ts
+  s_8479ec38083581::t_773b93387ec510 1286-1287,1297,1301-1302
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4ef276bf843cc78079086af7edfae1049fcceb59",
+  "prompts": {},
+  "sessions": {
+    "s_8479ec38083581": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_8479ec38083581",
+        "model": "unknown"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
