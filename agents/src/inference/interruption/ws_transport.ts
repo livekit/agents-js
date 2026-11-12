@@ -38,6 +38,10 @@ export interface WsTransportState {
   overlapSpeechStarted: boolean;
   overlapSpeechStartedAt: number | undefined;
   cache: BoundedCache<number, InterruptionCacheEntry>;
+  /** Bumped on every `overlap-speech-started` and never reset; identifies the open overlap. */
+  overlapGeneration: number;
+  /** Overlap generation each in-flight request was cut for, keyed by its `createdAt`. */
+  requestGenerations: BoundedCache<number, { generation: number }>;
 }
 
 export const wsMessageSchema = z.discriminatedUnion('type', [
@@ -150,6 +154,18 @@ export interface WsTransportResult {
   transport: TransformStream<Int16Array | OverlappingSpeechEvent, OverlappingSpeechEvent>;
   reconnect: () => Promise<void>;
   close: () => void;
+}
+
+/**
+ * Whether the response for `createdAt` belongs to an overlap that has since closed.
+ *
+ * Fails open: a request whose generation is no longer on record — evicted from the bounded
+ * ledger, or sent by an older transport — counts as current. Losing the bookkeeping therefore
+ * degrades to the previous behaviour rather than suppressing a genuine interruption.
+ */
+function isStaleResponse(state: WsTransportState, createdAt: number): boolean {
+  const recorded = state.requestGenerations.get(createdAt);
+  return recorded !== undefined && recorded.generation !== state.overlapGeneration;
 }
 
 /**
@@ -271,6 +287,10 @@ export function createWsTransport(
 
       case MSG_INTERRUPTION_DETECTED: {
         const createdAt = message.created_at;
+        if (isStaleResponse(state, createdAt)) {
+          logger.debug({ createdAt }, 'dropping bargein response from a closed overlap');
+          break;
+        }
         const overlapSpeechStartedAt = state.overlapSpeechStartedAt;
         if (state.overlapSpeechStarted && overlapSpeechStartedAt !== undefined) {
           const existing = state.cache.get(createdAt);
@@ -337,6 +357,12 @@ export function createWsTransport(
 
       case MSG_INFERENCE_DONE: {
         const createdAt = message.created_at;
+        if (isStaleResponse(state, createdAt)) {
+          // would otherwise poison the new overlap's cache entry, which
+          // `overlap-speech-ended` later pops to build its verdict
+          logger.debug({ createdAt }, 'dropping inference result from a closed overlap');
+          break;
+        }
         const overlapSpeechStartedAt = state.overlapSpeechStartedAt;
         if (state.overlapSpeechStarted && overlapSpeechStartedAt !== undefined) {
           const existing = state.cache.get(createdAt);
@@ -400,6 +426,7 @@ export function createWsTransport(
         speechInput: audioSlice,
       }),
     );
+    state.requestGenerations.set(createdAt, { generation: state.overlapGeneration });
 
     const header = new ArrayBuffer(8);
     const view = new DataView(header);
