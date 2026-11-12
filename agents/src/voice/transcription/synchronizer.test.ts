@@ -267,6 +267,78 @@ describe('TranscriptionSynchronizer enabled behavior', () => {
     },
   );
 
+  it('does not jump ahead when timed strings end mid-word', async () => {
+    // Character-level alignments (e.g. ElevenLabs) end a timed string inside every word.
+    const text = 'You know you do. You do.';
+    const downstream = new MockTextOutput();
+    const synchronizer = new TranscriptionSynchronizer(new MockAudioOutput(), downstream);
+    await synchronizer.barrier();
+    const impl = synchronizer._impl;
+    try {
+      impl.pushAudio(new AudioFrame(new Int16Array(6400), 16_000, 1, 6400));
+      impl.endAudioInput();
+      impl.onPlaybackStarted(Date.now());
+      [...text].forEach((char, i) =>
+        impl.pushText(
+          createTimedString({ text: char, startTime: i * 0.01, endTime: (i + 1) * 0.01 }),
+        ),
+      );
+      await vi.waitFor(() => expect(downstream.captured.join('')).toBe(text), { timeout: 2000 });
+      // One character per forwarded piece: nothing ran ahead to a later repeat of the letters.
+      expect(downstream.captured.filter((piece) => piece.trim().length > 1)).toEqual([]);
+    } finally {
+      await synchronizer.close();
+    }
+  });
+
+  it('keeps up with the audio after a stall in character-level timings', async () => {
+    const text =
+      'The first quarter numbers are in and the pipeline looks healthy across every region, ' +
+      'with the strongest growth in the north.';
+    const charSeconds = 0.04;
+    const stall = { atCharacter: 30, seconds: 1 };
+    const cutSeconds = 4;
+    const downstream = new MockTextOutput();
+    const synchronizer = new TranscriptionSynchronizer(new MockAudioOutput(), downstream);
+    await synchronizer.barrier();
+    const impl = synchronizer._impl;
+    const timers: NodeJS.Timeout[] = [];
+    try {
+      impl.pushAudio(new AudioFrame(new Int16Array(160_000), 16_000, 1, 160_000));
+      impl.endAudioInput();
+      impl.onPlaybackStarted(Date.now());
+      // Each character arrives 80 ms before it plays; from `stall.atCharacter` on, the TTS
+      // stream delivers (and the audio plays) `stall.seconds` late, so the playback clock runs
+      // past the timings and pacing falls back to the speaking rate.
+      [...text].forEach((char, i) => {
+        const stallSeconds = i >= stall.atCharacter ? stall.seconds : 0;
+        const deliverMs = (i * charSeconds + stallSeconds) * 1000 - 80;
+        timers.push(
+          setTimeout(
+            () =>
+              impl.pushText(
+                createTimedString({
+                  text: char,
+                  startTime: i * charSeconds,
+                  endTime: (i + 1) * charSeconds,
+                }),
+              ),
+            Math.max(0, deliverMs),
+          ),
+        );
+      });
+      await new Promise((resolve) => setTimeout(resolve, cutSeconds * 1000));
+      const played = (cutSeconds - stall.seconds) / charSeconds;
+      const saved = downstream.captured.join('').length;
+      // Counting one syllable per character holds the text near half of what played.
+      expect(saved).toBeGreaterThanOrEqual(played * 0.7);
+      expect(saved).toBeLessThanOrEqual(played * 1.2);
+    } finally {
+      timers.forEach((timer) => clearTimeout(timer));
+      await synchronizer.close();
+    }
+  }, 10_000);
+
   it('directly forwards text when synchronization is disabled', async () => {
     const downstream = new MockTextOutput();
     const synchronizer = new TranscriptionSynchronizer(new MockAudioOutput(), downstream, {
