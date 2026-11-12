@@ -131,15 +131,17 @@ new phonic.realtime.RealtimeModel({
 });
 ```
 
-| Field                             | Type      | Default | Description                                                                                                                                                             |
-| --------------------------------- | --------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `name`                            | `string`  | —       | Tool this config applies to (required)                                                                                                                                  |
-| `require_speech_before_tool_call` | `boolean` | `false` | Require the agent to speak before the tool can be called                                                                                                                |
-| `forbid_speech_after_tool_call`   | `boolean` | `false` | Suppress the auto-generated spoken reply after the tool. Use for tools that always hand off to another agent (a non-handoff tool set here would leave the agent silent) |
-| `forbid_tool_call_after_speech`   | `boolean` | `false` | Drop the tool call if the agent already spoke this turn                                                                                                                 |
-| `allow_tool_chaining`             | `boolean` | `false` | Allow another tool call immediately after this tool's output                                                                                                            |
-| `respond_after_sec`               | `number`  | —       | **`choose_not_to_respond` only.** Seconds to wait after the tool fires; if the user stays silent, the agent speaks a follow-up. Omit to keep the default (stay silent). |
-| `speech_before_tool_call`         | `string`  | —       | **`keypad_input` / `natural_conversation_ending` only.** `required` \| `optional` \| `suppressed`.                                                                      |
+| Field                             | Type                | Default  | Description                                                                                                                                                                                                      |
+| --------------------------------- | ------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`                            | `string`            | —        | Tool this config applies to (required)                                                                                                                                                                           |
+| `require_speech_before_tool_call` | `boolean`           | `false`  | Require the agent to speak before the tool can be called                                                                                                                                                         |
+| `forbid_speech_after_tool_call`   | `boolean`           | `false`  | Suppress the auto-generated spoken reply after the tool. Use for tools that always hand off to another agent (a non-handoff tool set here would leave the agent silent)                                          |
+| `forbid_tool_call_after_speech`   | `boolean`           | `false`  | Drop the tool call if the agent already spoke this turn                                                                                                                                                          |
+| `allow_tool_chaining`             | `boolean`           | `false`  | Allow another tool call immediately after this tool's output                                                                                                                                                     |
+| `execution_mode`                  | `'sync' \| 'async'` | `'sync'` | The agent waits for a sync tool's output before it continues, and a caller interruption marks the call interrupted. With an async tool it keeps talking while the tool runs and replies when the output arrives. |
+| `wait_for_response`               | `boolean`           | `false`  | **Async tools only.** Keep the caller engaged and make no other tool calls until this tool's output arrives. Can't be combined with `allow_tool_chaining`.                                                       |
+| `respond_after_sec`               | `number`            | —        | **`choose_not_to_respond` only.** Seconds to wait after the tool fires; if the user stays silent, the agent speaks a follow-up. Omit to keep the default (stay silent).                                          |
+| `speech_before_tool_call`         | `string`            | —        | **`keypad_input` / `natural_conversation_ending` only.** `required` \| `optional` \| `suppressed`.                                                                                                               |
 
 The plugin always sends tool calls with `wait_for_speech_before_tool_call` on; this is not configurable per tool.
 
