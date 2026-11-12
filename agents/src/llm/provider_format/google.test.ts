@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { VideoBufferType, VideoFrame } from '@livekit/rtc-node';
+import { AudioFrame, VideoBufferType, VideoFrame } from '@livekit/rtc-node';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { initializeLogger } from '../../log.js';
 import {
@@ -10,6 +10,7 @@ import {
   FunctionCall,
   FunctionCallOutput,
   Instructions,
+  createAudioContent,
 } from '../chat_context.js';
 import { serializeImage } from '../utils.js';
 import { toChatCtx } from './google.js';
@@ -654,6 +655,47 @@ describe('Google Provider Format - toChatCtx', () => {
             },
           },
         ],
+      },
+    ]);
+    expect(formatData.systemMessages).toBeNull();
+  });
+
+  it('should skip audio content', async () => {
+    const frame = new AudioFrame(new Int16Array(240), 24000, 1, 240);
+    const ctx = ChatContext.empty();
+    ctx.addMessage({
+      role: 'user',
+      content: ['Hello', createAudioContent({ frame: [frame], transcript: 'Hello' })],
+    });
+
+    const [result, formatData] = await toChatCtx(ctx, false);
+
+    expect(result).toEqual([
+      {
+        role: 'user',
+        parts: [{ text: 'Hello' }],
+      },
+    ]);
+    expect(formatData.systemMessages).toBeNull();
+  });
+
+  it('should not emit an empty turn for audio only messages', async () => {
+    const frame = new AudioFrame(new Int16Array(240), 24000, 1, 240);
+    const ctx = ChatContext.empty();
+    ctx.addMessage({ role: 'user', content: 'Hello' });
+    ctx.addMessage({ role: 'assistant', content: 'Hi there!' });
+    ctx.addMessage({ role: 'user', content: [createAudioContent({ frame: [frame] })] });
+
+    const [result, formatData] = await toChatCtx(ctx, false);
+
+    expect(result).toEqual([
+      {
+        role: 'user',
+        parts: [{ text: 'Hello' }],
+      },
+      {
+        role: 'model',
+        parts: [{ text: 'Hi there!' }],
       },
     ]);
     expect(formatData.systemMessages).toBeNull();
