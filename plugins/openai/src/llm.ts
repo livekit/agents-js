@@ -15,6 +15,7 @@ import type {
   ReasoningEffort,
   TelnyxChatModels,
   TogetherChatModels,
+  UrunChatModels,
   XAIChatModels,
 } from './models.js';
 import { defaultReasoningEffort } from './models.js';
@@ -172,6 +173,36 @@ export class LLM extends llm.LLM {
     return new LLM({
       model: 'gpt-oss-120b',
       baseURL: 'https://api.cerebras.ai/v1',
+      ...opts,
+    });
+  }
+
+  /**
+   * Create a new instance of uRun LLM.
+   *
+   * @remarks
+   * uRun is an OpenAI-compatible inference provider serving open-weight models (https://urun.sh).
+   * `apiKey` must be set to your uRun API key, either using the argument or by setting the
+   * `URUN_API_KEY` environment variable.
+   */
+  static withUrun(
+    opts: Partial<{
+      model: string | UrunChatModels;
+      apiKey?: string;
+      baseURL?: string;
+      user?: string;
+      temperature?: number;
+      client: OpenAI;
+    }> = {},
+  ): LLM {
+    opts.apiKey = opts.apiKey || process.env.URUN_API_KEY;
+    if (opts.apiKey === undefined) {
+      throw new Error('uRun API key is required, whether as an argument or as $URUN_API_KEY');
+    }
+
+    return new LLM({
+      model: 'qwen3.8-27b:nvfp4',
+      baseURL: 'https://inference.urun.sh/v1',
       ...opts,
     });
   }
