@@ -1,0 +1,19 @@
+pnpm-lock.yaml
+  s_b6ebb92b33ee85::t_3cb76ece7ed9d5 137-138,1450-1451,2484-2485,2489-2490,2494-2495,2499-2500,2504-2505,2509-2510,6890,6893,6896,6899,6902,6905,6909-6913
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ee5a9b6fb69663a59e0fcdb5f71b1a1ff76df6dd",
+  "prompts": {},
+  "sessions": {
+    "s_b6ebb92b33ee85": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7ffd5347-5f1e-4331-bcb5-8dce87ae0dd4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
