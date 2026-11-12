@@ -686,7 +686,7 @@ describe('Google Provider Format - toChatCtx', () => {
     ctx.addMessage({ role: 'assistant', content: 'Hi there!' });
     ctx.addMessage({ role: 'user', content: [createAudioContent({ frame: [frame] })] });
 
-    const [result, formatData] = await toChatCtx(ctx, false);
+    const [result, formatData] = await toChatCtx(ctx, true);
 
     expect(result).toEqual([
       {
@@ -697,8 +697,29 @@ describe('Google Provider Format - toChatCtx', () => {
         role: 'model',
         parts: [{ text: 'Hi there!' }],
       },
+      {
+        role: 'user',
+        parts: [{ text: '.' }],
+      },
     ]);
     expect(formatData.systemMessages).toBeNull();
+  });
+
+  it('should inject one dummy user message when the only user message is audio', async () => {
+    const frame = new AudioFrame(new Int16Array(240), 24000, 1, 240);
+    const ctx = ChatContext.empty();
+    ctx.addMessage({ role: 'system', content: 'You are a helpful assistant' });
+    ctx.addMessage({ role: 'user', content: [createAudioContent({ frame: [frame] })] });
+
+    const [result, formatData] = await toChatCtx(ctx, true);
+
+    expect(result).toEqual([
+      {
+        role: 'user',
+        parts: [{ text: '.' }],
+      },
+    ]);
+    expect(formatData.systemMessages).toEqual(['You are a helpful assistant']);
   });
 
   it('should group consecutive messages by role', async () => {
