@@ -1,0 +1,27 @@
+agents/etc/agents.api.md
+  s_7443a019c178ef::t_4c4f9419498938 5318
+agents/src/inference/eot/detector.test.ts
+  s_7443a019c178ef::t_5672e1c4c39c28 48-54,220-222,225-228,232,852-885
+agents/src/inference/eot/languages.ts
+  s_7443a019c178ef::t_84208e3d5584c0 22,25,28-35,39-40,43-45,47-49
+plugins/silero/package.json
+  s_7443a019c178ef::t_15096f7dd2fa8a 38
+pnpm-lock.yaml
+  s_7443a019c178ef::t_8a5f5c9cac16bc 1453-1454
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "44cd591c3bff6a6a67c6f501d66b16d2ebe8c161",
+  "prompts": {},
+  "sessions": {
+    "s_7443a019c178ef": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_7443a019c178ef",
+        "model": "unknown"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
