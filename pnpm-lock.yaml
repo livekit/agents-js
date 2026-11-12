@@ -137,8 +137,8 @@ importers:
         specifier: ^1.2.0
         version: 1.2.0
       '@livekit/local-inference':
-        specifier: ^0.3.0
-        version: 0.3.0
+        specifier: ^0.3.1
+        version: 0.3.1
       '@livekit/mutex':
         specifier: ^1.1.1
         version: 1.1.1
@@ -1450,8 +1450,8 @@ importers:
         specifier: workspace:*
         version: link:../../agents
       '@livekit/local-inference':
-        specifier: ^0.3.0
-        version: 0.3.0
+        specifier: ^0.3.1
+        version: 0.3.1
       '@livekit/rtc-node':
         specifier: 'catalog:'
         version: 1.2.2
@@ -2484,33 +2484,33 @@ packages:
   '@livekit/changesets-changelog-github@0.2.0':
     resolution: {integrity: sha512-HWgR0biITeIaLeBRIUpqYJ0Wacmx7JJjlqhiJtqYrGItqw0kRUe6tTB6vN0fU7tK1oh08hlgr3iYdGLNLNbrNQ==}
 
-  '@livekit/local-inference-darwin-arm64@0.3.0':
-    resolution: {integrity: sha512-gHfdwfUgYnb/kFMcrkki801+ejbQ9v/hurmhV4tOF32SQqr3zK8hZh3IS6esbsqSyFMgTRgeRhufWPUv3Ypfcg==}
+  '@livekit/local-inference-darwin-arm64@0.3.1':
+    resolution: {integrity: sha512-yLe4SNxe7NRr6DuB5j6MHzFT3Gc8q3+By0AFVm4ouv2LTU2TJ3YIO3aLCdWrmUjT6xWAaUu0aAdyBvkQZmnmlg==}
     cpu: [arm64]
     os: [darwin]
 
-  '@livekit/local-inference-darwin-x64@0.3.0':
-    resolution: {integrity: sha512-q0h8MRxT6Pp6Tx4IME2F6RyM1q8TRzKRpjrf8rMFJ0e1FCtljy0MS+Ci4undLzlK1pK9HlnPxUVf2qYDKM+v0g==}
+  '@livekit/local-inference-darwin-x64@0.3.1':
+    resolution: {integrity: sha512-5A1TiXnQrLBt8JdmgYCjjY0xUz3IpT9NxwlY/IYx6qz38JdvznI/0AG0lSU8jE/XoGT0x4yynO/n9dP1Mym8Kw==}
     cpu: [x64]
     os: [darwin]
 
-  '@livekit/local-inference-linux-arm64-gnu@0.3.0':
-    resolution: {integrity: sha512-f+CbEmH1Xxde++s1AMvHDdquROvd3gQyNHYoF8JskA7ChdrbAjRFblbnm001oECDt3WDXq4o7sOmC4roasAjBQ==}
+  '@livekit/local-inference-linux-arm64-gnu@0.3.1':
+    resolution: {integrity: sha512-Aw5NFw1dsWL1d/GYFEbzEk9jUvj9QjS7DFc00K/onLbSphD30mG+a+GvxYW872XUlvRkh3eUblUB+lDBokXZ7w==}
     cpu: [arm64]
     os: [linux]
 
-  '@livekit/local-inference-linux-x64-gnu@0.3.0':
-    resolution: {integrity: sha512-jsRxELKfvto/Tp1gDup+TeDzGurj5YuZy9/n1VmlU2pncCFYFVJb+8ADiPhzeisi6jdODafvhMOYR8IkbSSQ+g==}
+  '@livekit/local-inference-linux-x64-gnu@0.3.1':
+    resolution: {integrity: sha512-hIKKfMQWNQ8qLzg8i79NkEgiElV2BgBK9D+YvDnWFZct7WrAflxmCOQj/n2Et2zVMTL1u9HTU9QvyZj2vrKHOg==}
     cpu: [x64]
     os: [linux]
 
-  '@livekit/local-inference-win32-x64-msvc@0.3.0':
-    resolution: {integrity: sha512-UjvDUREkCPd0UrWIM/BIaHJkpqKhoEcHH8pNBzMp7uxohEGkhVRHQSMN2lZK00IQInMrf5K3iL1HyFa4Myx3tA==}
+  '@livekit/local-inference-win32-x64-msvc@0.3.1':
+    resolution: {integrity: sha512-3p0187XMeEAbbp8gPFhWFwr9SwmQVFlwWI48HukbpPnhiYK/jEsAGeHzXd2uEISu2qlj6Ee1euhPoWALAXeqxw==}
     cpu: [x64]
     os: [win32]
 
-  '@livekit/local-inference@0.3.0':
-    resolution: {integrity: sha512-OmBMpPv3AI9SrYDeoMchGe1rWeJKSn2xqndqoiDQ95juIEOjdisq7391Rf93O6P3JDV4toUNABJxtgC5ldAApA==}
+  '@livekit/local-inference@0.3.1':
+    resolution: {integrity: sha512-XlVVh9MeqheD+wFzp2x20s+EDKg2ethL0j4D2L25wd+wnbRXOIsj/nt0mMruX+Q4Dd0XS2f4gdCIQXz7AFjVzA==}
     engines: {node: '>=18.0.0'}
 
   '@livekit/mutex@1.1.1':
@@ -6949,30 +6949,30 @@ snapshots:
       '@changesets/types': 6.1.0
       dotenv: 8.6.0
 
-  '@livekit/local-inference-darwin-arm64@0.3.0':
+  '@livekit/local-inference-darwin-arm64@0.3.1':
     optional: true
 
-  '@livekit/local-inference-darwin-x64@0.3.0':
+  '@livekit/local-inference-darwin-x64@0.3.1':
     optional: true
 
-  '@livekit/local-inference-linux-arm64-gnu@0.3.0':
+  '@livekit/local-inference-linux-arm64-gnu@0.3.1':
     optional: true
 
-  '@livekit/local-inference-linux-x64-gnu@0.3.0':
+  '@livekit/local-inference-linux-x64-gnu@0.3.1':
     optional: true
 
-  '@livekit/local-inference-win32-x64-msvc@0.3.0':
+  '@livekit/local-inference-win32-x64-msvc@0.3.1':
     optional: true
 
-  '@livekit/local-inference@0.3.0':
+  '@livekit/local-inference@0.3.1':
     dependencies:
       node-gyp-build: 4.8.4
     optionalDependencies:
-      '@livekit/local-inference-darwin-arm64': 0.3.0
-      '@livekit/local-inference-darwin-x64': 0.3.0
-      '@livekit/local-inference-linux-arm64-gnu': 0.3.0
-      '@livekit/local-inference-linux-x64-gnu': 0.3.0
-      '@livekit/local-inference-win32-x64-msvc': 0.3.0
+      '@livekit/local-inference-darwin-arm64': 0.3.1
+      '@livekit/local-inference-darwin-x64': 0.3.1
+      '@livekit/local-inference-linux-arm64-gnu': 0.3.1
+      '@livekit/local-inference-linux-x64-gnu': 0.3.1
+      '@livekit/local-inference-win32-x64-msvc': 0.3.1
 
   '@livekit/mutex@1.1.1': {}
 

@@ -35,7 +35,7 @@
   },
   "devDependencies": {
     "@livekit/agents": "workspace:*",
-    "@livekit/local-inference": "^0.3.0",
+    "@livekit/local-inference": "^0.3.1",
     "@livekit/rtc-node": "catalog:",
     "@microsoft/api-extractor": "^7.58.12",
     "@types/ws": "catalog:",
