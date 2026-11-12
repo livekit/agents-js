@@ -217,6 +217,8 @@ export class TTS extends tts.TTS {
     // (undocumented)
     get model(): string;
     // (undocumented)
+    prewarm(): void;
+    // (undocumented)
     get provider(): string;
     // (undocumented)
     stream(options?: {
