@@ -1,0 +1,23 @@
+.changeset/quiet-turns-listen.md
+  s_b6ebb92b33ee85::t_4b068cd478f871 5
+agents/etc/agents.api.md
+  s_b6ebb92b33ee85::t_c247772dd8c3d5 2515,2541,5276
+agents/src/inference/eot/languages.ts
+  s_b6ebb92b33ee85::t_193fce0ced3a12 9-10,14,22-47
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ea4c5704ae3bcbec047ed003609cb9d615c23585",
+  "prompts": {},
+  "sessions": {
+    "s_b6ebb92b33ee85": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7ffd5347-5f1e-4331-bcb5-8dce87ae0dd4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
