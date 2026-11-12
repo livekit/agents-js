@@ -800,13 +800,11 @@ describe('SpeechStream reconnect', () => {
     wss.on('connection', (ws) => {
       connections += 1;
       const connection = connections;
-      let frames = 0;
       ws.on('message', (data, isBinary) => {
         if (!isBinary) {
           if (connection === 2) reconnected();
           return;
         }
-        frames += 1;
         if (connection === 1) {
           // A transient server reset after the first frame.
           ws.close(1011, 'server reset');
