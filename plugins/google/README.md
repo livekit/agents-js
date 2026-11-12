@@ -6,7 +6,7 @@ SPDX-License-Identifier: Apache-2.0
 
 # LiveKit Agents Google Plugin
 
-This plugin provides Google Gemini LLM support for LiveKit Node Agents using the new unified `@google/genai` SDK.
+This plugin provides Google Gemini LLM and decisions support for LiveKit Node Agents using the new unified `@google/genai` SDK.
 
 ## Installation
 
