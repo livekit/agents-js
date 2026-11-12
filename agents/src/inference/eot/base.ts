@@ -61,15 +61,27 @@ export interface FlushSentinel {
   reason?: string;
 }
 
+/**
+ * Marks where the user's turn started. Queued on the audio channel behind the
+ * audio captured so far, so the transport can count how much of that audio
+ * belongs to the turn.
+ */
 export interface StartOfTurnSentinel {
   readonly kind: 'start_of_turn';
   /** Milliseconds from the turn start to the end of the audio queued before this marker. */
   elapsed: number;
 }
 
+/**
+ * A prediction request. Queued on the audio channel behind the audio captured
+ * so far, so the transport runs the prediction only after it has that audio.
+ */
 export interface InferenceSentinel {
   readonly kind: 'inference';
+  /** Identifies the request when the transport reports its prediction. */
   requestId: string;
+  /** Conversation at the time of the request. The cloud model reads the last
+   * assistant message from it; the local model ignores it. */
   chatCtx?: ChatContext;
 }
 
@@ -102,6 +114,12 @@ export interface StreamingTurnDetectionTransport {
   run(): Promise<void>;
   runInference(requestId: string, chatCtx?: ChatContext): void;
   pushFrame(frame: AudioFrame): Promise<void>;
+  /**
+   * The user's turn started `elapsed` milliseconds before the end of the audio
+   * pushed so far. The transport limits its turn length to that much audio.
+   *
+   * @param elapsed - A duration in milliseconds, not a timestamp.
+   */
   onStartOfTurn(elapsed: number): void;
   flush(sentinel: FlushSentinel): Promise<void>;
   detach(): void;
@@ -354,6 +372,13 @@ export class BaseStreamingTurnDetectorStream {
     }
   }
 
+  /**
+   * Tell the detector when the user's turn started, so a prediction covers
+   * only the audio of that turn.
+   *
+   * @param startedAt - Wall-clock time of the turn start, in milliseconds since
+   * the epoch. The transport receives it as milliseconds elapsed since then.
+   */
   onStartOfTurn(startedAt: number): void {
     if (this._degraded || this._audioChannel.closed) return;
     void this._audioChannel.write({

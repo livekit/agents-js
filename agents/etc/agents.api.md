@@ -2517,7 +2517,6 @@ class CloudTransport implements StreamingTurnDetectionTransport {
     get numRetries(): number;
     // (undocumented)
     protected _numRetries: number;
-    // (undocumented)
     onStartOfTurn(elapsed: number): void;
     // Warning: (ae-forgotten-export) The symbol "BaseStreamingTurnDetectorOptions" needs to be exported by the entry point index.d.ts
     //
@@ -5338,7 +5337,6 @@ class LocalTransport implements StreamingTurnDetectionTransport {
     flush(_sentinel: FlushSentinel_2): Promise<void>;
     // (undocumented)
     protected _logger: Logger;
-    // (undocumented)
     onStartOfTurn(elapsed: number): void;
     // (undocumented)
     protected _opts: BaseStreamingTurnDetectorOptions;

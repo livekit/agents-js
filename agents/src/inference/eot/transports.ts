@@ -229,6 +229,10 @@ export class LocalTransport implements StreamingTurnDetectionTransport {
     this._turnSamples += this._buf.pushFrame(frame);
   }
 
+  /**
+   * Limit the turn length to the last `elapsed` milliseconds of audio, and drop
+   * buffered audio from before the turn.
+   */
   onStartOfTurn(elapsed: number): void {
     this._turnSamples = Math.min(
       this._turnSamples,
@@ -387,6 +391,10 @@ export class CloudTransport implements StreamingTurnDetectionTransport {
     );
   }
 
+  /**
+   * Limit the turn length sent with the next prediction request to the last
+   * `elapsed` milliseconds of audio. Audio already sent stays with the server.
+   */
   onStartOfTurn(elapsed: number): void {
     this._turnSamples = Math.min(
       this._turnSamples,
