@@ -1,0 +1,21 @@
+agents/src/inference/eot/base.ts
+  s_e8d82d3050566d::t_099de10a237177 64-68,75-78,81,83-84,117-122,375-381
+agents/src/inference/eot/transports.ts
+  s_e8d82d3050566d::t_029385dbbaf385 232-235,394-397
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c71c561f21d859212f5f6d0d64f99c8e200277dc",
+  "prompts": {},
+  "sessions": {
+    "s_e8d82d3050566d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_e8d82d3050566d",
+        "model": "unknown"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
