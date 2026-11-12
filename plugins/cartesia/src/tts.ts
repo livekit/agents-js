@@ -404,9 +404,6 @@ export class SynthesizeStream extends tts.SynthesizeStream {
   #opts: TTSOptions;
   #pool: ConnectionPool<WebSocket>;
   #logger = log();
-  #tokenizer = new tokenize.blingfire.SentenceTokenizer({
-    minSentenceLength: BUFFERED_WORDS_COUNT,
-  }).stream();
   label = 'cartesia.SynthesizeStream';
 
   constructor(tts: TTS, opts: TTSOptions, connOptions?: APIConnectOptions) {
@@ -432,12 +429,15 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
   protected async run() {
     const requestId = shortuuid();
+    const tokenizer = new tokenize.blingfire.SentenceTokenizer({
+      minSentenceLength: BUFFERED_WORDS_COUNT,
+    }).stream();
     // Only finish the generation once both: 1) Cartesia returns done, AND 2) all sentences have been sent
     let sentenceStreamClosed = false;
 
     const sentenceStreamTask = async (ws: WebSocket) => {
       const packet = _toCartesiaOptions(this.#opts, true);
-      for await (const event of this.#tokenizer) {
+      for await (const event of tokenizer) {
         const msg = {
           ...packet,
           context_id: requestId,
@@ -462,13 +462,13 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     const inputTask = async () => {
       for await (const data of this.input) {
         if (data === SynthesizeStream.FLUSH_SENTINEL) {
-          this.#tokenizer.flush();
+          tokenizer.flush();
           continue;
         }
-        this.#tokenizer.pushText(data);
+        tokenizer.pushText(data);
       }
-      this.#tokenizer.endInput();
-      this.#tokenizer.close();
+      tokenizer.endInput();
+      tokenizer.close();
     };
 
     // Use event channel and set up listeners ONCE to avoid missing messages during listener re-registration
@@ -709,7 +709,18 @@ export class SynthesizeStream extends tts.SynthesizeStream {
           if (ws.readyState !== WebSocket.OPEN) {
             throw new APIConnectionError({ message: 'Cartesia pooled websocket is not open' });
           }
-          await Promise.all([inputTask(), sentenceStreamTask(ws), recvTask(ws)]);
+          const tasks = [inputTask(), sentenceStreamTask(ws), recvTask(ws)];
+          try {
+            await Promise.all(tasks);
+          } catch (error) {
+            // Stop every task that belongs to the failed attempt before the
+            // base stream replays input into a fresh tokenizer and context.
+            if (!this.input.closed) this.input.close();
+            tokenizer.close();
+            safeCloseWebSocket(ws);
+            await Promise.allSettled(tasks);
+            throw error;
+          }
         },
         { timeout: this.connOptions.timeoutMs, signal: this.abortSignal },
       );
@@ -719,6 +730,8 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       }
       if (e instanceof APIError) throw e;
       throw toRetryableConnectionError(e);
+    } finally {
+      tokenizer.close();
     }
   }
 }

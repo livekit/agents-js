@@ -439,12 +439,10 @@ export class SynthesizeStream extends tts.SynthesizeStream {
   label = 'minimax.SynthesizeStream';
   #logger = log();
   #opts: ResolvedTTSOptions;
-  #tokenStream: tokenize.SentenceStream;
 
   constructor(tts: TTS, opts: ResolvedTTSOptions, connOptions?: APIConnectOptions) {
     super(tts, connOptions);
     this.#opts = opts;
-    this.#tokenStream = opts.tokenizer.stream();
   }
 
   // Ref: python livekit-plugins/livekit-plugins-minimax/livekit/plugins/minimax/tts.py - 396-569 lines
@@ -452,6 +450,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     const requestId = shortuuid();
     let currentTraceId = requestId;
     const taskStarted = new Future<void>();
+    const tokenStream = this.#opts.tokenizer.stream();
 
     const wsUrl =
       (this.#opts.baseUrl.startsWith('http')
@@ -466,12 +465,12 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       for await (const data of this.input) {
         if (this.abortController.signal.aborted) break;
         if (data === SynthesizeStream.FLUSH_SENTINEL) {
-          this.#tokenStream.flush();
+          tokenStream.flush();
           continue;
         }
-        this.#tokenStream.pushText(data);
+        tokenStream.pushText(data);
       }
-      this.#tokenStream.endInput();
+      tokenStream.endInput();
     };
 
     const sendTask = async () => {
@@ -494,7 +493,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         if (taskStartTimeout) clearTimeout(taskStartTimeout);
       }
 
-      for await (const sentence of this.#tokenStream) {
+      for await (const sentence of tokenStream) {
         if (this.abortController.signal.aborted) break;
         this.markStarted();
         ws.send(JSON.stringify({ event: 'task_continue', text: sentence.token }));
@@ -597,10 +596,26 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       }
     };
 
+    let tasks: Promise<void>[] = [];
     try {
       await waitForWebSocketOpen(ws, this.connOptions.timeoutMs, this.abortController.signal);
-      await Promise.all([inputTask(), sendTask(), recvTask()]);
+      tasks = [inputTask(), sendTask(), recvTask()];
+      await Promise.all(tasks);
     } catch (e) {
+      if (!this.input.closed) this.input.close();
+      tokenStream.close();
+      if (!taskStarted.done) {
+        taskStarted.reject(e instanceof Error ? e : new Error(String(e)));
+      }
+      try {
+        if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+          ws.close();
+        }
+      } catch {
+        // ignore cleanup failures and preserve the original attempt error
+      }
+      await Promise.allSettled(tasks);
+
       if (this.abortController.signal.aborted) return;
       if (e instanceof APIError) throw e;
       const err = e as Error;
@@ -608,6 +623,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         message: `MiniMax WebSocket connection failed: ${err.message} (trace_id: ${currentTraceId})`,
       });
     } finally {
+      tokenStream.close();
       try {
         if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
           ws.close();
@@ -615,16 +631,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       } catch {
         // ignore
       }
-      // Do NOT close #tokenStream here - the base class retries run() on
-      // retryable errors, and #tokenStream is created once in the constructor.
-      // Closing it here would make every retry push text into a closed stream,
-      // silently losing user input. It is closed in close() instead.
     }
-  }
-
-  close(): void {
-    this.#tokenStream.close();
-    super.close();
   }
 }
 
