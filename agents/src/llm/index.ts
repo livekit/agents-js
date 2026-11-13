@@ -9,8 +9,6 @@ export {
   isTool,
   isToolset,
   ProviderTool,
-  sortedToolEntries,
-  sortedToolNames,
   tool,
   ToolContext,
   ToolError,
