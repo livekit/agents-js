@@ -470,6 +470,73 @@ describe('processMessage', () => {
     ]);
     expect(events.at(-1)?.recognitionUsage?.audioDuration).toBeCloseTo(1.5);
   });
+
+  it('reports final transcription tokens as output tokens and excludes control tokens', () => {
+    const events = runProcess([
+      {
+        tokens: [finalToken('Hello', 'en'), finalToken(' world.', 'en'), END_TOKEN_FINAL],
+        total_audio_proc_ms: 500,
+      },
+    ]);
+    const usage = events.find((event) => event.type === stt.SpeechEventType.RECOGNITION_USAGE)!;
+
+    expect(usage.recognitionUsage?.audioDuration).toBeCloseTo(0.5);
+    expect(usage.recognitionUsage?.outputTokens).toBe(2);
+  });
+
+  it('excludes non-final tokens from output token usage', () => {
+    const events = runProcess([
+      {
+        tokens: [nonfinalToken('Hel', 'en'), nonfinalToken('lo', 'en')],
+        total_audio_proc_ms: 300,
+      },
+      {
+        tokens: [finalToken('Hello', 'en'), finalToken(' world.', 'en'), END_TOKEN_FINAL],
+        total_audio_proc_ms: 800,
+      },
+    ]);
+    const usages = events.filter((event) => event.type === stt.SpeechEventType.RECOGNITION_USAGE);
+
+    expect(usages[0]?.recognitionUsage?.outputTokens).toBe(0);
+    expect(usages[1]?.recognitionUsage?.outputTokens).toBe(2);
+  });
+
+  it('reports output token usage incrementally across endpoints', () => {
+    const events = runProcess([
+      {
+        tokens: [finalToken('First.', 'en'), END_TOKEN_FINAL],
+        total_audio_proc_ms: 1000,
+      },
+      {
+        tokens: [finalToken('Second', 'en'), finalToken(' utterance.', 'en'), END_TOKEN_FINAL],
+        total_audio_proc_ms: 2500,
+      },
+    ]);
+    const usages = events.filter((event) => event.type === stt.SpeechEventType.RECOGNITION_USAGE);
+
+    expect(usages).toHaveLength(2);
+    expect(usages[0]?.recognitionUsage).toMatchObject({ audioDuration: 1, outputTokens: 1 });
+    expect(usages[1]?.recognitionUsage).toMatchObject({ audioDuration: 1.5, outputTokens: 2 });
+  });
+
+  it('counts original and translated final tokens as output token usage', () => {
+    const events = runProcess(
+      [
+        {
+          tokens: [
+            finalToken('Hello world.', 'en', 'original'),
+            finalToken('Hola mundo.', 'es', 'translation'),
+            END_TOKEN_FINAL,
+          ],
+          total_audio_proc_ms: 500,
+        },
+      ],
+      { isTranslationMode: true },
+    );
+    const usage = events.find((event) => event.type === stt.SpeechEventType.RECOGNITION_USAGE)!;
+
+    expect(usage.recognitionUsage?.outputTokens).toBe(2);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -715,6 +782,61 @@ describe('SpeechStream graceful close', () => {
       const final = events.find((e) => e.type === stt.SpeechEventType.FINAL_TRANSCRIPT);
       expect(final?.alternatives?.[0]?.text).toBe('Hello world.');
       expect(events.some((e) => e.type === stt.SpeechEventType.END_OF_SPEECH)).toBe(true);
+    } finally {
+      await closeWebSocketServer(wss);
+    }
+  });
+});
+
+describe('SpeechStream reconnect', () => {
+  it('sends every frame to the new socket after a reconnect', async () => {
+    const { wss, baseUrl } = await startWebSocketServer();
+    let connections = 0;
+    const received: number[] = [];
+    let reconnected: () => void = () => {};
+    const reconnectedPromise = new Promise<void>((resolve) => {
+      reconnected = resolve;
+    });
+    wss.on('connection', (ws) => {
+      connections += 1;
+      const connection = connections;
+      ws.on('message', (data, isBinary) => {
+        if (!isBinary) {
+          if (connection === 2) reconnected();
+          return;
+        }
+        if (connection === 1) {
+          // A transient server reset after the first frame.
+          ws.close(1011, 'server reset');
+          return;
+        }
+        const bytes = data as Buffer;
+        received.push(new Int16Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 2)[0]!);
+      });
+    });
+
+    try {
+      const soniox = new STT({ apiKey: 'test-key', baseUrl });
+      const stream = soniox.stream({
+        connOptions: { maxRetry: 3, retryIntervalMs: 1, timeoutMs: 1000 },
+      });
+      const drain = consumeSpeechStream(stream);
+      const frame = (id: number) => {
+        const data = new Int16Array(160);
+        data[0] = id;
+        return new AudioFrame(data, 16000, 1, 160);
+      };
+
+      stream.pushFrame(frame(1));
+      await reconnectedPromise;
+      for (let id = 2; id <= 21; id += 1) {
+        stream.pushFrame(frame(id));
+      }
+      await expect.poll(() => received.length).toBe(20);
+      expect(received).toEqual(Array.from({ length: 20 }, (_, i) => i + 2));
+
+      stream.close();
+      await drain.catch(() => {});
     } finally {
       await closeWebSocketServer(wss);
     }

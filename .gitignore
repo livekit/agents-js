@@ -198,8 +198,10 @@ examples/src/test_*.ts
 !.changeset/*.md
 !**/README.md
 !**/CHANGELOG.md
+!.oss-scanner/threat_model.md
 !CONTRIBUTING.md
 !CLAUDE.md
+!AGENTS.md
 !.CODE_OF_CONDUCT.md
 
 # OpenTelemetry trace test output

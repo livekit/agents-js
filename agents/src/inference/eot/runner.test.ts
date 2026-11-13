@@ -30,8 +30,9 @@ describe('EotRunner', () => {
       initVad: vi.fn(),
       createVad: vi.fn(),
       VAD_WINDOW_SAMPLES: 512,
-      predict: vi.fn(async (pcm: Int16Array) => {
+      predict: vi.fn(async (pcm: Int16Array, turnSamples?: number) => {
         received.push(pcm);
+        expect(turnSamples).toBe(32000);
         return 0.83;
       }),
     };
@@ -49,7 +50,7 @@ describe('EotRunner', () => {
       'base64',
     );
 
-    const out = await runner.run({ pcm });
+    const out = await runner.run({ pcm, turnSamples: 32000 });
     expect(out.probability).toBe(0.83);
     expect(out.inferenceDurationMs).toBeGreaterThanOrEqual(0);
 
@@ -58,6 +59,22 @@ describe('EotRunner', () => {
     expect(Array.from(received[0]!)).toEqual([1, -2, 3, -4]);
 
     await runner.close();
+  });
+
+  it('rejects when the native prediction fails', async () => {
+    const fakeMod = {
+      initEot: vi.fn(),
+      predict: vi.fn(async () => {
+        throw new Error('predict failed');
+      }),
+    };
+    vi.spyOn(warmup, '_getLocalInferenceModule').mockReturnValue(
+      fakeMod as unknown as ReturnType<typeof warmup._getLocalInferenceModule>,
+    );
+
+    const runner = new EotRunner();
+    await runner.initialize();
+    await expect(runner.run({ pcm: '', turnSamples: 0 })).rejects.toThrow('predict failed');
   });
 
   it('throws on initialize when the native binding is unavailable', async () => {

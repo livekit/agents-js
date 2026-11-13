@@ -5,12 +5,13 @@ import type { AudioFrame } from '@livekit/rtc-node';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { ReadableStream } from 'node:stream/web';
 import {
-  LLM as InferenceLLM,
   STT as InferenceSTT,
   TTS as InferenceTTS,
   type LLMModels,
+  type RealtimeModels,
   type STTModelString,
   type TTSModelString,
+  llmFromModelString,
 } from '../inference/index.js';
 import { type Instructions, ReadonlyChatContext } from '../llm/chat_context.js';
 import { DuplexModel, type DuplexSession } from '../llm/duplex.js';
@@ -30,7 +31,7 @@ import {
 import { log } from '../log.js';
 import type { STT, SpeechEvent } from '../stt/index.js';
 import { StreamAdapter as STTStreamAdapter } from '../stt/index.js';
-import { SentenceTokenizer as BasicSentenceTokenizer } from '../tokenize/basic/index.js';
+import { SentenceTokenizer as BlingfireSentenceTokenizer } from '../tokenize/blingfire.js';
 import type { TTS } from '../tts/index.js';
 import { SynthesizeStream, StreamAdapter as TTSStreamAdapter } from '../tts/index.js';
 import { type FlushSentinel, USERDATA_TIMED_TRANSCRIPT } from '../types.js';
@@ -45,7 +46,7 @@ import {
   createAgentV2,
 } from './agent_v2.js';
 import type { UserTurnExceededEvent } from './events.js';
-import type { TimedString } from './io.js';
+import { type TimedString, sttStreamRegistration } from './io.js';
 import type { SpeechHandle } from './speech_handle.js';
 import type { ToolHandlingOptions } from './tool_executor.js';
 import type { TurnHandlingOptions } from './turn_config/turn_handling.js';
@@ -108,27 +109,7 @@ export function _setActivityTaskInfo<T>(
 export function _getActivityTaskInfo<T>(task: Task<T>): _ActivityTaskInfo | undefined {
   return activityTaskInfoStorage.get(task);
 }
-export const STOP_RESPONSE_SYMBOL = Symbol('StopResponse');
-
-export class StopResponse extends Error {
-  constructor() {
-    super();
-    this.name = 'StopResponse';
-
-    Object.defineProperty(this, STOP_RESPONSE_SYMBOL, {
-      value: true,
-    });
-  }
-}
-
-export function isStopResponse(value: unknown): value is StopResponse {
-  return (
-    value !== undefined &&
-    value !== null &&
-    typeof value === 'object' &&
-    STOP_RESPONSE_SYMBOL in value
-  );
-}
+export { STOP_RESPONSE_SYMBOL, StopResponse, isStopResponse } from './stop_response.js';
 
 export interface ModelSettings {
   /** The tool choice to use when calling the LLM. */
@@ -155,7 +136,7 @@ export interface AgentUpdateOptions {
    * Swapping to or from one while running throws because it replaces the whole pipeline.
    * Use `AgentSession.updateAgent()` for that.
    */
-  llm?: LLM | RealtimeModel | DuplexModel | LLMModels | null;
+  llm?: LLM | RealtimeModel | DuplexModel | LLMModels | RealtimeModels | null;
   /** New TTS model. Pass `null` to disable the agent TTS and override any session TTS. */
   tts?: TTS | TTSModelString | null;
   /** Expressive TTS delivery. Pass `false` to override and disable the session setting. */
@@ -169,7 +150,7 @@ export interface AgentOptions<UserData> {
   tools?: ToolContextLike<UserData>;
   stt?: STT | STTModelString | null;
   vad?: VAD | null;
-  llm?: LLM | RealtimeModel | DuplexModel | LLMModels | null;
+  llm?: LLM | RealtimeModel | DuplexModel | LLMModels | RealtimeModels | null;
   tts?: TTS | TTSModelString | null;
   /** Expressive TTS delivery. When set, overrides the session value for this agent. */
   expressive?: boolean | ExpressiveOptions;
@@ -275,12 +256,11 @@ export class Agent<UserData = any> {
       this._stt = stt;
     }
 
-    if (typeof llm === 'string') {
-      this._llm = InferenceLLM.fromModelString(llm);
-    } else if (llm instanceof DuplexModel) {
-      this._llm = new DuplexRealtimeAdapter(llm);
+    const resolvedLLM = typeof llm === 'string' ? llmFromModelString(llm) : llm;
+    if (resolvedLLM instanceof DuplexModel) {
+      this._llm = new DuplexRealtimeAdapter(resolvedLLM);
     } else {
-      this._llm = llm;
+      this._llm = resolvedLLM;
     }
 
     if (typeof tts === 'string') {
@@ -383,6 +363,17 @@ export class Agent<UserData = any> {
     });
   }
 
+  /**
+   * Transcribes audio frames into speech events. Override it for custom pre-processing or STT
+   * strategies.
+   *
+   * For an STT with `capabilities.manualFlush`, the framework flushes the stream created by
+   * `Agent.default.sttNode` at turn boundaries, in order with the audio. If your override wraps
+   * the audio before passing it to `Agent.default.sttNode`, the wrapper can read ahead, so that
+   * flush can reach the STT before audio the wrapper still holds. If your override creates its
+   * own STT stream, the framework can't flush it. In either case, set
+   * `stt.capabilities.manualFlush = false` and call `flush()` on the stream yourself.
+   */
   async sttNode(
     audio: ReadableStream<AudioFrame> | AsyncIterable<AudioFrame>,
     modelSettings: ModelSettings,
@@ -456,8 +447,9 @@ export class Agent<UserData = any> {
       resolved.stt = InferenceSTT.fromModelString(resolved.stt);
     }
     if (typeof resolved.llm === 'string') {
-      resolved.llm = InferenceLLM.fromModelString(resolved.llm);
-    } else if (resolved.llm instanceof DuplexModel) {
+      resolved.llm = llmFromModelString(resolved.llm);
+    }
+    if (resolved.llm instanceof DuplexModel) {
       resolved.llm = new DuplexRealtimeAdapter(resolved.llm);
     }
     if (typeof resolved.tts === 'string') {
@@ -503,6 +495,7 @@ export class Agent<UserData = any> {
       }
 
       let wrappedStt = activity.stt;
+      let temporaryAdapter: STTStreamAdapter | undefined;
 
       if (!wrappedStt.capabilities.streaming) {
         const vad = agent.vad || activity.vad;
@@ -511,30 +504,43 @@ export class Agent<UserData = any> {
             'STT does not support streaming, add a VAD to the AgentTask/VoiceAgent to enable streaming',
           );
         }
-        wrappedStt = new STTStreamAdapter(wrappedStt, vad);
+        temporaryAdapter = new STTStreamAdapter(wrappedStt, vad);
+        wrappedStt = temporaryAdapter;
       }
 
       const connOptions = activity.agentSession.connOptions.sttConnOptions;
-      const stream = wrappedStt.stream({ connOptions });
-
-      // Set startTimeOffset to provide linear timestamps across reconnections
-      const audioInputStartedAt =
-        activity.inputStartedAt ?? // Use input started at proxied from AudioRecognition if available
-        activity.agentSession._recorderIO?.recordingStartedAt ?? // Fallback to recording start time if available
-        activity.agentSession._startedAt ?? // Fallback to session start time
-        Date.now(); // Fallback to current time
-
-      stream.startTimeOffset = (Date.now() - audioInputStartedAt) / 1000;
-
-      stream.updateInputStream(input);
-
+      const registration = sttStreamRegistration.getStore();
+      let stream!: ReturnType<STT['stream']>;
       let cleaned = false;
-      const cleanup = () => {
+      const cleanup = async () => {
         if (cleaned) return;
         cleaned = true;
-        stream.detachInputStream();
-        stream.close();
+        try {
+          if (stream) registration?.unregister(stream);
+          stream?.detachInputStream();
+          stream?.close();
+        } finally {
+          await temporaryAdapter?.close();
+        }
       };
+      try {
+        stream = wrappedStt.stream({ connOptions });
+        registration?.register(stream, wrappedStt, input);
+
+        // Set startTimeOffset to provide linear timestamps across reconnections
+        const audioInputStartedAt =
+          activity.inputStartedAt ?? // Use input started at proxied from AudioRecognition if available
+          activity.agentSession._recorderIO?.recordingStartedAt ?? // Fallback to recording start time if available
+          activity.agentSession._startedAt ?? // Fallback to session start time
+          Date.now(); // Fallback to current time
+
+        stream.startTimeOffset = (Date.now() - audioInputStartedAt) / 1000;
+
+        stream.updateInputStream(input);
+      } catch (error) {
+        await cleanup();
+        throw error;
+      }
 
       return new ReadableStream({
         async start(controller) {
@@ -545,14 +551,14 @@ export class Agent<UserData = any> {
             // the retry loop swallows its own failure; surface it so the STT pipeline can
             // tell an exhausted stream from a closed audio input
             if (stream.terminalError) throw stream.terminalError;
-            controller.close();
           } finally {
             // Always clean up the STT stream, whether it ends naturally or is cancelled
-            cleanup();
+            await cleanup();
           }
+          controller.close();
         },
         cancel() {
-          cleanup();
+          return cleanup();
         },
       });
     },
@@ -627,11 +633,11 @@ export class Agent<UserData = any> {
       if (!activity.tts.capabilities.streaming) {
         wrappedTts = new TTSStreamAdapter(
           wrappedTts,
-          // markup only exists in the stream when expressive is active. Python also
-          // passes retain_format here, but that predates expressive mode and is a
-          // separate gap — turning it on would change tokenization for every
-          // non-streaming TTS plugin.
-          new BasicSentenceTokenizer({ xmlAware: expressiveActive }),
+          new BlingfireSentenceTokenizer({
+            retainFormat: true,
+            // markup only exists in the stream when expressive is active
+            xmlAware: expressiveActive,
+          }),
         );
       }
 
@@ -642,19 +648,30 @@ export class Agent<UserData = any> {
       activity.tts._setExpressive(expressiveActive);
 
       const connOptions = activity.agentSession.connOptions.ttsConnOptions;
-      const stream = wrappedTts.stream({ connOptions });
-      stream.updateInputStream(input);
-
+      let stream!: SynthesizeStream;
       let cleaned = false;
       const cleanup = async () => {
         if (cleaned) return;
         cleaned = true;
-        stream.close();
-        await input.cancel('tts node cleanup').catch(() => {});
-        if (wrappedTts !== activity.tts) {
-          await wrappedTts.close();
+        try {
+          stream?.close();
+        } finally {
+          try {
+            if (wrappedTts !== activity.tts) {
+              await wrappedTts.close();
+            }
+          } finally {
+            await input.cancel('tts node cleanup').catch(() => {});
+          }
         }
       };
+      try {
+        stream = wrappedTts.stream({ connOptions });
+        stream.updateInputStream(input);
+      } catch (error) {
+        await cleanup();
+        throw error;
+      }
 
       return new ReadableStream({
         async start(controller) {
@@ -669,10 +686,11 @@ export class Agent<UserData = any> {
               }
               controller.enqueue(chunk.frame);
             }
-            controller.close();
+            if (stream.error) throw stream.error;
           } finally {
             await cleanup();
           }
+          controller.close();
         },
         cancel() {
           return cleanup();
