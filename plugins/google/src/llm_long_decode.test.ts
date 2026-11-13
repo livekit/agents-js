@@ -49,12 +49,14 @@ function response({
   continuationToken,
   promptTokens,
   completionTokens,
+  thoughtsTokens,
 }: {
   text?: string;
   finishReason?: FinishReason;
   continuationToken?: string;
   promptTokens?: number;
   completionTokens?: number;
+  thoughtsTokens?: number;
 } = {}): types.GenerateContentResponse {
   return {
     candidates: [
@@ -70,6 +72,7 @@ function response({
         : {
             promptTokenCount: promptTokens,
             candidatesTokenCount: completionTokens,
+            thoughtsTokenCount: thoughtsTokens,
             totalTokenCount: (promptTokens ?? 0) + (completionTokens ?? 0),
           },
   } as types.GenerateContentResponse;
@@ -624,6 +627,26 @@ describe('Google Gemini 4 usage across requests', () => {
       promptTokens: 200,
       totalTokens: 2200,
     });
+  });
+
+  it('counts thinking tokens as completion and reasoning tokens', async () => {
+    const streams = new FakeStreams([
+      [
+        response({ text: 'one', promptTokens: 100, completionTokens: 10, thoughtsTokens: 40 }),
+        response({ finishReason: CONTINUATION, continuationToken: 'tok-1' }),
+      ],
+      [
+        response({
+          text: ' two',
+          finishReason: FinishReason.STOP,
+          promptTokens: 100,
+          completionTokens: 10,
+          thoughtsTokens: 40,
+        }),
+      ],
+    ]);
+    const [, usage] = await collectWithUsage(google(), streams);
+    expect(usage).toMatchObject({ completionTokens: 100, reasoningTokens: 80, promptTokens: 200 });
   });
 
   it('reports what the API returned for a single request', async () => {

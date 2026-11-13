@@ -641,6 +641,7 @@ export class LLMStream extends llm.LLMStream {
         completionTokens: 0,
         promptTokens: 0,
         promptCachedTokens: 0,
+        reasoningTokens: 0,
         totalTokens: 0,
       };
       let requestLimitReached = true;
@@ -676,10 +677,14 @@ export class LLMStream extends llm.LLMStream {
             if (chunk.usageMetadata) {
               const usage = chunk.usageMetadata;
               initialPromptTokens ??= usage.promptTokenCount;
+              // Gemini bills thinking tokens as output but reports them apart from
+              // `candidatesTokenCount`, so fold them into the completion total.
+              const thoughtsTokens = usage.thoughtsTokenCount || 0;
               hopUsage = {
-                completionTokens: usage.candidatesTokenCount || 0,
+                completionTokens: (usage.candidatesTokenCount || 0) + thoughtsTokens,
                 promptTokens: usage.promptTokenCount || 0,
                 promptCachedTokens: usage.cachedContentTokenCount || 0,
+                reasoningTokens: thoughtsTokens,
                 totalTokens: usage.totalTokenCount || 0,
               };
               this.queue.put({
@@ -688,6 +693,8 @@ export class LLMStream extends llm.LLMStream {
                   completionTokens: settledUsage.completionTokens + hopUsage.completionTokens,
                   promptTokens: settledUsage.promptTokens + hopUsage.promptTokens,
                   promptCachedTokens: settledUsage.promptCachedTokens + hopUsage.promptCachedTokens,
+                  reasoningTokens:
+                    (settledUsage.reasoningTokens ?? 0) + (hopUsage.reasoningTokens ?? 0),
                   totalTokens: settledUsage.totalTokens + hopUsage.totalTokens,
                 },
               });
@@ -747,6 +754,7 @@ export class LLMStream extends llm.LLMStream {
             completionTokens: settledUsage.completionTokens + hopUsage.completionTokens,
             promptTokens: settledUsage.promptTokens + hopUsage.promptTokens,
             promptCachedTokens: settledUsage.promptCachedTokens + hopUsage.promptCachedTokens,
+            reasoningTokens: (settledUsage.reasoningTokens ?? 0) + (hopUsage.reasoningTokens ?? 0),
             totalTokens: settledUsage.totalTokens + hopUsage.totalTokens,
           };
         }
