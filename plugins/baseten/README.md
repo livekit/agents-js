@@ -42,6 +42,9 @@ const llm = new LLM({
 
 ### STT
 
+Recommended model: [Whisper Large V3 Turbo](https://www.baseten.co/library/whisper-large-turbo/)
+using a real-time deployment.
+
 ```typescript
 import { STT } from 'livekit-plugin-baseten'
 
