@@ -14,7 +14,9 @@ import {
 import OpenAI from 'openai';
 import type { ChatModels, Reasoning } from '../models.js';
 import { defaultReasoningEffort } from '../models.js';
-import { toResponsesTools } from '../tool_utils.js';
+import { logProviderToolExecutions, toResponsesTools } from '../tool_utils.js';
+import type { ResponsesProviderToolType } from '../tool_utils.js';
+import { OpenAITool } from '../tools.js';
 import { WSLLM } from '../ws/llm.js';
 
 export interface LLMOptions {
@@ -42,7 +44,9 @@ export interface LLMOptions {
   useWebSocket?: boolean;
 }
 
-type HttpLLMOptions = Omit<LLMOptions, 'useWebSocket'>;
+type HttpLLMOptions = Omit<LLMOptions, 'useWebSocket'> & {
+  providerToolType?: ResponsesProviderToolType;
+};
 
 const defaultLLMOptions: LLMOptions = {
   model: 'gpt-4.1',
@@ -155,6 +159,7 @@ class ResponsesHttpLLM extends llm.LLM {
       connOptions,
       modelOptions,
       strictToolSchema: this.#opts.strictToolSchema ?? true,
+      providerToolType: this.#opts.providerToolType,
     });
   }
 }
@@ -164,6 +169,7 @@ class ResponsesHttpLLMStream extends llm.LLMStream {
   private client: OpenAI;
   private modelOptions: Record<string, unknown>;
   private strictToolSchema: boolean;
+  private providerToolType?: ResponsesProviderToolType;
   private responseId: string;
 
   constructor(
@@ -176,6 +182,7 @@ class ResponsesHttpLLMStream extends llm.LLMStream {
       connOptions,
       modelOptions,
       strictToolSchema,
+      providerToolType,
     }: {
       model: string | ChatModels;
       client: OpenAI;
@@ -184,6 +191,7 @@ class ResponsesHttpLLMStream extends llm.LLMStream {
       connOptions: APIConnectOptions;
       modelOptions: Record<string, unknown>;
       strictToolSchema: boolean;
+      providerToolType?: ResponsesProviderToolType;
     },
   ) {
     super(llm, { chatCtx, toolCtx, connOptions });
@@ -191,6 +199,7 @@ class ResponsesHttpLLMStream extends llm.LLMStream {
     this.client = client;
     this.modelOptions = modelOptions;
     this.strictToolSchema = strictToolSchema;
+    this.providerToolType = providerToolType;
     this.responseId = '';
   }
 
@@ -202,9 +211,8 @@ class ResponsesHttpLLMStream extends llm.LLMStream {
         'openai.responses',
       )) as OpenAI.Responses.ResponseInputItem[];
 
-      // TODO: support provider tools in the Responses schema.
       const tools = this.toolCtx
-        ? toResponsesTools(this.toolCtx, this.strictToolSchema)
+        ? toResponsesTools(this.toolCtx, this.strictToolSchema, this.providerToolType)
         : undefined;
 
       const requestOptions: Record<string, unknown> = { ...this.modelOptions };
@@ -369,6 +377,8 @@ class ResponsesHttpLLMStream extends llm.LLMStream {
   private handleResponseCompleted(
     event: OpenAI.Responses.ResponseCompletedEvent,
   ): llm.ChatChunk | undefined {
+    logProviderToolExecutions(event.response.output);
+
     if (event.response.usage) {
       return {
         id: this.responseId,
@@ -386,6 +396,10 @@ class ResponsesHttpLLMStream extends llm.LLMStream {
 }
 
 export class LLM extends llm.LLM {
+  // the plugin's ProviderTool subclass; subclasses (e.g. xAI) override this so server-side
+  // provider tools are recognized when serializing the request. See toResponsesTools.
+  static readonly providerToolType: ResponsesProviderToolType = OpenAITool;
+
   #opts: LLMOptions;
   #llm: llm.LLM;
   #logger = log();
@@ -402,6 +416,7 @@ export class LLM extends llm.LLM {
 
     this.#opts = { ...defaultLLMOptions, ...opts };
     const { useWebSocket, client, ...baseOpts } = this.#opts;
+    const providerToolType = (this.constructor as typeof LLM).providerToolType;
 
     if (useWebSocket) {
       if (client !== undefined) {
@@ -409,9 +424,9 @@ export class LLM extends llm.LLM {
           'WebSocket mode does not support custom client; provided client will be ignored',
         );
       }
-      this.#llm = new WSLLM(baseOpts);
+      this.#llm = new WSLLM({ ...baseOpts, providerToolType });
     } else {
-      this.#llm = new ResponsesHttpLLM({ ...baseOpts, client });
+      this.#llm = new ResponsesHttpLLM({ ...baseOpts, client, providerToolType });
     }
 
     // Forward events from the inner delegate so consumers listening on this
