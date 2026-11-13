@@ -31,7 +31,8 @@ const BASE_URL = 'https://api.openai.com/v1';
 
 const MOCK_AUDIO_ID_PREFIX = 'lk_mock_audio_item_';
 
-interface RealtimeOptions {
+/** @internal */
+export interface RealtimeOptions {
   model: api_proto.Model;
   voice: api_proto.Voice;
   toolChoice?: llm.ToolChoice;
@@ -98,7 +99,8 @@ export function isFatalError(error: unknown): boolean {
   return typeof errorCode === 'string' && FATAL_ERROR_CODES.has(errorCode);
 }
 
-class CreateResponseHandle {
+/** @internal */
+export class CreateResponseHandle {
   instructions?: string;
   doneFut: Future<llm.GenerationCreatedEvent>;
   timeout?: ReturnType<typeof setTimeout>;
@@ -456,24 +458,24 @@ export function processBaseURL({
 export class RealtimeSession extends llm.RealtimeSession {
   private _tools: llm.ToolContext = llm.ToolContext.empty();
   protected remoteChatCtx: llm.RemoteChatContext = new llm.RemoteChatContext();
-  private messageChannel = new Queue<api_proto.ClientEvent>();
+  protected messageChannel = new Queue<api_proto.ClientEvent>();
   private inputResampler?: AudioResampler;
   private inputRate?: number;
-  private instructions?: string;
-  private oaiRealtimeModel: RealtimeModel;
+  protected instructions?: string;
+  protected oaiRealtimeModel: RealtimeModel;
   // Ref: python livekit-plugins/livekit-plugins-openai/livekit/plugins/openai/realtime/realtime_model.py - 795-797 lines
   // per-session copy of options so updateOptions can diff against the session's
   // own state instead of the shared model-level state.
-  private _options: RealtimeOptions;
+  protected _options: RealtimeOptions;
   protected currentGeneration?: ResponseGeneration | DiscardedGeneration;
-  private responseCreatedFutures: { [id: string]: CreateResponseHandle } = {};
-  private discardedEventIds = new Set<string>();
+  protected responseCreatedFutures: { [id: string]: CreateResponseHandle } = {};
+  protected discardedEventIds = new Set<string>();
 
   private textModeRecoveryRetries: number = 0;
 
-  private itemCreateFutures: { [id: string]: Future } = {};
-  private itemDeleteFutures: { [id: string]: Future } = {};
-  private chatCtxEventFutures: { [id: string]: Future } = {};
+  protected itemCreateFutures: { [id: string]: Future } = {};
+  protected itemDeleteFutures: { [id: string]: Future } = {};
+  protected chatCtxEventFutures: { [id: string]: Future } = {};
   private sentChatCtxEvents: { [id: string]: api_proto.ClientEvent } = {};
   private replayItemCreateEventIds: { [id: string]: string[] } = {};
   private replayItemCreateEventItems: { [eventId: string]: string } = {};
@@ -490,7 +492,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   // 100ms chunks
   private bstream = new AudioByteStream(SAMPLE_RATE, NUM_CHANNELS, SAMPLE_RATE / 10);
 
-  private pushedDurationMs: number = 0;
+  protected pushedDurationMs: number = 0;
 
   #logger = log();
   #task: Task<void>;
@@ -534,13 +536,14 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
   }
 
-  private hasInflightResponse(): boolean {
+  protected hasInflightResponse(): boolean {
     return (
       this.currentGeneration !== undefined || Object.keys(this.responseCreatedFutures).length > 0
     );
   }
 
   sendEvent(command: api_proto.ClientEvent): void {
+    if (this.#closed) return;
     this.messageChannel.put(command);
   }
 
@@ -1112,10 +1115,10 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.currentGeneration = undefined;
   }
 
-  private rejectResponseCreatedFutures(reason: string): void {
+  protected rejectResponseCreatedFutures(reason: string | Error): void {
     for (const handle of Object.values(this.responseCreatedFutures)) {
       if (!handle.doneFut.done) {
-        handle.doneFut.reject(new Error(reason));
+        handle.doneFut.reject(typeof reason === 'string' ? new Error(reason) : reason);
       }
       if (handle.timeout) clearTimeout(handle.timeout);
     }
@@ -1375,13 +1378,16 @@ export class RealtimeSession extends llm.RealtimeSession {
           numRetries++;
         }
       }
+    } catch (error) {
+      this.#closed = true;
+      throw error;
     } finally {
       this.closeCurrentGeneration('session close');
       this.rejectResponseCreatedFutures('Realtime session closed');
     }
   }
 
-  private async runWs(wsConn: WebSocket): Promise<void> {
+  protected async runWs(wsConn: WebSocket): Promise<void> {
     const forwardEvents = async (signal: AbortSignal): Promise<void> => {
       const abortFuture = new Future<void>();
       signal.addEventListener('abort', () => abortFuture.resolve());
@@ -1424,8 +1430,8 @@ export class RealtimeSession extends llm.RealtimeSession {
     wsConn.onerror = (error) => {
       wsCloseFuture.resolve(new APIConnectionError({ message: error.message }));
     };
-    wsConn.onclose = () => {
-      wsCloseFuture.resolve();
+    wsConn.onclose = (event) => {
+      wsCloseFuture.resolve(this.websocketCloseError(event.code, event.reason));
     };
 
     wsConn.onmessage = (message: MessageEvent) => {
@@ -1551,9 +1557,7 @@ export class RealtimeSession extends llm.RealtimeSession {
         ? undefined
         : Task.from(async ({ signal }) => {
             await delay(this._options.maxSessionDuration!, { signal });
-            return new APIConnectionError({
-              message: 'OpenAI Realtime API connection timeout',
-            });
+            return this.maxSessionDurationResult();
           });
 
     try {
@@ -1582,6 +1586,16 @@ export class RealtimeSession extends llm.RealtimeSession {
       );
       wsConn.close();
     }
+  }
+
+  /** Provider hook for classifying a socket close. Returning undefined performs a clean recycle. */
+  protected websocketCloseError(_code: number, _reason: string): Error | undefined {
+    return undefined;
+  }
+
+  /** Provider hook for classifying the configured connection-duration recycle. */
+  protected maxSessionDurationResult(): Error | undefined {
+    return new APIConnectionError({ message: 'OpenAI Realtime API connection timeout' });
   }
 
   async close() {
@@ -1629,7 +1643,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.emit('input_speech_started', {} as llm.InputSpeechStartedEvent);
   }
 
-  private handleInputAudioBufferSpeechStopped(
+  protected handleInputAudioBufferSpeechStopped(
     _event: api_proto.InputAudioBufferSpeechStoppedEvent,
   ): void {
     this.emit('input_speech_stopped', {
@@ -1687,7 +1701,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.emit('generation_created', generationEv);
   }
 
-  private handleResponseOutputItemAdded(event: api_proto.ResponseOutputItemAddedEvent): void {
+  protected handleResponseOutputItemAdded(event: api_proto.ResponseOutputItemAddedEvent): void {
     if (this.currentGeneration instanceof DiscardedGeneration) return;
 
     if (!this.currentGeneration) {
@@ -1779,7 +1793,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
   }
 
-  private handleConversationItemDeleted(event: api_proto.ConversationItemDeletedEvent): void {
+  protected handleConversationItemDeleted(event: api_proto.ConversationItemDeletedEvent): void {
     if (!event.item_id) {
       throw new Error('item_id is not set');
     }
@@ -1822,7 +1836,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     });
   }
 
-  private clearAccumulator(itemId: string, contentIndex: number): string | undefined {
+  protected clearAccumulator(itemId: string, contentIndex: number): string | undefined {
     const byIndex = this.inputTranscriptAccumulators.get(itemId);
     if (!byIndex) return undefined;
     const partial = byIndex.get(contentIndex);
@@ -1883,7 +1897,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     });
   }
 
-  private handleResponseContentPartAdded(event: api_proto.ResponseContentPartAddedEvent): void {
+  protected handleResponseContentPartAdded(event: api_proto.ResponseContentPartAddedEvent): void {
     if (this.currentGeneration instanceof DiscardedGeneration) return;
 
     if (!this.currentGeneration) {
@@ -1919,7 +1933,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
   }
 
-  private handleResponseContentPartDone(event: api_proto.ResponseContentPartDoneEvent): void {
+  protected handleResponseContentPartDone(event: api_proto.ResponseContentPartDoneEvent): void {
     if (this.currentGeneration instanceof DiscardedGeneration) return;
 
     if (!event.part) {
@@ -1959,7 +1973,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     itemGeneration.audioTranscript += event.delta;
   }
 
-  private handleResponseTextDone(_event: api_proto.ResponseTextDoneEvent): void {
+  protected handleResponseTextDone(_event: api_proto.ResponseTextDoneEvent): void {
     if (this.currentGeneration instanceof DiscardedGeneration) return;
 
     if (!this.currentGeneration) {
@@ -1967,7 +1981,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
   }
 
-  private handleResponseAudioTranscriptDelta(
+  protected handleResponseAudioTranscriptDelta(
     event: api_proto.ResponseAudioTranscriptDeltaEvent,
   ): void {
     if (this.currentGeneration instanceof DiscardedGeneration) return;
@@ -2030,7 +2044,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     );
   }
 
-  private handleResponseAudioTranscriptDone(
+  protected handleResponseAudioTranscriptDone(
     _event: api_proto.ResponseAudioTranscriptDoneEvent,
   ): void {
     if (this.currentGeneration instanceof DiscardedGeneration) return;
@@ -2040,7 +2054,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
   }
 
-  private handleResponseAudioDone(_event: api_proto.ResponseAudioDoneEvent): void {
+  protected handleResponseAudioDone(_event: api_proto.ResponseAudioDoneEvent): void {
     if (this.currentGeneration instanceof DiscardedGeneration) return;
 
     if (!this.currentGeneration) {
@@ -2048,7 +2062,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
   }
 
-  private handleResponseOutputItemDone(event: api_proto.ResponseOutputItemDoneEvent): void {
+  protected handleResponseOutputItemDone(event: api_proto.ResponseOutputItemDoneEvent): void {
     // conversation.item.added carries a function call before its arguments are generated;
     // retain the completed arguments so a reconnection can replay them.
     if (event.item.type === 'function_call') {
@@ -2094,7 +2108,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
   }
 
-  private handleResponseDone(_event: api_proto.ResponseDoneEvent): void {
+  protected handleResponseDone(_event: api_proto.ResponseDoneEvent): void {
     if (this.currentGeneration instanceof DiscardedGeneration) {
       this.currentGeneration = undefined;
       return;
@@ -2149,7 +2163,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       ttftMs,
       durationMs,
       cancelled: _event.response.status === 'cancelled',
-      label: 'openai_realtime',
+      label: this.metricsLabel,
       inputTokens: usage?.input_tokens ?? 0,
       outputTokens: usage?.output_tokens ?? 0,
       totalTokens: usage?.total_tokens ?? 0,
@@ -2171,6 +2185,10 @@ export class RealtimeSession extends llm.RealtimeSession {
         textTokens: usage?.output_token_details?.text_tokens ?? 0,
         audioTokens: usage?.output_token_details?.audio_tokens ?? 0,
         imageTokens: 0,
+      },
+      metadata: {
+        modelProvider: this.oaiRealtimeModel.provider,
+        modelName: this.oaiRealtimeModel.model,
       },
     };
 
@@ -2229,7 +2247,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
   }
 
-  private handleError(event: api_proto.ErrorEvent): void {
+  protected handleError(event: api_proto.ErrorEvent): void {
     const eventId = event.error.event_id;
     if (eventId) {
       const replayItemId = this.replayItemCreateEventItems[eventId];
@@ -2289,13 +2307,16 @@ export class RealtimeSession extends llm.RealtimeSession {
     return true;
   }
 
-  private emitError({ error, recoverable }: { error: Error; recoverable: boolean }): void {
+  protected get metricsLabel(): string {
+    return 'openai_realtime';
+  }
+
+  protected emitError({ error, recoverable }: { error: Error; recoverable: boolean }): void {
     // IMPORTANT: only emit error if there are listeners; otherwise emit will throw an error
     this.emit('error', {
       type: 'realtime_model_error',
       timestamp: Date.now(),
-      // TODO(brian): add label
-      label: '',
+      label: this.oaiRealtimeModel.label(),
       error,
       recoverable,
     } as llm.RealtimeModelError);
