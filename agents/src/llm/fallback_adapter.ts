@@ -9,7 +9,7 @@ import * as traceTypes from '../telemetry/trace_types.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import type { ChatContext } from './chat_context.js';
 import type { ChatChunk } from './llm.js';
-import { LLM, LLMStream } from './llm.js';
+import { LLM, LLMStream, getLLMStreamError } from './llm.js';
 import type { ToolChoice, ToolContextLike } from './tool_context.js';
 
 /**
@@ -28,6 +28,7 @@ const DEFAULT_FALLBACK_API_CONNECT_OPTIONS: APIConnectOptions = {
 interface LLMStatus {
   available: boolean;
   recoveringTask: Promise<void> | null;
+  selectionId: number;
 }
 
 /**
@@ -52,6 +53,11 @@ export interface FallbackAdapterOptions {
   retryInterval?: number;
   /** Whether to retry when LLM fails after chunks are sent. Defaults to false. */
   retryOnChunkSent?: boolean;
+  /**
+   * Keep using the current LLM until it fails, even if a higher-priority LLM recovers.
+   * On failure, try the remaining LLMs in the given order. Defaults to false.
+   */
+  sticky?: boolean;
 }
 
 /**
@@ -72,9 +78,12 @@ export class FallbackAdapter extends LLM {
   readonly maxRetryPerLLM: number;
   readonly retryInterval: number;
   readonly retryOnChunkSent: boolean;
+  readonly sticky: boolean;
 
   /** @internal */
   _status: LLMStatus[];
+  /** @internal */
+  _attemptId = 0;
 
   private logger = log();
 
@@ -90,11 +99,13 @@ export class FallbackAdapter extends LLM {
     this.maxRetryPerLLM = options.maxRetryPerLLM ?? 0;
     this.retryInterval = options.retryInterval ?? 0.5;
     this.retryOnChunkSent = options.retryOnChunkSent ?? false;
+    this.sticky = options.sticky ?? false;
 
     // Initialize status for each LLM
     this._status = this.llms.map(() => ({
       available: true,
       recoveringTask: null,
+      selectionId: 0,
     }));
 
     // Forward metrics_collected events from child LLMs
@@ -105,15 +116,34 @@ export class FallbackAdapter extends LLM {
     }
   }
 
-  /**
-   * The instance the next request goes to first: the first one marked available, or the primary
-   * once all are down (they are then all retried, primary first). A failed instance's recovery
-   * task flips it back to available, so a recovered primary is reported again before it has
-   * served.
-   */
+  /** @internal */
+  _llmOrder(): number[] {
+    const order = this.llms.map((_, index) => index);
+    if (this.sticky) {
+      let selected = order[0]!;
+      for (const index of order.slice(1)) {
+        const selectionId = this._status[index]!.available ? this._status[index]!.selectionId : 0;
+        const selectedId = this._status[selected]!.available
+          ? this._status[selected]!.selectionId
+          : 0;
+        if (selectionId > selectedId) {
+          selected = index;
+        }
+      }
+      order.splice(order.indexOf(selected), 1);
+      order.unshift(selected);
+    }
+    return order;
+  }
+
+  /** The first available instance in request order, or the primary if all are down. */
   private nextInstance(): LLM {
-    const index = this._status.findIndex((status) => status.available);
-    return this.llms[index === -1 ? 0 : index]!;
+    for (const index of this._llmOrder()) {
+      if (this._status[index]!.available) {
+        return this.llms[index]!;
+      }
+    }
+    return this.llms[0]!;
   }
 
   /**
@@ -244,6 +274,11 @@ class FallbackLLMStream extends LLMStream {
     return undefined;
   }
 
+  override close(): void {
+    this._currentStream?.close();
+    super.close();
+  }
+
   /**
    * The instance that served: on the current (attempt) span, and as the response side of the
    * adapter's request span and the caller's (llm_node). Request-side attributes named the
@@ -277,6 +312,10 @@ class FallbackLLMStream extends LLMStream {
       retryIntervalMs: this.adapter.retryInterval * 1000,
     };
 
+    // LLM errors are read from this stream below. Keep an event listener attached so Node's
+    // special unhandled `error` event behavior does not replace the provider error.
+    const ignoreErrorEvent = () => {};
+    llm.on('error', ignoreErrorEvent);
     const stream = llm.chat({
       chatCtx: super.chatCtx,
       toolCtx: this.toolCtx,
@@ -285,13 +324,9 @@ class FallbackLLMStream extends LLMStream {
       toolChoice: this.toolChoice,
       extraKwargs: this.extraKwargs,
     });
-
-    // Listen for error events - child LLMs emit errors via their LLM instance, not the stream
-    let streamError: Error | undefined;
-    const errorHandler = (ev: { error: Error }) => {
-      streamError = ev.error;
-    };
-    llm.on('error', errorHandler);
+    if (!checkRecovery) {
+      stream._retryOnChunkSent = this.adapter.retryOnChunkSent;
+    }
 
     try {
       let shouldSetCurrent = !checkRecovery;
@@ -303,7 +338,7 @@ class FallbackLLMStream extends LLMStream {
         yield chunk;
       }
 
-      // If an error was emitted but not thrown through iteration, throw it now
+      const streamError = getLLMStreamError(stream);
       if (streamError) {
         throw streamError;
       }
@@ -335,7 +370,7 @@ class FallbackLLMStream extends LLMStream {
       }
       throw error;
     } finally {
-      llm.off('error', errorHandler);
+      llm.off('error', ignoreErrorEvent);
     }
   }
 
@@ -386,7 +421,7 @@ class FallbackLLMStream extends LLMStream {
       this._log.error('all LLMs are unavailable, retrying...');
     }
 
-    for (let i = 0; i < this.adapter.llms.length; i++) {
+    for (const i of this.adapter._llmOrder()) {
       const llm = this.adapter.llms[i]!;
       const status = this.adapter._status[i]!;
 
@@ -396,6 +431,9 @@ class FallbackLLMStream extends LLMStream {
       );
 
       if (status.available || allFailed) {
+        this.adapter._attemptId += 1;
+        const attemptId = this.adapter._attemptId;
+        status.selectionId = attemptId;
         let textSent = '';
         const toolCallsSent: string[] = [];
 
@@ -424,6 +462,19 @@ class FallbackLLMStream extends LLMStream {
             this.queue.put(chunk);
           }
 
+          // Closing a stream cancels the request without treating its selected model as failed.
+          if (this.closed) {
+            return;
+          }
+
+          // Restore this selection after concurrent failures without outranking a newer
+          // selection that has not failed.
+          status.selectionId = Math.max(status.selectionId, attemptId);
+          if (this.adapter.sticky && !status.available) {
+            status.available = true;
+            this.adapter._emitAvailabilityChanged(llm, true);
+          }
+
           // Success!
           this._log.info(
             { llm: llm.label(), totalChunks: chunkCount, textLength: textSent.length },
@@ -432,13 +483,12 @@ class FallbackLLMStream extends LLMStream {
           this.recordServed(llm, i);
           return;
         } catch (error) {
+          status.selectionId = 0;
           // Mark as unavailable if it was available before
           if (status.available) {
             status.available = false;
             this.adapter._emitAvailabilityChanged(llm, false);
           }
-
-          this.tryRecovery(llm, i);
 
           // Check if we sent data before failing
           if (textSent || toolCallsSent.length > 0) {
@@ -464,6 +514,8 @@ class FallbackLLMStream extends LLMStream {
           }
         }
       }
+
+      this.tryRecovery(llm, i);
     }
 
     // All LLMs failed
