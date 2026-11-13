@@ -4347,6 +4347,7 @@ declare namespace inference {
         OpenAIRealtimeModels,
         RealtimeModelOptions,
         RealtimeModels,
+        RimeRealtimeModels,
         XAIRealtimeModels,
         DuplexModel_2 as DuplexModel,
         DuplexSession_2 as DuplexSession,
@@ -6240,6 +6241,7 @@ declare namespace realtime {
         OpenAIRealtimeModels,
         GoogleRealtimeModels,
         XAIRealtimeModels,
+        RimeRealtimeModels,
         RealtimeModels,
         RealtimeModelOptions,
         RealtimeModel_2 as RealtimeModel,
@@ -6377,7 +6379,7 @@ interface RealtimeModelOptions {
 }
 
 // @public (undocumented)
-type RealtimeModels = OpenAIRealtimeModels | GoogleRealtimeModels | XAIRealtimeModels;
+type RealtimeModels = OpenAIRealtimeModels | GoogleRealtimeModels | XAIRealtimeModels | RimeRealtimeModels;
 
 // @public (undocumented)
 export abstract class RealtimeSession extends EventEmitter {
@@ -6642,6 +6644,9 @@ interface RimeOptions {
     speed_alpha?: number;
     time_scale_factor?: number;
 }
+
+// @public (undocumented)
+type RimeRealtimeModels = 'rime/prism';
 
 // @public (undocumented)
 export interface RoomInputOptions {

@@ -314,6 +314,7 @@ describe('inference DuplexModel', () => {
     expect(llmFromModelString('openai/gpt-realtime-2.1')).toBeInstanceOf(RealtimeModel);
     expect(llmFromModelString('google/gemini-3.8-live')).toBeInstanceOf(RealtimeModel);
     expect(llmFromModelString('xai/grok-voice-3.0')).toBeInstanceOf(RealtimeModel);
+    expect(llmFromModelString('rime/prism')).toBeInstanceOf(RealtimeModel);
     expect(llmFromModelString('openai/gpt-5.6-luna')).toBeInstanceOf(LLM);
 
     const session = new AgentSession({ llm: 'openai/gpt-live-1' });
