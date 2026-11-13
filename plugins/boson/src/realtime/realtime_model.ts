@@ -496,9 +496,11 @@ export class RealtimeSession extends realtime.RealtimeSession {
     // retain their requested predecessor and are tracked by itemCreateFutures.
     const previousItemId =
       !event.previous_item_id && !this.itemCreateFutures[event.item.id]
-        ? this.chatCtx.items.at(-1)?.id ?? null
+        ? this.chatCtx.items.at(-1)?.id
         : event.previous_item_id;
-    super.handleConversationItemCreated({ ...event, previous_item_id: previousItemId });
+    super.handleConversationItemCreated(
+      previousItemId ? { ...event, previous_item_id: previousItemId } : event,
+    );
   }
 
   protected override handleConversationItemInputAudioTranscriptionCompleted(
