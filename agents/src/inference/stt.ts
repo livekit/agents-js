@@ -4,7 +4,7 @@
 import { type AudioFrame } from '@livekit/rtc-node';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import type { WebSocket } from 'ws';
-import { APIStatusError } from '../_exceptions.js';
+import { APIConnectionError, APIStatusError } from '../_exceptions.js';
 import { AudioByteStream } from '../audio.js';
 import { type LanguageCode, areLanguagesEquivalent, normalizeLanguage } from '../language.js';
 import { ChatMessage } from '../llm/index.js';
@@ -30,6 +30,8 @@ import {
 } from './api_protos.js';
 import { type AnyString, connectWs, createAccessToken, getDefaultInferenceUrl } from './utils.js';
 import { VAD as InferenceVAD } from './vad.js';
+
+type STTWriterControl = { kind: 'update'; message: unknown } | { kind: 'handoff'; id: string };
 
 export type DeepgramModels =
   | 'deepgram/nova-3'
@@ -772,60 +774,68 @@ export class STT<TModel extends STTModels> extends BaseSTT {
     );
   }
 
-  async connectWs(timeout: number): Promise<WebSocket> {
+  async connectWs(
+    timeout: number,
+    opts: InferenceSTTOptions<TModel> = this.opts,
+    sessionKeyterms: string[] = this._sessionKeyterms,
+    handoffProbeId?: string,
+  ): Promise<WebSocket> {
     // a copy of the caller's options: the hint is gated on this frame, never cleared from them
     const extra = {
-      ...this.opts.modelOptions,
-      ...(keytermsExtraForModel(this.opts.model, {
-        extraKwargs: this.opts.modelOptions as Record<string, unknown>,
-        sessionKeyterms: this._sessionKeyterms,
+      ...opts.modelOptions,
+      ...(keytermsExtraForModel(opts.model, {
+        extraKwargs: opts.modelOptions as Record<string, unknown>,
+        sessionKeyterms,
       }) ?? {}),
     } as Record<string, unknown>;
 
-    if (dropUnsupportedLanguageHint(this.opts.model, this.opts.language, extra)) {
-      this._warnLanguageHintIgnored(this.opts.model, this.opts.language);
+    if (dropUnsupportedLanguageHint(opts.model, opts.language, extra)) {
+      this._warnLanguageHintIgnored(opts.model, opts.language);
     }
 
     const params = {
+      handoff_protocol: 1,
       settings: {
-        sample_rate: String(this.opts.sampleRate),
-        encoding: this.opts.encoding,
+        sample_rate: String(opts.sampleRate),
+        encoding: opts.encoding,
         // the framework session keyterms into the user's extra_kwargs keyterm key)
         extra,
       },
     } as Record<string, unknown>;
 
-    if (this.opts.model && this.opts.model !== 'auto') {
-      params.model = this.opts.model;
+    if (handoffProbeId !== undefined) params.handoff_probe = { handoff_id: handoffProbeId };
+
+    if (opts.model && opts.model !== 'auto') {
+      params.model = opts.model;
     }
 
-    if (this.opts.language) {
-      (params.settings as Record<string, unknown>).language = this.opts.language;
+    if (opts.language) {
+      (params.settings as Record<string, unknown>).language = opts.language;
     }
 
-    if (this.opts.fallback?.length) {
+    if (opts.fallback?.length) {
       params.fallback = {
-        models: this.opts.fallback.map((m) => ({
+        models: opts.fallback.map((m) => ({
           model: m.model,
           extra: m.extraKwargs ?? {},
         })),
       };
     }
 
-    if (this.opts.connOptions) {
+    if (opts.connOptions) {
       params.connection = {
-        timeout: this.opts.connOptions.timeoutMs / 1000,
-        retries: this.opts.connOptions.maxRetry,
+        timeout: opts.connOptions.timeoutMs / 1000,
+        retries: opts.connOptions.maxRetry,
       };
     }
 
-    let baseURL = this.opts.baseURL;
+    let baseURL = opts.baseURL;
     if (baseURL.startsWith('http://') || baseURL.startsWith('https://')) {
       baseURL = baseURL.replace('http', 'ws');
     }
 
-    const token = await createAccessToken(this.opts.apiKey, this.opts.apiSecret);
-    const url = `${baseURL}/stt?model=${encodeURIComponent(this.model)}`;
+    const token = await createAccessToken(opts.apiKey, opts.apiSecret);
+    const url = `${baseURL}/stt?model=${encodeURIComponent(opts.model ?? 'auto')}`;
     const headers = { Authorization: `Bearer ${token}` } as Record<string, string>;
 
     const socket = await connectWs(url, headers, timeout);
@@ -848,6 +858,61 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
   private stt: STT<TModel>;
   private connOptions: APIConnectOptions;
   private activeWs?: WebSocket;
+  private requestedHandoffId?: string;
+  private handoffSerialized = false;
+  private handoffId?: string;
+  private handoffWrites: { encoded: string; onSent?: () => void; discardOnRetry?: boolean }[] = [];
+  private abortHandoff?: () => void;
+  private pendingUpdateAcks = 0;
+  private updateUncertain = false;
+  private handoffAudioOffsetInS = 0;
+  private connectionAudioDurationInS = 0;
+  private retryHandoffOpts?: InferenceSTTOptions<TModel>;
+  private retryHandoffKeyterms?: string[];
+
+  private sendOrBuffer(message: unknown, onSent?: () => void, discardOnRetry = false): void {
+    const encoded = JSON.stringify(message);
+    if (this.handoffId !== undefined) {
+      if (this.handoffWrites.length < 1024) {
+        this.handoffWrites.push({ encoded, onSent, discardOnRetry });
+        return;
+      }
+      try {
+        this.abortHandoff?.();
+      } catch {
+        throw new APIConnectionError({ message: 'STT handoff could not resume' });
+      }
+    }
+    if (!this.activeWs || this.activeWs.readyState !== 1) {
+      throw new APIConnectionError({ message: 'STT WebSocket is closed' });
+    }
+    try {
+      this.activeWs.send(encoded);
+    } catch {
+      throw new APIConnectionError({ message: 'STT WebSocket write failed' });
+    }
+    onSent?.();
+  }
+
+  /**
+   * Replays writes buffered during a handoff to `socket`. The queue empties only after every
+   * write is sent: a failed write leaves it whole, because the retry dials a fresh session that
+   * needs the full replay. `onSent` callbacks run once, after the last write.
+   */
+  private releaseHandoffWrites(socket: WebSocket): void {
+    const writes = this.handoffWrites;
+    for (const next of writes) {
+      if (socket.readyState !== 1)
+        throw new APIConnectionError({ message: 'STT WebSocket is closed' });
+      try {
+        socket.send(next.encoded);
+      } catch {
+        throw new APIConnectionError({ message: 'STT WebSocket write failed' });
+      }
+    }
+    this.handoffWrites = [];
+    for (const next of writes) next.onSent?.();
+  }
 
   #logger = log();
 
@@ -920,7 +985,16 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
       }
       if (Object.keys(settings).length > 0) {
         try {
-          this.activeWs.send(JSON.stringify({ type: 'session.update', settings }));
+          if (this.handoffSerialized) {
+            (this.input as unknown as { put(value: STTWriterControl): void }).put({
+              kind: 'update',
+              message: { type: 'session.update', settings },
+            });
+          } else {
+            this.sendOrBuffer({ type: 'session.update', settings }, () => {
+              this.pendingUpdateAcks++;
+            });
+          }
         } catch (e) {
           this.#logger.debug({ err: e }, 'failed to send session.update, ws may be closing');
         }
@@ -936,6 +1010,8 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
   }
 
   protected async run(): Promise<void> {
+    this.handoffAudioOffsetInS = 0;
+    this.connectionAudioDurationInS = 0;
     while (true) {
       const vad = await this.stt.vadPromise;
       // Create fresh resources for each connection attempt
@@ -948,6 +1024,13 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
       let sessionCloseSent = false;
       let finalizationTimeout: ReturnType<typeof setTimeout> | undefined;
       let vadStream: VADStream | null = null;
+      let replacementWs: WebSocket | undefined;
+      let replacementMessageMonitor: (() => void) | undefined;
+      let attachSocket: ((socket: WebSocket) => void) | undefined;
+      let handoffOpts: InferenceSTTOptions<TModel> | undefined;
+      let handoffKeyterms: string[] = [];
+      let audioStream: AudioByteStream | undefined;
+      let handoffTimer: ReturnType<typeof setTimeout> | undefined;
 
       const eventChannel = createStreamChannel<SttServerEvent>();
 
@@ -961,14 +1044,36 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
         socket.send(JSON.stringify({ type: 'session.close' }));
       };
 
-      const sendSessionFinalize = (socket: WebSocket) => {
-        socket.send(JSON.stringify({ type: 'session.finalize' }));
+      const sendSessionFinalize = (onSent?: () => void) => {
+        this.sendOrBuffer({ type: 'session.finalize' }, onSent, onSent !== undefined);
       };
 
       const resourceCleanup = () => {
         if (cleanedUp) return;
         cleanedUp = true;
+        if (this.requestedHandoffId !== undefined || this.handoffWrites.length > 0) {
+          this.retryHandoffOpts = handoffOpts ?? this.retryHandoffOpts;
+          this.retryHandoffKeyterms = handoffOpts ? handoffKeyterms : this.retryHandoffKeyterms;
+          if (audioStream && this.retryHandoffOpts !== undefined) {
+            for (const frame of audioStream.flush()) {
+              const audio = Buffer.from(frame.data.buffer).toString('base64');
+              this.handoffWrites.push({
+                encoded: JSON.stringify({ type: 'input_audio', audio }),
+                onSent: () => {
+                  this.speechDuration += frame.samplesPerChannel / frame.sampleRate;
+                  this.connectionAudioDurationInS += frame.samplesPerChannel / frame.sampleRate;
+                },
+              });
+            }
+          }
+          this.requestedHandoffId = undefined;
+          this.handoffId = undefined;
+          this.abortHandoff = undefined;
+          this.handoffWrites = this.handoffWrites.filter((entry) => !entry.discardOnRetry);
+        }
         if (finalizationTimeout) clearTimeout(finalizationTimeout);
+        if (handoffTimer) clearTimeout(handoffTimer);
+        replacementWs?.close();
         void eventChannel.close().catch((error) => {
           this.#logger.debug({ error }, 'Failed to close STT event channel');
         });
@@ -1016,54 +1121,67 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
 
           signal.addEventListener('abort', onAbort, { once: true });
 
-          ws.on('message', (data) => {
-            const json = JSON.parse(data.toString()) as SttServerEvent;
-            if (json.type === 'final_transcript') {
-              finalTranscriptReceived = true;
-            }
-            // a transcript keeps the finalization wait open; an interim with no text is not one
-            // (xai/stt-1 sends an empty interim every second after session.finalized, for as
-            // long as the socket is open, and the stream would never end)
-            const transcriptText = (json as { transcript?: string }).transcript;
-            if (
-              json.type === 'final_transcript' ||
-              json.type === 'preflight_transcript' ||
-              (json.type === 'interim_transcript' && Boolean(transcriptText))
-            ) {
-              scheduleFinalizationTimeout();
-            }
-            void eventChannel.write(json).catch((error) => {
-              this.#logger.debug({ error }, 'Failed to queue STT server event');
+          attachSocket = (socket: WebSocket) => {
+            socket.on('message', (data) => {
+              const json = JSON.parse(data.toString()) as SttServerEvent;
+              if (json.type === 'final_transcript') {
+                finalTranscriptReceived = true;
+              }
+              // a transcript keeps the finalization wait open; an interim with no text is not one
+              // (xai/stt-1 sends an empty interim every second after session.finalized, for as
+              // long as the socket is open, and the stream would never end)
+              const transcriptText = (json as { transcript?: string }).transcript;
+              if (
+                json.type === 'final_transcript' ||
+                json.type === 'preflight_transcript' ||
+                (json.type === 'interim_transcript' && Boolean(transcriptText))
+              ) {
+                scheduleFinalizationTimeout();
+              }
+              void eventChannel.write(json).catch((error) => {
+                this.#logger.debug({ error }, 'Failed to queue STT server event');
+              });
             });
-          });
 
-          ws.on('error', (e) => {
-            this.#logger.error({ error: e }, 'WebSocket error');
-            resourceCleanup();
-            reject(e);
-          });
+            socket.on('error', (e) => {
+              if (socket !== this.activeWs) return;
+              this.#logger.error({ error: e }, 'WebSocket error');
+              resourceCleanup();
+              reject(e);
+            });
 
-          ws.on('close', (code: number) => {
-            const expectedClose =
-              signal.aborted || inputEnded || finalizationComplete || sessionCloseSent;
-            resourceCleanup();
+            socket.on('close', (code: number) => {
+              if (socket !== this.activeWs) return;
+              const expectedClose =
+                signal.aborted || inputEnded || finalizationComplete || sessionCloseSent;
+              resourceCleanup();
 
-            if (expectedClose) return resolve();
+              if (expectedClose) return resolve();
 
-            this.#logger.error('WebSocket closed unexpectedly');
+              this.#logger.error('WebSocket closed unexpectedly');
 
-            reject(
-              new APIStatusError({
-                message: 'LiveKit STT connection closed unexpectedly',
-                options: { statusCode: code, retryable: !inputEnded },
-              }),
-            );
-          });
+              reject(
+                new APIStatusError({
+                  message: 'LiveKit STT connection closed unexpectedly',
+                  options: { statusCode: code, retryable: !inputEnded },
+                }),
+              );
+            });
+          };
+          attachSocket(ws);
         });
       };
 
-      const send = async (socket: WebSocket, signal: AbortSignal) => {
-        const audioStream = new AudioByteStream(
+      const sendAudioFrame = (frame: AudioFrame) => {
+        const base64 = Buffer.from(frame.data.buffer).toString('base64');
+        this.sendOrBuffer({ type: 'input_audio', audio: base64 }, () => {
+          this.speechDuration += frame.samplesPerChannel / frame.sampleRate;
+          this.connectionAudioDurationInS += frame.samplesPerChannel / frame.sampleRate;
+        });
+      };
+
+      const send = async (signal: AbortSignal) => {
+        audioStream = new AudioByteStream(
           this.opts.sampleRate,
           1,
           Math.floor(this.opts.sampleRate / 20), // 50ms
@@ -1086,6 +1204,26 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
           if (result.done) break;
           const ev = result.value;
 
+          if (typeof ev === 'object' && ev !== null && 'kind' in ev) {
+            const control = ev as unknown as STTWriterControl;
+            if (control.kind === 'update') {
+              this.sendOrBuffer(control.message, () => {
+                this.pendingUpdateAcks++;
+              });
+            } else if (
+              control.kind === 'handoff' &&
+              control.id === this.requestedHandoffId &&
+              this.activeWs
+            ) {
+              for (const frame of audioStream.flush()) sendAudioFrame(frame);
+              this.handoffId = control.id;
+              this.activeWs.send(
+                JSON.stringify({ type: 'session.handoff.pause', handoff_id: control.id }),
+              );
+            }
+            continue;
+          }
+
           let frames: AudioFrame[];
           if (ev === SpeechStream.FLUSH_SENTINEL) {
             frames = audioStream.flush();
@@ -1096,20 +1234,18 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
           }
 
           for (const frame of frames) {
-            this.speechDuration += frame.samplesPerChannel / frame.sampleRate;
-            const base64 = Buffer.from(frame.data.buffer).toString('base64');
-            const msg = { type: 'input_audio', audio: base64 };
-            socket.send(JSON.stringify(msg));
+            sendAudioFrame(frame);
           }
         }
 
-        inputEnded = true;
         vadStream?.endInput();
-        sendSessionFinalize(socket);
-        scheduleFinalizationTimeout();
+        sendSessionFinalize(() => {
+          inputEnded = true;
+          scheduleFinalizationTimeout();
+        });
       };
 
-      const processVAD = async (stream: VADStream, socket: WebSocket, signal: AbortSignal) => {
+      const processVAD = async (stream: VADStream, signal: AbortSignal) => {
         // VADStream.next() does not support cancellation.
         const iterator = stream[Symbol.asyncIterator]();
         while (true) {
@@ -1117,8 +1253,8 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
           if (isAborted) return;
           if (result.done) break;
           if (result.value.type !== VADEventType.END_OF_SPEECH) continue;
-          if (socket.readyState !== 1) return;
-          sendSessionFinalize(socket);
+          if (this.activeWs?.readyState !== 1) return;
+          sendSessionFinalize();
         }
       };
 
@@ -1131,6 +1267,203 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
             const result = await reader.read();
             if (signal.aborted) return;
             if (result.done) return;
+
+            const handoff = result.value as { type: string; handoff_id?: unknown };
+            if (handoff.type === 'session.updated') {
+              const ack = result.value as { success?: unknown };
+              if (this.pendingUpdateAcks > 0) this.pendingUpdateAcks--;
+              else this.updateUncertain = true;
+              if (ack.success !== true) this.updateUncertain = true;
+              continue;
+            }
+            if (
+              handoff.type === 'session.handoff.request' &&
+              typeof handoff.handoff_id === 'string' &&
+              this.requestedHandoffId === undefined &&
+              this.activeWs
+            ) {
+              if (vadStream || this._pendingExtra !== undefined) {
+                this.activeWs.send(
+                  JSON.stringify({ type: 'session.handoff.abort', handoff_id: handoff.handoff_id }),
+                );
+                continue;
+              }
+              this.handoffSerialized = true;
+              this.requestedHandoffId = handoff.handoff_id;
+              handoffOpts = {
+                ...this.opts,
+                modelOptions: { ...this.opts.modelOptions },
+              } as InferenceSTTOptions<TModel>;
+              handoffKeyterms = [...this.stt._sessionKeyterms];
+              this.retryHandoffOpts = handoffOpts;
+              this.retryHandoffKeyterms = handoffKeyterms;
+              this.abortHandoff = () => {
+                if (this.requestedHandoffId === undefined || !this.activeWs) return;
+                this.activeWs.send(
+                  JSON.stringify({
+                    type: 'session.handoff.abort',
+                    handoff_id: this.requestedHandoffId,
+                  }),
+                );
+                this.requestedHandoffId = undefined;
+                this.handoffId = undefined;
+                replacementWs?.close();
+                replacementWs = undefined;
+                this.releaseHandoffWrites(this.activeWs);
+                this.retryHandoffOpts = undefined;
+                this.retryHandoffKeyterms = undefined;
+              };
+              handoffTimer = setTimeout(() => {
+                try {
+                  this.abortHandoff?.();
+                } catch {
+                  this.activeWs?.terminate();
+                }
+              }, 10_000);
+              try {
+                (this.input as unknown as { put(value: STTWriterControl): void }).put({
+                  kind: 'handoff',
+                  id: handoff.handoff_id,
+                });
+              } catch {
+                this.abortHandoff();
+              }
+              continue;
+            }
+            if (
+              handoff.type === 'session.handoff.abort' &&
+              handoff.handoff_id === this.requestedHandoffId
+            ) {
+              if (handoffTimer) clearTimeout(handoffTimer);
+              this.abortHandoff = undefined;
+              this.requestedHandoffId = undefined;
+              this.handoffId = undefined;
+              replacementWs?.close();
+              replacementWs = undefined;
+              if (this.activeWs) {
+                this.releaseHandoffWrites(this.activeWs);
+                this.retryHandoffOpts = undefined;
+                this.retryHandoffKeyterms = undefined;
+              }
+              continue;
+            }
+            if (
+              handoff.type === 'session.handoff.drained' &&
+              handoff.handoff_id === this.handoffId &&
+              this.activeWs
+            ) {
+              if (this.pendingUpdateAcks > 0 || this.updateUncertain) {
+                this.abortHandoff?.();
+                continue;
+              }
+              const requestedId = this.handoffId;
+              let next: WebSocket | undefined;
+              try {
+                next = await this.stt.connectWs(
+                  this.connOptions.timeoutMs,
+                  handoffOpts,
+                  handoffKeyterms,
+                  requestedId,
+                );
+                replacementWs = next;
+                const created = await new Promise<boolean>((resolve) => {
+                  let sawCreated = false;
+                  const timer = setTimeout(() => finish(false), this.connOptions.timeoutMs);
+                  const finish = (ok: boolean) => {
+                    clearTimeout(timer);
+                    next?.off('message', onMessage);
+                    next?.off('close', onClose);
+                    next?.off('error', onClose);
+                    resolve(ok);
+                  };
+                  const onMessage = (raw: import('ws').RawData) => {
+                    try {
+                      const event = JSON.parse(raw.toString()) as {
+                        type: string;
+                        handoff_id?: string;
+                      };
+                      if (event.type === 'session.created') {
+                        sawCreated = true;
+                        return;
+                      }
+                      finish(
+                        sawCreated &&
+                          event.type === 'session.handoff.ready' &&
+                          event.handoff_id === requestedId,
+                      );
+                    } catch {
+                      finish(false);
+                    }
+                  };
+                  const onClose = () => finish(false);
+                  next?.on('message', onMessage);
+                  next?.once('close', onClose);
+                  next?.once('error', onClose);
+                });
+                if (!created) throw new Error('replacement STT session was refused');
+                if (signal.aborted || this.handoffId !== requestedId) {
+                  next.close();
+                  continue;
+                }
+              } catch {
+                next?.close();
+                this.abortHandoff?.();
+                continue;
+              }
+              replacementWs = next;
+              const replacementFailed = () => {
+                if (replacementWs === next && this.handoffId === requestedId) this.abortHandoff?.();
+              };
+              next.on('error', replacementFailed);
+              next.on('close', replacementFailed);
+              replacementMessageMonitor = replacementFailed;
+              next.on('message', replacementMessageMonitor);
+              this.activeWs.send(
+                JSON.stringify({ type: 'session.handoff.complete', handoff_id: this.handoffId }),
+              );
+              continue;
+            }
+            if (
+              handoff.type === 'session.handoff.accepted' &&
+              handoff.handoff_id === this.handoffId &&
+              replacementWs &&
+              this.activeWs
+            ) {
+              if (replacementWs.readyState !== 1) {
+                this.abortHandoff?.();
+                continue;
+              }
+              const old = this.activeWs;
+              if (replacementMessageMonitor) {
+                replacementWs.off('message', replacementMessageMonitor);
+                replacementMessageMonitor = undefined;
+              }
+              try {
+                old.send(
+                  JSON.stringify({ type: 'session.handoff.switched', handoff_id: this.handoffId }),
+                );
+              } catch {
+                // The replacement is ready even if the old socket closes before the metric acknowledgment.
+              }
+              this.activeWs = replacementWs;
+              ws = replacementWs;
+              replacementWs = undefined;
+              attachSocket?.(this.activeWs);
+              this.handoffAudioOffsetInS += this.connectionAudioDurationInS;
+              this.connectionAudioDurationInS = 0;
+              if (handoffTimer) clearTimeout(handoffTimer);
+              this.abortHandoff = undefined;
+              this.requestedHandoffId = undefined;
+              this.handoffId = undefined;
+              try {
+                this.releaseHandoffWrites(this.activeWs);
+              } finally {
+                old.close();
+              }
+              this.retryHandoffOpts = undefined;
+              this.retryHandoffKeyterms = undefined;
+              continue;
+            }
 
             // Parse broadly first; warn only on genuinely malformed messages.
             const parseResult = await sttServerEventSchema.safeParseAsync(result.value);
@@ -1213,11 +1546,22 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
       };
 
       try {
-        ws = await this.stt.connectWs(this.connOptions.timeoutMs);
+        ws = await this.stt.connectWs(
+          this.connOptions.timeoutMs,
+          this.retryHandoffOpts ?? this.opts,
+          this.retryHandoffKeyterms,
+        );
         // An abort that landed during connectWs has no listener yet: the socket would
         // otherwise idle until the finalization timeout, holding a gateway concurrency slot.
         if (this.abortController.signal.aborted) break;
         this.activeWs = ws;
+        this.pendingUpdateAcks = 0;
+        this.updateUncertain = false;
+        if (this.retryHandoffOpts) {
+          this.releaseHandoffWrites(ws);
+          this.retryHandoffOpts = undefined;
+          this.retryHandoffKeyterms = undefined;
+        }
         vadStream = vad?.stream() ?? null;
 
         // Use a per-connection controller so reconnect loops don't inherit a permanently-aborted signal.
@@ -1225,7 +1569,7 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
         const onStreamAbort = () => connController.abort();
         this.abortController.signal.addEventListener('abort', onStreamAbort);
 
-        const sendTask = Task.from(({ signal }) => send(ws!, signal), connController);
+        const sendTask = Task.from(({ signal }) => send(signal), connController);
         const wsListenerTask = Task.from(
           ({ signal }) => createWsListener(ws!, signal),
           connController,
@@ -1233,7 +1577,7 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
         const recvTask = Task.from(({ signal }) => recv(signal), connController);
         const activeVADStream = vadStream;
         const vadTask = activeVADStream
-          ? Task.from(({ signal }) => processVAD(activeVADStream, ws!, signal), connController)
+          ? Task.from(({ signal }) => processVAD(activeVADStream, signal), connController)
           : undefined;
 
         try {
@@ -1300,8 +1644,8 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
 
       const speechData: SpeechData = {
         language,
-        startTime: this.startTimeOffset + data.start,
-        endTime: this.startTimeOffset + data.start + data.duration,
+        startTime: this.startTimeOffset + this.handoffAudioOffsetInS + data.start,
+        endTime: this.startTimeOffset + this.handoffAudioOffsetInS + data.start + data.duration,
         confidence: data.confidence,
         text,
         speakerId: data.speaker_id ?? undefined,
@@ -1309,9 +1653,9 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
           (word): TimedString =>
             createTimedString({
               text: word.word,
-              startTime: word.start + this.startTimeOffset,
-              endTime: word.end + this.startTimeOffset,
-              startTimeOffset: this.startTimeOffset,
+              startTime: word.start + this.startTimeOffset + this.handoffAudioOffsetInS,
+              endTime: word.end + this.startTimeOffset + this.handoffAudioOffsetInS,
+              startTimeOffset: this.startTimeOffset + this.handoffAudioOffsetInS,
               confidence: word.confidence,
               speakerId: word.speaker_id ?? undefined,
             }),
