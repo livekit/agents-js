@@ -81,8 +81,8 @@ const XAI_DEFAULT_TURN_DETECTION: apiProto.TurnDetectionType = {
 export interface RealtimeModelOptions {
   model: RealtimeModels | AnyString;
   /**
-   * Host that must serve the model, e.g. `'azure'` or `'openai'` for OpenAI models. The
-   * session is refused if no host in the region matches.
+   * @deprecated Provider pinning will no longer be supported on March 1, 2027.
+   * Omit this option to let LiveKit route requests and use fallback providers.
    */
   provider?: string;
   baseURL?: string;

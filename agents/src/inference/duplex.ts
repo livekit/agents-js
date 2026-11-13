@@ -79,8 +79,8 @@ export interface DuplexModelOptions<TModel extends DuplexModels | AnyString> {
   /** Provider-prefixed duplex model, for example `openai/gpt-live-1`. */
   model: TModel;
   /**
-   * Host that must serve the model, e.g. `'openai'`. The session is refused if no host in the
-   * region matches.
+   * @deprecated Provider pinning will no longer be supported on March 1, 2027.
+   * Omit this option to let LiveKit route requests and use fallback providers.
    */
   provider?: string;
   baseURL?: string;

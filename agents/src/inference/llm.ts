@@ -186,6 +186,10 @@ function dropUnsupportedParams(
  */
 export interface InferenceLLMOptions {
   model: LLMModels;
+  /**
+   * @deprecated Provider pinning will no longer be supported on March 1, 2027.
+   * Omit this option to let LiveKit route requests and use fallback providers.
+   */
   provider?: string;
   baseURL: string;
   apiKey: string;
@@ -209,6 +213,10 @@ export class LLM extends llm.LLM {
 
   constructor(opts: {
     model: LLMModels;
+    /**
+     * @deprecated Provider pinning will no longer be supported on March 1, 2027.
+     * Omit this option to let LiveKit route requests and use fallback providers.
+     */
     provider?: string;
     baseURL?: string;
     apiKey?: string;
