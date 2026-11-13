@@ -157,7 +157,7 @@ describe('Rime TTS streaming', () => {
     const explicitCodaTTS = new TTS({ apiKey: 'test-rime-key', modelId: 'coda' });
 
     expect(defaultTTS).toHaveProperty('opts.modelId', 'coda');
-    expect(defaultTTS).toHaveProperty('opts.speaker', 'luna');
+    expect(defaultTTS).toHaveProperty('opts.speaker', 'lyra');
     expect(explicitCodaTTS).toHaveProperty('opts.modelId', 'coda');
     expect(explicitCodaTTS).toHaveProperty('opts.speaker', 'lyra');
   });

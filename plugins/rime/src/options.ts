@@ -6,6 +6,12 @@ import { log } from '@livekit/agents';
 import { isIP } from 'node:net';
 import type { DefaultLanguages, TTSModels } from './models.js';
 
+/** Coda pronunciation for one spelling. */
+export interface CustomLexiconEntry {
+  spelling: string;
+  pronunciation: string;
+}
+
 export type WebSocketProtocol = 'binary' | 'json';
 export type RimeAudioFormat =
   | 'audio/pcm'
@@ -125,10 +131,24 @@ export function resolveOptions(opts: Partial<TTSOptions>, previous?: TTSOptions)
     Boolean(opts.baseURL?.startsWith('ws'));
   if (previous && previous.useWebsocket !== useWebsocket)
     throw new Error('Cannot change Rime transport');
+  const lexicon = opts.customLexicon ?? previous?.customLexicon;
+  if (lexicon !== undefined) {
+    if (model !== 'coda') throw new Error('customLexicon requires the coda model');
+    if (useWebsocket && !v1) throw new Error('customLexicon requires HTTP or WebSocket v1');
+    if (
+      !Array.isArray(lexicon) ||
+      lexicon.some(
+        (entry) =>
+          !entry || typeof entry.spelling !== 'string' || typeof entry.pronunciation !== 'string',
+      )
+    )
+      throw new Error('customLexicon requires spelling and pronunciation strings');
+  }
   const resolved: TTSOptions = {
     ...defaultTTSOptions,
     ...previous,
     ...opts,
+    customLexicon: lexicon?.map((entry) => ({ ...entry })),
     websocketURL: opts.websocketURL ?? previous?.websocketURL,
     modelId: model,
     useWebsocket,
@@ -137,15 +157,7 @@ export function resolveOptions(opts: Partial<TTSOptions>, previous?: TTSOptions)
       opts.baseURL ?? previous?.baseURL ?? (useWebsocket && !v1 ? RIME_WS_BASE_URL : RIME_BASE_URL),
   };
   if (!previous && opts.speaker === undefined) {
-    resolved.speaker = v1
-      ? model.includes('mist')
-        ? 'cove'
-        : model === 'coda'
-          ? 'lyra'
-          : 'astra'
-      : opts.modelId === 'coda'
-        ? 'lyra'
-        : 'luna';
+    resolved.speaker = model.includes('mist') ? 'cove' : model === 'coda' ? 'lyra' : 'astra';
   }
   if (v1) {
     resolved.websocketProtocol ??= 'binary';
@@ -175,6 +187,8 @@ export function resolveOptions(opts: Partial<TTSOptions>, previous?: TTSOptions)
 
 /** Configuration options for Rime AI TTS */
 export interface TTSOptions {
+  /** Coda pronunciations for HTTP and WebSocket v1. Empty clears the lexicon. */
+  customLexicon?: readonly CustomLexiconEntry[];
   /** Explicit endpoint selects the Rime v1 streaming protocol. */
   websocketURL?: string;
   websocketProtocol?: WebSocketProtocol;
@@ -207,12 +221,18 @@ export interface TTSOptions {
   noTextNormalization?: boolean;
   saveOovs?: boolean;
   /** Additional Rime API parameters */
-  [key: string]: string | number | boolean | tokenize.SentenceTokenizer | undefined;
+  [key: string]:
+    | string
+    | number
+    | boolean
+    | tokenize.SentenceTokenizer
+    | readonly CustomLexiconEntry[]
+    | undefined;
 }
 
 const defaultTTSOptions: TTSOptions = {
   modelId: 'coda',
-  speaker: 'luna',
+  speaker: 'lyra',
   apiKey: process.env.RIME_API_KEY,
   baseURL: RIME_BASE_URL,
   useWebsocket: false,

@@ -1344,8 +1344,11 @@ importers:
         specifier: ^10.0.0
         version: 10.0.0
       '@rimelabs/api':
-        specifier: 0.0.1
-        version: 0.0.1
+        specifier: 0.4.0
+        version: 0.4.0
+      '@rimelabs/sdk':
+        specifier: 0.1.0-alpha.28
+        version: 0.1.0-alpha.28
       ws:
         specifier: 'catalog:'
         version: 8.21.3
@@ -2946,8 +2949,12 @@ packages:
   '@protobufjs/utf8@1.1.1':
     resolution: {integrity: sha512-oOAWABowe8EAbMyWKM0tYDKi8Yaox52D+HWZhAIJqQXbqe0xI/GV7FhLWqlEKreMkfDjshR5FKgi3mnle0h6Eg==}
 
-  '@rimelabs/api@0.0.1':
-    resolution: {integrity: sha512-U8cHW3aRyzDWFU9ww4qZFOJyIH+2p7zQBkWwmpcKoOsrdUmsi6qVXVGohipbOxUCmX+qaGGtd/g8MD6LVwTpTg==}
+  '@rimelabs/api@0.4.0':
+    resolution: {integrity: sha512-Tj59qnCEOQPk68fTAXtpj6TqDh88zpasya9ZuzqHDs1uwJH2ZKUwRIlddzGfc/SaA9tCW8GxoJZGd9DFmhKigw==}
+
+  '@rimelabs/sdk@0.1.0-alpha.28':
+    resolution: {integrity: sha512-P92qkhXHfmx/OqTLP03ZB4AEsc8TeuA+wH2INhzWP6baqh2Qpz5D555EkCY3nWWJCoMkvKvxRhOdtZTa3C9xCA==}
+    engines: {node: '>=22'}
 
   '@rollup/rollup-android-arm-eabi@4.62.2':
     resolution: {integrity: sha512-6o7ZLZK+BeenkZCFNDXqpbjw9bD6nuWonvS/lwQJp7NoVVxm6p3qE7qQ5jGuBjiFsgvqjD8mZAU5oWxTmbOeOg==}
@@ -6197,6 +6204,18 @@ packages:
       utf-8-validate:
         optional: true
 
+  ws@8.22.0:
+    resolution: {integrity: sha512-Ydggc987+RO0AnWtZ/7Wq9FtNvcrL1b/RO0ud9mWjUPgDrsAAwQSF51sm2hm1XofbU/4jkpGEsLFsZZxU+1DOg==}
+    engines: {node: '>=10.0.0'}
+    peerDependencies:
+      bufferutil: ^4.0.1
+      utf-8-validate: '>=5.0.2'
+    peerDependenciesMeta:
+      bufferutil:
+        optional: true
+      utf-8-validate:
+        optional: true
+
   y18n@5.0.8:
     resolution: {integrity: sha512-0pfFzegeDWJHJIAmTLRP2DwHjdF5s7jo9tuztdQxAhINCdvS+3nGINqPd00AphqJR/0LhANUS6/+7SCb98YOfA==}
     engines: {node: '>=10'}
@@ -7454,9 +7473,19 @@ snapshots:
 
   '@protobufjs/utf8@1.1.1': {}
 
-  '@rimelabs/api@0.0.1':
+  '@rimelabs/api@0.4.0':
     dependencies:
       '@bufbuild/protobuf': 2.14.1
+
+  '@rimelabs/sdk@0.1.0-alpha.28':
+    dependencies:
+      '@bufbuild/protobuf': 2.14.1
+      '@grpc/grpc-js': 1.14.6
+      '@rimelabs/api': 0.4.0
+      ws: 8.22.0
+    transitivePeerDependencies:
+      - bufferutil
+      - utf-8-validate
 
   '@rollup/rollup-android-arm-eabi@4.62.2':
     optional: true
@@ -11076,6 +11105,8 @@ snapshots:
   wrappy@1.0.2: {}
 
   ws@8.21.3: {}
+
+  ws@8.22.0: {}
 
   y18n@5.0.8: {}
 

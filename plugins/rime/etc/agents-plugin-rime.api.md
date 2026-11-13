@@ -4,11 +4,35 @@
 
 ```ts
 
-import type { AudioFrame } from '@livekit/rtc-node';
+import { AgentSession as AgentSession_2 } from '@livekit/protocol';
+import { AudioFrame } from '@livekit/rtc-node';
 import { AudioResampler } from '@livekit/rtc-node';
-import type { ReadableStream as ReadableStream_2 } from 'node:stream/web';
-import type { Span } from '@opentelemetry/api';
+import { Context } from '@opentelemetry/api';
+import { EventEmitter } from 'events';
+import { EventEmitter as EventEmitter_2 } from 'node:events';
+import type { EventMap } from '@livekit/typed-emitter';
+import { FrameProcessor } from '@livekit/rtc-node';
+import { JsonObject } from '@bufbuild/protobuf';
+import type { JSONSchema7 } from 'json-schema';
+import { Logger } from 'pino';
+import { NoiseCancellationOptions } from '@livekit/rtc-node';
+import { Participant } from '@livekit/rtc-node';
+import { ParticipantKind } from '@livekit/rtc-node';
+import type * as r from '@rimelabs/sdk';
+import { ReadableStream as ReadableStream_2 } from 'node:stream/web';
+import type { ReadableStreamDefaultReader as ReadableStreamDefaultReader_2 } from 'node:stream/web';
+import { RemoteParticipant } from '@livekit/rtc-node';
+import { Room } from '@livekit/rtc-node';
+import { Span } from '@opentelemetry/api';
+import type { TextStreamInfo } from '@livekit/rtc-node';
+import { Throws } from '@livekit/throws-transformer/throws';
+import { ThrowsPromise } from '@livekit/throws-transformer/throws';
+import { TrackPublishOptions } from '@livekit/rtc-node';
+import { TransformStream as TransformStream_2 } from 'node:stream/web';
 import type { TypedEventEmitter } from '@livekit/typed-emitter';
+import type { VideoFrame as VideoFrame_2 } from '@livekit/rtc-node';
+import type { WritableStreamDefaultWriter as WritableStreamDefaultWriter_2 } from 'node:stream/web';
+import { z } from 'zod';
 
 // Warning: (ae-forgotten-export) The symbol "tts" needs to be exported by the entry point index.d.ts
 // Warning: (ae-missing-release-tag) "ChunkedStream" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -23,15 +47,247 @@ export class ChunkedStream extends tts.ChunkedStream {
     protected run(): Promise<void>;
 }
 
+// Warning: (ae-missing-release-tag) "CustomLexiconEntry" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export interface CustomLexiconEntry {
+    // (undocumented)
+    pronunciation: string;
+    // (undocumented)
+    spelling: string;
+}
+
 // Warning: (ae-missing-release-tag) "DefaultLanguages" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
 export type DefaultLanguages = 'eng' | 'spa' | 'fra' | 'ger';
 
+// Warning: (ae-missing-release-tag) "PlaybackMode" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+type PlaybackMode = 'auto' | 'estimated' | 'discard';
+
+// Warning: (ae-forgotten-export) The symbol "llm" needs to be exported by the entry point index.d.ts
+// Warning: (ae-missing-release-tag) "PrismError" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+class PrismError extends llm.RealtimeError {
+    constructor(fault: r.NormalizedRealtimeFault);
+    readonly code: string;
+    readonly requestId: string | null;
+    readonly responseId: string | null;
+    readonly retryable: boolean;
+    readonly scope: r.RealtimeFault['scope'];
+}
+
+// Warning: (ae-missing-release-tag) "PrismGenerationCreatedEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+interface PrismGenerationCreatedEvent extends llm.GenerationCreatedEvent {
+    inputItemIds: readonly string[];
+    instructionItemId?: string | null;
+    metadata: r.Labels;
+    providerRequestId: string | null;
+    settingsRevision: number | null;
+}
+
+// Warning: (ae-missing-release-tag) "PrismHistoryUpdateError" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+class PrismHistoryUpdateError extends Error {
+    constructor(message: string, status?: 'rejected' | 'partial' | 'uncertain', confirmedChatCtx?: llm.ChatContext | null);
+    // (undocumented)
+    readonly code: string;
+    // (undocumented)
+    readonly confirmedChatCtx: llm.ChatContext | null;
+    // (undocumented)
+    needsReconciliation: boolean;
+    // (undocumented)
+    readonly recoverable: boolean;
+    // (undocumented)
+    readonly status: 'rejected' | 'partial' | 'uncertain';
+}
+
+// @public
+class PrismIdleTimeoutError extends llm.RealtimeError {
+    constructor(idleTimeoutInS: number);
+    readonly idleTimeoutInS: number;
+}
+
+// Warning: (ae-missing-release-tag) "PrismItemTruncatedEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+type PrismItemTruncatedEvent = r.ItemTruncated;
+
+// Warning: (ae-missing-release-tag) "PrismResponseEndedEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+type PrismResponseEndedEvent = r.ResponseEnded;
+
+declare namespace realtime {
+    export {
+        RealtimeModel,
+        RealtimeSession_2 as RealtimeSession,
+        PrismError,
+        PrismIdleTimeoutError,
+        RealtimeModelOptions,
+        SessionOptions,
+        PrismGenerationCreatedEvent,
+        PrismItemTruncatedEvent,
+        PrismResponseEndedEvent,
+        PrismHistoryUpdateError,
+        PlaybackMode
+    }
+}
+
+// Warning: (ae-missing-release-tag) "RealtimeModel" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+class RealtimeModel extends llm.RealtimeModel {
+    constructor(options?: RealtimeModelOptions);
+    close(): Promise<void>;
+    deleteInstructionItem(itemId: string): Promise<void>;
+    getHistory(): Promise<readonly r.HistoryItem[]>;
+    label(): string;
+    get model(): string;
+    get provider(): string;
+    session(options?: {
+        turnDetectionDisabled?: boolean;
+    }): RealtimeSession_2;
+    get sessionInfo(): r.SessionInfo | undefined;
+    updateOptions(options: SessionOptions): void;
+}
+
+// Warning: (ae-missing-release-tag) "RealtimeModelOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+interface RealtimeModelOptions {
+    allowCustomEndpoint?: boolean;
+    apiKey?: string;
+    client?: r.Rime;
+    connectTimeout?: number;
+    connOptions?: Partial<APIConnectOptions>;
+    contextMode?: 'shared' | 'strict';
+    endpoint?: string;
+    playback?: PlaybackMode;
+    readyTimeout?: number;
+    requestId?: string;
+    requestTimeout?: number;
+    responseMetadata?: r.Labels;
+    startupTimeout?: number;
+    toolFillers?: Record<string, r.PrismFiller>;
+    truncation?: r.Truncation;
+    turnDetection?: r.TurnDetection;
+    voice?: string;
+}
+
+// Warning: (ae-missing-release-tag) "RealtimeSession" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+class RealtimeSession_2 extends llm.RealtimeSession {
+    // @internal
+    constructor(model: RealtimeModel, options: RealtimeModelOptions);
+    get chatCtx(): llm.ChatContext;
+    clearAudio(): Promise<void>;
+    close(): Promise<void>;
+    commitAudio(): Promise<void>;
+    deleteInstructionItem(itemId: string): Promise<void>;
+    generateReply(instructions?: string, options?: {
+        signal?: AbortSignal;
+        metadata?: r.Labels;
+    }): Promise<PrismGenerationCreatedEvent>;
+    getHistory(): Promise<readonly r.HistoryItem[]>;
+    interrupt(): Promise<void>;
+    get isClosed(): boolean;
+    pushAudio(source: AudioFrame): void;
+    get sessionInfo(): r.SessionInfo | undefined;
+    get tools(): llm.ToolContext;
+    truncate(options: {
+        messageId: string;
+        audioEndMs: number;
+        modalities?: ('text' | 'audio')[];
+        audioTranscript?: string;
+    }): Promise<void>;
+    updateChatCtx(ctx: llm.ChatContext): Promise<void>;
+    updateInstructions(instructions: string): Promise<void>;
+    updateOptions(options: SessionOptions & {
+        toolChoice?: llm.ToolChoice | null;
+    }): void;
+    updateTools(tools: llm.ToolContext): Promise<void>;
+}
+
 // Warning: (ae-missing-release-tag) "RimeAudioFormat" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
 export type RimeAudioFormat = 'audio/pcm' | 'audio/pcmu' | 'audio/wav' | 'audio/mpeg' | 'audio/ogg;codecs=opus' | 'audio/webm;codecs=opus';
+
+// Warning: (ae-missing-release-tag) "SessionOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+interface SessionOptions {
+    responseMetadata?: r.Labels;
+    toolFillers?: Record<string, r.PrismFiller>;
+    truncation?: r.Truncation;
+    voice?: string;
+}
+
+// Warning: (ae-forgotten-export) The symbol "stt" needs to be exported by the entry point index.d.ts
+// Warning: (ae-missing-release-tag) "STT" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export class STT extends stt.STT {
+    constructor(options?: STTOptions);
+    // (undocumented)
+    close(): Promise<void>;
+    // (undocumented)
+    label: string;
+    // (undocumented)
+    get model(): string;
+    // (undocumented)
+    get provider(): string;
+    // Warning: (ae-forgotten-export) The symbol "AudioBuffer_2" needs to be exported by the entry point index.d.ts
+    protected _recognize(buffer: AudioBuffer_2, signal?: AbortSignal): Promise<stt.SpeechEvent>;
+    // @internal (undocumented)
+    sdk(): Promise<{
+        client: r.Rime;
+        types: typeof r;
+    }>;
+    // Warning: (ae-forgotten-export) The symbol "Settings" needs to be exported by the entry point index.d.ts
+    //
+    // @internal
+    snapshot(): Settings;
+    // (undocumented)
+    stream(options?: {
+        connOptions?: APIConnectOptions;
+    }): stt.SpeechStream;
+    // (undocumented)
+    updateOptions(options: Pick<STTOptions, 'language' | 'mode' | 'contextTerms'>): void;
+    // (undocumented)
+    _updateSessionKeyterms(terms: string[]): void;
+}
+
+// Warning: (ae-missing-release-tag) "STTOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export interface STTOptions {
+    // (undocumented)
+    apiKey?: string;
+    // (undocumented)
+    client?: r.Rime;
+    connOptions?: Partial<APIConnectOptions>;
+    // (undocumented)
+    contextTerms?: readonly string[];
+    // (undocumented)
+    language?: string;
+    // (undocumented)
+    mode?: r.TranscriptionMode;
+    // (undocumented)
+    outputContract?: r.TranscriptionOutputContract;
+    // Warning: (ae-forgotten-export) The symbol "VAD" needs to be exported by the entry point index.d.ts
+    //
+    // (undocumented)
+    vad?: VAD;
+}
 
 // Warning: (ae-missing-release-tag) "SynthesizeStream" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -88,7 +344,7 @@ export type TTSModels = 'coda' | 'mistv2' | 'mistv3';
 //
 // @public
 export interface TTSOptions {
-    [key: string]: string | number | boolean | tokenize.SentenceTokenizer | undefined;
+    [key: string]: string | number | boolean | tokenize.SentenceTokenizer | readonly CustomLexiconEntry[] | undefined;
     allowCustomEndpoint?: boolean;
     // (undocumented)
     apiKey?: string;
@@ -96,6 +352,7 @@ export interface TTSOptions {
     audioFormat?: RimeAudioFormat;
     // (undocumented)
     baseURL?: string;
+    customLexicon?: readonly CustomLexiconEntry[];
     // (undocumented)
     inlineSpeedAlpha?: string;
     // (undocumented)

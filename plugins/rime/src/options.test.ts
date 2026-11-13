@@ -192,3 +192,16 @@ it.each(['status', 'fetch', 'body'])('sanitizes HTTP %s failures', async (mode) 
   expect(errors[0]!.cause).toBeUndefined();
   await value.close();
 });
+
+it('copies Coda HTTP lexicons and rejects unsupported transports', () => {
+  const lexicon = [{ spelling: 'Rime', pronunciation: '" r aI m' }];
+  const options = resolveOptions({ apiKey: 'test', customLexicon: lexicon });
+  lexicon[0]!.pronunciation = 'changed';
+  expect(options.customLexicon).toEqual([{ spelling: 'Rime', pronunciation: '" r aI m' }]);
+  expect(() =>
+    resolveOptions({ apiKey: 'test', modelId: 'mistv3', customLexicon: lexicon }),
+  ).toThrow('coda');
+  expect(() =>
+    resolveOptions({ apiKey: 'test', useWebsocket: true, customLexicon: lexicon }),
+  ).toThrow('HTTP or WebSocket v1');
+});
