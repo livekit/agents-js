@@ -41,6 +41,7 @@ exports[`ChatContext.toJSON > should match snapshot for edge cases > edge-cases-
       "isError": false,
       "name": "",
       "output": "OK",
+      "replyRequired": true,
       "type": "function_call_output",
     },
     {
@@ -109,6 +110,7 @@ exports[`ChatContext.toJSON > should match snapshot for edge cases > edge-cases-
       "isError": false,
       "name": "",
       "output": "OK",
+      "replyRequired": true,
       "type": "function_call_output",
     },
     {
@@ -158,6 +160,7 @@ exports[`ChatContext.toJSON > should match snapshot for function calls > convers
       "isError": false,
       "name": "get_weather",
       "output": "{"temperature": 22, "condition": "partly cloudy", "humidity": 65}",
+      "replyRequired": true,
       "type": "function_call_output",
     },
     {
@@ -201,6 +204,7 @@ exports[`ChatContext.toJSON > should match snapshot for function calls > convers
       "isError": false,
       "name": "get_weather",
       "output": "{"temperature": 22, "condition": "partly cloudy", "humidity": 65}",
+      "replyRequired": true,
       "type": "function_call_output",
     },
     {

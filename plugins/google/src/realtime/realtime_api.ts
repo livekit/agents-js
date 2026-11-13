@@ -52,6 +52,19 @@ const LK_GOOGLE_DEBUG = Number(process.env.LK_GOOGLE_DEBUG ?? 0);
 
 // WebSocket close codes (RFC 6455)
 const WS_CLOSE_NORMAL = 1000;
+// Gemini Live closes with 1007 when the session's context is exhausted.
+const WS_CLOSE_CONTEXT_EXHAUSTED = 1007;
+
+const GO_AWAY_RESTART_MARGIN_MS = 10_000;
+// A goAway restart is armed only for the last part of the time the server grants.
+const GO_AWAY_RESTART_WINDOW_MS = 30_000;
+const GO_AWAY_IDLE_POLL_MS = 250;
+
+/** `goAway.timeLeft` is a protobuf Duration string such as "300s". */
+export function goAwayTimeLeftMs(timeLeft: string | undefined): number {
+  const seconds = Number.parseFloat((timeLeft ?? '').replace(/s$/, ''));
+  return Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : 0;
+}
 
 const KNOWN_VERTEXAI_MODELS = new Set(['gemini-3.8-live', 'gemini-live-2.5-flash-native-audio']);
 
@@ -63,11 +76,34 @@ const KNOWN_GEMINI_API_MODELS = new Set([
 ]);
 
 // generateReply() appends a "." user turn so Gemini sees a completed turn. These models
-// answer that placeholder with an empty turn instead, so they must not get it.
+// answer that placeholder with an empty turn instead, so they must not get it, and take
+// reply instructions as a user turn instead.
 const MODELS_WITHOUT_REPLY_PLACEHOLDER = ['3.1', '3.8'];
 
 function needsReplyPlaceholder(model: string): boolean {
   return !MODELS_WITHOUT_REPLY_PLACEHOLDER.some((tag) => model.includes(tag));
+}
+
+/** The turns generateReply() sends to request a reply, with optional instructions. */
+export function replyTurns(model: string, instructions?: string): types.Content[] {
+  const placeholder = needsReplyPlaceholder(model);
+  const turns: types.Content[] = [];
+  if (instructions !== undefined) {
+    if (placeholder) {
+      turns.push({ parts: [{ text: instructions }], role: 'model' });
+    } else {
+      // A trailing model turn is continued: these models speak their reasoning or
+      // stay silent. Unwrapped, they later quote it back as the user's words.
+      turns.push({
+        parts: [{ text: `<instructions>\n${instructions}\n</instructions>` }],
+        role: 'user',
+      });
+    }
+  }
+  if (placeholder) {
+    turns.push({ parts: [{ text: '.' }], role: 'user' });
+  }
+  return turns;
 }
 
 /**
@@ -109,6 +145,12 @@ function warnModelAPIMismatch(model: string, vertexai: boolean): void {
         `(e.g., 'gemini-2.5-flash-native-audio-preview-12-2025') or set vertexai=true.`,
     );
   }
+}
+
+function warnVertexSchedulingUnsupported(): void {
+  log().warn(
+    'toolResponseScheduling is not supported by Vertex AI and will be ignored; tool responses use the default scheduling there.',
+  );
 }
 
 /**
@@ -208,6 +250,7 @@ export class RealtimeModel extends llm.RealtimeModel {
   #logger = log();
   /** @internal */
   _options: RealtimeOptions;
+  #sessions = new Set<RealtimeSession>();
 
   get model(): string {
     return this._options.model;
@@ -381,8 +424,7 @@ export class RealtimeModel extends llm.RealtimeModel {
 
       /**
        * The scheduling for tool responses. Default scheduling is `WHEN_IDLE`.
-       * Note: Vertex AI currently does not support the scheduling parameter; the user is
-       * responsible for avoiding this parameter when using Vertex AI.
+       * Note: Vertex AI currently does not support the scheduling parameter.
        */
       toolResponseScheduling?: types.FunctionResponseScheduling;
     } = {},
@@ -404,6 +446,9 @@ export class RealtimeModel extends llm.RealtimeModel {
       options.vertexai ??
       (process.env.GOOGLE_GENAI_USE_VERTEXAI === 'true' ||
         process.env.GOOGLE_GENAI_USE_VERTEXAI === '1');
+    if (vertexai && options.toolResponseScheduling !== undefined) {
+      warnVertexSchedulingUnsupported();
+    }
 
     // Model selection based on API type
     const defaultModel = vertexai
@@ -475,8 +520,21 @@ export class RealtimeModel extends llm.RealtimeModel {
   /**
    * Create a new realtime session
    */
-  session() {
-    return new RealtimeSession(this);
+  session(options?: llm.RealtimeSessionOptions) {
+    // Gemini drives manual turns through activity start/end, so turnDetectionDisabled is not
+    // honored yet (canDisableTurnDetection is false).
+    const session = new RealtimeSession(this, options);
+    this.#sessions.add(session);
+    return session;
+  }
+
+  /**
+   * Stop forwarding `updateOptions()` to a session. A session calls this when it closes or when
+   * its connection loop ends.
+   * @internal
+   */
+  _removeSession(session: RealtimeSession): void {
+    this.#sessions.delete(session);
   }
 
   /**
@@ -499,9 +557,13 @@ export class RealtimeModel extends llm.RealtimeModel {
     }
     if (options.toolResponseScheduling !== undefined) {
       this._options.toolResponseScheduling = options.toolResponseScheduling;
+      // an open session warns when it applies the change
+      if (this._options.vertexai && this.#sessions.size === 0) warnVertexSchedulingUnsupported();
     }
 
-    // TODO: Notify active sessions of option changes
+    for (const session of this.#sessions) {
+      session.updateOptions(options);
+    }
   }
 
   /**
@@ -549,6 +611,8 @@ export class RealtimeSession extends llm.RealtimeSession {
   private pendingInterruptText = false;
   private earlyCompletionPending = false;
   private pendingToolCallIds = new Set<string>();
+  // A blocking tool result went out and Gemini has not started its reply yet.
+  private awaitingToolReply = false;
   private syntheticCallIds = new Set<string>();
   private toolCallStatuses = new Map<string, ToolCallStatus>();
   private toolResponseCallIds = new WeakMap<types.FunctionResponse, string>();
@@ -558,11 +622,27 @@ export class RealtimeSession extends llm.RealtimeSession {
   #task: Promise<void>;
   #logger = log();
   #closed = false;
+  // A session failure, rethrown by the main loop so it uses the connection retry budget.
+  #sessionError?: Error;
 
-  constructor(realtimeModel: RealtimeModel) {
+  constructor(realtimeModel: RealtimeModel, sessionOptions?: llm.RealtimeSessionOptions) {
     super(realtimeModel);
 
-    this.options = realtimeModel._options;
+    // Each session changes its own instructions and options. The model forwards its
+    // updateOptions calls to open sessions.
+    this.options = { ...realtimeModel._options };
+
+    // The first connection sends the tools and instructions in its setup message. Seed them before
+    // #mainTask connects, so the same values from _updateSession do not force a reconnect.
+    if (sessionOptions?.instructions !== undefined) {
+      this.options.instructions = sessionOptions.instructions;
+    }
+    if (sessionOptions?.tools !== undefined) {
+      this._tools = sessionOptions.tools.copy();
+    }
+    if (sessionOptions?.chatCtx !== undefined) {
+      this._chatCtx = sessionOptions.chatCtx.copy();
+    }
     this.bstream = new AudioByteStream(
       INPUT_AUDIO_SAMPLE_RATE,
       INPUT_AUDIO_CHANNELS,
@@ -597,7 +677,8 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     this.#client = new GoogleGenAI(clientOptions);
 
-    this.#task = this.#mainTask();
+    // A session whose connection loop ended can no longer apply option updates.
+    this.#task = this.#mainTask().finally(() => realtimeModel._removeSession(this));
   }
 
   private async closeActiveSession(): Promise<void> {
@@ -611,11 +692,15 @@ export class RealtimeSession extends llm.RealtimeSession {
       } finally {
         this.activeSession = undefined;
       }
+      // A reply in flight belongs to the socket being closed. Its own close can
+      // arrive after the next socket is live, too late to finish it there.
+      this.markCurrentGenerationDone();
     }
     this.earlyCompletionPending = false;
     this.pendingInterruptText = false;
 
     this.pendingToolCallIds.clear();
+    this.awaitingToolReply = false;
     this.syntheticCallIds.clear();
     this.toolCallStatuses.clear();
     if (this.generationPendingTurnComplete) {
@@ -645,6 +730,8 @@ export class RealtimeSession extends llm.RealtimeSession {
     vertexai: boolean,
   ): types.LiveClientToolResponse | undefined {
     const toolResponses: types.FunctionResponse[] = [];
+    const supportsSilentScheduling =
+      !vertexai && this.options.toolBehavior === types.Behavior.NON_BLOCKING;
 
     for (const item of ctx.items) {
       if (item.type === 'function_call_output') {
@@ -652,12 +739,16 @@ export class RealtimeSession extends llm.RealtimeSession {
           // gemini-3.8-live on Vertex AI drops BLOCKING responses without an id
           id: this.syntheticCallIds.has(item.callId) ? undefined : item.callId,
           name: item.name,
-          response: { output: item.output },
+          response: item.isError ? { error: item.output } : { output: item.output },
         };
 
         // Vertex AI does not support scheduling; the Gemini API defaults it to WHEN_IDLE.
-        if (!vertexai && this.options.toolResponseScheduling !== undefined) {
-          response.scheduling = this.options.toolResponseScheduling;
+        const scheduling =
+          supportsSilentScheduling && !item.replyRequired
+            ? types.FunctionResponseScheduling.SILENT
+            : this.options.toolResponseScheduling;
+        if (!vertexai && scheduling !== undefined) {
+          response.scheduling = scheduling;
         }
         this.toolResponseCallIds.set(response, item.callId);
 
@@ -704,6 +795,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       this.options.toolResponseScheduling !== options.toolResponseScheduling
     ) {
       this.options.toolResponseScheduling = options.toolResponseScheduling;
+      if (this.options.vertexai) warnVertexSchedulingUnsupported();
       // no need to restart
     }
 
@@ -744,9 +836,9 @@ export class RealtimeSession extends llm.RealtimeSession {
         turns: [
           {
             parts: [{ text: instructions }],
-            // Both APIs error on role="system". Gemini 2.5 accepted an omitted role as the
-            // system role, but 3.1 and 3.8 reject it. "model" is accepted by all three.
-            role: 'model',
+            // On Vertex AI, role="system" replaces the session's system instruction. The Gemini
+            // API rejects role="system" (and 3.1/3.8 reject an omitted role), so it keeps "model".
+            role: this.options.vertexai ? 'system' : 'model',
           },
         ],
         turnComplete: false,
@@ -780,6 +872,21 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
 
     if (appendCtx.items.length > 0) {
+      const supportsSilentScheduling =
+        !this.options.vertexai && this.options.toolBehavior === types.Behavior.NON_BLOCKING;
+      const silenced = appendCtx.items
+        .filter(
+          (item): item is llm.FunctionCallOutput =>
+            item.type === 'function_call_output' && !item.replyRequired,
+        )
+        .map((item) => item.name);
+      if (!supportsSilentScheduling && silenced.length > 0) {
+        this.#logger.warn(
+          { functions: silenced },
+          'a tool result wants no reply, but Gemini will answer it anyway; declare the tools NON_BLOCKING on the Gemini API to keep it silent. Sending it regardless, since an unanswered call blocks the session.',
+        );
+      }
+
       const [turns] = await appendCtx
         .copy({
           excludeFunctionCall: true,
@@ -946,19 +1053,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       this.inUserActivity = false;
     }
 
-    const turns: types.Content[] = [];
-    if (instructions !== undefined) {
-      turns.push({
-        parts: [{ text: instructions }],
-        role: 'model',
-      });
-    }
-    if (needsReplyPlaceholder(this.options.model)) {
-      turns.push({
-        parts: [{ text: '.' }],
-        role: 'user',
-      });
-    }
+    const turns = replyTurns(this.options.model, instructions);
 
     this.sendClientEvent({
       type: 'content',
@@ -1049,6 +1144,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   async close(): Promise<void> {
     super.close();
     this.#closed = true;
+    (this.realtimeModel as RealtimeModel)._removeSession(this);
 
     this.sessionShouldClose.set();
     this.inputResampler?.close();
@@ -1078,19 +1174,28 @@ export class RealtimeSession extends llm.RealtimeSession {
       // previous session might not be closed yet, we'll do it here.
       await this.closeActiveSession();
 
+      // close() may have run while we were waiting on the session lock
+      if (this.#closed) break;
+
       this.sessionShouldClose.clear();
+      this.#sessionError = undefined;
+      // The SDK forwards the queued setupComplete message before connect()
+      // returns, so onmessage can fire before we hold the session. Ignoring
+      // those changes nothing: onReceiveMessage already dropped anything
+      // arriving before activeSession was set. `stale` keeps a late close of
+      // this attempt's socket from restarting the next one.
+      const connected: { session?: types.Session; stale?: boolean } = {};
+      let config: types.LiveConnectConfig | undefined;
 
       try {
-        const config = this.buildConnectConfig();
+        config = this.buildConnectConfig();
         this.#logger.debug('Connecting to Gemini Realtime API...');
 
         const sessionOpened = new Event();
-        // The SDK forwards the queued setupComplete message before connect()
-        // returns, so this callback can fire before we hold the session. Ignoring
-        // those changes nothing: onReceiveMessage already dropped anything
-        // arriving before activeSession was set, a few lines below.
-        const connected: { session?: types.Session } = {};
-        const session = await this.#client.live.connect({
+        // The SDK's connect() never settles when the server closes the socket
+        // before setupComplete, so a close during setup rejects it here.
+        const setupClosed = new Future<never>();
+        const connecting = this.#client.live.connect({
           model: this.options.model,
           callbacks: {
             onopen: () => sessionOpened.set(),
@@ -1103,7 +1208,10 @@ export class RealtimeSession extends llm.RealtimeSession {
             // Application-level errors (e.g., invalid model name) come through onclose with error codes.
             onerror: (error: ErrorEvent) => {
               this.#logger.error('Gemini Live session error:', error);
-              if (!this.sessionShouldClose.isSet) {
+              if (!connected.stale && !this.#closed && !this.sessionShouldClose.isSet) {
+                this.#sessionError = new APIConnectionError({
+                  message: error.message || 'Gemini Live connection error',
+                });
                 this.markRestartNeeded();
               }
             },
@@ -1119,27 +1227,51 @@ export class RealtimeSession extends llm.RealtimeSession {
                 const errorMsg = event.reason || `WebSocket closed with code ${event.code}`;
                 this.#logger.error(`Gemini Live session error: ${errorMsg}${truncationNote}`);
 
-                this.emitError(
-                  new APIStatusError({
-                    message: `${errorMsg}${truncationNote}`,
-                    options: {
-                      statusCode: event.code,
-                      retryable: false,
-                      body: event.reason
-                        ? { reason: event.reason, code: event.code, truncated: isTruncated }
-                        : null,
-                    },
-                  }),
-                  false,
-                );
+                const error = new APIStatusError({
+                  message: `${errorMsg}${truncationNote}`,
+                  options: {
+                    statusCode: event.code,
+                    retryable: false,
+                    body: event.reason
+                      ? { reason: event.reason, code: event.code, truncated: isTruncated }
+                      : null,
+                  },
+                });
+                if (!connected.session) {
+                  setupClosed.reject(error);
+                } else if (!connected.stale && !this.#closed) {
+                  // The main loop reconnects and replays the chat context, the
+                  // way the Python plugin recovers from a dropped session.
+                  this.#sessionError = error;
+                  this.markRestartNeeded();
+                }
               } else {
                 this.#logger.debug('Gemini Live session closed:', event.code, event.reason);
+                if (!connected.session) {
+                  setupClosed.reject(
+                    new APIConnectionError({
+                      message: 'Gemini Live closed the connection before the session was set up',
+                    }),
+                  );
+                }
               }
-              this.markCurrentGenerationDone();
+              // A replaced socket's close must not end the reply on the socket
+              // that replaced it; closeActiveSession already finished its own.
+              if (
+                !this.activeSession ||
+                !connected.session ||
+                this.activeSession === connected.session
+              ) {
+                this.markCurrentGenerationDone();
+              }
             },
           },
           config,
         });
+        // Keeps a setup failure that lands after the race settled from
+        // surfacing as an unhandled rejection.
+        setupClosed.await.catch(() => {});
+        const session = await Promise.race([connecting, setupClosed.await]);
         connected.session = session;
 
         await sessionOpened.wait();
@@ -1171,31 +1303,51 @@ export class RealtimeSession extends llm.RealtimeSession {
 
         await Promise.race([sendTask.result, restartWaitTask.result]);
 
-        // TODO(brian): handle error from tasks
-
         if (!restartWaitTask.done && this.#closed) {
           break;
         }
 
         await cancelAndWait([sendTask, restartWaitTask], 2000);
+
+        const sessionError = this.#sessionError;
+        if (sessionError) {
+          this.#sessionError = undefined;
+          throw sessionError;
+        }
       } catch (error) {
         this.#logger.error(`Gemini Realtime API error: ${error}`);
 
         if (this.#closed) break;
 
+        // Nothing awaits this task, so the final error is emitted rather than
+        // thrown: a throw here would surface as an unhandled rejection.
         if (maxRetries === 0) {
+          this.#logger.error('Failed to connect to Gemini Live');
           this.emitError(error as Error, false);
-          throw new APIConnectionError({
-            message: 'Failed to connect to Gemini Live',
-          });
+          return;
         }
 
         if (this.numRetries >= maxRetries) {
+          this.#logger.error(`Failed to connect to Gemini Live after ${maxRetries} attempts`);
           this.emitError(error as Error, false);
-          throw new APIConnectionError({
-            message: `Failed to connect to Gemini Live after ${maxRetries} attempts`,
-          });
+          return;
         }
+
+        // Reconnecting would replay the same oversized chat context and fail
+        // the same way.
+        if (error instanceof APIStatusError && error.statusCode === WS_CLOSE_CONTEXT_EXHAUSTED) {
+          this.emitError(error, false);
+          return;
+        }
+
+        // A config the plugin cannot build, such as a tool schema it cannot
+        // convert, fails the same way on every retry.
+        if (!config) {
+          this.emitError(error as Error, false);
+          return;
+        }
+
+        this.emitError(error as Error, true);
 
         const retryInterval =
           this.numRetries === 100 ? 0 : this.options.connOptions.retryIntervalMs;
@@ -1211,6 +1363,7 @@ export class RealtimeSession extends llm.RealtimeSession {
         await delay(retryInterval);
         this.numRetries++;
       } finally {
+        connected.stale = true;
         await this.closeActiveSession();
       }
     }
@@ -1260,6 +1413,13 @@ export class RealtimeSession extends llm.RealtimeSession {
                 await session.sendToolResponse({
                   functionResponses,
                 });
+                // Blocking calls ignore scheduling, including SILENT.
+                if (
+                  !this.isNonBlockingToolBehavior() &&
+                  functionResponses.some((response) => response.willContinue !== true)
+                ) {
+                  this.awaitingToolReply = true;
+                }
               } finally {
                 this.clearPendingToolCallIdsForResponses(functionResponses);
               }
@@ -1292,6 +1452,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     } catch (e) {
       if (!this.sessionShouldClose.isSet) {
         this.#logger.error(`Error in send task: ${e}`);
+        this.#sessionError = e instanceof Error ? e : new Error(String(e), { cause: e });
         this.markRestartNeeded();
       }
     } finally {
@@ -1405,12 +1566,16 @@ export class RealtimeSession extends llm.RealtimeSession {
         this.handleGoAway(response.goAway);
       }
 
-      if (this.numRetries > 0) {
+      // Only a real exchange proves the socket works: a server that sends a
+      // resumption update and then drops every fresh socket must still run
+      // out of retries.
+      if (this.numRetries > 0 && (response.serverContent || response.toolCall)) {
         this.numRetries = 0;
       }
     } catch (e) {
       if (!this.sessionShouldClose.isSet) {
         this.#logger.error(`Error in onReceiveMessage: ${e}`);
+        this.#sessionError = e instanceof Error ? e : new Error(String(e), { cause: e });
         this.markRestartNeeded();
       }
     }
@@ -1618,6 +1783,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   private startNewGeneration(): void {
+    this.awaitingToolReply = false;
     const previousGen = this.currentGeneration;
     const previousHadOpenFunctionChannel = previousGen && !previousGen.functionChannel.closed;
 
@@ -1986,8 +2152,45 @@ export class RealtimeSession extends llm.RealtimeSession {
 
   private handleGoAway(goAway: types.LiveServerGoAway): void {
     this.#logger.warn({ timeLeft: goAway.timeLeft }, 'Gemini server indicates disconnection soon.');
-    // TODO(brian): this isn't a seamless reconnection just yet
-    this.sessionShouldClose.set();
+    // Most sessions end before the connection does, so a goAway only arms a
+    // restart for the last 30 s of the time the server grants. Inside that
+    // window the restart waits for a gap between turns: restarting
+    // mid-generation cuts the reply the user is hearing. The deadline keeps a
+    // generation that never completes from outliving the connection.
+    const timeLeftMs = goAwayTimeLeftMs(goAway.timeLeft);
+    const windowStart = Date.now() + Math.max(0, timeLeftMs - GO_AWAY_RESTART_WINDOW_MS);
+    const deadline = Date.now() + Math.max(0, timeLeftMs - GO_AWAY_RESTART_MARGIN_MS);
+    // A config update can restart the session before this fires; the notice
+    // belongs to the connection that received it.
+    const session = this.activeSession;
+    const restartWhenIdle = (): void => {
+      if (this.#closed || this.sessionShouldClose.isSet || this.activeSession !== session) {
+        return;
+      }
+      // Idle: no reply being generated, no reply request waiting for its
+      // generation, no blocking tool call waiting for its result or for the
+      // reply to it, no manual user activity. With automatic activity
+      // detection the server owns the speech boundaries and the client has no
+      // signal for an utterance in progress; the poll interval bounds that
+      // window.
+      const idle =
+        (!this.currentGeneration || this.currentGeneration._done) &&
+        !(this.pendingGenerationFut && !this.pendingGenerationFut.done) &&
+        !this.shouldBlockRealtimeInputForPendingTools() &&
+        !this.awaitingToolReply &&
+        !this.inUserActivity;
+      const now = Date.now();
+      if ((idle && now >= windowStart) || now >= deadline) {
+        this.sessionShouldClose.set();
+        return;
+      }
+      // Unref'd: a pending check must not keep a finished job process alive.
+      setTimeout(
+        restartWhenIdle,
+        now < windowStart ? windowStart - now : GO_AWAY_IDLE_POLL_MS,
+      ).unref?.();
+    };
+    restartWhenIdle();
   }
 
   async commitAudio() {

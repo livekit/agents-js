@@ -228,9 +228,13 @@ class NoFrameAgent extends Agent {
   }
   async ttsNode(): Promise<ReadableStream<AudioFrame> | null> {
     this.onTtsStarted?.();
+    let closeTimer: ReturnType<typeof setTimeout>;
     return new ReadableStream<AudioFrame>({
       start(controller) {
-        setTimeout(() => controller.close(), 500);
+        closeTimer = setTimeout(() => controller.close(), 500);
+      },
+      cancel() {
+        clearTimeout(closeTimer);
       },
     });
   }
@@ -333,9 +337,9 @@ describe('AgentActivity interrupted-speech commit', () => {
       await session.close();
 
       for (const chatCtx of [agent.chatCtx, session.history]) {
-        const assistantMessages = chatCtx.items
-          .filter((item) => item.type === 'message' && item.role === 'assistant')
-          .map((item) => item.textContent);
+        const assistantMessages = chatCtx.items.flatMap((item) =>
+          item.type === 'message' && item.role === 'assistant' ? [item.textContent] : [],
+        );
         expect(assistantMessages).toEqual(expected);
       }
     } finally {

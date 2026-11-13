@@ -185,8 +185,8 @@ describe('GPTLiveModel', () => {
   });
 
   it.each([
-    'aster',
     'beacon',
+    'cedar',
     'cinder',
     'marin',
     'stone',
@@ -453,6 +453,7 @@ describe('GPTLiveModel', () => {
 
     server.sockets[0]!.terminate();
     await vi.waitFor(() => expect(session.sessionId).toBe('live_1'));
+    await waitCount(2, 1);
 
     // A replacement session starts unmuted, so restore the mute before queued input.
     expect(server.events(1).map((event) => event.type)).toEqual([
@@ -505,6 +506,154 @@ describe('GPTLiveModel', () => {
       { type: 'session.commentary.append', delegation_id: 'd1', content: '62 and raining.' },
       { type: 'session.thinking.append', delegation_id: 'd1', content: 'Still checking.' },
     ]);
+  });
+
+  it('supports Decisions delegation and manual evaluation', async () => {
+    const decisionsOptions = {
+      model: 'gpt-6-luna',
+      questions: [
+        {
+          type: 'choice',
+          name: 'mood',
+          instructions: 'Mood?',
+          choices: [{ value: 'happy' }, { value: 'sad' }],
+        },
+      ],
+    };
+    const session = create({ delegation: 'decisions', decisionsOptions });
+    const events: GPTLive.DecisionEventEnvelope[] = [];
+    session.on('decision_event', (event) => events.push(event));
+    await ready(session);
+    const eventId = session.createDecision();
+    await waitCount(2);
+    expect(startConfig().delegation).toEqual({ type: 'decisions', decisions: decisionsOptions });
+    expect(server.events()).toContainEqual({ type: 'decision.create', event_id: eventId });
+    const payload = {
+      type: 'decision.completed',
+      decision: {
+        model: 'gpt-6-luna',
+        answers: [{ name: 'mood', value: 'happy' }],
+        usage: { input_tokens: 10 },
+      },
+    };
+    await server.send(session, {
+      type: 'decision.event',
+      event_id: 'result-1',
+      event: payload,
+    });
+    expect(events).toEqual([{ type: 'decision.event', event_id: 'result-1', event: payload }]);
+    await expect(session._updateTools(tools)).rejects.toThrow('no tool channel');
+  });
+
+  it('rejects manual Decisions evaluation while a connection drains', async () => {
+    server.autoClose = false;
+    const session = create({
+      delegation: 'decisions',
+      decisionsOptions: { model: 'gpt-6-luna' },
+      maxSessionDuration: 300,
+    });
+    try {
+      await ready(session);
+      await vi.waitFor(() => expect(server.events().at(-1)?.type).toBe('session.close'));
+      expect(() => session.createDecision()).toThrow('closing');
+      await server.send(session, { type: 'session.closed', reason: 'expired' });
+      await vi.waitFor(() => expect(session.sessionId).toBe('live_1'));
+      const eventId = session.createDecision();
+      await vi.waitFor(() =>
+        expect(server.events(1)).toContainEqual({ type: 'decision.create', event_id: eventId }),
+      );
+      expect(server.events(1)).toMatchObject([
+        { type: 'session.start' },
+        { type: 'decision.create', event_id: eventId },
+      ]);
+    } finally {
+      server.autoClose = true;
+      const closing = session.close();
+      for (const socket of server.sockets) {
+        if (socket.readyState === WebSocket.OPEN)
+          socket.send(JSON.stringify({ type: 'session.closed' }));
+      }
+      await closing;
+    }
+  });
+
+  it('rejects manual Decisions evaluation while the session closes and after closing', async () => {
+    const session = create({
+      delegation: 'decisions',
+      decisionsOptions: { model: 'gpt-6-luna' },
+    });
+    await ready(session);
+    const closing = session.close();
+    expect(() => session.createDecision()).toThrow('closing');
+    await closing;
+    expect(() => session.createDecision()).toThrow('closing');
+    expect(server.events().some((event) => event.type === 'decision.create')).toBe(false);
+  });
+
+  it('does not replay manual Decisions evaluation after a failed startup', async () => {
+    server.autoStart = false;
+    const session = create({
+      delegation: 'decisions',
+      decisionsOptions: { model: 'gpt-6-luna' },
+      connOptions: { maxRetry: 1, retryIntervalMs: 10, timeoutMs: 1000 },
+    });
+    await session._updateSession();
+    await waitCount(1);
+    session.createDecision();
+    server.sockets[0]!.terminate();
+    await waitCount(1, 1);
+    const eventId = session.createDecision();
+    await server.send(session, { type: 'session.started', session: { id: 'live_1' } });
+    await vi.waitFor(() =>
+      expect(server.events(1)).toContainEqual({ type: 'decision.create', event_id: eventId }),
+    );
+    expect(server.events(1)).toMatchObject([
+      { type: 'session.start' },
+      { type: 'decision.create', event_id: eventId },
+    ]);
+  });
+
+  it.each(['client', 'responses'] as const)(
+    'serializes Decisions triggers but rejects manual evaluation under %s delegation',
+    async (delegation) => {
+      const triggers = [
+        {
+          type: 'decisions' as const,
+          eventType: 'session.output_transcript.delta',
+          decisions: {
+            questions: [
+              {
+                name: 'mood',
+                type: 'choice',
+                instructions: 'Mood?',
+                choices: [{ value: 'happy' }],
+              },
+            ],
+          },
+        },
+      ];
+      const session = create({ delegation, triggers });
+      await ready(session);
+      expect(startConfig().triggers).toEqual([
+        {
+          type: 'decisions',
+          event_type: 'session.output_transcript.delta',
+          decisions: triggers[0]!.decisions,
+        },
+      ]);
+      expect(startConfig().delegation?.type).toBe(delegation);
+      expect(() => session.createDecision()).toThrow('Decisions delegation');
+      expect(server.events().some((event) => event.type === 'decision.create')).toBe(false);
+    },
+  );
+
+  it('requires Decisions configuration to match Decisions delegation', () => {
+    expect(() => new GPTLiveModel({ apiKey: 'sk-test', delegation: 'decisions' })).toThrow(
+      'decisionsOptions',
+    );
+    expect(
+      () => new GPTLiveModel({ apiKey: 'sk-test', decisionsOptions: { model: 'gpt-6-luna' } }),
+    ).toThrow('decisionsOptions');
   });
 
   it('drops old delegation answers during drain, startup, and after reconnect', async () => {
