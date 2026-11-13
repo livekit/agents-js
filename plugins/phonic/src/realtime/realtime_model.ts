@@ -114,6 +114,9 @@ export interface PhonicToolConfig {
   allow_tool_chaining?: boolean;
   execution_mode?: 'sync' | 'async';
   wait_for_response?: boolean; // async tools only
+  uninterruptible?: boolean; // sync tools only
+  can_run_during_user_speech?: boolean;
+  tool_call_output_timeout_ms?: number;
   // Built-in tools only (set on the matching `phonicTools` entry):
   respond_after_sec?: number; // choose_not_to_respond: seconds to wait before a follow-up (or omit)
   speech_before_tool_call?: string; // keypad_input / natural_conversation_ending: required|optional|suppressed
@@ -684,13 +687,16 @@ export class RealtimeSession extends llm.RealtimeSession {
           },
           execution_mode: cfg?.execution_mode ?? 'sync',
           wait_for_response: cfg?.wait_for_response ?? false,
-          tool_call_output_timeout_ms: TOOL_CALL_OUTPUT_TIMEOUT_MS,
+          tool_call_output_timeout_ms:
+            cfg?.tool_call_output_timeout_ms ?? TOOL_CALL_OUTPUT_TIMEOUT_MS,
           // fixed, not configurable: the plugin does not support tool calls during agent speech
           wait_for_speech_before_tool_call: true,
           require_speech_before_tool_call: cfg?.require_speech_before_tool_call ?? false,
           allow_tool_chaining: cfg?.allow_tool_chaining ?? false,
           forbid_speech_after_tool_call: cfg?.forbid_speech_after_tool_call ?? false,
           forbid_tool_call_after_speech: cfg?.forbid_tool_call_after_speech ?? false,
+          uninterruptible: cfg?.uninterruptible ?? false,
+          can_run_during_user_speech: cfg?.can_run_during_user_speech ?? false,
         };
       });
   }
