@@ -974,7 +974,8 @@ export class RealtimeSession extends llm.RealtimeSession {
       this.#logger.info('Sending caller keypad input');
       this.socket.sendGenerateReply({
         type: 'generate_reply',
-        user_message: `(User pressed ${digits} on the keypad)`,
+        // The count saves the model from counting the keys itself, which it sometimes gets wrong.
+        user_message: `(User pressed ${digits} on the keypad: ${digits.length} ${digits.length === 1 ? 'key' : 'keys'})`,
       });
     });
   };
