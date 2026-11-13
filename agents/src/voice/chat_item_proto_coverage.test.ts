@@ -47,7 +47,14 @@ const SATURATED_ITEMS: ChatItem[] = [
       e2eLatency: 1,
     },
   }),
-  new FunctionCall({ id: 'item_fc', callId: 'call-1', name: 'fn', args: '{}', createdAt: TS }),
+  new FunctionCall({
+    id: 'item_fc',
+    callId: 'call-1',
+    name: 'fn',
+    args: '{}',
+    extra: { key: 'value' },
+    createdAt: TS,
+  }),
   new FunctionCallOutput({
     id: 'item_fco',
     callId: 'call-1',

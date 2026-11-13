@@ -163,4 +163,40 @@ describe('StreamChannel', () => {
     const result3 = await read3;
     expect(result3.done).toBe(true);
   });
+
+  it('should not produce unhandled rejections when the reader cancels mid-stream', async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => {
+      unhandled.push(reason);
+    };
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      const channel = createStreamChannel<string>();
+      const reader = channel.stream().getReader();
+
+      await channel.write('before');
+      await reader.read();
+      await reader.cancel();
+
+      // Fire-and-forget write and close after the consumer is gone, as
+      // realtime producers do.
+      channel.write('after-cancel');
+      await channel.close();
+
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(unhandled).toEqual([]);
+      expect(channel.closed).toBe(true);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+  });
+
+  it('should still reject an awaited write after the reader cancelled', async () => {
+    const channel = createStreamChannel<string>();
+    const reader = channel.stream().getReader();
+
+    await reader.cancel(new Error('consumer gone'));
+
+    await expect(channel.write('late')).rejects.toThrow('consumer gone');
+  });
 });

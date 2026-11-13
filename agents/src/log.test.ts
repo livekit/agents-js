@@ -1,8 +1,11 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { enableOtelLogging, initializeLogger, log } from './log.js';
+import { loggerOptions, setLoggerState } from './log_core.js';
 import {
   PinoCloudExporter,
   flushPinoLogs,
@@ -19,6 +22,15 @@ vi.mock('pino-pretty', async () => {
 });
 
 const OTEL_ENABLED_KEY = Symbol.for('@livekit/agents:otelEnabled');
+
+function entrypoint() {
+  log().info('hello');
+}
+
+const entrypointLogLine =
+  readFileSync(fileURLToPath(import.meta.url), 'utf8')
+    .split('\n')
+    .findIndex((line) => line.includes("log().info('hello')")) + 1;
 
 function resetOtelLoggingState() {
   delete (globalThis as Record<symbol, unknown>)[OTEL_ENABLED_KEY];
@@ -239,4 +251,143 @@ describe('OTEL logging', () => {
       }
     },
   );
+});
+
+describe('log metadata', () => {
+  beforeEach(() => {
+    initPinoCloudExporter({
+      observabilityUrl: 'https://example.livekit.cloud',
+      roomId: 'RM_test',
+      jobId: 'AJ_test',
+    });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    resetOtelLoggingState();
+  });
+
+  it('adds code attributes', async () => {
+    initializeLogger({ pretty: false, level: 'info' });
+    const emitSpy = vi.spyOn(PinoCloudExporter.prototype, 'emit').mockImplementation(() => {});
+    enableOtelLogging();
+
+    entrypoint();
+
+    await vi.waitFor(() => {
+      const record = emitSpy.mock.calls
+        .map(([logObj]) => logObj)
+        .find(({ msg }) => msg === 'hello');
+      expect(record).toMatchObject({
+        'code.file.path': fileURLToPath(import.meta.url),
+        'code.function.name': 'entrypoint',
+        'code.line.number': entrypointLogLine,
+      });
+    });
+  });
+
+  it.each([false, true])('adds current job context to cached loggers (pretty: %s)', (pretty) => {
+    initializeLogger({ pretty, level: 'info' });
+    const cached = log().child({ component: 'prewarmed' });
+    const emitSpy = vi.spyOn(PinoCloudExporter.prototype, 'emit').mockImplementation(() => {});
+    enableOtelLogging();
+
+    cached.info('before job');
+    expect(emitSpy.mock.calls.at(-1)?.[0]).not.toHaveProperty('agent_name');
+
+    const context = { jobID: 'AJ_named', room_id: 'RM_named', agent_name: 'named-agent' };
+    setLoggerState(log().child(context), loggerOptions()!);
+    cached.info('cached logger');
+    log().info('current logger');
+
+    expect(emitSpy.mock.calls.at(-2)?.[0]).toMatchObject({
+      ...context,
+      component: 'prewarmed',
+      msg: 'cached logger',
+    });
+    expect(emitSpy.mock.calls.at(-1)?.[0]).toMatchObject({ ...context, msg: 'current logger' });
+    if (pretty) {
+      expect(emitSpy.mock.calls.at(-1)?.[0]).not.toHaveProperty('code.file.path');
+    }
+
+    initializeLogger({ pretty, level: 'info' });
+    cached.info('after reset');
+    expect(emitSpy.mock.calls.at(-1)?.[0]).not.toHaveProperty('agent_name');
+  });
+
+  it.each([
+    { 'code.file.path': '/reported/source.ts' },
+    { 'code.function.name': 'reported' },
+    { 'code.line.number': 42 },
+    { 'code.file.path': null },
+  ])('preserves child code attributes: %j', (bindings) => {
+    initializeLogger({ pretty: false, level: 'info' });
+    const emitSpy = vi.spyOn(PinoCloudExporter.prototype, 'emit').mockImplementation(() => {});
+    enableOtelLogging();
+
+    const child = log().child(bindings);
+    child.info('child attributes');
+    expect(emitSpy.mock.calls.at(-1)?.[0]).toMatchObject(bindings);
+    expect(emitSpy.mock.calls.at(-1)?.[0]).toHaveProperty('code.line.number');
+    expect(emitSpy.mock.calls.at(-1)?.[0]).toHaveProperty('code.function.name');
+
+    const override = {
+      'code.file.path': '/override.ts',
+      'code.function.name': 'override',
+      'code.line.number': 84,
+    };
+    child.info(override, 'call attributes');
+    expect(emitSpy.mock.calls.at(-1)?.[0]).toMatchObject(override);
+  });
+
+  it.each([
+    '/app/node_modules/@opentelemetry/instrumentation-pino/build/src/instrumentation.js',
+    'C:\\app\\node_modules\\@opentelemetry\\instrumentation-pino\\build\\src\\instrumentation.js',
+  ])('skips the Pino instrumentation frame at %s', (instrumentationPath) => {
+    initializeLogger({ pretty: false, level: 'info' });
+    const emitSpy = vi.spyOn(PinoCloudExporter.prototype, 'emit').mockImplementation(() => {});
+    enableOtelLogging();
+    vi.spyOn(Error, 'captureStackTrace').mockImplementation((holder) => {
+      Object.assign(holder, {
+        stack: `Error\n    at logger.<computed> (${instrumentationPath}:45:71)\n    at Pino.write (/app/node_modules/pino/lib/proto.js:204:16)\n    at entrypoint (${import.meta.url}:42:9)`,
+      });
+    });
+
+    log().info('instrumented logger');
+    expect(emitSpy.mock.calls.at(-1)?.[0]).toMatchObject({
+      'code.file.path': fileURLToPath(import.meta.url),
+      'code.function.name': 'entrypoint',
+      'code.line.number': 42,
+    });
+  });
+
+  it.each([
+    [
+      'throws',
+      () => {
+        throw new Error('broken hook');
+      },
+    ],
+    ['returns call sites', (_error: Error, callSites: NodeJS.CallSite[]) => callSites],
+  ])('still logs when a global Error.prepareStackTrace %s', async (_name, prepareStackTrace) => {
+    initializeLogger({ pretty: false, level: 'info' });
+    const emitSpy = vi.spyOn(PinoCloudExporter.prototype, 'emit').mockImplementation(() => {});
+    enableOtelLogging();
+
+    const original = Error.prepareStackTrace;
+    Error.prepareStackTrace = prepareStackTrace;
+    try {
+      expect(() => log().info('broken stack')).not.toThrow();
+    } finally {
+      Error.prepareStackTrace = original;
+    }
+
+    await vi.waitFor(() => {
+      const record = emitSpy.mock.calls
+        .map(([logObj]) => logObj)
+        .find(({ msg }) => msg === 'broken stack');
+      expect(record).toBeDefined();
+      expect(record).not.toHaveProperty('code.file.path');
+    });
+  });
 });

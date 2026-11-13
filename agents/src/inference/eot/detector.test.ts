@@ -24,8 +24,12 @@ import { AudioFrame } from '@livekit/rtc-node';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { APIConnectionError, APIError } from '../../_exceptions.js';
 import type { InferenceExecutor } from '../../ipc/inference_executor.js';
+import * as job from '../../job.js';
+import type { ChatContext } from '../../llm/chat_context.js';
 import { log } from '../../log.js';
 import { DEFAULT_API_CONNECT_OPTIONS } from '../../types.js';
+import type { Task } from '../../utils.js';
+import * as warmup from '../_warmup.js';
 import type { BaseStreamingTurnDetectorStream } from './base.js';
 import {
   type BaseStreamingTurnDetectorOptions,
@@ -35,11 +39,18 @@ import {
 import { TurnDetector, TurnDetectorStreamImpl } from './detector.js';
 import { LOCAL_LANGUAGES, ThresholdOptions } from './languages.js';
 import { EOT_INFERENCE_METHOD } from './runner.js';
-import { LocalTransport } from './transports.js';
+import { CloudTransport, LocalTransport } from './transports.js';
 
 // Stand-in for the per-language defaults a gateway returns in `SessionCreated`.
 const SERVER_THRESHOLDS: Record<string, number> = { en: 0.56, ja: 0.37, fr: 0.575 };
 const SERVER_DEFAULT_THRESHOLD = 0.5;
+
+// Stand-in for the per-language defaults `@livekit/local-inference` ships for the mini model.
+const LOCAL_THRESHOLDS: Readonly<Record<string, number>> = Object.freeze({
+  en: 0.25,
+  ja: 0.22,
+  fr: 0.23,
+});
 
 // Backchannel defaults a gateway returns alongside the EOT defaults.
 const SERVER_BACKCHANNEL_THRESHOLDS: Record<string, number> = { en: 0.62, ja: 0.7 };
@@ -53,12 +64,12 @@ async function waitFor(predicate: () => boolean, ticks = 50): Promise<void> {
 }
 
 interface ScriptedTransportOptions {
-  runBehavior?: 'idle' | 'raise' | 'return';
+  runBehavior?: 'idle' | 'raise' | 'return' | 'drain';
   runExc?: Error;
 }
 
 class ScriptedTransport implements StreamingTurnDetectionTransport {
-  runBehavior: 'idle' | 'raise' | 'return';
+  runBehavior: 'idle' | 'raise' | 'return' | 'drain';
   runExc: Error | undefined;
   runCalls = 0;
   events: Array<[string, unknown]> = [];
@@ -76,9 +87,14 @@ class ScriptedTransport implements StreamingTurnDetectionTransport {
     this.runCalls += 1;
     if (this.runBehavior === 'raise') {
       if (!this.runExc) throw new Error('runExc not set');
+      this.runBehavior = 'return';
       throw this.runExc;
     }
     if (this.runBehavior === 'return') {
+      return;
+    }
+    if (this.runBehavior === 'drain') {
+      await this._stream?._drainAudioChannel();
       return;
     }
     // idle — wait until cancelled (resolved by `detach()` via the
@@ -86,11 +102,14 @@ class ScriptedTransport implements StreamingTurnDetectionTransport {
     // cancels via `aclose`).
     await new Promise(() => undefined);
   }
-  runInference(requestId: string): void {
+  runInference(requestId: string, _chatCtx?: ChatContext): void {
     this.events.push(['run_inference', requestId]);
   }
   async pushFrame(frame: AudioFrame): Promise<void> {
     this.events.push(['push_frame', frame]);
+  }
+  onStartOfTurn(elapsed: number): void {
+    this.events.push(['on_start_of_turn', elapsed]);
   }
   async flush(sentinel: FlushSentinel): Promise<void> {
     this.events.push(['flush', sentinel]);
@@ -108,6 +127,7 @@ interface MakeStreamOpts {
   model?: 'turn-detector-v1' | 'turn-detector-v1-mini';
   userThreshold?: number | Record<string, number>;
   detector?: TurnDetector;
+  localFallback?: boolean;
 }
 
 /**
@@ -137,6 +157,7 @@ function makeStreamWithTransport(
         : undefined,
     model,
     transport,
+    localFallback: opts.localFallback,
   });
   return stream;
 }
@@ -196,17 +217,25 @@ function withEnv(
 // Stub `LocalTransport.run` so the fallback FSM doesn't hang on a real
 // drain loop. The behavior under test is the swap, not the post-swap I/O.
 let runSpy: ReturnType<typeof vi.spyOn>;
+// Stand-in for the native module, so these tests do not depend on the binding loading on
+// the host. `LOCAL_LANGUAGES` reads its table from it.
+let localInferenceSpy: ReturnType<typeof vi.spyOn>;
 beforeEach(() => {
   runSpy = vi.spyOn(LocalTransport.prototype, 'run').mockImplementation(async () => undefined);
+  localInferenceSpy = vi.spyOn(warmup, '_getLocalInferenceModule').mockReturnValue({
+    EOT_THRESHOLDS: LOCAL_THRESHOLDS,
+    EOT_MAX_SAMPLES: 32000,
+  } as unknown as ReturnType<typeof warmup._getLocalInferenceModule>);
 });
 afterEach(() => {
   runSpy.mockRestore();
+  localInferenceSpy.mockRestore();
 });
 
-describe('AutoSelect', () => {
+describe.each([undefined, false])('AutoSelect (localFallback=%s)', (localFallback) => {
   it('selects local when no remote EOT url', () => {
     void withEnv({ LIVEKIT_REMOTE_EOT_URL: undefined }, () => {
-      const detector = new TurnDetector();
+      const detector = new TurnDetector({ localFallback });
       expect(detector.model).toBe('turn-detector-v1-mini');
     });
   });
@@ -219,7 +248,7 @@ describe('AutoSelect', () => {
         LIVEKIT_API_SECRET: 's',
       },
       () => {
-        const detector = new TurnDetector();
+        const detector = new TurnDetector({ localFallback });
         expect(detector.model).toBe('turn-detector-v1');
       },
     );
@@ -235,7 +264,7 @@ describe('AutoSelect', () => {
         LIVEKIT_INFERENCE_API_SECRET: undefined,
       },
       () => {
-        const detector = new TurnDetector();
+        const detector = new TurnDetector({ localFallback });
         expect(detector.model).toBe('turn-detector-v1-mini');
       },
     );
@@ -287,33 +316,39 @@ describe('ExplicitModelErrors', () => {
 });
 
 describe('Fallback', () => {
-  it('fallback on transport error swaps to local', async () => {
-    const transport = new ScriptedTransport({
-      runBehavior: 'raise',
-      runExc: new APIConnectionError({ message: 'boom' }),
-    });
-    const stream = makeStreamWithTransport(transport);
-    await waitFor(() => stream.model === 'turn-detector-v1-mini');
-    expect(stream.model).toBe('turn-detector-v1-mini');
-    expect(stream.isFallback).toBe(true);
-    expect(stream.warnedCloudFailure).toBe(true);
-    expect(transport.events).toContainEqual(['detach', null]);
-    await stream.aclose();
-  });
+  it.each([undefined, true])(
+    'fallback on transport error swaps to local (%s)',
+    async (localFallback) => {
+      const transport = new ScriptedTransport({
+        runBehavior: 'raise',
+        runExc: new APIConnectionError({ message: 'boom' }),
+      });
+      const stream = makeStreamWithTransport(transport, { localFallback });
+      await waitFor(() => stream.model === 'turn-detector-v1-mini');
+      expect(stream.model).toBe('turn-detector-v1-mini');
+      expect(stream.isFallback).toBe(true);
+      expect(stream.warnedCloudFailure).toBe(true);
+      expect(transport.events).toContainEqual(['detach', null]);
+      await stream.aclose();
+    },
+  );
 
-  it('fallback on timed-out cancelInference', async () => {
-    const transport = new ScriptedTransport({ runBehavior: 'idle' });
-    const stream = makeStreamWithTransport(transport);
-    const fut = stream.predict();
-    // A timed-out cancel (driven by AudioRecognition's eou bounce) closes the
-    // request and promotes the cloud→local fallback.
-    stream.cancelInference({ timedOut: true });
-    expect((await fut.await).endOfTurnProbability).toBe(0.0);
-    await waitFor(() => stream.model === 'turn-detector-v1-mini');
-    expect(stream.model).toBe('turn-detector-v1-mini');
-    expect(stream.isFallback).toBe(true);
-    await stream.aclose();
-  });
+  it.each([undefined, true])(
+    'fallback on timed-out cancelInference (%s)',
+    async (localFallback) => {
+      const transport = new ScriptedTransport({ runBehavior: 'idle' });
+      const stream = makeStreamWithTransport(transport, { localFallback });
+      const fut = stream.predict();
+      // A timed-out cancel (driven by AudioRecognition's eou bounce) closes the
+      // request and promotes the cloud→local fallback.
+      stream.cancelInference({ timedOut: true });
+      expect((await fut.await).endOfTurnProbability).toBe(0.0);
+      await waitFor(() => stream.model === 'turn-detector-v1-mini');
+      expect(stream.model).toBe('turn-detector-v1-mini');
+      expect(stream.isFallback).toBe(true);
+      await stream.aclose();
+    },
+  );
 
   it('fallback persists across turns', async () => {
     const transport = new ScriptedTransport({
@@ -326,6 +361,94 @@ describe('Fallback', () => {
     stream.predict();
     expect(stream.model).toBe('turn-detector-v1-mini');
     await stream.aclose();
+  });
+});
+
+describe('LocalFallbackDisabled', () => {
+  it('keeps the cloud transport active after prediction timeouts', async () => {
+    const transport = new ScriptedTransport({ runBehavior: 'drain' });
+    const stream = makeStreamWithTransport(transport, { localFallback: false });
+    stream.thresholdsOptions._updateDefaults(
+      { ...SERVER_THRESHOLDS },
+      SERVER_DEFAULT_THRESHOLD,
+      { ...SERVER_BACKCHANNEL_THRESHOLDS },
+      SERVER_BACKCHANNEL_DEFAULT,
+    );
+    try {
+      for (let i = 0; i < 2; i++) {
+        const prediction = stream.predict();
+        stream.cancelInference({ timedOut: true });
+        expect((await prediction.await).endOfTurnProbability).toBe(0);
+      }
+
+      const prediction = stream.predict();
+      await waitFor(() => transport.events.some(([name]) => name === 'run_inference'));
+      const requestId = transport.events.findLast(
+        ([name]) => name === 'run_inference',
+      )![1] as string;
+      stream._resolvePrediction(requestId, 0.75);
+      expect((await prediction.await).endOfTurnProbability).toBe(0.75);
+      expect(stream.model).toBe('turn-detector-v1');
+      expect(stream.isFallback).toBe(false);
+      expect(stream.transport).toBe(transport);
+      expect(transport.runCalls).toBe(1);
+      expect(transport.events).not.toContainEqual(['detach', null]);
+      expect(runSpy).not.toHaveBeenCalled();
+      expect(await stream.unlikelyThreshold('en')).toBe(SERVER_THRESHOLDS.en);
+      expect(await stream.backchannelThreshold('en')).toBe(SERVER_BACKCHANNEL_THRESHOLDS.en);
+    } finally {
+      await stream.aclose();
+    }
+  });
+
+  it('defaults pending and future predictions after a terminal cloud failure and discards audio', async () => {
+    const cloudRunSpy = vi
+      .spyOn(CloudTransport.prototype, 'run')
+      .mockRejectedValue(new APIConnectionError({ message: 'cloud unavailable' }));
+    const pushSpy = vi.spyOn(CloudTransport.prototype, 'pushFrame');
+    const flushSpy = vi.spyOn(CloudTransport.prototype, 'flush');
+    const warnSpy = vi.spyOn(log(), 'warn');
+    const detector = new TurnDetector({
+      version: 'v1',
+      localFallback: false,
+      baseUrl: 'ws://test',
+      apiKey: 'k',
+      apiSecret: 's',
+    });
+    const stream = detector.stream() as TurnDetectorStreamImpl;
+    stream.thresholdsOptions._updateDefaults({ ...SERVER_THRESHOLDS }, SERVER_DEFAULT_THRESHOLD);
+    try {
+      const frame = new AudioFrame(new Int16Array(320), 16000, 1, 320);
+      for (let i = 0; i < 20; i++) stream.pushAudio(frame);
+      stream.flush();
+      const prediction = stream.predict();
+      expect((await prediction.await).endOfTurnProbability).toBe(1);
+      await (stream as unknown as { _mainTask: Task<void> })._mainTask.result;
+
+      stream.pushAudio(frame);
+      stream.flush();
+      stream.cancelInference({ timedOut: true });
+      expect((await stream.predict().await).endOfTurnProbability).toBe(1);
+      expect((await stream.predict().await).endOfTurnProbability).toBe(1);
+      await stream._drainAudioChannel();
+      expect(pushSpy).not.toHaveBeenCalled();
+      expect(flushSpy).not.toHaveBeenCalled();
+      expect(runSpy).not.toHaveBeenCalled();
+      expect(cloudRunSpy).toHaveBeenCalledTimes(1);
+      expect(stream.model).toBe('turn-detector-v1');
+      expect(detector.model).toBe('turn-detector-v1');
+      expect(stream.isFallback).toBe(false);
+      expect(await stream.unlikelyThreshold('en')).toBe(SERVER_THRESHOLDS.en);
+      expect(
+        warnSpy.mock.calls.filter((c) => JSON.stringify(c).includes('local fallback is disabled')),
+      ).toHaveLength(1);
+    } finally {
+      await detector.aclose();
+      cloudRunSpy.mockRestore();
+      pushSpy.mockRestore();
+      flushSpy.mockRestore();
+      warnSpy.mockRestore();
+    }
   });
 });
 
@@ -395,7 +518,36 @@ describe('LocalFailureRetry', () => {
     expect(stream.isFallback).toBe(false);
     expect(stream.warnedLocalFailure).toBe(true);
     expect(stream.transport).toBe(transport);
+    expect(transport.runCalls).toBe(2);
     await stream.aclose();
+  });
+
+  it('keeps serving queued requests after the local drain fails', async () => {
+    class FlakyTransport extends ScriptedTransport {
+      private failed = false;
+
+      override async pushFrame(frame: AudioFrame): Promise<void> {
+        await super.pushFrame(frame);
+        if (!this.failed) {
+          this.failed = true;
+          throw new Error('local boom');
+        }
+      }
+    }
+
+    const transport = new FlakyTransport({ runBehavior: 'drain' });
+    const stream = makeStreamWithTransport(transport, { model: 'turn-detector-v1-mini' });
+    try {
+      stream.pushAudio(new AudioFrame(new Int16Array(160), 16000, 1, 160));
+      await waitFor(() => stream.warnedLocalFailure);
+      stream.pushAudio(new AudioFrame(new Int16Array(160), 16000, 1, 160));
+      stream.predict();
+      await waitFor(() => transport.events.some(([name]) => name === 'run_inference'));
+      expect(transport.events.filter(([name]) => name === 'run_inference')).toHaveLength(1);
+      expect(transport.runCalls).toBe(2);
+    } finally {
+      await stream.aclose();
+    }
   });
 });
 
@@ -697,6 +849,40 @@ describe('UpdateOptions', () => {
   });
 });
 
+describe('LocalLanguages', () => {
+  it('mirrors the thresholds bundled with the native model', () => {
+    expect({ ...LOCAL_LANGUAGES }).toEqual(LOCAL_THRESHOLDS);
+    expect(Object.keys(LOCAL_LANGUAGES)).toEqual(Object.keys(LOCAL_THRESHOLDS));
+    expect(LOCAL_LANGUAGES.en).toBe(LOCAL_THRESHOLDS.en);
+    expect('en' in LOCAL_LANGUAGES).toBe(true);
+    expect('xx' in LOCAL_LANGUAGES).toBe(false);
+  });
+
+  it('is empty without the native binding', async () => {
+    localInferenceSpy.mockReturnValue(undefined);
+
+    expect({ ...LOCAL_LANGUAGES }).toEqual({});
+    expect('en' in LOCAL_LANGUAGES).toBe(false);
+    // no table to resolve against: the mini model supports a language only through a
+    // scalar override
+    expect(new ThresholdOptions('turn-detector-v1-mini').supports('en')).toBe(false);
+    const overridden = new ThresholdOptions('turn-detector-v1-mini', 0.4);
+    expect(overridden.lookup('en')).toBe(0.4);
+    expect(overridden.supports('ja')).toBe(true);
+  });
+
+  it('is read-only', () => {
+    const table = LOCAL_LANGUAGES as Record<string, number>;
+    expect(() => {
+      table.en = 1;
+    }).toThrow(TypeError);
+    expect(() => {
+      delete table.en;
+    }).toThrow(TypeError);
+    expect(LOCAL_LANGUAGES.en).toBe(LOCAL_THRESHOLDS.en);
+  });
+});
+
 describe('ThresholdRescaleOnFallback', () => {
   it('scalar override rescaled against server on fallback', async () => {
     const transport = new ScriptedTransport({ runBehavior: 'idle' });
@@ -761,35 +947,93 @@ describe('LocalModelExecutor', () => {
     return new AudioFrame(new Int16Array(samples), 16000, 1, samples);
   }
 
-  it('routes local predict through the injected executor (base64 PCM)', async () => {
-    const doInference = vi.fn(async (method: string, data: unknown) => {
-      expect(method).toBe(EOT_INFERENCE_METHOD);
-      expect(typeof (data as { pcm: string }).pcm).toBe('string');
-      return { probability: 0.7, inferenceDurationMs: 5 };
-    });
-    const executor: InferenceExecutor = { doInference };
-    const detector = new TurnDetector({ version: 'v1-mini', executor });
+  async function predictOnce(detector: TurnDetector): Promise<number> {
     const stream = detector.stream();
+    const drain = stream._drainAudioChannel();
     try {
       stream.pushAudio(pcmFrame());
-      const ev = await stream.predict().await;
-      expect(ev.endOfTurnProbability).toBe(0.7);
-      expect(doInference).toHaveBeenCalledWith(EOT_INFERENCE_METHOD, expect.anything());
+      return (await stream.predict().await).endOfTurnProbability;
     } finally {
       await stream.aclose();
+      await drain;
     }
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
+
+  it('resolves a failed inference to the positive default', async () => {
+    const executor: InferenceExecutor = {
+      doInference: () => Promise.reject(new Error('inference failed')),
+    };
+
+    expect(await predictOnce(new TurnDetector({ version: 'v1-mini', executor }))).toBe(1.0);
+  });
+
+  it('skips the job executor without the native binding', async () => {
+    const doInference = vi.fn();
+    vi.spyOn(job, 'getJobContext').mockReturnValue({
+      inferenceExecutor: { doInference },
+    } as unknown as ReturnType<typeof job.getJobContext>);
+    vi.spyOn(warmup, '_getLocalInferenceModule').mockReturnValue(undefined);
+
+    expect(await predictOnce(new TurnDetector({ version: 'v1-mini' }))).toBe(1.0);
+    expect(doInference).not.toHaveBeenCalled();
+  });
+
+  it('keeps an explicit executor without the native binding', async () => {
+    vi.spyOn(warmup, '_getLocalInferenceModule').mockReturnValue(undefined);
+    const executor: InferenceExecutor = {
+      doInference: async () => ({ probability: 0.3, inferenceDurationMs: 5 }),
+    };
+
+    expect(await predictOnce(new TurnDetector({ version: 'v1-mini', executor }))).toBe(0.3);
+  });
+
+  it.each([undefined, false])(
+    'routes local predict through the executor (localFallback=%s)',
+    async (localFallback) => {
+      const doInference = vi.fn(async (method: string, data: unknown) => {
+        expect(method).toBe(EOT_INFERENCE_METHOD);
+        expect(typeof (data as { pcm: string }).pcm).toBe('string');
+        return { probability: 0.7, inferenceDurationMs: 5 };
+      });
+      const executor: InferenceExecutor = { doInference };
+      const warnSpy = vi.spyOn(log(), 'warn');
+      const detector = new TurnDetector({ version: 'v1-mini', executor, localFallback });
+      const stream = detector.stream();
+      const drain = stream._drainAudioChannel();
+      try {
+        stream.pushAudio(pcmFrame());
+        const ev = await stream.predict().await;
+        expect(ev.endOfTurnProbability).toBe(0.7);
+        expect(doInference).toHaveBeenCalledWith(EOT_INFERENCE_METHOD, expect.anything());
+        if (localFallback === false) {
+          expect(warnSpy).toHaveBeenCalledWith(
+            expect.stringContaining('localFallback=false has no effect'),
+          );
+        }
+      } finally {
+        await stream.aclose();
+        await drain;
+        warnSpy.mockRestore();
+      }
+    },
+  );
 
   it('degrades to a positive default when no executor is available', async () => {
     // explicit undefined → constructor falls through to getJobContext()
     // (throws outside a job) → executor stays undefined.
     const detector = new TurnDetector({ version: 'v1-mini', executor: undefined });
     const stream = detector.stream();
+    const drain = stream._drainAudioChannel();
     try {
       const ev = await stream.predict().await;
       expect(ev.endOfTurnProbability).toBe(1.0);
     } finally {
       await stream.aclose();
+      await drain;
     }
   });
 });
