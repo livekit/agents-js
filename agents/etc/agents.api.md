@@ -474,6 +474,12 @@ export class AgentSession<UserData = UnknownUserData> extends AgentSession_base 
     clearUserTurn(): void;
     // (undocumented)
     close(): Promise<void>;
+    // @internal
+    _closeImpl(input: {
+        reason: ShutdownReason;
+        drain?: boolean;
+        error?: RealtimeModelError | STTError | TTSError | LLMError | null;
+    }): Promise<void>;
     // @internal (undocumented)
     _closeSoon(input: {
         reason: ShutdownReason;
@@ -2603,6 +2609,7 @@ class CloudTransport implements StreamingTurnDetectionTransport {
     get numRetries(): number;
     // (undocumented)
     protected _numRetries: number;
+    onStartOfTurn(elapsed: number): void;
     // Warning: (ae-forgotten-export) The symbol "BaseStreamingTurnDetectorOptions" needs to be exported by the entry point index.d.ts
     //
     // (undocumented)
@@ -2617,7 +2624,7 @@ class CloudTransport implements StreamingTurnDetectionTransport {
     run(): Promise<void>;
     protected _runAbort: AbortController | undefined;
     // (undocumented)
-    runInference(requestId: string): void;
+    runInference(requestId: string, chatCtx?: ChatContext): void;
     // (undocumented)
     protected _runOnce(): Promise<void>;
     // Warning: (ae-forgotten-export) The symbol "ClientMsg" needs to be exported by the entry point index.d.ts
@@ -2628,6 +2635,8 @@ class CloudTransport implements StreamingTurnDetectionTransport {
     protected _streamRef: WeakRef<BaseStreamingTurnDetectorStream> | undefined;
     // @internal
     transportReady(): boolean;
+    // (undocumented)
+    protected _turnSamples: number;
     // Warning: (ae-forgotten-export) The symbol "CloudWebSocket" needs to be exported by the entry point index.d.ts
     //
     // (undocumented)
@@ -2929,6 +2938,16 @@ export interface DecisionCapabilities {
     decisionKinds: DecisionKind[];
 }
 
+// @public
+interface DecisionEventEnvelope {
+    // (undocumented)
+    event: Record<string, unknown>;
+    // (undocumented)
+    event_id?: string | null;
+    // (undocumented)
+    type: 'decision.event';
+}
+
 // @public (undocumented)
 export type DecisionKind = 'probability' | 'choice' | 'score';
 
@@ -3008,6 +3027,24 @@ export class DecisionResponse {
 
 // @public (undocumented)
 export type DecisionResult = ProbabilityResult | ChoiceResult | ScoreResult;
+
+// @public
+interface DecisionsOptions {
+    // (undocumented)
+    model?: string;
+    // (undocumented)
+    questions?: Record<string, unknown>[];
+}
+
+// @public
+interface DecisionsTrigger {
+    // (undocumented)
+    decisions: DecisionsOptions;
+    // (undocumented)
+    eventType: string;
+    // (undocumented)
+    type: 'decisions';
+}
 
 // @public
 export function dedent(strings: TemplateStringsArray, ...values: unknown[]): string;
@@ -3153,6 +3190,9 @@ type DtmfEvent = (typeof DTMF_EVENTS)[number];
 declare namespace duplex {
     export {
         isDuplexModel,
+        DecisionEventEnvelope,
+        DecisionsOptions,
+        DecisionsTrigger,
         OpenAIDuplexModels,
         DuplexModels,
         OpenAIResponsesOptions,
@@ -4409,6 +4449,9 @@ declare namespace inference {
         DuplexModelOptions,
         DuplexModels,
         DuplexOptions,
+        DecisionsOptions,
+        DecisionsTrigger,
+        DecisionEventEnvelope,
         OpenAIDuplexOptions,
         OpenAIResponsesOptions,
         normalizeSTTFallback,
@@ -5157,6 +5200,7 @@ declare namespace llm {
         MessageGeneration,
         RealtimeCapabilities,
         RealtimeModelError,
+        RealtimeSessionOptions,
         RealtimeSessionReconnectedEvent,
         RemoteChatContext,
         computeChatCtxDiff,
@@ -5382,7 +5426,7 @@ class LLMStream_2 extends llm_2.LLMStream {
     protected run(): Promise<void>;
 }
 
-// @public (undocumented)
+// @public
 const LOCAL_LANGUAGES: Readonly<Record<string, number>>;
 
 // @public
@@ -5405,20 +5449,23 @@ class LocalTransport implements StreamingTurnDetectionTransport {
     flush(_sentinel: FlushSentinel_2): Promise<void>;
     // (undocumented)
     protected _logger: Logger;
+    onStartOfTurn(elapsed: number): void;
     // (undocumented)
     protected _opts: BaseStreamingTurnDetectorOptions;
     // (undocumented)
-    protected _predict(requestId: string, pcmSnapshot: Int16Array): Promise<void>;
+    protected _predict(requestId: string, pcmSnapshot: Int16Array, turnSamples: number): Promise<void>;
     // (undocumented)
     pushFrame(frame: AudioFrame): Promise<void>;
     // (undocumented)
     run(): Promise<void>;
     // (undocumented)
-    runInference(requestId: string): void;
+    runInference(requestId: string, _chatCtx?: ChatContext): void;
     // (undocumented)
     protected _streamRef: WeakRef<BaseStreamingTurnDetectorStream> | undefined;
     // (undocumented)
     protected _tasks: Set<Promise<void>>;
+    // (undocumented)
+    protected _turnSamples: number;
     // (undocumented)
     protected _warnedNoExecutor: boolean;
 }
@@ -5518,6 +5565,9 @@ const MAX_SPANS_PER_MINUTE = 6;
 
 // @public
 function maxInputLen(provider: string): number | undefined;
+
+// @internal
+export function _maybeRegisterLocalEotRunner(): void;
 
 // @public (undocumented)
 export type MCPHTTPTransportType = 'sse' | 'streamable_http';
@@ -5925,8 +5975,10 @@ type OpenAIDuplexModels = 'openai/gpt-live-1';
 
 // @public (undocumented)
 interface OpenAIDuplexOptions {
-    delegation?: 'responses' | 'client';
+    decisionsOptions?: DecisionsOptions;
+    delegation?: 'responses' | 'client' | 'decisions';
     responsesOptions?: OpenAIResponsesOptions;
+    triggers?: DecisionsTrigger[];
 }
 
 // @public
@@ -6343,9 +6395,7 @@ export abstract class RealtimeModel {
     // (undocumented)
     get provider(): string;
     // (undocumented)
-    abstract session(options?: {
-        turnDetectionDisabled?: boolean;
-    }): RealtimeSession;
+    abstract session(options?: RealtimeSessionOptions): RealtimeSession;
 }
 
 // Warning: (ae-forgotten-export) The symbol "RealtimeModel_3" needs to be exported by the entry point index.d.ts
@@ -6364,9 +6414,7 @@ class RealtimeModel_2 extends RealtimeModel_3 {
     // (undocumented)
     get provider(): string;
     // (undocumented)
-    session(options?: {
-        turnDetectionDisabled?: boolean;
-    }): RealtimeSession_3;
+    session(options?: llm_2.RealtimeSessionOptions): RealtimeSession_3;
 }
 
 // @public (undocumented)
@@ -6495,9 +6543,7 @@ export abstract class RealtimeSession extends EventEmitter {
 //
 // @public (undocumented)
 class RealtimeSession_3 extends RealtimeSession_2 {
-    constructor(realtimeModel: RealtimeModel_2, options?: {
-        turnDetectionDisabled?: boolean;
-    });
+    constructor(realtimeModel: RealtimeModel_2, options?: llm_2.RealtimeSessionOptions);
     // (undocumented)
     close(): Promise<void>;
     // (undocumented)
@@ -6528,6 +6574,14 @@ class RealtimeSession_3 extends RealtimeSession_2 {
     protected isFatalError(error: unknown): boolean;
     // (undocumented)
     protected resetInputTurnState(): void;
+}
+
+// @public
+export interface RealtimeSessionOptions {
+    chatCtx?: ChatContext;
+    instructions?: string;
+    tools?: ToolContext;
+    turnDetectionDisabled?: boolean;
 }
 
 // @public (undocumented)
@@ -10022,7 +10076,7 @@ interface XaiOptions {
 type XAIRealtimeModels = 'xai/grok-voice' | 'xai/grok-voice-latest' | 'xai/grok-voice-3.0';
 
 // @public (undocumented)
-type XaiSTTModels = 'xai/stt-1';
+type XaiSTTModels = 'xai/stt-1' | 'xai/stt-2';
 
 // @public (undocumented)
 type XaiTTSModels = 'xai/tts-1';
@@ -10053,9 +10107,9 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 // src/utils.ts:468:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "cancelled"
 // src/voice/agent_session.ts:412:3 - (ae-unresolved-link) The @link reference could not be resolved: This type of declaration is not supported yet by the resolver
 // src/voice/agent_session.ts:1089:5 - (ae-forgotten-export) The symbol "RecordingOptions" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1821:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1821:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1821:5 - (ae-forgotten-export) The symbol "LLMError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1824:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1824:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1824:5 - (ae-forgotten-export) The symbol "LLMError" needs to be exported by the entry point index.d.ts
 // src/voice/events.ts:461:3 - (ae-forgotten-export) The symbol "InterruptionDetectionError" needs to be exported by the entry point index.d.ts
 // src/voice/room_io/_output.ts:183:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "segmentTags"
 // src/voice/testing/run_result.ts:94:5 - (ae-forgotten-export) The symbol "OutputSchema" needs to be exported by the entry point index.d.ts

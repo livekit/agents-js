@@ -342,7 +342,7 @@ export class RealtimeModel extends llm.RealtimeModel {
     });
   }
 
-  session(options?: { turnDetectionDisabled?: boolean }) {
+  session(options?: llm.RealtimeSessionOptions) {
     return new RealtimeSession(this, options);
   }
 
@@ -496,7 +496,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   #task: Task<void>;
   #closed = false;
 
-  constructor(realtimeModel: RealtimeModel, options?: { turnDetectionDisabled?: boolean }) {
+  constructor(realtimeModel: RealtimeModel, options?: llm.RealtimeSessionOptions) {
     super(realtimeModel);
 
     this.oaiRealtimeModel = realtimeModel;
@@ -509,10 +509,29 @@ export class RealtimeSession extends llm.RealtimeSession {
     if (options?.turnDetectionDisabled) {
       this._options.turnDetection = null;
     }
+    // Seed before the first session.update, so the instructions go in it. Sending them again
+    // through updateInstructions or updateTools only replaces the same values.
+    if (options?.instructions !== undefined) {
+      this.instructions = options.instructions;
+    }
+    if (options?.tools !== undefined) {
+      this._tools = options.tools.copy();
+    }
 
     this.#task = Task.from(({ signal }) => this.#mainTask(signal));
 
+    // The queued events go out when the socket connects, in the same order as a reconnect.
     this.sendEvent(this.createSessionUpdateEvent());
+    if (Object.keys(this._tools.functionTools).length > 0) {
+      this.sendEvent(this.createToolsUpdateEvent(this._tools));
+    }
+    if (options?.chatCtx !== undefined && options.chatCtx.items.length > 0) {
+      // A later updateChatCtx with the same context waits for this one and then finds nothing new.
+      // It sends items again only if this call times out or the server rejects an item.
+      void this.updateChatCtx(options.chatCtx).catch((error) => {
+        this.#logger.error(error, 'failed to apply the initial chat context');
+      });
+    }
   }
 
   private hasInflightResponse(): boolean {

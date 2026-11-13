@@ -955,6 +955,8 @@ export class AgentActivity implements RecognitionHooks {
     if (this.llm instanceof RealtimeModel) {
       const rtReused = reuseResources?.rtSession !== undefined;
 
+      removeInstructions(this.agent._chatCtx);
+
       if (rtReused) {
         this.logger.debug('reusing realtime session from previous activity');
         this.realtimeSession = reuseResources!.rtSession;
@@ -964,8 +966,13 @@ export class AgentActivity implements RecognitionHooks {
         await this.realtimeSession!.interrupt();
         await this.realtimeSession!.clearAudio();
       } else {
+        // Pass the initial configuration at creation. A provider that sends it in the connection
+        // handshake (Gemini Live) then connects once, and _updateSession below changes nothing.
         this.realtimeSession = this.llm.session({
           turnDetectionDisabled: !this.rtTurnDetectionEnabled,
+          instructions: renderInstructions(this.agent.instructions),
+          chatCtx: this.agent.chatCtx,
+          tools: this.tools,
         });
       }
 
@@ -979,8 +986,6 @@ export class AgentActivity implements RecognitionHooks {
       );
       this.realtimeSession!.on('metrics_collected', this.onMetricsCollected);
       this.realtimeSession!.on('error', this.onModelError);
-
-      removeInstructions(this.agent._chatCtx);
 
       // skip the update if the session is reused and no mid-session update is supported
       // this means the content is the same as the previous session

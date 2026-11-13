@@ -65,8 +65,10 @@ let localEotRunnerRegistered = false;
  * inference process. Idempotent and guarded by native-binding availability;
  * a no-op (with a one-time warning) when `@livekit/local-inference` can't be
  * loaded so the worker still starts on unsupported platforms.
+ *
+ * @internal
  */
-function maybeRegisterLocalEotRunner(): void {
+export function _maybeRegisterLocalEotRunner(): void {
   if (localEotRunnerRegistered) return;
   localEotRunnerRegistered = true;
   if (InferenceRunner.registeredRunners[EOT_INFERENCE_METHOD]) return;
@@ -455,11 +457,11 @@ export class AgentServer {
     }
 
     // Register the local audio-EOT runner so it runs in the shared inference
-    // process (loaded once per host, ~138 MB) instead of in every job worker.
+    // process (loaded once per host, ~450 MB) instead of in every job worker.
     // Guarded by binding availability: on a platform where
     // `@livekit/local-inference` can't load, skip registration so the worker
     // still starts (local EOT then degrades to a positive-default prediction).
-    maybeRegisterLocalEotRunner();
+    _maybeRegisterLocalEotRunner();
 
     this.#inferenceExecutor = InferenceProcExecutor.createIfNeeded();
 

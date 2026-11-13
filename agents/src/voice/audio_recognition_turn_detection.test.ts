@@ -57,6 +57,7 @@ interface RecognitionInternals {
   turnDetectorLatePredictionWarned: boolean;
   lastEmittedEotPrediction?: TurnDetectionEvent;
   lastSpeakingTime?: number;
+  userTurnStart?: number;
   lastLanguage?: LanguageCode;
   audioTranscript: string;
   audioInterimTranscript: string;
@@ -139,6 +140,7 @@ function makeAudioStream(): BaseStreamingTurnDetectorStream {
   stream.predict = vi.fn(() => new Future<TurnDetectionEvent>());
   stream.cancelInference = vi.fn();
   stream.flush = vi.fn();
+  stream.onStartOfTurn = vi.fn();
   return stream as BaseStreamingTurnDetectorStream;
 }
 
@@ -572,19 +574,55 @@ describe('TestBackchannelOpportunityEmit', () => {
 
 describe('TestPredictionFutureLifecycle', () => {
   it('silence tick starts a request once', async () => {
-    const { internals } = makeRecognition();
+    const { internals, hooks } = makeRecognition();
     const stream = makeAudioStream();
     internals.turnDetectorStream = stream;
     internals.turnDetector = makeAudioDetector(stream);
     internals.speaking = true;
+    const chatCtx = ChatContext.empty();
+    chatCtx.addMessage({ role: 'assistant', content: 'How can I help?' });
+    hooks.retrieveChatCtx = () => chatCtx;
 
     const vad = runScriptedVad(internals);
     try {
       await vad.feed(inferenceDone(0, 300));
       await vad.feed(inferenceDone(0, 400));
 
-      expect(predictMock(stream).mock.calls.length).toBe(1);
+      expect(predictMock(stream)).toHaveBeenCalledOnce();
+      expect(predictMock(stream)).toHaveBeenCalledWith(chatCtx);
       expect(internals.turnDetectorPredictionFut).toBeDefined();
+    } finally {
+      await vad.stop();
+    }
+  });
+
+  it('reports the user turn start once across VAD bursts', async () => {
+    const { internals } = makeRecognition();
+    const stream = makeAudioStream();
+    internals.turnDetectorStream = stream;
+    internals.turnDetector = makeAudioDetector(stream);
+    const vad = runScriptedVad(internals);
+    try {
+      await vad.feed(startOfSpeech());
+      await vad.feed(endOfSpeech());
+      await vad.feed(startOfSpeech());
+      expect(stream.onStartOfTurn).toHaveBeenCalledOnce();
+      expect(stream.onStartOfTurn).toHaveBeenCalledWith(internals.userTurnStart);
+    } finally {
+      await vad.stop();
+    }
+  });
+
+  it('keeps the detector count when a turn has no known start', async () => {
+    const { internals } = makeRecognition();
+    const stream = makeAudioStream();
+    internals.turnDetectorStream = stream;
+    internals.turnDetector = makeAudioDetector(stream);
+    const vad = runScriptedVad(internals);
+    try {
+      await vad.feed(endOfSpeech());
+      expect(internals.userTurnStart).toBeDefined();
+      expect(stream.onStartOfTurn).not.toHaveBeenCalled();
     } finally {
       await vad.stop();
     }

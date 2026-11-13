@@ -1214,6 +1214,62 @@ describe('RealtimeSession chat context update events', () => {
   });
 });
 
+describe('RealtimeSession initial session options', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function queuedEvents(session: llm.RealtimeSession): api_proto.ClientEvent[] {
+    return (session as unknown as { messageChannel: { items: api_proto.ClientEvent[] } })
+      .messageChannel.items;
+  }
+
+  it('queues the seeded instructions and tools before the socket connects', () => {
+    stubTaskRuntime();
+
+    const tools = new llm.ToolContext([
+      llm.tool({ name: 'lookup', description: 'look something up', execute: async () => 'ok' }),
+    ]);
+    const session = new RealtimeModel({ apiKey: 'test-key' }).session({
+      instructions: 'be brief',
+      tools,
+    });
+
+    const sessionUpdates = queuedEvents(session).filter(
+      (ev): ev is api_proto.SessionUpdateEvent => ev.type === 'session.update',
+    );
+    expect(sessionUpdates).toHaveLength(2);
+    expect((sessionUpdates[0]!.session as { instructions?: string }).instructions).toBe('be brief');
+    expect(sessionUpdates[1]!.session.tools?.map((tool) => tool.name)).toEqual(['lookup']);
+    expect(session.tools.equals(tools)).toBe(true);
+  });
+
+  it('queues the seeded chat context through the standard update path', async () => {
+    stubTaskRuntime();
+
+    const chatCtx = llm.ChatContext.empty();
+    chatCtx.addMessage({ role: 'user', content: 'hi there' });
+    const session = new RealtimeModel({ apiKey: 'test-key' }).session({ chatCtx });
+
+    await vi.waitFor(() =>
+      expect(queuedEvents(session).some((ev) => ev.type === 'conversation.item.create')).toBe(true),
+    );
+  });
+
+  it('keeps disabling turn detection alongside the seeded config', () => {
+    stubTaskRuntime();
+
+    const session = new RealtimeModel({ apiKey: 'test-key' }).session({
+      turnDetectionDisabled: true,
+      instructions: 'be brief',
+    });
+
+    const update = queuedEvents(session)[0] as api_proto.SessionUpdateEvent;
+    expect(JSON.stringify(update.session)).toContain('"turn_detection":null');
+    expect((update.session as { instructions?: string }).instructions).toBe('be brief');
+  });
+});
+
 describe('RealtimeSession.updateOptions', () => {
   afterEach(() => {
     vi.restoreAllMocks();

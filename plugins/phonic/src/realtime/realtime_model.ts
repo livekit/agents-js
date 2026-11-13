@@ -425,8 +425,8 @@ export class RealtimeModel extends llm.RealtimeModel {
   /**
    * Create a new realtime session
    */
-  session(): RealtimeSession {
-    const session = new RealtimeSession(this);
+  session(options?: llm.RealtimeSessionOptions): RealtimeSession {
+    const session = new RealtimeSession(this, options);
     this._activeSession = session;
     return session;
   }
@@ -468,6 +468,8 @@ export class RealtimeSession extends llm.RealtimeSession {
 
   private phonicModel: RealtimeModel;
   private options: RealtimeModelOptions;
+  // Per session, not in the options object that the model and its sessions share.
+  private instructions?: string;
   private bstream: AudioByteStream;
   private inputResampler?: AudioResampler;
   private inputResamplerInputRate?: number;
@@ -494,7 +496,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   private systemPromptPostfix = '';
   private pendingUserText?: string;
 
-  constructor(realtimeModel: RealtimeModel) {
+  constructor(realtimeModel: RealtimeModel, sessionOptions?: llm.RealtimeSessionOptions) {
     super(realtimeModel);
     this.phonicModel = realtimeModel;
     this.options = realtimeModel._options;
@@ -509,6 +511,25 @@ export class RealtimeSession extends llm.RealtimeSession {
       PHONIC_NUM_CHANNELS,
       (PHONIC_INPUT_SAMPLE_RATE * PHONIC_INPUT_FRAME_MS) / 1000,
     );
+
+    // Phonic sends its config after it has the instructions and the tools. Seeded options are the
+    // whole initial config, so tools left out start empty. Phonic has no default instructions, so
+    // without them connect() waits for updateInstructions().
+    // The updates below apply before connect() starts, because config is not sent yet.
+    if (
+      sessionOptions?.instructions !== undefined ||
+      sessionOptions?.chatCtx !== undefined ||
+      sessionOptions?.tools !== undefined
+    ) {
+      if (sessionOptions.chatCtx !== undefined) {
+        void this.updateChatCtx(sessionOptions.chatCtx);
+      }
+      if (sessionOptions.instructions !== undefined) {
+        void this.updateInstructions(sessionOptions.instructions);
+      }
+      void this.updateTools(sessionOptions.tools ?? llm.ToolContext.empty());
+    }
+
     this.connectTask = this.connect().catch((error: unknown) => {
       const normalizedError = asError(error);
       this.emitError(normalizedError, false);
@@ -530,7 +551,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       );
       return;
     }
-    this.options.instructions = instructions;
+    this.instructions = instructions;
     this.instructionsReady.resolve();
   }
 
@@ -706,7 +727,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
     await this.readyToStart.await;
     if (instructions !== undefined) {
-      this.options.instructions = instructions;
+      this.instructions = instructions;
     }
     if (tools !== undefined) {
       this._tools = tools.copy();
@@ -725,7 +746,7 @@ export class RealtimeSession extends llm.RealtimeSession {
    * or a config change via `updateOptions`) takes effect. No-op if the socket isn't open yet.
    */
   private sendMidSessionReset(): void {
-    let systemPrompt = this.options.instructions ?? '';
+    let systemPrompt = this.instructions ?? '';
     const history = this.buildTurnHistory(this._chatCtx);
     if (history) {
       systemPrompt += CONVERSATION_HISTORY_PREFIX + history;
@@ -980,7 +1001,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     await this.toolsReady.await;
     if (this.closed) return;
 
-    if (this.options.instructions === undefined) {
+    if (this.instructions === undefined) {
       this.emitError(
         new Error('Instructions are required to start a conversation with Phonic.'),
         false,
@@ -993,7 +1014,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       type: 'config',
       model: this.options.model as Phonic.ConfigPayload['model'],
       ...this.buildConfigOptions({
-        systemPrompt: this.options.instructions + this.systemPromptPostfix,
+        systemPrompt: this.instructions + this.systemPromptPostfix,
         toolsPayload: [...this.serializePhonicTools(), ...this.toolDefinitions],
       }),
     });
