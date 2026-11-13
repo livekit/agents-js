@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type { APIConnectOptions } from '@livekit/agents';
+import type { APIConnectOptions, JobContext } from '@livekit/agents';
 import {
   AudioByteStream,
   DEFAULT_API_CONNECT_OPTIONS,
@@ -15,7 +15,13 @@ import {
   shortuuid,
   stream,
 } from '@livekit/agents';
-import { AudioFrame, AudioResampler, type RemoteParticipant, RoomEvent } from '@livekit/rtc-node';
+import {
+  AudioFrame,
+  AudioResampler,
+  type RemoteParticipant,
+  type Room,
+  RoomEvent,
+} from '@livekit/rtc-node';
 import type { Phonic } from 'phonic';
 import { PhonicClient } from 'phonic';
 import type { ServerEvent, Voice } from './api_proto.js';
@@ -76,6 +82,7 @@ export interface RealtimeModelOptions {
   configurationEndpoint?: Phonic.ConfigOptions['configuration_endpoint'];
   additionalParams?: NonNullable<Phonic.ConfigOptions['additional_params']>;
   externalId?: string;
+  forwardKeypadInput?: boolean;
   configsForTools?: PhonicToolConfig[];
   /** @deprecated Use `configsForTools` with `forbid_speech_after_tool_call` per tool instead. */
   forbidSpeechAfterToolCall?: string[];
@@ -88,12 +95,19 @@ export interface RealtimeModelOptions {
  * Phonic config fields that can be changed mid-session via `RealtimeModel.updateOptions` /
  * `RealtimeSession.updateOptions` — every field is optional so an update carries only what changes.
  * Connection-level fields (`apiKey`, `model`, `connOptions`, `baseUrl`), `externalId` (fixed for the
- * conversation) and `instructions` (managed through the Agent handoff) are excluded.
+ * conversation), `forwardKeypadInput` (set when the session starts) and `instructions` (managed
+ * through the Agent handoff) are excluded.
  */
 export type PhonicConfig = Partial<
   Omit<
     RealtimeModelOptions,
-    'apiKey' | 'model' | 'connOptions' | 'baseUrl' | 'externalId' | 'instructions'
+    | 'apiKey'
+    | 'model'
+    | 'connOptions'
+    | 'baseUrl'
+    | 'externalId'
+    | 'forwardKeypadInput'
+    | 'instructions'
   >
 >;
 
@@ -319,6 +333,11 @@ export class RealtimeModel extends llm.RealtimeModel {
        */
       externalId?: string;
       /**
+       * When true, the caller's keypad presses are sent to the agent as user turns. Leave it off if
+       * your agent already handles keypad input itself (e.g. a `RoomEvent.DtmfReceived` handler).
+       */
+      forwardKeypadInput?: boolean;
+      /**
        * Per-tool behavior overrides, one `PhonicToolConfig` per tool (keyed by `name`); omitted
        * fields fall back to the plugin defaults. See the README for the available fields.
        */
@@ -410,6 +429,7 @@ export class RealtimeModel extends llm.RealtimeModel {
       configurationEndpoint: options.configurationEndpoint,
       additionalParams: options.additionalParams,
       externalId: options.externalId,
+      forwardKeypadInput: options.forwardKeypadInput ?? false,
       configsForTools: options.configsForTools,
       forbidSpeechAfterToolCall: options.forbidSpeechAfterToolCall,
       onConversationCreated: options.onConversationCreated,
@@ -500,8 +520,8 @@ export class RealtimeSession extends llm.RealtimeSession {
   private systemPromptPostfix = '';
   private pendingUserText?: string;
   // Keypad presses come from the job's agent session: its room and its linked participant.
-  private agentSession = getJobContext(false)?._primaryAgentSession;
-  private keypadRoom = this.agentSession?._roomIO?.rtcRoom;
+  private agentSession?: JobContext['_primaryAgentSession'];
+  private keypadRoom?: Room;
   private keypadDigits = '';
   private keypadFlushTimer?: ReturnType<typeof setTimeout>;
 
@@ -515,7 +535,11 @@ export class RealtimeSession extends llm.RealtimeSession {
       baseUrl: this.options.baseUrl,
       reconnectConversationOnAbnormalDisconnect: true,
     });
-    this.keypadRoom?.on(RoomEvent.DtmfReceived, this.onDtmfReceived);
+    if (this.options.forwardKeypadInput) {
+      this.agentSession = getJobContext(false)?._primaryAgentSession;
+      this.keypadRoom = this.agentSession?._roomIO?.rtcRoom;
+      this.keypadRoom?.on(RoomEvent.DtmfReceived, this.onDtmfReceived);
+    }
     this.bstream = new AudioByteStream(
       PHONIC_INPUT_SAMPLE_RATE,
       PHONIC_NUM_CHANNELS,

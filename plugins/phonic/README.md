@@ -115,6 +115,7 @@ Set the `PHONIC_API_KEY` environment variable, or pass `apiKey` directly to `Rea
 | `configurationEndpoint`              | `{ url, headers?, timeout_ms? }` \| `null` | Endpoint the agent calls to fetch per-conversation configuration                                                                                                                                                                                            |
 | `additionalParams`                   | `Record<string, unknown>`                  | Additional runtime parameters forwarded to Phonic                                                                                                                                                                                                           |
 | `externalId`                         | `string`                                   | Your own identifier for the conversation, stored on the Phonic conversation                                                                                                                                                                                 |
+| `forwardKeypadInput`                 | `boolean`                                  | Send the caller's keypad presses to the agent (default `false`; see [Caller keypad input](#caller-keypad-input))                                                                                                                                            |
 | `configsForTools`                    | `PhonicToolConfig[]`                       | Per-tool behavior overrides (see [Per-tool configuration](#per-tool-configuration))                                                                                                                                                                         |
 | `onConversationCreated`              | `(conversationId: string) => void`         | Callback invoked with the Phonic conversation ID when the conversation is created                                                                                                                                                                           |
 
@@ -162,4 +163,10 @@ If you have Webhook tools set up on the Phonic platform, you can use `phonicTool
 
 ### Caller keypad input
 
-On phone calls, the plugin forwards the caller's keypad presses to the agent. Only presses from the participant the session is linked to are forwarded. Digits are buffered until the caller pauses for 2 seconds (or presses 32 keys), then sent as one user turn, `(User pressed 1234# on the keypad: 5 keys)`, which the agent replies to. Every key, including `*` and `#`, is passed through as typed. You don't need your own `RoomEvent.DtmfReceived` handler for this.
+Set `forwardKeypadInput: true` to send the caller's keypad presses on phone calls to the agent. It is off by default.
+
+```typescript
+new phonic.realtime.RealtimeModel({ forwardKeypadInput: true });
+```
+
+Only presses from the participant the session is linked to are forwarded. Digits are buffered until the caller pauses for 2 seconds (or presses 32 keys), then sent as one user turn, `(User pressed 1234# on the keypad: 5 keys)`, which the agent replies to. Every key, including `*` and `#`, is passed through as typed. Leave the option off if your agent already handles keypad input itself (e.g. with a `RoomEvent.DtmfReceived` handler), or it will get each press twice.
