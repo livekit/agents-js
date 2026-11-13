@@ -8,6 +8,7 @@ import {
   APIStatusError,
   APITimeoutError,
   type AudioBuffer,
+  Future,
   log,
   stt,
   waitForAbort,
@@ -161,6 +162,12 @@ export class SpeechStream extends stt.SpeechStream {
   #opts: STTOptions;
   #logger = log();
   #ws?: WebSocket;
+  /**
+   * The input read still waiting for a frame. It outlives a failed attempt, so the next
+   * attempt picks it up instead of starting a second reader that would take every other
+   * frame.
+   */
+  #pendingInput?: ReturnType<typeof this.input.next>;
   label = 'soniox.SpeechStream';
 
   constructor(stt: STT, opts: STTOptions, connOptions?: APIConnectOptions) {
@@ -325,7 +332,8 @@ export class SpeechStream extends stt.SpeechStream {
     // connection (per Soniox protocol: an empty frame ends the session). We then
     // let `listenTask` observe that final response rather than tearing down the
     // moment the input runs dry.
-    const sendTask = this.#sendAudio(ws);
+    const attemptEnded = new Future<void>();
+    const sendTask = this.#sendAudio(ws, attemptEnded.await);
     const finalize = sendTask.then(() => {
       if (this.abortSignal.aborted || ws.readyState !== WebSocket.OPEN) {
         return;
@@ -345,15 +353,23 @@ export class SpeechStream extends stt.SpeechStream {
       ]);
     } finally {
       closing = true;
+      attemptEnded.resolve();
       clearInterval(keepalive);
       ws.close();
     }
   }
 
-  async #sendAudio(ws: WebSocket): Promise<void> {
+  async #sendAudio(ws: WebSocket, attemptEnded: Promise<void>): Promise<void> {
     const abortPromise = waitForAbort(this.abortSignal);
+    const ended = attemptEnded.then(() => 'ended' as const);
     while (!this.closed) {
-      const result = await Promise.race([this.input.next(), abortPromise]);
+      this.#pendingInput ??= this.input.next();
+      const result = await Promise.race([this.#pendingInput, abortPromise, ended]);
+      if (result === 'ended') {
+        // Leave the pending read to the next attempt.
+        return;
+      }
+      this.#pendingInput = undefined;
       if (result === undefined || result.done) {
         break;
       }

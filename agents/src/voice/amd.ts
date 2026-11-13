@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type { AudioFrame } from '@livekit/rtc-node';
-import { ParticipantKind, TrackKind } from '@livekit/rtc-node';
+import type { AudioFrame, RemoteParticipant, Room } from '@livekit/rtc-node';
+import { ParticipantKind, RoomEvent, TrackKind } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import type { Span } from '@opentelemetry/api';
 import { EventEmitter } from 'node:events';
@@ -247,6 +247,9 @@ function warnIfNotEvaluated(
  * detection timeout begins only after listening starts; SIP settings bound the
  * pre-answer phase. If the call ends before audio arrives, AMD settles as
  * uncertain with `reason = "participant_missing"`.
+ * If the callee hangs up while AMD is listening, AMD settles uncertain with
+ * `reason = "participant_disconnected"`, unless machine-unavailable was already
+ * detected, which is returned.
  *
  * Emits `'amd_prediction'` once with the final {@link AMDPredictionEvent} when
  * a run settles (mirrors python `AMD(EventEmitter[Literal["amd_prediction"]])`).
@@ -313,6 +316,8 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
    * before the run settles.
    */
   private trackGateAbort: AbortController | undefined;
+  private room: Room | undefined;
+  private publisherIdentity: string | undefined;
 
   /**
    * Tracks the in-flight LLM classification stream so {@link aclose} (and any
@@ -462,6 +467,7 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     if (this.active && this.rejectRun) {
       this.rejectRun(new Error('AMD closed'));
     }
+    this.cleanup();
     (this.session as unknown as { _setAmd?: (amd: AMD | null) => void })._setAmd?.(null);
 
     // Close AMD-owned resources. Caller-supplied LLM/STT instances are NOT
@@ -686,6 +692,10 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
           return;
         }
 
+        this.publisherIdentity = participant.identity;
+        this.room = room;
+        room.on(RoomEvent.ParticipantDisconnected, this.onParticipantDisconnected);
+
         if (participant.kind !== ParticipantKind.SIP) {
           this.startListening();
           return;
@@ -727,6 +737,21 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     this.settle(AMDCategory.UNCERTAIN, 'participant_missing');
   }
 
+  private readonly onParticipantDisconnected = (participant: RemoteParticipant): void => {
+    if (participant.identity !== this.publisherIdentity || this.settled) return;
+    if (!this.listening) {
+      this.settleParticipantMissing('participant disconnected before listening started');
+      return;
+    }
+
+    this._log.debug('AMD: participant disconnected before a verdict, settling');
+    if (this.verdictResult?.category !== AMDCategory.MACHINE_UNAVAILABLE) {
+      this.verdictResult = undefined;
+    }
+    this.eotReached = true;
+    this.settle(AMDCategory.UNCERTAIN, 'participant_disconnected');
+  };
+
   private cleanup(): void {
     this.clearTimer('noSpeech');
     this.clearTimer('detection');
@@ -735,6 +760,12 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     this.listening = false;
     this.sessionClosingSignal?.removeEventListener('abort', this.handleSessionClosing);
     this.sessionClosingSignal = undefined;
+
+    if (this.room) {
+      this.room.off(RoomEvent.ParticipantDisconnected, this.onParticipantDisconnected);
+      this.room = undefined;
+      this.publisherIdentity = undefined;
+    }
 
     // Detach the track-publication listener — without this, a run that
     // settled via `detectionTimer` before the participant track was ever

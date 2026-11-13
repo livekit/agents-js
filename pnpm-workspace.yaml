@@ -34,7 +34,7 @@ minimumReleaseAgeExclude:
   - sharp@0.35.4 || 0.35.5
 
 catalog:
-  '@livekit/rtc-node': ^1.1.0
+  '@livekit/rtc-node': ^1.2.2
   ws: ^8.21.0
   '@types/ws': ^8.5.10
 
