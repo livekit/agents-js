@@ -15,14 +15,7 @@ import {
   shortuuid,
   stream,
 } from '@livekit/agents';
-import {
-  AudioFrame,
-  AudioResampler,
-  ParticipantKind,
-  type RemoteParticipant,
-  type Room,
-  RoomEvent,
-} from '@livekit/rtc-node';
+import { AudioFrame, AudioResampler, type RemoteParticipant, RoomEvent } from '@livekit/rtc-node';
 import type { Phonic } from 'phonic';
 import { PhonicClient } from 'phonic';
 import type { ServerEvent, Voice } from './api_proto.js';
@@ -506,7 +499,8 @@ export class RealtimeSession extends llm.RealtimeSession {
   private generateReplyRequestId = 0;
   private systemPromptPostfix = '';
   private pendingUserText?: string;
-  private room?: Room;
+  // The job's agent session room input: its room, and the participant the session is linked to.
+  private roomIO = getJobContext(false)?._primaryAgentSession?._roomIO;
   private keypadDigits = '';
   private keypadFlushTimer?: ReturnType<typeof setTimeout>;
 
@@ -520,8 +514,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       baseUrl: this.options.baseUrl,
       reconnectConversationOnAbnormalDisconnect: true,
     });
-    this.room = getJobContext(false)?.room;
-    this.room?.on(RoomEvent.DtmfReceived, this.onDtmfReceived);
+    this.roomIO?.rtcRoom.on(RoomEvent.DtmfReceived, this.onDtmfReceived);
     this.bstream = new AudioByteStream(
       PHONIC_INPUT_SAMPLE_RATE,
       PHONIC_NUM_CHANNELS,
@@ -946,8 +939,9 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.socket.sendGenerateReply({ type: 'generate_reply', system_message: systemMessage });
   }
 
+  /** Buffer a keypad press from the linked participant; presses from anyone else are ignored. */
   private onDtmfReceived = (_code: number, digit: string, participant: RemoteParticipant) => {
-    if (participant.kind !== ParticipantKind.SIP) {
+    if (participant.identity !== this.roomIO?.linkedParticipant?.identity) {
       return;
     }
     // Every key, including * and #, is part of what the caller typed.
@@ -960,6 +954,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
   };
 
+  /** Clear the keypad buffer and send its digits as one user turn once the session is ready. */
   private flushKeypadDigits = () => {
     this.keypadFlushTimer = undefined;
     const digits = this.keypadDigits;
@@ -972,11 +967,16 @@ export class RealtimeSession extends llm.RealtimeSession {
         return;
       }
       this.#logger.info('Sending caller keypad input');
-      this.socket.sendGenerateReply({
-        type: 'generate_reply',
-        // The count saves the model from counting the keys itself, which it sometimes gets wrong.
-        user_message: `(User pressed ${digits} on the keypad: ${digits.length} ${digits.length === 1 ? 'key' : 'keys'})`,
-      });
+      try {
+        this.socket.sendGenerateReply({
+          type: 'generate_reply',
+          // The count saves the model from counting the keys itself, which it sometimes gets wrong.
+          user_message: `(User pressed ${digits} on the keypad: ${digits.length} ${digits.length === 1 ? 'key' : 'keys'})`,
+        });
+      } catch (error) {
+        this.#logger.error({ error }, 'Failed to send caller keypad input');
+        this.emitError(asError(error), true);
+      }
     });
   };
 
@@ -999,7 +999,7 @@ export class RealtimeSession extends llm.RealtimeSession {
 
   async close(): Promise<void> {
     this.closed = true;
-    this.room?.off(RoomEvent.DtmfReceived, this.onDtmfReceived);
+    this.roomIO?.rtcRoom.off(RoomEvent.DtmfReceived, this.onDtmfReceived);
     clearTimeout(this.keypadFlushTimer);
     if (this.phonicModel._activeSession === this) {
       this.phonicModel._activeSession = undefined;
