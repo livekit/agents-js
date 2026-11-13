@@ -5172,6 +5172,14 @@ export class AgentActivity implements RecognitionHooks {
       speechHandle._itemAdded([out.toolCallOutput]);
     };
 
+    // A realtime model holds a tool call open until it is answered, so an interrupted reply keeps
+    // its tools running and sends their results, as the Python agent does. Only closing aborts them.
+    const toolAbortController = new AbortController();
+    const closeSignal = AbortSignal.any([this.closeAbort.signal, this.agentSession._closingSignal]);
+    const abortTools = () => toolAbortController.abort();
+    closeSignal.addEventListener('abort', abortTools, { once: true });
+    if (closeSignal.aborted) abortTools();
+
     const [executeToolsTask, toolOutput] = performToolExecutions({
       agentName: this.agent.id,
       session: this.agentSession,
@@ -5179,10 +5187,13 @@ export class AgentActivity implements RecognitionHooks {
       toolCtx,
       toolCallStream,
       toolChoice: modelSettings.toolChoice,
-      controller: replyAbortController,
+      controller: toolAbortController,
       onToolExecutionStarted,
       onToolExecutionCompleted,
     });
+    void executeToolsTask.result
+      .catch(() => undefined)
+      .finally(() => closeSignal.removeEventListener('abort', abortTools));
 
     await speechHandle.waitIfNotInterrupted(tasks.map((task) => task.result));
 
@@ -5212,7 +5223,8 @@ export class AgentActivity implements RecognitionHooks {
         this.onEndOfAgentSpeech(Date.now());
       }
       speechHandle._markGenerationDone();
-      await this.cancelToolExecutions(executeToolsTask, speechHandle, toolOutput);
+      // closing aborts the tools instead; their outputs are committed either way
+      await executeToolsTask.result.catch(() => undefined);
 
       const interruptedOutputs = this._commitInterruptedToolOutputs(toolOutput, speechHandle);
       if (interruptedOutputs.length > 0) {
