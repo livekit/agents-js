@@ -471,6 +471,71 @@ describe('Realtime tool output commit', () => {
     expect(synced[0]).toMatchObject({ callId: TOOL_CALL_ID, replyRequired: false });
   });
 
+  // Python waits for a tool that is still running when a realtime turn is interrupted and sends
+  // its result to the realtime session, which holds the call open until it is answered.
+  for (const [label, emitAudio] of [
+    ['while the reply is still playing', true],
+    ['after the reply finished, while only the tool is running', false],
+  ] as const) {
+    it(`syncs the output of a tool still running when a realtime turn is interrupted ${label}`, async () => {
+      vi.useFakeTimers();
+      const model = new FakeRealtimeModel();
+      model.activeSession.emitAudio = emitAudio;
+      const session = new AgentSession({
+        llm: model,
+        vad: null,
+        turnHandling: { turnDetection: null },
+      });
+      session.output.audio = new InterruptibleAudioOutput();
+      const toolStarted = new Future<void>();
+      const releaseTool = new Future<void>();
+      const agent = new Agent({
+        instructions: 'test',
+        tools: {
+          lookup_order: tool({
+            description: 'x',
+            execute: async () => {
+              toolStarted.resolve();
+              await releaseTool.await;
+              return 'ships tomorrow';
+            },
+          }),
+        },
+      });
+
+      await session.start({ agent });
+      try {
+        const speech = session.generateReply();
+        await toolStarted.await;
+        await vi.advanceTimersByTimeAsync(10);
+        session.interrupt();
+        // past the interrupted speech's watchdog, which cancels whatever it still runs
+        await vi.advanceTimersByTimeAsync(6000);
+        releaseTool.resolve();
+        await vi.advanceTimersByTimeAsync(10);
+        await vi.waitFor(() =>
+          expect(
+            model.activeSession.chatCtx.items.filter(
+              (item) => item.type === 'function_call_output',
+            ),
+          ).toEqual([
+            expect.objectContaining({
+              callId: TOOL_CALL_ID,
+              output: JSON.stringify('ships tomorrow'),
+            }),
+          ]),
+        );
+        await speech.waitForPlayout();
+      } finally {
+        releaseTool.resolve();
+        const closeTask = session.close();
+        await vi.runAllTimersAsync();
+        await closeTask;
+        vi.useRealTimers();
+      }
+    });
+  }
+
   it('answers an interrupted realtime handoff as a silent error', async () => {
     const model = new FakeRealtimeModel();
     model.activeSession.emitAudio = true;
