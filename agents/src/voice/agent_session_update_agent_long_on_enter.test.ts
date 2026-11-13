@@ -166,4 +166,26 @@ describe('AgentSession updateAgent with long onEnter', () => {
       await session.close().catch(() => {});
     }
   });
+
+  it('rejects an agent running in another session', async () => {
+    const current = new Agent({ instructions: 'current' });
+    const occupied = new Agent({ instructions: 'occupied' });
+    const session = new AgentSession();
+    const other = new AgentSession();
+
+    try {
+      await session.start({ agent: current });
+      await other.start({ agent: occupied });
+
+      expect(() => session.updateAgent(occupied)).toThrow(Error);
+
+      expect(session.currentAgent).toBe(current);
+      const internals = session as unknown as {
+        activity: { newTurnsBlocked: boolean };
+      };
+      expect(internals.activity.newTurnsBlocked).toBe(false);
+    } finally {
+      await Promise.all([session.close().catch(() => {}), other.close().catch(() => {})]);
+    }
+  });
 });
