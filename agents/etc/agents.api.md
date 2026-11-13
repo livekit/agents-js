@@ -3678,17 +3678,11 @@ interface FakeUserSpeech {
 
 // @public
 interface FallbackActivatedEvent {
-    // (undocumented)
     cause: 'unknown' | 'timeout' | 'provider_error' | 'quota_exceeded';
-    // (undocumented)
     fallbackType: 'unknown' | 'fallback' | 'system_default';
-    // (undocumented)
     model: string;
-    // (undocumented)
     provider: string;
-    // (undocumented)
     sessionId: string;
-    // (undocumented)
     voice: string;
 }
 
@@ -4454,7 +4448,6 @@ interface InferenceTTSOptions<TModel extends TTSModels> {
     baseURL: string;
     // (undocumented)
     connOptions?: APIConnectOptions;
-    // (undocumented)
     disableSystemDefaultFallback?: boolean;
     // (undocumented)
     encoding: TTSEncoding;
@@ -9916,7 +9909,7 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 //
 // src/_exceptions.ts:90:5 - (ae-forgotten-export) The symbol "APIStatusErrorOptions" needs to be exported by the entry point index.d.ts
 // src/_exceptions.ts:128:5 - (ae-forgotten-export) The symbol "APIErrorOptions" needs to be exported by the entry point index.d.ts
-// src/inference/tts.ts:318:5 - (ae-forgotten-export) The symbol "TTSEncoding" needs to be exported by the entry point index.d.ts
+// src/inference/tts.ts:322:5 - (ae-forgotten-export) The symbol "TTSEncoding" needs to be exported by the entry point index.d.ts
 // src/llm/chat_context.ts:80:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "audio"
 // src/llm/tool_context.ts:709:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "ToolFlag" has more than one declaration; you need to add a TSDoc member reference selector
 // src/llm/tool_context.ts:756:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "ToolFlag" has more than one declaration; you need to add a TSDoc member reference selector

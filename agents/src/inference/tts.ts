@@ -295,6 +295,10 @@ export interface InferenceTTSOptions<TModel extends TTSModels> {
   /** Flat provider-specific inference options forwarded as the `extra` payload field. */
   modelOptions: TTSOptions<TModel>;
   fallback?: TTSFallbackModel[];
+  /**
+   * Opt out of the gateway's system-default fallback models. Customer `fallback` models still
+   * apply. Set only at construction; `updateOptions` does not change it.
+   */
   disableSystemDefaultFallback?: boolean;
   connOptions?: APIConnectOptions;
 }
@@ -322,6 +326,10 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
     /** Flat provider-specific inference options forwarded as the `extra` payload field. */
     modelOptions?: TTSOptions<TModel>;
     fallback?: TTSFallbackModelType | TTSFallbackModelType[];
+    /**
+     * Opt out of the gateway's system-default fallback models. Customer `fallback` models still
+     * apply. Set only at construction; `updateOptions` does not change it.
+     */
     disableSystemDefaultFallback?: boolean;
     connOptions?: APIConnectOptions;
   }) {
