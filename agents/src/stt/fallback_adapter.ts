@@ -12,6 +12,7 @@ import { StreamAdapter } from './stream_adapter.js';
 import {
   STT,
   type STTCallbacks,
+  type STTCapabilities,
   type STTError,
   type SpeechEvent,
   SpeechEventType,
@@ -102,6 +103,7 @@ export class FallbackAdapter extends STT {
   private _status: STTStatus[] = [];
   private _logger = log();
   private _metricsForwarders = new Map<STT, (m: STTMetrics) => void>();
+  private _ownedStreamAdapters: StreamAdapter[] = [];
 
   label = 'stt.FallbackAdapter';
 
@@ -120,9 +122,13 @@ export class FallbackAdapter extends STT {
       );
     }
 
-    const wrapped = opts.sttInstances.map((s) =>
-      s.capabilities.streaming ? s : new StreamAdapter(s, opts.vad!),
-    );
+    const ownedStreamAdapters: StreamAdapter[] = [];
+    const wrapped = opts.sttInstances.map((s) => {
+      if (s.capabilities.streaming) return s;
+      const adapter = new StreamAdapter(s, opts.vad!);
+      ownedStreamAdapters.push(adapter);
+      return adapter;
+    });
 
     // Pick the primary's granularity only if every instance supports aligned
     // transcripts — otherwise consumers can't rely on a consistent format.
@@ -134,6 +140,7 @@ export class FallbackAdapter extends STT {
     super({
       streaming: true,
       interimResults: wrapped.every((s) => s.capabilities.interimResults),
+      manualFlush: wrapped.every((s) => s.capabilities.manualFlush === true),
       diarization: wrapped.every((s) => !!s.capabilities.diarization),
       alignedTranscript,
       keyterms: wrapped.some((s) => !!s.capabilities.keyterms),
@@ -141,6 +148,7 @@ export class FallbackAdapter extends STT {
     });
 
     this.sttInstances = wrapped;
+    this._ownedStreamAdapters = ownedStreamAdapters;
     this.attemptTimeoutMs = opts.attemptTimeoutMs ?? 10_000;
     this.maxRetryPerSTT = opts.maxRetryPerSTT ?? 1;
     this.retryIntervalMs = opts.retryIntervalMs ?? 5_000;
@@ -154,6 +162,14 @@ export class FallbackAdapter extends STT {
     }));
 
     this.setupEventForwarding();
+  }
+
+  override get capabilities(): STTCapabilities {
+    // recompute manualFlush, as a wrapped instance's capabilities can change after construction
+    return {
+      ...super.capabilities,
+      manualFlush: this.sttInstances.every((s) => s.capabilities.manualFlush === true),
+    };
   }
 
   /**
@@ -340,6 +356,7 @@ export class FallbackAdapter extends STT {
       if (m) s.off('metrics_collected' as keyof STTCallbacks, m);
     }
     this._metricsForwarders.clear();
+    await Promise.all(this._ownedStreamAdapters.map((adapter) => adapter.close()));
   }
 }
 

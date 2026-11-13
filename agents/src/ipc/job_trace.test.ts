@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { Job, JobState, Room as ProtoRoom } from '@livekit/protocol';
+import { Job, JobJoinTiming, JobState, Room as ProtoRoom } from '@livekit/protocol';
 import type { Room } from '@livekit/rtc-node';
 import { ROOT_CONTEXT, context as otelContext, trace } from '@opentelemetry/api';
 import { hrTimeToMilliseconds } from '@opentelemetry/core';
@@ -12,12 +12,14 @@ import {
 } from '@opentelemetry/sdk-trace-base';
 import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { JobContext, JobProcess, type RunningJobInfo } from '../job.js';
+import { JobContext, JobProcess, type RunningJobInfo, getJobContext } from '../job.js';
 import { initializeLogger } from '../log.js';
 import { setTracerProvider, traceTypes, tracer } from '../telemetry/index.js';
 import type { InferenceExecutor } from './inference_executor.js';
 import {
   callbackName,
+  joinTiming,
+  monotonicUs,
   recordDispatchTimeline,
   serverTimestampMs,
   startJobSpan,
@@ -176,6 +178,7 @@ describe('job dispatch telemetry', () => {
       assignedAt: T0 + 500,
       launchedAt: T0 + 600,
     });
+    expect(getJobContext(false)).toBeUndefined();
     const span = startJobSpan(jobContext(running), T0 + 1000);
     expect(span.isRecording()).toBe(true);
     // a child created under it (the session, a connect) nests: the root is a real span
@@ -189,6 +192,7 @@ describe('job dispatch telemetry', () => {
     expect(root!.attributes[traceTypes.ATTR_WORKER_ID]).toBe('W_1');
     expect(root!.attributes[traceTypes.ATTR_JOB_AGENT_ID]).toBe('AG_1');
     expect(root!.attributes[traceTypes.ATTR_ROOM_SID]).toBe('RM_1');
+    expect(root!.attributes[traceTypes.ATTR_GEN_AI_CONVERSATION_ID]).toBe('RM_1');
     expect(root!.attributes[traceTypes.ATTR_JOB_ACCEPT_LATENCY]).toBeCloseTo(0.2);
     expect(eventNames(root!).slice(0, 4)).toEqual([
       'job_received',
@@ -200,6 +204,18 @@ describe('job dispatch telemetry', () => {
     expect(session!.parentSpanContext?.spanId).toBe(root!.spanContext().spanId);
   });
 
+  it.each([undefined, new ProtoRoom({ sid: '' })])(
+    'omits the conversation ID when the job room has no SID (%j)',
+    (room) => {
+      const running = info();
+      running.job.room = room;
+      startJobSpan(jobContext(running)).end();
+
+      const [root] = spans(exporter, 'job_entrypoint');
+      expect(root!.attributes).not.toHaveProperty(traceTypes.ATTR_GEN_AI_CONVERSATION_ID);
+    },
+  );
+
   it('reads server timestamps in nanoseconds, milliseconds, or seconds', () => {
     expect(serverTimestampMs(1_700_000_000_123_456_789n)).toBeCloseTo(1_700_000_000_123.456, 2);
     expect(serverTimestampMs(1_700_000_000_123)).toBe(1_700_000_000_123);
@@ -210,5 +226,44 @@ describe('job dispatch telemetry', () => {
     async function flushCrm() {}
     expect(callbackName(flushCrm)).toBe('flushCrm');
     expect(callbackName(() => undefined)).toBe('anonymous');
+  });
+});
+
+describe('joinTiming', () => {
+  const worker = {
+    receivedMonoUs: 100_000_000,
+    acceptedMonoUs: 100_200_000,
+    assignedMonoUs: 100_500_000,
+    launchedMonoUs: 100_600_000,
+    launchedWarm: true,
+  };
+
+  it('reports every instant of the join', () => {
+    expect(joinTiming(worker, 101_000_000, 103_000_000, 103_250_000)).toEqual(
+      new JobJoinTiming({
+        offerReceivedUs: 100_000_000n,
+        acceptedUs: 100_200_000n,
+        assignmentReceivedUs: 100_500_000n,
+        launchedUs: 100_600_000n,
+        launchWarm: true,
+        entrypointStartedUs: 101_000_000n,
+        connectCalledUs: 103_000_000n,
+        connectedUs: 103_250_000n,
+      }),
+    );
+  });
+
+  it('reports nothing when an instant is unknown', () => {
+    // simulation and console jobs carry no worker instants
+    expect(joinTiming({}, 101_000_000, 103_000_000, 103_250_000)).toBeUndefined();
+    expect(joinTiming(worker, 101_000_000, 0, 103_250_000)).toBeUndefined();
+  });
+
+  it('stamps connect() on the monotonic clock', async () => {
+    const ctx = jobContext(info());
+    const before = monotonicUs();
+    await ctx.connect();
+    expect(ctx._connectCalledMonoUs).toBeGreaterThanOrEqual(before);
+    expect(ctx._connectedMonoUs).toBeGreaterThanOrEqual(ctx._connectCalledMonoUs);
   });
 });

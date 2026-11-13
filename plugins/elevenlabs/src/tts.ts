@@ -22,7 +22,12 @@ import {
 import { Mutex } from '@livekit/mutex';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { WebSocket } from 'ws';
-import { type TTSEncoding, type TTSModels, isDialogueModel } from './models.js';
+import {
+  type TTSEncoding,
+  type TTSModels,
+  isDialogueModel,
+  supportsCloneStrength,
+} from './models.js';
 
 const DEFAULT_VOICE_ID = 'bIHbv24MWmeRgasZH58o';
 const API_BASE_URL_V1 = 'https://api.elevenlabs.io/v1';
@@ -30,7 +35,11 @@ const AUTHORIZATION_HEADER = 'xi-api-key';
 const WS_INACTIVITY_TIMEOUT = 180;
 const DEFAULT_ENCODING: TTSEncoding = 'pcm_22050';
 const DIALOGUE_KEEP_ALIVE_INTERVAL = 10_000;
-const DIALOGUE_VOICE_SETTINGS_FIELDS = new Set<keyof VoiceSettings>(['stability']);
+const DIALOGUE_VOICE_SETTINGS_FIELDS = new Set<keyof VoiceSettings>([
+  'stability',
+  'similarity_boost',
+  'clone_strength',
+]);
 
 export interface VoiceSettings {
   stability: number; // [0.0 - 1.0]
@@ -38,6 +47,7 @@ export interface VoiceSettings {
   style?: number; // [0.0 - 1.0]
   speed?: number; // [0.8 - 1.2]
   use_speaker_boost?: boolean;
+  clone_strength?: number; // [0.0 - 1.0], eleven_v4 only
 }
 
 export interface Voice {
@@ -215,16 +225,23 @@ function stripUndefined<T extends object>(obj: T): Partial<T> {
   return result;
 }
 
-function dialogueVoiceSettings(
-  settings: Partial<VoiceSettings> | undefined,
-): Partial<VoiceSettings> | undefined {
-  if (!settings) return undefined;
-  const filtered = Object.fromEntries(
-    Object.entries(settings).filter(([key]) =>
-      DIALOGUE_VOICE_SETTINGS_FIELDS.has(key as keyof VoiceSettings),
-    ),
-  ) as Partial<VoiceSettings>;
-  return Object.keys(filtered).length > 0 ? filtered : undefined;
+function voiceSettingsPayload(opts: ResolvedTTSOptions): Partial<VoiceSettings> | undefined {
+  if (!opts.voiceSettings) return undefined;
+  const settings = stripUndefined(opts.voiceSettings);
+  if (!supportsCloneStrength(opts.model)) delete settings.clone_strength;
+  return settings;
+}
+
+function dialogueVoiceSettings(opts: ResolvedTTSOptions): Record<string, number> | undefined {
+  if (!opts.voiceSettings) return undefined;
+  const settings: Record<string, number> = {
+    stability: opts.voiceSettings.stability,
+    similarity: opts.voiceSettings.similarity_boost,
+  };
+  if (opts.voiceSettings.clone_strength !== undefined && supportsCloneStrength(opts.model)) {
+    settings.clone_strength = opts.voiceSettings.clone_strength;
+  }
+  return settings;
 }
 
 function pronunciationDictionaryLocators(opts: ResolvedTTSOptions) {
@@ -474,9 +491,7 @@ class Connection {
           const isNewContext = !this.#activeContexts.has(content.contextId);
 
           if (isNewContext) {
-            const voiceSettings = this.#opts.voiceSettings
-              ? stripUndefined(this.#opts.voiceSettings)
-              : {};
+            const voiceSettings = voiceSettingsPayload(this.#opts) ?? {};
 
             const initPkt: Record<string, unknown> = dialogue
               ? {
@@ -490,7 +505,7 @@ class Connection {
                 };
 
             if (dialogue) {
-              const settings = dialogueVoiceSettings(voiceSettings);
+              const settings = dialogueVoiceSettings(this.#opts);
               if (settings) initPkt.voice_settings = settings;
             } else if (this.#opts.chunkLengthSchedule) {
               initPkt.generation_config = {
@@ -870,7 +885,7 @@ export class TTS extends tts.TTS {
     let wordTokenizer = opts.wordTokenizer;
     if (!wordTokenizer) {
       wordTokenizer = autoMode
-        ? new tokenize.basic.SentenceTokenizer()
+        ? new tokenize.blingfire.SentenceTokenizer({ xmlAware: opts.enableSsmlParsing })
         : new tokenize.basic.WordTokenizer(false);
     } else if (autoMode && !(wordTokenizer instanceof tokenize.SentenceTokenizer)) {
       this.#logger.warn(
@@ -908,10 +923,19 @@ export class TTS extends tts.TTS {
       autoMode,
       pronunciationDictionaryLocators: opts.pronunciationDictionaryLocators,
     };
-    this.#warnIfDialogueModelIgnoresOptions();
+    this.#warnIfModelIgnoresOptions();
   }
 
-  #warnIfDialogueModelIgnoresOptions(): void {
+  #warnIfModelIgnoresOptions(): void {
+    if (
+      this.#opts.voiceSettings?.clone_strength !== undefined &&
+      !supportsCloneStrength(this.#opts.model)
+    ) {
+      this.#logger.warn(
+        `voiceSettings.clone_strength is only supported by eleven_v4 models and is ignored for '${this.#opts.model}'`,
+      );
+    }
+
     if (!isDialogueModel(this.#opts.model)) return;
     const ignored: string[] = [];
     if (this.#opts.chunkLengthSchedule !== undefined) ignored.push('chunkLengthSchedule');
@@ -990,7 +1014,9 @@ export class TTS extends tts.TTS {
       changed = true;
     }
 
-    if (changed) this.#warnIfDialogueModelIgnoresOptions();
+    if (opts.model !== undefined || opts.voiceSettings !== undefined) {
+      this.#warnIfModelIgnoresOptions();
+    }
 
     if (changed && this.#currentConnection) {
       this.#currentConnection.markNonCurrent();
@@ -1055,9 +1081,7 @@ export class ChunkedStream extends tts.ChunkedStream {
   }
 
   protected async run(): Promise<void> {
-    const voiceSettings = this.#opts.voiceSettings
-      ? stripUndefined(this.#opts.voiceSettings)
-      : undefined;
+    const voiceSettings = voiceSettingsPayload(this.#opts);
     const extraParams: Record<string, string | boolean> = {};
     if (this.#opts.language) {
       extraParams.language_code = getBaseLanguage(this.#opts.language);
@@ -1071,7 +1095,7 @@ export class ChunkedStream extends tts.ChunkedStream {
 
     try {
       const dialogue = isDialogueModel(this.#opts.model);
-      const settings = dialogueVoiceSettings(voiceSettings);
+      const settings = dialogueVoiceSettings(this.#opts);
       const body = dialogue
         ? {
             inputs: [{ text: this.inputText, voice_id: this.#opts.voiceId }],

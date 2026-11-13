@@ -653,6 +653,9 @@ describe('expressive chunking', () => {
     '<expr type="expression" label="really amiable and welcoming"/> Hey, good to hear from you! ' +
     '<expr type="expression" label="gently inquisitive"/> How did the interview go? ' +
     '<expr type="expression" label="really bright, upbeat energy"/> I have been thinking about it all week.';
+  // markup only exists in the stream when expressive is active, so the plain baseline is
+  // the same reply without its markers (the default tokenizer doesn't split around them)
+  const stripMarkers = (text: string) => text.replace(/<expr [^>]*\/>\s*/g, '');
 
   /** Feed the reply in LLM-sized chunks; report what the TTS would have received and when. */
   async function synthesisRequests(provider: string, expressive: boolean) {
@@ -662,7 +665,8 @@ describe('expressive chunking', () => {
       for await (const ev of stream) tokens.push(ev.token);
     })();
 
-    for (const chunk of REPLY.match(/.{1,12}/gs) ?? []) stream.pushText(chunk);
+    const reply = expressive ? REPLY : stripMarkers(REPLY);
+    for (const chunk of reply.match(/.{1,12}/gs) ?? []) stream.pushText(chunk);
     await new Promise((r) => setImmediate(r));
     // everything emitted at this point went out while the LLM was still generating
     const duringStream = [...tokens];
@@ -683,7 +687,7 @@ describe('expressive chunking', () => {
       // finished and the whole turn was synthesized in one request — first audio waited
       // for the full completion.
       expect(expressive.duringStream.length).toBeGreaterThan(0);
-      expect(expressive.first).toBe(plain.first);
+      expect(stripMarkers(expressive.first)).toBe(plain.first);
 
       // ...while still batching the body of the turn into fewer requests than per-sentence
       expect(expressive.total).toBeLessThan(plain.total);

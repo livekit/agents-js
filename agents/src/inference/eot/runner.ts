@@ -4,7 +4,7 @@
 
 /**
  * Audio EOT inference runner — runs inside the shared `InferenceProcExecutor`
- * so the ~138 MB native model loads once per host instead of once per job
+ * so the ~450 MB native model loads once per host instead of once per job
  * worker. Job-side transports reach it via `executor.doInference(...)`.
  *
  * The inference proc instantiates this with `new Runner()` (no args) and
@@ -19,9 +19,10 @@ import { _getLocalInferenceModule, _shouldPreloadLocalInference } from '../_warm
 /** Inference method id used to register + dispatch the audio EOT runner. */
 export const EOT_INFERENCE_METHOD = 'lk_eot_audio';
 
-/** Request payload: base64-encoded 16 kHz s16le PCM (up to 1.2 s). */
+/** Request payload: base64-encoded 16 kHz s16le PCM (up to 2.0 s). */
 export interface EotInferenceInput {
   pcm: string;
+  turnSamples: number;
 }
 
 export interface EotInferenceOutput {
@@ -45,7 +46,7 @@ export default class EotRunner extends InferenceRunner<EotInferenceInput, EotInf
         'EotRunner: @livekit/local-inference native binding unavailable in the inference process',
       );
     }
-    // Page in the EOT model singleton (~138 MB). During preload this keeps the
+    // Page in the EOT model singleton (~450 MB). During preload this keeps the
     // first request off the hot path; otherwise the first request loads it lazily.
     mod.initEot();
     this.#mod = mod;
@@ -58,14 +59,15 @@ export default class EotRunner extends InferenceRunner<EotInferenceInput, EotInf
     const bytes = Buffer.from(data.pcm, 'base64');
     const pcm = new Int16Array(bytes.buffer, bytes.byteOffset, Math.floor(bytes.byteLength / 2));
     const t0 = performance.now();
-    let probability = 0.0;
+    let probability: number;
     try {
-      probability = await mod.predict(pcm);
+      probability = await mod.predict(pcm, data.turnSamples);
     } catch (err) {
       this.#logger.error(
         { err: err instanceof Error ? err.message : String(err) },
         'local audio EOT prediction failed',
       );
+      throw err;
     }
     return { probability, inferenceDurationMs: performance.now() - t0 };
   }

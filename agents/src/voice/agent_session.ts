@@ -21,14 +21,15 @@ import type { z } from 'zod';
 import { isAPIError } from '../_exceptions.js';
 import type { BaseStreamingTurnDetector } from '../inference/eot/base.js';
 import {
-  LLM as InferenceLLM,
   STT as InferenceSTT,
   TTS as InferenceTTS,
   TurnDetector as InferenceTurnDetector,
   VAD as InferenceVAD,
   type LLMModels,
+  type RealtimeModels,
   type STTModelString,
   type TTSModelString,
+  llmFromModelString,
 } from '../inference/index.js';
 import type { OverlappingSpeechEvent } from '../inference/interruption/types.js';
 import { getJobContext } from '../job.js';
@@ -309,7 +310,7 @@ export type AgentSessionOptions<UserData = UnknownUserData> = {
    * one as absent). Pass `null` to opt out entirely.
    */
   vad?: VAD | null;
-  llm?: LLM | RealtimeModel | DuplexModel | LLMModels;
+  llm?: LLM | RealtimeModel | DuplexModel | LLMModels | RealtimeModels;
   tts?: TTS | TTSModelString;
   userData?: UserData;
   connOptions?: SessionConnectOptions;
@@ -552,6 +553,7 @@ export class AgentSession<
   private updateActivityTask?: Task<void>;
   private started = false;
   private sessionHost?: SessionHost;
+  private ownsSessionHost = false;
 
   private _chatCtx: ChatContext;
   private _userData: UserData | undefined;
@@ -630,6 +632,13 @@ export class AgentSession<
    * @internal
    */
   _usingDefaultVad: boolean = false;
+
+  /**
+   * True when the caller chose turn detection, as opposed to the eager default TurnDetector.
+   *
+   * @internal
+   */
+  _turnDetectionExplicit: boolean = false;
 
   /** @internal True when the current job is a text simulation. */
   get _textOnly(): boolean {
@@ -763,12 +772,11 @@ export class AgentSession<
       this.stt = stt;
     }
 
-    if (typeof llm === 'string') {
-      this.llm = InferenceLLM.fromModelString(llm);
-    } else if (llm instanceof DuplexModel) {
-      this.llm = new DuplexRealtimeAdapter(llm);
+    const resolvedLLM = typeof llm === 'string' ? llmFromModelString(llm) : llm;
+    if (resolvedLLM instanceof DuplexModel) {
+      this.llm = new DuplexRealtimeAdapter(resolvedLLM);
     } else {
-      this.llm = llm;
+      this.llm = resolvedLLM;
     }
 
     // Eagerly establish DNS/TLS to the LLM provider so the first inference request is faster.
@@ -792,6 +800,7 @@ export class AgentSession<
       configuredTurnDetection === null
         ? undefined
         : configuredTurnDetection ?? new InferenceTurnDetector();
+    this._turnDetectionExplicit = configuredTurnDetection !== undefined;
     // The session report serializes `sessionOptions`, so record the effective detector there
     // (Python keeps the eager default in `AgentSessionOptions.turn_handling` the same way).
     resolvedSessionOptions.turnHandling.turnDetection =
@@ -937,12 +946,10 @@ export class AgentSession<
       consoleInst.acquireIo(this);
 
       if (consoleInst.transport) {
-        this.sessionHost = new SessionHost(
-          consoleInst.transport,
-          consoleInst.audioInput,
-          consoleInst.audioOutput,
+        const transport = consoleInst.transport;
+        this.attachSessionHost(
+          () => new SessionHost(transport, consoleInst.audioInput, consoleInst.audioOutput),
         );
-        this.sessionHost.registerSession(this);
       }
     } else if (room && !this._roomIO) {
       if (this._textOnly) {
@@ -983,9 +990,8 @@ export class AgentSession<
       // passed, not made current: RoomIO's tasks live for the whole session
       this._roomIO.start(this.sessionStartContext);
 
-      const transport = new RoomSessionTransport(room, this._roomIO);
-      this.sessionHost = new SessionHost(transport);
-      this.sessionHost.registerSession(this);
+      const roomIO = this._roomIO;
+      this.attachSessionHost(() => new SessionHost(new RoomSessionTransport(room, roomIO)));
     }
 
     const ctx = getJobContext(false);
@@ -1395,6 +1401,7 @@ export class AgentSession<
     if (hasTurnDetection) {
       this.turnDetection = normalizedTurnDetection;
       this.sessionOptions.turnHandling.turnDetection = normalizedTurnDetection;
+      this._turnDetectionExplicit = turnDetection !== null;
     }
 
     if (this.activity) {
@@ -1508,7 +1515,7 @@ export class AgentSession<
     outputType?: z.ZodType<T>;
     outputOptions?: RunOutputOptions | null;
   }): RunResult<T> {
-    if (this._globalRunState && !this._globalRunState.done()) {
+    if (this._globalRunState?._isActive()) {
       throw new Error('nested runs are not supported');
     }
 
@@ -1531,6 +1538,7 @@ export class AgentSession<
       try {
         const unlock = await this.activityLock.lock();
         unlock();
+        if (runState.done()) return;
         this.generateReply({ userInput, inputModality });
       } catch (e) {
         runState._reject(asError(e));
@@ -1775,8 +1783,7 @@ export class AgentSession<
   }
 
   async close(): Promise<void> {
-    this._closeSoon({ reason: CloseReason.USER_INITIATED });
-    await this.closingTask;
+    await this._closeImpl({ reason: CloseReason.USER_INITIATED });
   }
 
   shutdown(options?: { drain?: boolean; reason?: ShutdownReason }): void {
@@ -1786,6 +1793,24 @@ export class AgentSession<
       reason,
       drain,
     });
+  }
+
+  /**
+   * Close the session with the supplied reason and wait for teardown to finish.
+   * If closure is already in progress, wait for it and preserve its reason.
+   * @internal
+   */
+  async _closeImpl({
+    reason,
+    drain = false,
+    error = null,
+  }: {
+    reason: ShutdownReason;
+    drain?: boolean;
+    error?: RealtimeModelError | STTError | TTSError | LLMError | null;
+  }): Promise<void> {
+    this._closeSoon({ reason, drain, error });
+    await this.closingTask;
   }
 
   /** @internal */
@@ -2020,6 +2045,21 @@ export class AgentSession<
       this.logger.debug('User away timeout triggered');
       this._updateUserState('away');
     }, this.sessionOptions.userAwayTimeout * 1000);
+  }
+
+  private attachSessionHost(makeHost: () => SessionHost): void {
+    // under a job, the job owns the host so it outlives this session; without one, the
+    // session is the only owner there is
+    const jobCtx = getJobContext(false);
+    if (jobCtx) {
+      jobCtx._sessionHost ??= makeHost();
+      this.sessionHost = jobCtx._sessionHost;
+      this.ownsSessionHost = false;
+    } else {
+      this.sessionHost = makeHost();
+      this.ownsSessionHost = true;
+    }
+    this.sessionHost.registerSession(this);
   }
 
   private _cancelUserAwayTimer(): void {
@@ -2297,11 +2337,17 @@ export class AgentSession<
           }
         }
         try {
-          await this.sessionHost?.close();
+          if (this.sessionHost?.attachedSession === this) {
+            this.sessionHost.unregisterSession();
+          }
+          if (this.ownsSessionHost) {
+            await this.sessionHost?.close();
+          }
         } catch (e) {
           failures.push(e);
         } finally {
           this.sessionHost = undefined;
+          this.ownsSessionHost = false;
         }
         // close room io after the close event is emitted
         try {

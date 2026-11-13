@@ -13,6 +13,7 @@ import { AudioResampler, AudioResamplerQuality } from '@livekit/rtc-node';
 import type { TypedEventEmitter as TypedEmitter } from '@livekit/typed-emitter';
 import { EventEmitter } from 'node:events';
 import type { LanguageCode } from '../../language.js';
+import { ChatContext } from '../../llm/chat_context.js';
 import { log } from '../../log.js';
 import type { EOTInferenceMetrics } from '../../metrics/base.js';
 import { type StreamChannel, createStreamChannel } from '../../stream/stream_channel.js';
@@ -60,8 +61,46 @@ export interface FlushSentinel {
   reason?: string;
 }
 
+/**
+ * Marks where the user's turn started. Queued on the audio channel behind the
+ * audio captured so far, so the transport can count how much of that audio
+ * belongs to the turn.
+ */
+export interface StartOfTurnSentinel {
+  readonly kind: 'start_of_turn';
+  /** Milliseconds from the turn start to the end of the audio queued before this marker. */
+  elapsed: number;
+}
+
+/**
+ * A prediction request. Queued on the audio channel behind the audio captured
+ * so far, so the transport runs the prediction only after it has that audio.
+ */
+export interface InferenceSentinel {
+  readonly kind: 'inference';
+  /** Identifies the request when the transport reports its prediction. */
+  requestId: string;
+  /** Conversation at the time of the request. The cloud model reads the last
+   * assistant message from it; the local model ignores it. */
+  chatCtx?: ChatContext;
+}
+
 export function isFlushSentinel(value: unknown): value is FlushSentinel {
   return typeof value === 'object' && value !== null && (value as FlushSentinel).kind === 'flush';
+}
+
+function isStartOfTurnSentinel(value: unknown): value is StartOfTurnSentinel {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    (value as StartOfTurnSentinel).kind === 'start_of_turn'
+  );
+}
+
+function isInferenceSentinel(value: unknown): value is InferenceSentinel {
+  return (
+    typeof value === 'object' && value !== null && (value as InferenceSentinel).kind === 'inference'
+  );
 }
 
 /**
@@ -73,8 +112,15 @@ export function isFlushSentinel(value: unknown): value is FlushSentinel {
 export interface StreamingTurnDetectionTransport {
   attach(stream: BaseStreamingTurnDetectorStream): void;
   run(): Promise<void>;
-  runInference(requestId: string): void;
+  runInference(requestId: string, chatCtx?: ChatContext): void;
   pushFrame(frame: AudioFrame): Promise<void>;
+  /**
+   * The user's turn started `elapsed` milliseconds before the end of the audio
+   * pushed so far. The transport limits its turn length to that much audio.
+   *
+   * @param elapsed - A duration in milliseconds, not a timestamp.
+   */
+  onStartOfTurn(elapsed: number): void;
   flush(sentinel: FlushSentinel): Promise<void>;
   detach(): void;
 }
@@ -177,7 +223,10 @@ export class BaseStreamingTurnDetectorStream {
   private _audioInputSampleRate: number | undefined;
   private _audioInputNumChannels: number | undefined;
   private _audioResampler: AudioResampler | undefined;
-  private _audioChannel: StreamChannel<AudioFrame | FlushSentinel> = createStreamChannel();
+  private _audioChannel: StreamChannel<
+    AudioFrame | FlushSentinel | StartOfTurnSentinel | InferenceSentinel
+  > = createStreamChannel();
+  private _degraded = false;
 
   /** Id of the in-flight inference request, or `undefined` when idle. */
   protected _requestId: string | undefined;
@@ -247,8 +296,8 @@ export class BaseStreamingTurnDetectorStream {
 
   /** Start a new inference request and return its future, superseding any
    * previous request. */
-  predict(): Future<TurnDetectionEvent> {
-    if (this._audioChannel.closed) {
+  predict(chatCtx?: ChatContext): Future<TurnDetectionEvent> {
+    if (this._degraded || this._audioChannel.closed) {
       const fut = new Future<TurnDetectionEvent>();
       fut.resolve(BaseStreamingTurnDetectorStream._defaultEvent(1.0));
       return fut;
@@ -258,11 +307,11 @@ export class BaseStreamingTurnDetectorStream {
     const fut = new Future<TurnDetectionEvent>();
     this._requestId = shortuuid('turn_request_');
     this._requestFut = fut;
-    // A transport may resolve synchronously (e.g. the local no-executor path
-    // defaults to 1.0 inline), which clears `_requestFut` via
-    // `_resolvePrediction`. Hold a local reference so we still return the
-    // resolved future rather than `undefined`.
-    this._transport.runInference(this._requestId);
+    void this._audioChannel.write({
+      kind: 'inference',
+      requestId: this._requestId,
+      chatCtx: chatCtx === undefined ? undefined : new ChatContext([...chatCtx.items]),
+    });
     return fut;
   }
 
@@ -288,7 +337,7 @@ export class BaseStreamingTurnDetectorStream {
   flush(reason?: string): void {
     // Idempotent: a second call sends another sentinel that transports
     // treat as a no-op (cloud: redundant session_flush; local: empty trim).
-    if (this._audioChannel.closed) {
+    if (this._degraded || this._audioChannel.closed) {
       return;
     }
     for (const resampled of this._flushAudioResampler()) {
@@ -315,12 +364,27 @@ export class BaseStreamingTurnDetectorStream {
   // region: audio ingress
 
   pushAudio(frame: AudioFrame): void {
-    if (this._audioChannel.closed) {
+    if (this._degraded || this._audioChannel.closed) {
       return;
     }
     for (const resampled of this._resampleAudioFrame(frame)) {
       void this._audioChannel.write(resampled);
     }
+  }
+
+  /**
+   * Tell the detector when the user's turn started, so a prediction covers
+   * only the audio of that turn.
+   *
+   * @param startedAt - Wall-clock time of the turn start, in milliseconds since
+   * the epoch. The transport receives it as milliseconds elapsed since then.
+   */
+  onStartOfTurn(startedAt: number): void {
+    if (this._degraded || this._audioChannel.closed) return;
+    void this._audioChannel.write({
+      kind: 'start_of_turn',
+      elapsed: Math.max(0, Date.now() - startedAt),
+    });
   }
 
   endInput(): void {
@@ -485,6 +549,12 @@ export class BaseStreamingTurnDetectorStream {
         if (done) return;
         if (isFlushSentinel(value)) {
           await this._transport.flush(value);
+        } else if (isStartOfTurnSentinel(value)) {
+          this._transport.onStartOfTurn(value.elapsed);
+        } else if (isInferenceSentinel(value)) {
+          if (value.requestId === this._requestId) {
+            this._transport.runInference(value.requestId, value.chatCtx);
+          }
         } else {
           await this._transport.pushFrame(value);
         }
@@ -503,6 +573,16 @@ export class BaseStreamingTurnDetectorStream {
   // endregion
 
   // region: subclass hooks
+
+  /** Stop detection after a terminal failure and release buffered audio. */
+  protected async _disableDetection(): Promise<void> {
+    this._degraded = true;
+    this._transport.detach();
+    // Let pending writes finish before cancel discards the readable backlog.
+    await this._audioChannel.close();
+    await this._audioChannel.stream().cancel();
+    this._audioResampler = undefined;
+  }
 
   /** Default: hand control to the transport. Subclasses override for
    * cross-transport orchestration (e.g. cloud→local fallback). */

@@ -165,6 +165,8 @@ function messageParts(item: ChatItem): MessagePart[] {
     parts.push({
       type: 'tool_call_response',
       id: item.callId,
+      // Optional extension: the OTel response-part schema permits extra fields.
+      ...(item.name ? { name: item.name } : {}),
       response: maybeJson(item.output),
     });
   }
@@ -411,8 +413,6 @@ export function setRequestAttributes(
   if (params.model) attrs[traceTypes.ATTR_GEN_AI_REQUEST_MODEL] = params.model;
   // "if and only if the request is streaming; if unset, assumed non-streaming"
   if (params.stream) attrs[traceTypes.ATTR_GEN_AI_REQUEST_STREAM] = true;
-  const conv = conversationId();
-  if (conv) attrs[traceTypes.ATTR_GEN_AI_CONVERSATION_ID] = conv;
   if (params.outputType) attrs[traceTypes.ATTR_GEN_AI_OUTPUT_TYPE] = params.outputType;
   span.setAttributes(attrs);
 }
@@ -522,8 +522,6 @@ export function setToolAttributes(
   };
   if (params.callId) attrs[traceTypes.ATTR_GEN_AI_TOOL_CALL_ID] = params.callId;
   if (params.agentName) attrs[traceTypes.ATTR_GEN_AI_AGENT_NAME] = params.agentName;
-  const conv = conversationId();
-  if (conv) attrs[traceTypes.ATTR_GEN_AI_CONVERSATION_ID] = conv;
   if (captureContent) {
     if (params.description) attrs[traceTypes.ATTR_GEN_AI_TOOL_DESCRIPTION] = params.description;
     if (params.args !== undefined) {
@@ -579,8 +577,6 @@ export function setAgentAttributes(
   const normalizedProvider = traceTypes.genAIProviderName(params.provider);
   if (normalizedProvider) attrs[traceTypes.ATTR_GEN_AI_PROVIDER_NAME] = normalizedProvider;
   if (params.model) attrs[traceTypes.ATTR_GEN_AI_REQUEST_MODEL] = params.model;
-  const conv = conversationId();
-  if (conv) attrs[traceTypes.ATTR_GEN_AI_CONVERSATION_ID] = conv;
   span.setAttributes(attrs);
 }
 
@@ -592,7 +588,5 @@ export function setWorkflowAttributes(span: Span, params: { name: string }): voi
     [traceTypes.ATTR_GEN_AI_OPERATION_NAME]: traceTypes.GenAIOperationName.INVOKE_WORKFLOW,
     [traceTypes.ATTR_GEN_AI_WORKFLOW_NAME]: params.name,
   };
-  const conv = conversationId();
-  if (conv) attrs[traceTypes.ATTR_GEN_AI_CONVERSATION_ID] = conv;
   span.setAttributes(attrs);
 }

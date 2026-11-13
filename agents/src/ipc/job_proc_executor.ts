@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { JobJoinTiming } from '@livekit/protocol';
 import type { ChildProcess } from 'node:child_process';
 import { fork } from 'node:child_process';
 import { extname } from 'node:path';
@@ -21,23 +22,26 @@ export class JobProcExecutor extends SupervisedProc implements JobExecutor {
   #agent: string;
   #inferenceExecutor?: InferenceExecutor;
   #inferenceTasks: Promise<void>[] = [];
-  #logger = log();
+  #onJoinTiming?: (timing: JobJoinTiming) => void;
 
   constructor({
     agent,
     inferenceExecutor,
+    onJoinTiming,
     ...opts
   }: ProcOpts & {
     agent: string;
     inferenceExecutor?: InferenceExecutor;
+    onJoinTiming?: (timing: JobJoinTiming) => void;
   }) {
     super(opts);
     this.#agent = agent;
     this.#inferenceExecutor = inferenceExecutor;
+    this.#onJoinTiming = onJoinTiming;
   }
 
   get status(): JobStatus {
-    if (this.#jobStatus) {
+    if (this.#jobStatus !== undefined) {
       return this.#jobStatus;
     }
     throw new Error('job status not available');
@@ -75,6 +79,9 @@ export class JobProcExecutor extends SupervisedProc implements JobExecutor {
       switch (msg.case) {
         case 'inferenceRequest':
           this.#inferenceTasks.push(this.#doInferenceTask(proc, msg.value));
+          break;
+        case 'joinTiming':
+          this.#onJoinTiming?.(JobJoinTiming.fromJson(msg.value));
       }
     });
   }
@@ -84,7 +91,7 @@ export class JobProcExecutor extends SupervisedProc implements JobExecutor {
     req: { method: string; requestId: string; data: unknown },
   ) {
     if (!this.#inferenceExecutor) {
-      this.#logger.warn('inference request received but no inference executor');
+      this.logger.warn('inference request received but no inference executor');
       proc.send({
         case: 'inferenceResponse',
         value: { requestId: req.requestId, error: new Error('no inference executor') },
@@ -100,6 +107,14 @@ export class JobProcExecutor extends SupervisedProc implements JobExecutor {
     }
   }
 
+  async join() {
+    await super.join();
+    // a killed process has no exit code
+    if (this.#runningJob) {
+      this.#jobStatus = this.proc?.exitCode === 0 ? JobStatus.SUCCESS : JobStatus.FAILED;
+    }
+  }
+
   async launchJob(info: RunningJobInfo) {
     if (this.#runningJob) {
       throw Error('process already has a running job');
@@ -109,6 +124,12 @@ export class JobProcExecutor extends SupervisedProc implements JobExecutor {
     }
     this.#jobStatus = JobStatus.RUNNING;
     this.#runningJob = info;
+    this.logger = log().child({
+      job_id: info.job.id,
+      room: info.job.room?.name,
+      room_id: info.job.room?.sid,
+      ...(info.job.agentName && { agent_name: info.job.agentName }),
+    });
 
     this.proc!.send({ case: 'startJobRequest', value: { runningJob: info } });
   }

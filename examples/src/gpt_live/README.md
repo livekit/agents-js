@@ -29,8 +29,8 @@ The delegation mode is fixed when the session starts.
 
 ## Voices
 
-Both examples use `voice: 'marin'`. `openai.realtime.GPTLiveVoices` also offers `aster`,
-`beacon`, `cinder`, `stone`, and `vesper`. Other supported names and custom voice objects
+Both examples use `voice: 'marin'`. `openai.realtime.GPTLiveVoices` also offers `beacon`,
+`cedar`, `cinder`, `stone`, and `vesper`. Other supported names and custom voice objects
 still pass through to the API.
 
 A voice is fixed at session start.
