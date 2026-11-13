@@ -599,8 +599,9 @@ export class RealtimeSession extends llm.RealtimeSession {
         if (!item.replyRequired || cfg?.forbid_speech_after_tool_call) {
           forbidSpeech = true;
         }
-        // An async result can land while the agent is still speaking, so its reply opens on
-        // assistant_started_speaking instead of cutting that speech short.
+        // Only a sync tool's reply starts right away. The agent may still be talking when an async
+        // tool's output arrives, and opening a turn now would cut it off, so that reply's turn
+        // opens on assistant_started_speaking.
         if ((cfg?.execution_mode ?? 'sync') === 'sync') {
           openReplyTurn = true;
         }
