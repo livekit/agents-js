@@ -7344,6 +7344,7 @@ export class SimulationContext {
         simulatorVerdict: SimulationVerdict;
         run?: SimulationRun;
     }): void;
+    defines(): Readonly<Record<string, string>>;
     // @internal (undocumented)
     _dispatch: SimulationDispatch;
     // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "fail"
