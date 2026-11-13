@@ -30,6 +30,7 @@ import * as mistral from '@livekit/agents-plugin-mistralai';
 
 const llm = new mistral.LLM({
   model: 'mistral-small-latest',
+  reasoningEffort: 'none',
   // apiKey defaults to process.env.MISTRAL_API_KEY
 });
 ```
