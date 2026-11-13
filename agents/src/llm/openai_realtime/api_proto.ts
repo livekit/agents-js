@@ -423,7 +423,7 @@ export type ConversationItemCreateContent =
 
 export interface ConversationItemCreateEvent extends BaseClientEvent {
   type: 'conversation.item.create';
-  previous_item_id?: string;
+  previous_item_id?: string | null;
   item: ConversationItemCreateContent;
 }
 
@@ -547,6 +547,8 @@ export interface ConversationItemInputAudioTranscriptionCompletedEvent extends B
   content_index: number;
   transcript: string;
   status?: 'in_progress' | 'completed' | string;
+  logprobs?: { logprob?: number }[] | null;
+  usage?: { type?: string; seconds?: number };
 }
 
 export interface ConversationItemInputAudioTranscriptionFailedEvent extends BaseServerEvent {
