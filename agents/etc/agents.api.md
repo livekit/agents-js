@@ -2806,11 +2806,11 @@ export class DataStreamAudioOutput extends AudioOutput {
     // (undocumented)
     static _playbackFinishedHandlers: Record<string, (data: RpcInvocationData) => string>;
     // (undocumented)
-    static _playbackFinishedRpcRegistered: boolean;
+    static _playbackFinishedRpcRooms: WeakSet<Room>;
     // (undocumented)
     static _playbackStartedHandlers: Record<string, (data: RpcInvocationData) => string>;
     // (undocumented)
-    static _playbackStartedRpcRegistered: boolean;
+    static _playbackStartedRpcRooms: WeakSet<Room>;
     // (undocumented)
     static registerPlaybackFinishedRpc(input: {
         room: Room;

@@ -44,9 +44,9 @@ export interface DataStreamAudioOutputOptions {
  * AudioOutput implementation that streams audio to a remote avatar worker using LiveKit DataStream.
  */
 export class DataStreamAudioOutput extends AudioOutput {
-  static _playbackFinishedRpcRegistered: boolean = false;
+  static _playbackFinishedRpcRooms = new WeakSet<Room>();
   static _playbackFinishedHandlers: Record<string, (data: RpcInvocationData) => string> = {};
-  static _playbackStartedRpcRegistered: boolean = false;
+  static _playbackStartedRpcRooms = new WeakSet<Room>();
   static _playbackStartedHandlers: Record<string, (data: RpcInvocationData) => string> = {};
 
   private room: Room;
@@ -271,7 +271,7 @@ export class DataStreamAudioOutput extends AudioOutput {
   }) {
     DataStreamAudioOutput._playbackFinishedHandlers[callerIdentity] = handler;
 
-    if (DataStreamAudioOutput._playbackFinishedRpcRegistered) {
+    if (DataStreamAudioOutput._playbackFinishedRpcRooms.has(room)) {
       return;
     }
 
@@ -292,7 +292,7 @@ export class DataStreamAudioOutput extends AudioOutput {
     };
 
     room.localParticipant?.registerRpcMethod(RPC_PLAYBACK_FINISHED, rpcHandler);
-    DataStreamAudioOutput._playbackFinishedRpcRegistered = true;
+    DataStreamAudioOutput._playbackFinishedRpcRooms.add(room);
   }
 
   private handlePlaybackStarted(data: RpcInvocationData): string {
@@ -322,7 +322,7 @@ export class DataStreamAudioOutput extends AudioOutput {
   }) {
     DataStreamAudioOutput._playbackStartedHandlers[callerIdentity] = handler;
 
-    if (DataStreamAudioOutput._playbackStartedRpcRegistered) {
+    if (DataStreamAudioOutput._playbackStartedRpcRooms.has(room)) {
       return;
     }
 
@@ -343,6 +343,6 @@ export class DataStreamAudioOutput extends AudioOutput {
     };
 
     room.localParticipant?.registerRpcMethod(RPC_PLAYBACK_STARTED, rpcHandler);
-    DataStreamAudioOutput._playbackStartedRpcRegistered = true;
+    DataStreamAudioOutput._playbackStartedRpcRooms.add(room);
   }
 }
