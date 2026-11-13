@@ -1122,7 +1122,7 @@ export class AgentServer {
       return;
     }
 
-    this.#logger.debug('shutting down worker');
+    this.#logger.info('shutting down worker');
 
     this.#closed = true;
     if (this.#loopMonitor) stopMonitoring(this.#loopMonitor);
