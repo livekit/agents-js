@@ -65,6 +65,9 @@ export {
   type DuplexModelOptions,
   type DuplexModels,
   type DuplexOptions,
+  type DecisionsOptions,
+  type DecisionsTrigger,
+  type DecisionEventEnvelope,
   type OpenAIDuplexOptions,
   type OpenAIResponsesOptions,
 } from './duplex.js';

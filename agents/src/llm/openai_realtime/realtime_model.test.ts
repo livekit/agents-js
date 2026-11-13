@@ -78,6 +78,37 @@ function stubTaskRuntime(): void {
   } as unknown as Task<void>);
 }
 
+describe('RealtimeSession.updateTools', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('keeps application metadata locally and omits it from session updates', async () => {
+    stubTaskRuntime();
+    const session = new RealtimeModel({ apiKey: 'test-key' }).session();
+    const sendEvent = vi.fn();
+    Object.assign(session, { sendEvent });
+    const fn = llm.tool({
+      name: 'lookup',
+      description: 'Look up an order',
+      parameters: { type: 'object', properties: {} },
+      meta: { guardrails: ['check_order_access'] },
+      execute: async () => 'found',
+    });
+
+    await session.updateTools(new llm.ToolContext([fn]));
+
+    expect(session.tools.getFunctionTool('lookup')?.meta).toEqual(fn.meta);
+    expect(sendEvent.mock.lastCall?.[0].session.tools).toEqual([
+      {
+        type: 'function',
+        name: 'lookup',
+        description: 'Look up an order',
+        parameters: { type: 'object', properties: {} },
+      },
+    ]);
+    await session.close();
+  });
+});
+
 describe('RealtimeSession.generateReply', () => {
   it('preserves session instructions when generating with per-response instructions', async () => {
     const session = createSessionForTest();
@@ -1129,6 +1160,62 @@ describe('RealtimeSession chat context update events', () => {
       previous_item_id: 'item_1',
       item: { id: 'item_2' },
     });
+  });
+});
+
+describe('RealtimeSession initial session options', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function queuedEvents(session: llm.RealtimeSession): api_proto.ClientEvent[] {
+    return (session as unknown as { messageChannel: { items: api_proto.ClientEvent[] } })
+      .messageChannel.items;
+  }
+
+  it('queues the seeded instructions and tools before the socket connects', () => {
+    stubTaskRuntime();
+
+    const tools = new llm.ToolContext([
+      llm.tool({ name: 'lookup', description: 'look something up', execute: async () => 'ok' }),
+    ]);
+    const session = new RealtimeModel({ apiKey: 'test-key' }).session({
+      instructions: 'be brief',
+      tools,
+    });
+
+    const sessionUpdates = queuedEvents(session).filter(
+      (ev): ev is api_proto.SessionUpdateEvent => ev.type === 'session.update',
+    );
+    expect(sessionUpdates).toHaveLength(2);
+    expect((sessionUpdates[0]!.session as { instructions?: string }).instructions).toBe('be brief');
+    expect(sessionUpdates[1]!.session.tools?.map((tool) => tool.name)).toEqual(['lookup']);
+    expect(session.tools.equals(tools)).toBe(true);
+  });
+
+  it('queues the seeded chat context through the standard update path', async () => {
+    stubTaskRuntime();
+
+    const chatCtx = llm.ChatContext.empty();
+    chatCtx.addMessage({ role: 'user', content: 'hi there' });
+    const session = new RealtimeModel({ apiKey: 'test-key' }).session({ chatCtx });
+
+    await vi.waitFor(() =>
+      expect(queuedEvents(session).some((ev) => ev.type === 'conversation.item.create')).toBe(true),
+    );
+  });
+
+  it('keeps disabling turn detection alongside the seeded config', () => {
+    stubTaskRuntime();
+
+    const session = new RealtimeModel({ apiKey: 'test-key' }).session({
+      turnDetectionDisabled: true,
+      instructions: 'be brief',
+    });
+
+    const update = queuedEvents(session)[0] as api_proto.SessionUpdateEvent;
+    expect(JSON.stringify(update.session)).toContain('"turn_detection":null');
+    expect((update.session as { instructions?: string }).instructions).toBe('be brief');
   });
 });
 

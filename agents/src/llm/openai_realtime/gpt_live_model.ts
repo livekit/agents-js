@@ -19,6 +19,7 @@ import { Future, shortuuid } from '../../utils.js';
 import * as llm from '../index.js';
 import type {
   ClientEvent,
+  DecisionEventEnvelope,
   Delegation,
   DelegationTarget,
   ErrorBody,
@@ -27,7 +28,10 @@ import type {
   ResponsesConfig,
   ResponsesEvent,
   ServerEvent,
+  DecisionsTrigger as WireDecisionsTrigger,
 } from './gpt_live_types.js';
+
+export type { DecisionEventEnvelope } from './gpt_live_types.js';
 
 const SAMPLE_RATE = 24000;
 const MIN_SILENCE_DURATION = 800;
@@ -68,6 +72,23 @@ export interface ResponsesDelegationOptions {
   maxOutputTokens?: number;
 }
 
+/** Decisions model and question definitions, using the upstream Decisions schema.
+ * @public
+ */
+export interface DecisionsOptions {
+  model?: string;
+  questions?: Record<string, unknown>[];
+}
+
+/** Evaluate questions when a transcript event occurs.
+ * @public
+ */
+export interface DecisionsTrigger {
+  type: 'decisions';
+  eventType: string;
+  decisions: DecisionsOptions;
+}
+
 /** Work handed to the application under client delegation.
  * @public
  */
@@ -92,10 +113,14 @@ export interface GPTLiveModelOptions {
    * Names pass through unchanged.
    */
   voice?: GPTLiveVoices | (string & NonNullable<unknown>) | Record<string, unknown>;
-  /** Fixed at startup. Client delegation requires an agent with no tools. */
+  /** Fixed at startup. Client and Decisions delegation require an agent with no tools. */
   delegation?: DelegationTarget;
   /** Backend configuration when delegation is responses (the default). */
   responsesOptions?: ResponsesDelegationOptions;
+  /** Model and questions when delegation is decisions. */
+  decisionsOptions?: DecisionsOptions;
+  /** Decisions configurations evaluated on transcript events, in any mode. */
+  triggers?: DecisionsTrigger[];
   /** Falls back to OPENAI_API_KEY. */
   apiKey?: string;
   /** Falls back to OPENAI_BASE_URL, then https://api.openai.com/v1. */
@@ -128,11 +153,24 @@ export class GPTLiveModel extends llm.DuplexModel {
     if (!apiKey) {
       throw new Error('OpenAI API key is required: pass apiKey or set OPENAI_API_KEY');
     }
+    const delegation = options.delegation ?? 'responses';
+    if (delegation === 'decisions' && !options.decisionsOptions?.model)
+      throw new Error('decisions delegation requires decisionsOptions.model');
+    if (options.decisionsOptions !== undefined && delegation !== 'decisions')
+      throw new Error("decisionsOptions requires delegation='decisions'; use triggers otherwise");
+    if (options.responsesOptions !== undefined && delegation !== 'responses')
+      throw new Error("responsesOptions requires delegation='responses'");
     this._opts = {
       model: options.model ?? DEFAULT_MODEL,
       voice: options.voice ?? 'marin',
-      delegation: options.delegation ?? 'responses',
+      delegation,
       responsesOptions: { ...options.responsesOptions },
+      decisionsOptions: { ...options.decisionsOptions },
+      triggers:
+        options.triggers?.map((trigger) => ({
+          ...trigger,
+          decisions: { ...trigger.decisions },
+        })) ?? [],
       apiKey,
       baseURL: options.baseURL ?? process.env.OPENAI_BASE_URL ?? 'https://api.openai.com/v1',
       maxSessionDuration: options.maxSessionDuration ?? null,
@@ -182,7 +220,8 @@ interface Speech {
 
 /**
  * GPT-Live WebSocket session, accessible through Agent.duplexSession.
- * Also emits openai_server_event_received, openai_client_event_queued and delegation_created.
+ * Also emits openai_server_event_received, openai_client_event_queued, delegation_created and
+ * decision_event.
  * Append methods queue context without waiting for acknowledgment. The appended events arrive
  * at the estimated context-injection end and do not indicate speech completion.
  * @public
@@ -191,6 +230,7 @@ export class GPTLiveSession extends llm.DuplexSession<{
   openai_server_event_received: (event: ServerEvent) => void;
   openai_client_event_queued: (event: ClientEvent | Record<string, unknown>) => void;
   delegation_created: (event: GPTLiveDelegation) => void;
+  decision_event: (event: DecisionEventEnvelope) => void;
 }> {
   private readonly opts: LiveOptions;
   private readonly liveModel: GPTLiveModel;
@@ -244,7 +284,15 @@ export class GPTLiveSession extends llm.DuplexSession<{
   constructor(model: GPTLiveModel) {
     super(model);
     this.liveModel = model;
-    this.opts = { ...model._opts, responsesOptions: { ...model._opts.responsesOptions } };
+    this.opts = {
+      ...model._opts,
+      responsesOptions: { ...model._opts.responsesOptions },
+      decisionsOptions: { ...model._opts.decisionsOptions },
+      triggers: model._opts.triggers.map((trigger) => ({
+        ...trigger,
+        decisions: { ...trigger.decisions },
+      })),
+    };
     // Let the adapter attach error/metrics listeners before starting the connection.
     this.mainTask = Promise.resolve()
       .then(() => this.main())
@@ -308,6 +356,8 @@ export class GPTLiveSession extends llm.DuplexSession<{
 
   private buildDelegation(): Delegation {
     if (this.opts.delegation === 'client') return { type: 'client' };
+    if (this.opts.delegation === 'decisions')
+      return { type: 'decisions', decisions: this.opts.decisionsOptions };
     const opts = this.opts.responsesOptions;
     const tools = this.buildTools();
     return {
@@ -370,6 +420,15 @@ export class GPTLiveSession extends llm.DuplexSession<{
           output: { voice: this.opts.voice },
         },
         delegation: this.buildDelegation(),
+        triggers: this.opts.triggers.length
+          ? this.opts.triggers.map(
+              (trigger): WireDecisionsTrigger => ({
+                type: trigger.type,
+                event_type: trigger.eventType,
+                decisions: trigger.decisions,
+              }),
+            )
+          : undefined,
       },
     };
   }
@@ -532,7 +591,8 @@ export class GPTLiveSession extends llm.DuplexSession<{
         if (
           this.closing &&
           event.type !== 'session.usage.updated' &&
-          event.type !== 'session.closed'
+          event.type !== 'session.closed' &&
+          event.type !== 'decision.event'
         )
           return;
         const started = event.type === 'session.started' && !this.sessionStarted;
@@ -610,6 +670,9 @@ export class GPTLiveSession extends llm.DuplexSession<{
       }
       case 'response.event':
         this.handleResponseEvent(event.delegation_id ?? null, event.event ?? { type: '' });
+        break;
+      case 'decision.event':
+        this.emit('decision_event', event);
         break;
       case 'session.usage.updated':
       case 'session.closed':
@@ -952,6 +1015,21 @@ export class GPTLiveSession extends llm.DuplexSession<{
     } satisfies ClientEvent);
   }
 
+  /**
+   * Evaluate the Decisions delegation's questions on the current connection.
+   * Returns the command event id. Requests are not replayed after reconnecting.
+   * Throws if the connection is draining or the session is closing or closed.
+   */
+  createDecision(): string {
+    if (this.opts.delegation !== 'decisions')
+      throw new Error('manual evaluation requires Decisions delegation');
+    if (this.closing || this.connectionDraining)
+      throw new Error('manual evaluation is unavailable while the session is closing or closed');
+    const eventId = shortuuid('decision_');
+    this.queueEvent({ type: 'decision.create', event_id: eventId } satisfies ClientEvent, false);
+    return eventId;
+  }
+
   /** Drain final provider usage, then close the transport and output stream. */
   protected async closeConnection(): Promise<void> {
     if (!this.closing) {
@@ -971,11 +1049,11 @@ export class GPTLiveSession extends llm.DuplexSession<{
     }
     this.instructions = instructions;
   }
-  /** Update backend tools. Client delegation requires an empty tool context. */
+  /** Update backend tools. Non-Responses delegation requires an empty tool context. */
   async _updateTools(tools: llm.ToolContext): Promise<void> {
-    if (this.opts.delegation === 'client' && tools.flatten().length) {
+    if (this.opts.delegation !== 'responses' && tools.flatten().length) {
       throw new llm.RealtimeError(
-        `gpt-live client delegation has no tool channel, so the model can never call ${tools
+        `gpt-live ${this.opts.delegation} delegation has no tool channel, so the model can never call ${tools
           .flatten()
           .map((tool) => tool.id)
           .sort()

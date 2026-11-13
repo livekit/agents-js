@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { LiveCallbacks, LiveServerMessage, Session } from '@google/genai';
 import { Behavior, Live } from '@google/genai';
-import { initializeLogger, llm, voice } from '@livekit/agents';
+import { DEFAULT_API_CONNECT_OPTIONS, initializeLogger, llm, voice } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
@@ -19,22 +19,28 @@ type Events = {
 
 /**
  * A session on a server that confirms every setup, with the server's messages
- * delivered by `receive` and the session's events counted.
+ * delivered by `receive` to the latest connection and the session's events counted.
+ * `replayed` holds the client content each connection was sent, one list per connection.
  */
 async function openSession(toolBehavior?: Behavior): Promise<{
   session: RealtimeSession;
   receive: (message: LiveServerMessage) => void;
+  drop: () => void;
   sendToolResponse: ReturnType<typeof vi.fn>;
+  replayed: unknown[][];
   events: Events;
 }> {
   let callbacks: LiveCallbacks | undefined;
   const sendToolResponse = vi.fn();
+  const replayed: unknown[][] = [];
   vi.spyOn(Live.prototype, 'connect').mockImplementation(
     async (params: { callbacks: LiveCallbacks }) => {
       callbacks = params.callbacks;
       callbacks.onopen?.();
+      const sent: unknown[] = [];
+      replayed.push(sent);
       return {
-        sendClientContent: () => {},
+        sendClientContent: (content: unknown) => sent.push(content),
         sendRealtimeInput: () => {},
         sendToolResponse,
         close: () => {},
@@ -45,6 +51,7 @@ async function openSession(toolBehavior?: Behavior): Promise<{
     model: 'gemini-3.8-live',
     apiKey: 'fake-key',
     toolBehavior,
+    connOptions: { ...DEFAULT_API_CONNECT_OPTIONS, retryIntervalMs: 10 },
   }).session();
   const events: Events = { generations: 0, speechStarts: 0, finals: [] };
   session.on('generation_created', () => events.generations++);
@@ -59,7 +66,10 @@ async function openSession(toolBehavior?: Behavior): Promise<{
   return {
     session,
     receive: (message) => callbacks!.onmessage(message),
+    drop: () =>
+      callbacks!.onclose?.({ code: 1011, reason: 'Internal error encountered.' } as CloseEvent),
     sendToolResponse,
+    replayed,
     events,
   };
 }
@@ -172,6 +182,29 @@ describe('Google Realtime input transcription during a blocking tool call', () =
     } as LiveServerMessage);
     await vi.waitFor(() => expect(opened.events.generations).toBe(2));
     expect(opened.events.finals).toHaveLength(1);
+  });
+
+  it('hands it over when the connection drops, and replays it to the next connection', async () => {
+    const opened = await openSession();
+    session = opened.session;
+    opened.receive(toolCall());
+    await vi.waitFor(() => expect(opened.events.generations).toBe(1));
+    opened.receive(lateTranscript());
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(opened.events.finals).toEqual([]);
+    // The drop is reported as a recoverable error before the session reconnects.
+    session.on('error', () => {});
+
+    opened.drop();
+
+    await vi.waitFor(() => expect(opened.replayed).toHaveLength(2));
+    await vi.waitFor(() => expect(opened.events.finals).toHaveLength(1));
+    expect(opened.events.finals[0]).toMatchObject({
+      transcript: 'What do I need to know for my exam?',
+    });
+    await vi.waitFor(() =>
+      expect(JSON.stringify(opened.replayed[1])).toContain('What do I need to know for my exam?'),
+    );
   });
 
   it('starts a generation for it when no tool call is pending', async () => {

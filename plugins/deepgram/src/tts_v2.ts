@@ -26,6 +26,24 @@ import type { FluxTTSModels } from './models.js';
 
 const AUTHORIZATION_HEADER = 'Authorization';
 const NUM_CHANNELS = 1;
+const MIN_SPEED = 0.5;
+const MAX_SPEED = 1.5;
+const SPEED_STEP = 0.05;
+
+const validateSpeed = (speed: number): number => {
+  // Check the range before rounding so NaN, infinities, and huge values all fail cleanly.
+  if (!(speed >= MIN_SPEED - 1e-6 && speed <= MAX_SPEED + 1e-6)) {
+    throw new Error(`speed must be between ${MIN_SPEED} and ${MAX_SPEED}, but got ${speed}`);
+  }
+
+  const steps = speed / SPEED_STEP;
+  if (Math.abs(steps - Math.round(steps)) > 1e-6) {
+    throw new Error(`speed must be a multiple of ${SPEED_STEP}, but got ${speed}`);
+  }
+
+  // Send the exact decimal step because Deepgram rejects float noise off the 0.05 grid.
+  return Number((Math.round(steps) * SPEED_STEP).toFixed(2));
+};
 
 // Flux TTS is served on the /v2/speak endpoint over both WebSocket (streaming) and
 // REST (batch). A single https base URL works for both; the streaming path flips the
@@ -89,6 +107,12 @@ export interface TTSv2Options {
   encoding: FluxTTSEncoding;
   /** Sample rate of audio in Hz. */
   sampleRate: number;
+  /**
+   * Speaking rate from 0.5 to 1.5 in 0.05 steps. `1.0` is the normal rate and
+   * `null` leaves it out of the request.
+   * @see https://developers.deepgram.com/docs/tts-voice-controls
+   */
+  speed?: number | null;
   /** Deepgram API key. Falls back to `$DEEPGRAM_API_KEY`. */
   apiKey?: string;
   /** Base URL for the Deepgram Flux TTS API. */
@@ -150,6 +174,10 @@ export class TTSv2 extends tts.TTS {
   constructor(opts: Partial<TTSv2Options> = {}) {
     const resolvedOpts = { ...defaultTTSv2Options, ...opts };
 
+    if (resolvedOpts.speed !== undefined && resolvedOpts.speed !== null) {
+      resolvedOpts.speed = validateSpeed(resolvedOpts.speed);
+    }
+
     super(resolvedOpts.sampleRate, NUM_CHANNELS, { streaming: true });
 
     this.#opts = resolvedOpts;
@@ -170,17 +198,29 @@ export class TTSv2 extends tts.TTS {
     connectionPools.set(this, this.#pool);
   }
 
-  updateOptions(opts: Partial<Pick<TTSv2Options, 'model' | 'encoding' | 'sampleRate'>>) {
-    if (opts.encoding !== undefined) {
-      validateEncoding(opts.encoding);
+  updateOptions(opts: Partial<Pick<TTSv2Options, 'model' | 'encoding' | 'sampleRate' | 'speed'>>) {
+    const nextOpts = { ...opts };
+    if (nextOpts.speed === undefined) {
+      delete nextOpts.speed;
+    }
+    if (nextOpts.encoding !== undefined) {
+      validateEncoding(nextOpts.encoding);
+    }
+    if (nextOpts.speed !== undefined && nextOpts.speed !== null) {
+      nextOpts.speed = validateSpeed(nextOpts.speed);
     }
 
-    this.#opts = { ...this.#opts, ...opts };
+    this.#opts = { ...this.#opts, ...nextOpts };
 
     // These params are baked into the WebSocket URL at connection time, so any existing
     // pooled connection must be invalidated to avoid serving audio at the wrong
-    // rate/encoding.
-    if (opts.model !== undefined || opts.encoding !== undefined || opts.sampleRate !== undefined) {
+    // rate/encoding/speed.
+    if (
+      nextOpts.model !== undefined ||
+      nextOpts.encoding !== undefined ||
+      nextOpts.sampleRate !== undefined ||
+      nextOpts.speed !== undefined
+    ) {
       this.#pool.invalidate();
     }
   }
@@ -217,12 +257,15 @@ export class TTSv2 extends tts.TTS {
   }
 
   async #connectWebSocket(timeoutMs: number): Promise<WebSocket> {
-    const config = {
+    const config: Record<string, string | number> = {
       encoding: this.#opts.encoding,
       model: this.#opts.model,
       sample_rate: this.#opts.sampleRate,
       mip_opt_out: String(this.#opts.mipOptOut),
     };
+    if (this.#opts.speed !== undefined && this.#opts.speed !== null) {
+      config.speed = this.#opts.speed;
+    }
     const baseUrl = this.#opts.baseUrl.replace(/^http/, 'ws');
     const url = `${baseUrl}?${queryString.stringify(config)}`;
 
@@ -289,6 +332,9 @@ export class ChunkedStreamv2 extends tts.ChunkedStream {
       sample_rate: this.#opts.sampleRate,
       mip_opt_out: String(this.#opts.mipOptOut),
     };
+    if (this.#opts.speed !== undefined && this.#opts.speed !== null) {
+      params.speed = this.#opts.speed;
+    }
 
     const url = new URL(this.#opts.baseUrl);
     url.search = queryString.stringify(params);

@@ -105,6 +105,31 @@ export interface InputTranscriptionCompleted {
 
 export interface RealtimeSessionReconnectedEvent {}
 
+/**
+ * Options for {@link RealtimeModel.session}.
+ *
+ * The framework passes the agent's instructions, chat context, and tools when it creates a
+ * session. A provider that fixes them at connect time (for example, Gemini Live sends tools in
+ * its setup message) applies them to the first connection. It then does not need to reconnect
+ * when the same values arrive through `_updateSession`.
+ *
+ * The framework still applies all of these values with `_updateSession` after creation. A
+ * provider can ignore a value that it does not need before it connects.
+ */
+export interface RealtimeSessionOptions {
+  /**
+   * Disable server-side turn detection for this session. Only providers that report
+   * `canDisableTurnDetection` honor it.
+   */
+  turnDetectionDisabled?: boolean;
+  /** Initial system instructions. */
+  instructions?: string;
+  /** Initial chat context. */
+  chatCtx?: ChatContext;
+  /** Initial tools. */
+  tools?: ToolContext;
+}
+
 export abstract class RealtimeModel {
   private _capabilities: RealtimeCapabilities;
 
@@ -127,7 +152,7 @@ export abstract class RealtimeModel {
     return 'RealtimeModel';
   }
 
-  abstract session(options?: { turnDetectionDisabled?: boolean }): RealtimeSession;
+  abstract session(options?: RealtimeSessionOptions): RealtimeSession;
 
   abstract close(): Promise<void>;
 }

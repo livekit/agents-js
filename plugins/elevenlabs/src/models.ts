@@ -22,6 +22,13 @@ export function isDialogueModel(model: string): boolean {
   return DIALOGUE_TTS_MODEL_PREFIXES.some((prefix) => model.startsWith(prefix));
 }
 
+const CLONE_STRENGTH_MODEL_PREFIXES = ['eleven_v4'];
+
+/** Whether the model accepts voice_settings.clone_strength. */
+export function supportsCloneStrength(model: string): boolean {
+  return CLONE_STRENGTH_MODEL_PREFIXES.some((prefix) => model.startsWith(prefix));
+}
+
 export type TTSEncoding =
   | 'mp3_22050_32'
   | 'mp3_44100_32'
