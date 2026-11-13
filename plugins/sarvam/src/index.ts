@@ -11,6 +11,7 @@ export {
   type STTV2Options,
   type STTTranslateOptions,
   type STTV3Options,
+  type STTV4Options,
 } from './stt.js';
 export {
   ChunkedStream,
