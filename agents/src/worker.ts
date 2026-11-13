@@ -1122,7 +1122,8 @@ export class AgentServer {
       return;
     }
 
-    this.#logger.debug('shutting down worker');
+    // Keep this at info: the LiveKit Cloud log sidecar waits for this line before it exits.
+    this.#logger.info({ id: this.#id }, 'shutting down worker');
 
     this.#closed = true;
     if (this.#loopMonitor) stopMonitoring(this.#loopMonitor);
