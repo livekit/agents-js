@@ -10,10 +10,19 @@ import "riva/proto/riva_audio.proto";
 import "riva/proto/riva_common.proto";
 
 service RivaSpeechSynthesis {
+  rpc Synthesize(SynthesizeSpeechRequest) returns (SynthesizeSpeechResponse) {}
   rpc SynthesizeOnline(SynthesizeSpeechRequest)
       returns (stream SynthesizeSpeechResponse) {}
   rpc GetRivaSynthesisConfig(RivaSynthesisConfigRequest)
       returns (RivaSynthesisConfigResponse) {}
+}
+
+message ZeroShotData {
+  bytes audio_prompt = 1;
+  int32 sample_rate_hz = 2;
+  nvidia.riva.AudioEncoding encoding = 3;
+  int32 quality = 4;
+  string transcript = 5;
 }
 
 message RivaSynthesisConfigRequest {
@@ -34,6 +43,10 @@ message SynthesizeSpeechRequest {
   nvidia.riva.AudioEncoding encoding = 3;
   int32 sample_rate_hz = 4;
   string voice_name = 5;
+  ZeroShotData zero_shot_data = 6;
+  string custom_dictionary = 7;
+  map<string, string> custom_configuration = 8;
+  bool enable_word_time_offsets = 9;
 }
 
 message SynthesizeSpeechResponse {

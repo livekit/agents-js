@@ -1,3 +1,4 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES.
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
@@ -11,6 +12,7 @@ import { STT, type STTOptions } from './stt.js';
 type ProtoRecord = Record<string, unknown>;
 
 type RecognizeCall = grpc.ServerDuplexStream<ProtoRecord, ProtoRecord>;
+type OfflineRecognizeCall = grpc.ServerUnaryCall<ProtoRecord, ProtoRecord>;
 
 const SAMPLE_RATE = 16000;
 const FRAME_SAMPLES = SAMPLE_RATE / 10;
@@ -22,10 +24,17 @@ let stream: stt.SpeechStream | undefined;
 async function startServer(
   streamingRecognize: (call: RecognizeCall) => void,
   options: Partial<STTOptions> = {},
+  recognize?: (call: OfflineRecognizeCall, callback: grpc.sendUnaryData<ProtoRecord>) => void,
 ): Promise<STT> {
   server = new grpc.Server();
   const { service } = RivaSpeechRecognition as unknown as grpc.ServiceClientConstructor;
-  server.addService(service, { StreamingRecognize: streamingRecognize });
+  server.addService(service, {
+    StreamingRecognize: streamingRecognize,
+    Recognize:
+      recognize ??
+      ((_call: OfflineRecognizeCall, callback: grpc.sendUnaryData<ProtoRecord>) =>
+        callback({ code: grpc.status.UNIMPLEMENTED }, null)),
+  });
   const port = await new Promise<number>((resolve, reject) =>
     server!.bindAsync('127.0.0.1:0', grpc.ServerCredentials.createInsecure(), (error, port) =>
       error ? reject(error) : resolve(port),
@@ -68,6 +77,141 @@ afterEach(async () => {
 });
 
 describe('NVIDIA STT', () => {
+  it.each([
+    ['auto', true, true],
+    ['streaming', true, false],
+    ['offline', false, true],
+  ] as const)('supports %s inference mode', async (inferenceMode, streaming, offline) => {
+    const provider = await startServer(
+      (call) => call.end(),
+      { inferenceMode },
+      (_call, callback) => callback(null, result('hello', true)),
+    );
+    expect(provider.capabilities).toMatchObject({
+      streaming,
+      offlineRecognize: offline,
+      interimResults: streaming,
+    });
+    if (offline) {
+      await expect(provider.recognize(frame())).resolves.toMatchObject({
+        alternatives: [{ text: 'hello' }],
+      });
+    } else {
+      await expect(provider.recognize(frame())).rejects.toThrow("inferenceMode: 'offline'");
+    }
+    if (!streaming) expect(() => provider.stream()).toThrow("inferenceMode: 'streaming'");
+  });
+
+  it('sends recognition, word boosting, endpointing, and custom configuration options', async () => {
+    let config: ProtoRecord | undefined;
+    const provider = await startServer(
+      (call) => {
+        call.on('data', (request: ProtoRecord) => {
+          if (request['streamingConfig']) config = request['streamingConfig'] as ProtoRecord;
+        });
+        call.on('end', () => call.end());
+      },
+      {
+        model: 'parakeet-sortformer',
+        enableDiarization: true,
+        maxSpeakerCount: 2,
+        profanityFilter: true,
+        verbatimTranscripts: true,
+        boostedLmWords: ['LiveKit'],
+        boostedLmScore: 7,
+        endpointing: { mode: 'lowLatency', startHistory: 11 },
+        options: { customConfiguration: { enable_vad_endpointing: 'true' } },
+      },
+    );
+    stream = provider.stream();
+    stream.pushFrame(frame());
+    stream.endInput();
+    await collect(stream);
+    expect(config!['config']).toMatchObject({
+      model: 'parakeet-sortformer',
+      profanityFilter: true,
+      verbatimTranscripts: true,
+      speechContexts: [{ phrases: ['LiveKit'], boost: 7 }],
+      diarizationConfig: { enableSpeakerDiarization: true, maxSpeakerCount: 2 },
+      customConfiguration: { enable_vad_endpointing: 'true' },
+      endpointingConfig: {
+        startHistory: 11,
+        startThreshold: -1,
+        stopHistory: 500,
+        stopThreshold: -1,
+        stopHistoryEou: 240,
+        stopThresholdEou: -1,
+      },
+    });
+  });
+
+  it('combines multipart offline hypotheses and preserves zero confidence', async () => {
+    const provider = await startServer(
+      (call) => call.end(),
+      { inferenceMode: 'offline' },
+      (_call, callback) =>
+        callback(null, {
+          results: [
+            {
+              alternatives: [
+                { transcript: 'hello', confidence: 0, words: [] },
+                { transcript: 'yellow', confidence: 0, words: [] },
+              ],
+            },
+            {
+              alternatives: [
+                { transcript: 'world', confidence: 0.9, words: [] },
+                { transcript: 'word', confidence: 0, words: [] },
+              ],
+            },
+          ],
+        }),
+    );
+    const event = await provider.recognize(frame());
+    expect(event.alternatives!.map((alternative) => alternative.text)).toEqual([
+      'hello world',
+      'yellow word',
+    ]);
+    expect(event.alternatives![0].confidence).toBeCloseTo(0.45);
+  });
+
+  it('restarts the backend RPC across flush boundaries', async () => {
+    const calls: number[] = [];
+    const provider = await startServer((call) => {
+      let frames = 0;
+      calls.push(frames);
+      call.on('data', (request: ProtoRecord) => {
+        if (request['audioContent']) frames++;
+      });
+      call.on('end', () => {
+        calls[calls.length - 1] = frames;
+        call.write(
+          result(`segment ${calls.length}`, true, [
+            { word: 'segment', startTime: 100, endTime: 200 },
+          ]),
+        );
+        call.end();
+      });
+    });
+    stream = provider.stream();
+    stream.pushFrame(frame());
+    stream.flush();
+    stream.pushFrame(frame());
+    stream.endInput();
+    const events = await collect(stream);
+    expect(calls).toEqual([1, 1]);
+    expect(
+      events
+        .filter((event) => event.type === stt.SpeechEventType.FINAL_TRANSCRIPT)
+        .map((event) => event.alternatives![0]!.text),
+    ).toEqual(['segment 1', 'segment 2']);
+    expect(
+      events
+        .filter((event) => event.type === stt.SpeechEventType.FINAL_TRANSCRIPT)
+        .map((event) => event.alternatives![0]!.startTime),
+    ).toEqual([0.1, 0.2]);
+  });
+
   it('streams Riva requests, emits transcripts, and reports the audio sent', async () => {
     const requests: ProtoRecord[] = [];
     let audioBytes = 0;
@@ -108,10 +252,14 @@ describe('NVIDIA STT', () => {
             sampleRateHertz: SAMPLE_RATE,
             languageCode: 'fr-FR',
             maxAlternatives: 1,
+            profanityFilter: false,
+            speechContexts: [],
             audioChannelCount: 1,
             enableWordTimeOffsets: true,
             enableAutomaticPunctuation: true,
             model: 'parakeet-1.1b-en-US-asr-streaming-silero-vad-sortformer',
+            verbatimTranscripts: false,
+            customConfiguration: {},
             diarizationConfig: null, // not sent unless diarization is enabled
           },
           interimResults: true,
@@ -191,10 +339,10 @@ describe('NVIDIA STT', () => {
     stream.endInput();
     const events = await collect(stream);
 
-    // audio sent to the failed call is not replayed into the new one
+    // audio not covered by a final transcript is replayed into the new call
     expect(calls).toEqual([
       { configs: 1, frames: 1 },
-      { configs: 1, frames: 3 },
+      { configs: 1, frames: 4 },
     ]);
     expect(recoverable).toEqual([]);
     const speech = events.filter((e) => e.type !== stt.SpeechEventType.RECOGNITION_USAGE);
@@ -206,9 +354,9 @@ describe('NVIDIA STT', () => {
       stt.SpeechEventType.END_OF_SPEECH,
     ]);
     expect(speech[2]!.requestId).toBe('riva-2');
-    expect(speech[2]!.alternatives![0]!.startTime).toBeGreaterThan(0.1);
+    expect(speech[2]!.alternatives![0]!.startTime).toBeCloseTo(0.1);
     const usage = events.filter((e) => e.type === stt.SpeechEventType.RECOGNITION_USAGE);
-    expect(usage.map((e) => e.recognitionUsage!.audioDuration)).toEqual([0.1, 0.3]);
+    expect(usage.map((e) => e.recognitionUsage!.audioDuration)).toEqual([0.4]);
   });
 
   it('does not retry authorization failures', async () => {
@@ -242,6 +390,7 @@ describe('NVIDIA STT', () => {
     provider.on('error', (error) => recoverable.push(error.recoverable));
 
     stream = provider.stream();
+    stream.pushFrame(frame());
     await vi.waitFor(() => expect(configured).toBe(true));
     stream.close();
 
@@ -316,17 +465,21 @@ describe('NVIDIA STT', () => {
     );
     // only finals carry a speaker, as in the Python plugin
     expect(transcripts.map((e) => e.alternatives![0]!.speakerId)).toEqual([undefined, 'S2']);
-    for (const event of transcripts) {
-      expect(event.alternatives![0]!.words!.map((word) => word.speakerId)).toEqual([
-        'S2',
-        'S1',
-        'S2',
-        null,
-      ]);
-    }
+    expect(transcripts[0]!.alternatives![0]!.words!.map((word) => word.speakerId)).toEqual([
+      null,
+      null,
+      null,
+      null,
+    ]);
+    expect(transcripts[1]!.alternatives![0]!.words!.map((word) => word.speakerId)).toEqual([
+      'S2',
+      'S1',
+      'S2',
+      null,
+    ]);
   });
 
-  it('counts results without a transcript as provider progress', async () => {
+  it('bounds retries when results do not include a final transcript', async () => {
     let calls = 0;
     const provider = await startServer((call) => {
       calls++;
@@ -345,20 +498,14 @@ describe('NVIDIA STT', () => {
     const errors: boolean[] = [];
     provider.on('error', (error) => errors.push(error.recoverable));
 
-    // two failures with maxRetry 1 survive only if each attempt's progress resets the budget
     stream = provider.stream({ connOptions: { maxRetry: 1, retryIntervalMs: 1, timeoutMs: 1000 } });
     stream.pushFrame(frame());
     await vi.waitFor(() => expect(calls).toBe(2));
-    stream.pushFrame(frame());
-    await vi.waitFor(() => expect(calls).toBe(3));
-    stream.pushFrame(frame());
-    stream.endInput();
     const events = await collect(stream);
 
-    expect(errors).toEqual([]);
-    expect(events.find((e) => e.type === stt.SpeechEventType.FINAL_TRANSCRIPT)).toMatchObject({
-      alternatives: [{ text: 'done' }],
-    });
+    expect(calls).toBe(2);
+    expect(errors).toEqual([false]);
+    expect(events.find((e) => e.type === stt.SpeechEventType.FINAL_TRANSCRIPT)).toBeUndefined();
   });
 
   it('sends whole frames when the sample rate is not a multiple of 10', async () => {
