@@ -235,25 +235,36 @@ export function replace(
       ? new RegExp(`(?:${Array.from(prefixes).map(escapeRegex).join('|')})$`, flags)
       : null;
 
-  const apply = (value: string): { output: string; lastMatchEnd: number } => {
-    if (!pattern) return { output: value, lastMatchEnd: 0 };
-    let lastMatchEnd = 0;
-    const output = value.replace(pattern, (match: string, offset: number) => {
+  const apply = (value: string): string => {
+    if (!pattern) return value;
+    return value.replace(pattern, (match: string) => {
       const entry = entryPatterns.find(([entryPattern]) => entryPattern.test(match));
       if (!entry) {
         throw new Error(`Unable to resolve replacement for matched text: ${match}`);
       }
-      const replacement = entry[1];
-      lastMatchEnd = offset + match.length;
-      return replacement;
+      return entry[1];
     });
-    return { output, lastMatchEnd };
   };
 
   const holdback = (value: string): number => {
     if (!holdbackPattern) return 0;
     const match = holdbackPattern.exec(value.slice(-maxPrefix));
     return match ? match[0].length : 0;
+  };
+
+  // `value.slice(cut)` is held back because it may still grow into a longer key; a match
+  // that straddles that boundary must be pulled into the flushed part, otherwise it would
+  // be split and never matched.
+  const flushIndex = (value: string): number => {
+    let cut = value.length - holdback(value);
+    if (!pattern) return cut;
+    for (const match of value.matchAll(pattern)) {
+      const end = match.index + match[0].length;
+      if (end <= cut) continue;
+      if (match.index >= cut) break;
+      cut = end;
+    }
+    return cut;
   };
 
   return (text: ReadableStream<string>) =>
@@ -263,19 +274,17 @@ export function replace(
 
         for await (const chunk of readStream(text)) {
           const source = sourceBuffer + chunk;
-          const applied = apply(source);
-          const heldLength = holdback(source);
-          const heldStart = source.length - heldLength;
-          const retainSource = heldLength > 0 && heldStart >= applied.lastMatchEnd;
-          sourceBuffer = retainSource ? source.slice(heldStart) : '';
-          const emitted = retainSource ? applied.output.slice(0, -heldLength) : applied.output;
+          const cut = flushIndex(source);
+          sourceBuffer = source.slice(cut);
+          const emitted = apply(source.slice(0, cut));
           if (emitted) {
             yield emitted;
           }
         }
 
-        if (sourceBuffer) {
-          yield sourceBuffer;
+        const remaining = apply(sourceBuffer);
+        if (remaining) {
+          yield remaining;
         }
       })(),
     );
