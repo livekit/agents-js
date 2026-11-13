@@ -1,11 +1,12 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { log } from '@livekit/agents';
 import { VAD } from '@livekit/agents-plugin-silero';
 import { stt } from '@livekit/agents-plugins-test';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { WebSocketServer } from 'ws';
 import { STT } from './stt.js';
 
@@ -31,6 +32,23 @@ async function waitUntil(predicate: () => boolean, timeoutMs = 1000): Promise<vo
 }
 
 describe('AssemblyAI options', () => {
+  it('defaults to universal-3-6-pro', () => {
+    const stt = new STT({ apiKey: 'test-key' });
+
+    expect(stt.model).toBe('universal-3-6-pro');
+  });
+
+  it('rewrites the deprecated u3-pro alias to universal-3-6-pro', () => {
+    const warn = vi.spyOn(log(), 'warn').mockImplementation(() => undefined);
+
+    const stt = new STT({ apiKey: 'test-key', speechModel: 'u3-pro' });
+
+    expect(stt.model).toBe('universal-3-6-pro');
+    expect(warn).toHaveBeenCalledOnce();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('universal-3-6-pro'));
+    warn.mockRestore();
+  });
+
   it('accepts u3-rt-pro-beta-1', () => {
     const stt = new STT({ apiKey: 'test-key', speechModel: 'u3-rt-pro-beta-1' });
 
