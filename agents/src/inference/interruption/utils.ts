@@ -40,21 +40,6 @@ export class BoundedCache<K, V extends object> {
     return value;
   }
 
-  /**
-   * Set a new value with factory when missing; otherwise update in place.
-   * Mirrors python BoundedDict.set_or_update behavior.
-   */
-  setOrUpdate(key: K, factory: () => V, fields: Partial<V>): V {
-    if (!this.cache.has(key)) {
-      this.set(key, factory());
-    }
-    const result = this.updateValue(key, fields);
-    if (!result) {
-      throw new Error('setOrUpdate invariant failed: entry should exist after set');
-    }
-    return result;
-  }
-
   get(key: K): V | undefined {
     return this.cache.get(key);
   }
