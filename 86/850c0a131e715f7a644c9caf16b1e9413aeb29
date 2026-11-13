@@ -1,0 +1,165 @@
+.changeset/bright-eels-listen.md
+  s_aaf78334cb7322::t_08f8dec9f0a251 1-5
+.changeset/console-local-eot-runner.md
+  s_aaf78334cb7322::t_3e4972ad7dae46 1-5
+.changeset/failed-job-entrypoints.md
+  s_aaf78334cb7322::t_ced3cddf091cd7 1-9
+.changeset/google-realtime-single-connect.md
+  s_aaf78334cb7322::t_0527d931c978b6 1-10
+.changeset/gpt-live-decisions.md
+  s_aaf78334cb7322::t_9bf8dacbc63410 1-6
+.changeset/inference-xai-stt-2.md
+  s_aaf78334cb7322::t_d8ddbdec6e424f 1-5
+.changeset/job-shutdown-close-reason.md
+  s_aaf78334cb7322::t_ea95b1d7734f23 1-5
+.changeset/settle-amd-disconnect.md
+  s_aaf78334cb7322::t_8686b2aaa25b99 1-5
+.changeset/soniox-stt-reconnect-audio.md
+  s_aaf78334cb7322::t_10e5dd1f656234 1-5
+.changeset/soniox-tts-retry-text.md
+  s_aaf78334cb7322::t_319424594ddcdc 1-5
+.changeset/tough-dialogues-clone.md
+  s_aaf78334cb7322::t_0c05e44b8eca45 1-5
+.gitignore
+  s_aaf78334cb7322::t_17ed0c2296d63b 201
+.oss-scanner/Dockerfile
+  s_aaf78334cb7322::t_621dd72be6d6dd 1-78
+.oss-scanner/threat_model.md
+  s_aaf78334cb7322::t_3c9399158485d6 1-212
+agents/etc/agents.api.md
+  s_aaf78334cb7322::t_650843483dde77 477-482,2612,2627,2638-2639,2941-2950,3031-3048,3193-3195,4452-4454,5203,5429,5452,5456,5462,5468-5469,5569-5571,5978-5979,5981,6398,6417,6546,6579-6586,10079,10110-10112
+agents/package.json
+  s_aaf78334cb7322::t_692f454f1960a3 70
+agents/src/console.test.ts
+  s_aaf78334cb7322::t_f920fa7be0d9b5 1-48
+agents/src/console.ts
+  s_aaf78334cb7322::t_d9d4f949b8be8b 22,141
+agents/src/inference/duplex.test.ts
+  s_aaf78334cb7322::t_782b95734f8abe 8-9,11-16,18,42-48,53-54,58,62,73-78,203-282,289-304
+agents/src/inference/duplex.ts
+  s_aaf78334cb7322::t_a00058ab075d14 7-8,24-26,46-48,55-56,62-65,71-72,126,138-139
+agents/src/inference/eot/base.test.ts
+  s_aaf78334cb7322::t_77f921cd76ac9e 17,19,32,44,46-47,49-53,56,83,114,117-122,130-134,151-152,197-198,220-245
+agents/src/inference/eot/base.ts
+  s_aaf78334cb7322::t_462856a66e15db 16,64-87,92-105,115,117-123,226-228,299,310-314,375-389,552-557
+agents/src/inference/eot/detector.test.ts
+  s_aaf78334cb7322::t_8b37d36c90915c 28,48-54,67,72,90,96-99,105,111-113,220-222,225-228,232,369,385-388,521,524-551,852-885,952,958,1006,1019,1030,1036
+agents/src/inference/eot/detector.ts
+  s_aaf78334cb7322::t_331c4df3b6d10f 35
+agents/src/inference/eot/languages.ts
+  s_aaf78334cb7322::t_59654de65e3e20 10,14,22-51
+agents/src/inference/eot/runner.test.ts
+  s_aaf78334cb7322::t_fa37b792ba7f94 33,35,53,77
+agents/src/inference/eot/runner.ts
+  s_aaf78334cb7322::t_7376cd61a387e1 7,22,25,49,64
+agents/src/inference/eot/transports.test.ts
+  s_aaf78334cb7322::t_c47d182b508349 19,21-22,28,31,140-141,229,233-234,239-250,263-265,267-270,281-398,404-477
+agents/src/inference/eot/transports.ts
+  s_aaf78334cb7322::t_9bbce45d3a3c62 9,18,23,39,90,101,108,139,141,155,164,171,173,178-182,212,229-242,249,289,336-363,366-372,379,394-404,406
+agents/src/inference/index.ts
+  s_aaf78334cb7322::t_fab52e02ed02bb 68-70
+agents/src/inference/realtime.ts
+  s_aaf78334cb7322::t_08af1e2f294bfd 184,194
+agents/src/inference/stt.ts
+  s_aaf78334cb7322::t_cfc097e1d1d1fb 56,345
+agents/src/ipc/job_proc_lazy_main.test.ts
+  s_aaf78334cb7322::t_6c34f692e5e481 1-159
+agents/src/ipc/job_proc_lazy_main.ts
+  s_aaf78334cb7322::t_3deedd22a82800 4,6,68,139,172-179,183,185-205,235-237,261-263,285-288,291-293,303-309,456
+agents/src/ipc/job_proc_lazy_main_test_agent.ts
+  s_aaf78334cb7322::t_e28acf297aa574 1-70
+agents/src/job_lifecycle.test.ts
+  s_aaf78334cb7322::t_f930bbaab84a85 18-20,44,100,118-140,147,168
+agents/src/job_lifecycle.ts
+  s_aaf78334cb7322::t_ea0d8b14c789d1 19,102-113
+agents/src/llm/index.ts
+  s_aaf78334cb7322::t_b9554e9e51c2d3 122
+agents/src/llm/openai_realtime/gpt_live_model.ts
+  s_aaf78334cb7322::t_335f44465d61e1 22,31,34-35,75-91,116,120-123,156-162,166,168-173,223-224,233,287-295,359-360,423-431,594-595,674-676,1018-1032,1052,1054,1056
+agents/src/llm/openai_realtime/gpt_live_types.ts
+  s_aaf78334cb7322::t_6efefb62b5f1ae 8,29-55,66,87,138
+agents/src/llm/openai_realtime/realtime_model.test.ts
+  s_aaf78334cb7322::t_db0757e7c85038 1217-1272
+agents/src/llm/openai_realtime/realtime_model.ts
+  s_aaf78334cb7322::t_490b431d264f4f 345,499,512-519,523,525-534
+agents/src/llm/realtime.ts
+  s_aaf78334cb7322::t_8c10742e09abb9 108-132,155
+agents/src/voice/agent_activity.ts
+  s_aaf78334cb7322::t_c93a02c4bf8d4a 958-959,969-970,973-975
+agents/src/voice/agent_session.ts
+  s_aaf78334cb7322::t_3d1169eaa91292 1800,1812-1829
+agents/src/voice/audio_recognition.ts
+  s_aaf78334cb7322::t_d92c7ed400cecb 1244-1249,1268-1273,2308-2310
+agents/src/voice/audio_recognition_turn_detection.test.ts
+  s_aaf78334cb7322::t_66ed90e3a3ca6b 60,143,577,582-584,591-592,599-630
+agents/src/voice/realtime_tool_output_commit.test.ts
+  s_aaf78334cb7322::t_c7e95c6c9e1736 13,25,601-638
+agents/src/worker.test.ts
+  s_aaf78334cb7322::t_7f6b5d2f6dde2b 302-305,337,345
+agents/src/worker.ts
+  s_aaf78334cb7322::t_0f990d2d3d2550 68-69,71,460,464
+examples/src/gpt_live/gpt_live_decisions.ts
+  s_aaf78334cb7322::t_71938254170ed1 1-63
+package.json
+  s_aaf78334cb7322::t_133716069ca99f 48
+plugins/elevenlabs/etc/agents-plugin-elevenlabs.api.md
+  s_aaf78334cb7322::t_0547ea5cae5f11 174-178,329-330
+plugins/elevenlabs/src/models.ts
+  s_aaf78334cb7322::t_175ebd68caca78 25-31
+plugins/elevenlabs/src/tts.test.ts
+  s_aaf78334cb7322::t_8ec7bbf4b20ce5 300,317,330,334,357,383,401-520
+plugins/elevenlabs/src/tts.ts
+  s_aaf78334cb7322::t_db37c849e0505a 25-30,38-42,50,228-244,494,508,926,929-938,1017-1019,1084,1098
+plugins/google/etc/agents-plugin-google.api.md
+  s_aaf78334cb7322::t_153f5b8c434aab 407-408,410,583
+plugins/google/src/realtime/realtime_api.ts
+  s_aaf78334cb7322::t_a4c75d8bd53717 250,520-534,557-558,561-563,620,623-637,672-673,1120,1150-1152
+plugins/google/src/realtime/realtime_session_options.test.ts
+  s_aaf78334cb7322::t_9c02d36529c4d6 1-132
+plugins/openai/etc/agents-plugin-openai.api.md
+  s_aaf78334cb7322::t_3c99f96aef70e4 167,371-424,441-443,447,564-567,599,604,615,630,1289-1291,1382,1409,1953,2006-2007
+plugins/openai/src/realtime/gpt_live_model.test.ts
+  s_aaf78334cb7322::t_103a19be429d49 456,511-658
+plugins/openai/src/realtime/gpt_live_model.ts
+  s_aaf78334cb7322::t_b54d42b08da7e6 10-12
+plugins/phonic/etc/agents-plugin-phonic.api.md
+  s_aaf78334cb7322::t_1686edc7853ff3 133
+plugins/phonic/src/realtime/realtime_model.test.ts
+  s_aaf78334cb7322::t_b24a3890134ada 1-100
+plugins/phonic/src/realtime/realtime_model.ts
+  s_aaf78334cb7322::t_2301004be5e1dd 428-429,471-472,499,514-532,554,730,749,1004,1017
+plugins/silero/package.json
+  s_aaf78334cb7322::t_39834f1a107379 38
+plugins/soniox/src/stt.test.ts
+  s_aaf78334cb7322::t_0207027a6b1a76 790-844
+plugins/soniox/src/stt.ts
+  s_aaf78334cb7322::t_c9078f7b6dda35 11,147-152,291-292,312,318,320,322-328
+plugins/soniox/src/tts.test.ts
+  s_aaf78334cb7322::t_746164e283759c 384-463
+plugins/soniox/src/tts.ts
+  s_aaf78334cb7322::t_33364ed7443de2 330-333,335-337,413,423-426,429-434,436-443,445,447-451,453,455-464
+plugins/xai/etc/agents-plugin-xai.api.md
+  s_aaf78334cb7322::t_1939700c1f7501 83-84,86
+plugins/xai/src/realtime/realtime_model.ts
+  s_aaf78334cb7322::t_132d2d2ac01c2f 98-99
+pnpm-lock.yaml
+  s_aaf78334cb7322::t_66b41689b493f0 10-11,109-111,140-141,247,376,450,478,509,534,568,596,633,667,701,726,760,794,840,867,895,913,926,957,988,1044,1072,1097,1115,1125,1156,1184,1218,1249,1271,1293,1324,1367,1392,1426,1453-1454,1457,1485,1512,1534,1559,1590,1615,1652,2487-2488,2492-2493,2497-2498,2502-2503,2507-2508,2512-2513,2599-2604,2611-2616,2624-2630,2638-2644,2651-2656,2661-2664,2669-2670,4340-4342,5347-5349,5358-5361,5455-5457,5606-5608,5706-5708,5803-5806,6952,6955,6958,6961,6964,6967,6971-6975,7011,7014,7050-7052,7056-7058,7062-7064,7068-7070,7074-7076,7087-7096,7106,7110,7113,7208,7216,8977-8978,9986-9989,10023-10038,10138-10142,10355-10356,10540-10543,10639-10640
+pnpm-workspace.yaml
+  s_aaf78334cb7322::t_4bdc2225d83096 37
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "86850c0a131e715f7a644c9caf16b1e9413aeb29",
+  "prompts": {},
+  "sessions": {
+    "s_aaf78334cb7322": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d2193486-0057-4a50-bb24-44082ff248d9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
