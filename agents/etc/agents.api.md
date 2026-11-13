@@ -3717,6 +3717,16 @@ interface FakeUserSpeech {
 }
 
 // @public
+interface FallbackActivatedEvent {
+    cause: 'unknown' | 'timeout' | 'provider_error' | 'quota_exceeded';
+    fallbackType: 'unknown' | 'fallback' | 'system_default';
+    model: string;
+    provider: string;
+    sessionId: string;
+    voice: string;
+}
+
+// @public
 export class FallbackAdapter extends LLM {
     constructor(options: FallbackAdapterOptions);
     // (undocumented)
@@ -4377,6 +4387,7 @@ declare namespace inference {
         normalizeTTSFallback,
         parseTTSModelString,
         TTS_2 as TTS,
+        FallbackActivatedEvent,
         TTSFallbackModel,
         TTSFallbackModelType,
         TTSModels,
@@ -4480,6 +4491,7 @@ interface InferenceTTSOptions<TModel extends TTSModels> {
     baseURL: string;
     // (undocumented)
     connOptions?: APIConnectOptions;
+    disableSystemDefaultFallback?: boolean;
     // (undocumented)
     encoding: TTSEncoding;
     // (undocumented)
@@ -8979,6 +8991,7 @@ abstract class TTS extends TTS_base {
 declare namespace tts {
     export {
         SynthesizedAudio,
+        FallbackActivatedEvent,
         TTSCapabilities,
         TTSCallbacks,
         TTS,
@@ -9028,6 +9041,7 @@ class TTS_2<TModel extends TTSModels> extends TTS {
         apiSecret?: string;
         modelOptions?: TTSOptions<TModel>;
         fallback?: TTSFallbackModelType | TTSFallbackModelType[];
+        disableSystemDefaultFallback?: boolean;
         connOptions?: APIConnectOptions;
     });
     // (undocumented)
@@ -9070,6 +9084,7 @@ declare namespace tts_2 {
         parseTTSModelString,
         hasAlignedTranscript,
         normalizeTTSFallback,
+        FallbackActivatedEvent,
         CartesiaModels_2 as CartesiaModels,
         DeepgramTTSModels,
         InworldModels,
@@ -9102,6 +9117,7 @@ export const TTS_INSTRUCTIONS_PLACEHOLDER = "{tts.markup.llm_instructions}";
 type TTSCallbacks = {
     ['metrics_collected']: (metrics: TTSMetrics) => void;
     ['error']: (error: TTSError) => void;
+    ['fallback_activated']: (event: FallbackActivatedEvent) => void;
 };
 
 // @public
@@ -9962,7 +9978,7 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 //
 // src/_exceptions.ts:90:5 - (ae-forgotten-export) The symbol "APIStatusErrorOptions" needs to be exported by the entry point index.d.ts
 // src/_exceptions.ts:128:5 - (ae-forgotten-export) The symbol "APIErrorOptions" needs to be exported by the entry point index.d.ts
-// src/inference/tts.ts:315:5 - (ae-forgotten-export) The symbol "TTSEncoding" needs to be exported by the entry point index.d.ts
+// src/inference/tts.ts:322:5 - (ae-forgotten-export) The symbol "TTSEncoding" needs to be exported by the entry point index.d.ts
 // src/llm/chat_context.ts:80:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "audio"
 // src/llm/tool_context.ts:709:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "ToolFlag" has more than one declaration; you need to add a TSDoc member reference selector
 // src/llm/tool_context.ts:756:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "ToolFlag" has more than one declaration; you need to add a TSDoc member reference selector
