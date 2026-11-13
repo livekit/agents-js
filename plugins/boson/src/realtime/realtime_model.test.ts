@@ -108,6 +108,10 @@ class TestSession extends RealtimeSession {
 }
 
 class TestModel extends RealtimeModel {
+  get sessionCount(): number {
+    return this.sessions.size;
+  }
+
   override session(options?: llm.RealtimeSessionOptions): TestSession {
     const session = new TestSession(this, options);
     this.sessions.add(session);
@@ -677,6 +681,9 @@ describe('Boson realtime', () => {
     const session = open();
     for (const event of events) session.inject(event);
     expect((session.chatCtx.getById('user') as llm.ChatMessage).textContent).toBe(expected);
+
+    session.inject(added('next', 'next'));
+    expect(session.chatCtx.items.map((item) => item.id)).toEqual(['user', 'next']);
   });
 
   it('transcription carries the first fragment turn timestamp', () => {
@@ -1263,7 +1270,9 @@ describe('Boson realtime', () => {
   });
 
   it('close promptly terminates an open session', async () => {
-    const session = open();
+    const instance = model();
+    const session = instance.session();
+    sessions.push(session);
     const reports: unknown[] = [];
     const onUnhandled = (reason: unknown) => reports.push(reason);
     process.on('unhandledRejection', onUnhandled);
@@ -1271,6 +1280,7 @@ describe('Boson realtime', () => {
     sockets[0]!.close(3000, 'refused');
     await new Promise((resolve) => setTimeout(resolve, 20));
     await expect(session.close()).resolves.toBeUndefined();
+    expect(instance.sessionCount).toBe(0);
     await new Promise((resolve) => setTimeout(resolve, 0));
     process.off('unhandledRejection', onUnhandled);
     expect(reports).toEqual([]);

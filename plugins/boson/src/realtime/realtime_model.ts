@@ -490,7 +490,15 @@ export class RealtimeSession extends realtime.RealtimeSession {
       delete this.itemCreateFutures[event.item.id];
       return;
     }
-    super.handleConversationItemCreated(event);
+
+    // Boson uses a null predecessor to append server-originated items, while
+    // RemoteChatContext interprets it as insert-at-head. Client-create echoes
+    // retain their requested predecessor and are tracked by itemCreateFutures.
+    const previousItemId =
+      !event.previous_item_id && !this.itemCreateFutures[event.item.id]
+        ? this.chatCtx.items.at(-1)?.id ?? null
+        : event.previous_item_id;
+    super.handleConversationItemCreated({ ...event, previous_item_id: previousItemId });
   }
 
   protected override handleConversationItemInputAudioTranscriptionCompleted(
@@ -823,7 +831,10 @@ export class RealtimeSession extends realtime.RealtimeSession {
   }
 
   override async close(): Promise<void> {
-    await super.close();
-    (this.oaiRealtimeModel as RealtimeModel)._forgetSession(this);
+    try {
+      await super.close();
+    } finally {
+      (this.oaiRealtimeModel as RealtimeModel)._forgetSession(this);
+    }
   }
 }
