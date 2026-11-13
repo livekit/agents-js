@@ -499,8 +499,9 @@ export class RealtimeSession extends llm.RealtimeSession {
   private generateReplyRequestId = 0;
   private systemPromptPostfix = '';
   private pendingUserText?: string;
-  // The job's agent session room input: its room, and the participant the session is linked to.
-  private roomIO = getJobContext(false)?._primaryAgentSession?._roomIO;
+  // Keypad presses come from the job's agent session: its room and its linked participant.
+  private agentSession = getJobContext(false)?._primaryAgentSession;
+  private keypadRoom = this.agentSession?._roomIO?.rtcRoom;
   private keypadDigits = '';
   private keypadFlushTimer?: ReturnType<typeof setTimeout>;
 
@@ -514,7 +515,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       baseUrl: this.options.baseUrl,
       reconnectConversationOnAbnormalDisconnect: true,
     });
-    this.roomIO?.rtcRoom.on(RoomEvent.DtmfReceived, this.onDtmfReceived);
+    this.keypadRoom?.on(RoomEvent.DtmfReceived, this.onDtmfReceived);
     this.bstream = new AudioByteStream(
       PHONIC_INPUT_SAMPLE_RATE,
       PHONIC_NUM_CHANNELS,
@@ -939,9 +940,13 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.socket.sendGenerateReply({ type: 'generate_reply', system_message: systemMessage });
   }
 
-  /** Buffer a keypad press from the linked participant; presses from anyone else are ignored. */
+  /** Buffer a keypad press from the linked participant of the agent session using this session. */
   private onDtmfReceived = (_code: number, digit: string, participant: RemoteParticipant) => {
-    if (participant.identity !== this.roomIO?.linkedParticipant?.identity) {
+    // A job can run several agent sessions; only the one using this realtime session takes keys.
+    if (this.agentSession?._activity?.realtimeLLMSession !== this) {
+      return;
+    }
+    if (participant.identity !== this.agentSession._roomIO?.linkedParticipant?.identity) {
       return;
     }
     // Every key, including * and #, is part of what the caller typed.
@@ -999,7 +1004,7 @@ export class RealtimeSession extends llm.RealtimeSession {
 
   async close(): Promise<void> {
     this.closed = true;
-    this.roomIO?.rtcRoom.off(RoomEvent.DtmfReceived, this.onDtmfReceived);
+    this.keypadRoom?.off(RoomEvent.DtmfReceived, this.onDtmfReceived);
     clearTimeout(this.keypadFlushTimer);
     if (this.phonicModel._activeSession === this) {
       this.phonicModel._activeSession = undefined;
