@@ -11,6 +11,12 @@ import { DEFAULT_API_CONNECT_OPTIONS, inference, llm } from '@livekit/agents';
 import { OpenAI } from 'openai';
 import type { BasetenLLMOptions } from './types.js';
 
+const INLINE_INSTRUCTIONS_MODELS = new Set(['qwen/qwen3.8-27b']);
+
+export function supportsInlineInstructions(model: string): boolean {
+  return INLINE_INSTRUCTIONS_MODELS.has(model.toLowerCase());
+}
+
 export interface LLMOptions {
   model: string;
   apiKey?: string;
@@ -41,15 +47,18 @@ export class OpenAILLM extends llm.LLM {
   #opts: LLMOptions;
   #client: OpenAI;
   #providerFmt: llm.ProviderFormat;
+  #transformChatContext: (chatCtx: llm.ChatContext) => llm.ChatContext;
 
   constructor(
     opts: Partial<LLMOptions> = defaultLLMOptions,
     providerFmt: llm.ProviderFormat = 'openai',
+    transformChatContext: (chatCtx: llm.ChatContext) => llm.ChatContext = (chatCtx) => chatCtx,
   ) {
     super();
 
     this.#opts = { ...defaultLLMOptions, ...opts };
     this.#providerFmt = providerFmt;
+    this.#transformChatContext = transformChatContext;
     if (this.#opts.apiKey === undefined) {
       throw new Error('OpenAI API key is required, whether as an argument or as $OPENAI_API_KEY');
     }
@@ -145,7 +154,7 @@ export class OpenAILLM extends llm.LLM {
       providerFmt: this.#providerFmt,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       client: this.#client as any,
-      chatCtx,
+      chatCtx: this.#transformChatContext(chatCtx),
       toolCtx,
       connOptions,
       modelOptions: extras,
@@ -173,21 +182,34 @@ export class LLM extends OpenAILLM {
     }
 
     const model = opts.model;
+    const inlineMidConversationInstructions =
+      opts.inlineMidConversationInstructions ?? supportsInlineInstructions(model);
 
     // Configure the OpenAI plugin with Baseten's endpoint
-    super({
-      model,
-      apiKey,
-      baseURL: 'https://inference.baseten.co/v1',
-      temperature: opts.temperature,
-      topP: opts.topP,
-      presencePenalty: opts.presencePenalty,
-      frequencyPenalty: opts.frequencyPenalty,
-      user: opts.user,
-      maxCompletionTokens: opts.maxTokens,
-      toolChoice: opts.toolChoice,
-      parallelToolCalls: opts.parallelToolCalls,
-    });
+    super(
+      {
+        model,
+        apiKey,
+        baseURL: 'https://inference.baseten.co/v1',
+        temperature: opts.temperature,
+        topP: opts.topP,
+        presencePenalty: opts.presencePenalty,
+        frequencyPenalty: opts.frequencyPenalty,
+        user: opts.user,
+        maxCompletionTokens: opts.maxTokens,
+        toolChoice: opts.toolChoice,
+        parallelToolCalls: opts.parallelToolCalls,
+      },
+      'openai',
+      inlineMidConversationInstructions
+        ? (chatCtx) =>
+            llm.convertMidConversationInstructions(
+              chatCtx,
+              'user',
+              '<instructions>\n{instructions}\n</instructions>',
+            )
+        : undefined,
+    );
   }
 
   label(): string {
