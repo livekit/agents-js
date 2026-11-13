@@ -666,6 +666,21 @@ function endOfTurnActivity(llm: unknown): EndOfTurnActivity {
   return activity;
 }
 
+describe('AgentActivity - skipped realtime user turn', () => {
+  it('drops the skipped turn audio instead of committing it', async () => {
+    const activity = endOfTurnActivity(new ServerTurnRealtimeModel()) as EndOfTurnActivity & {
+      userTurnCompletedImpl: (info: EndOfTurnInfo) => Promise<void>;
+    };
+    const realtimeSession = { clearAudio: vi.fn(), commitAudio: vi.fn() };
+    Object.assign(activity, { rtTurnDetectionEnabled: false, realtimeSession });
+
+    await activity.userTurnCompletedImpl(endOfTurnInfo({ skipReply: true }));
+
+    expect(realtimeSession.clearAudio).toHaveBeenCalledOnce();
+    expect(realtimeSession.commitAudio).not.toHaveBeenCalled();
+  });
+});
+
 describe('AgentActivity - false interruption resume', () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());

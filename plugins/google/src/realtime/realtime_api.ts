@@ -40,9 +40,8 @@ import type { LiveAPIModels, Voice } from './api_proto.js';
 // Input audio constants (matching Python)
 const INPUT_AUDIO_SAMPLE_RATE = 16000;
 const INPUT_AUDIO_CHANNELS = 1;
-// In 50 ms chunks: 3 s held between user activities, the last 1.5 s opens one started mid-speech.
-const PRE_ACTIVITY_AUDIO_CHUNKS = 60;
-const ACTIVITY_LEAD_CHUNKS = 30;
+// In 50 ms chunks: at most 60 s held between user activities, oldest dropped first.
+const MAX_PRE_ACTIVITY_AUDIO_CHUNKS = 1200;
 
 // Output audio constants (matching Python)
 const OUTPUT_AUDIO_SAMPLE_RATE = 24000;
@@ -602,8 +601,9 @@ export class RealtimeSession extends llm.RealtimeSession {
   private inUserActivity = false;
   // With manual activity, audio sent outside a user activity is dropped or kept
   // unpredictably, and the activity opens a beat after the user starts speaking.
-  // Between activities the input is held here and sent once one opens, so each
-  // word reaches Gemini once.
+  // Between activities the input is held here and sent whole once one opens, so
+  // each word reaches Gemini once. It holds what came after the last activity,
+  // commitAudio or clearAudio: none of it has reached Gemini yet.
   private preActivityAudio: string[] = [];
   private sessionLock = new Mutex();
   private numRetries = 0;
@@ -972,26 +972,30 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.hasReceivedAudioInput = true;
 
     for (const f of this.resampleAudio(frame)) {
-      for (const nf of this.bstream.write(f.data.buffer as ArrayBuffer)) {
-        const data = Buffer.from(nf.data.buffer).toString('base64');
-        if (this.manualActivityDetection && !this.inUserActivity) {
-          this.preActivityAudio.push(data);
-          if (this.preActivityAudio.length > PRE_ACTIVITY_AUDIO_CHUNKS) {
-            this.preActivityAudio.shift();
-          }
-          continue;
+      this.appendAudio(this.bstream.write(f.data.buffer as ArrayBuffer));
+    }
+  }
+
+  private appendAudio(frames: AudioFrame[]): void {
+    for (const nf of frames) {
+      const data = Buffer.from(nf.data.buffer).toString('base64');
+      if (this.manualActivityDetection && !this.inUserActivity) {
+        this.preActivityAudio.push(data);
+        if (this.preActivityAudio.length > MAX_PRE_ACTIVITY_AUDIO_CHUNKS) {
+          this.preActivityAudio.shift();
         }
-        const realtimeInput: types.LiveClientRealtimeInput = {
-          audio: {
-            mimeType: 'audio/pcm',
-            data,
-          },
-        };
-        this.sendClientEvent({
-          type: 'realtime_input',
-          value: realtimeInput,
-        });
+        continue;
       }
+      const realtimeInput: types.LiveClientRealtimeInput = {
+        audio: {
+          mimeType: 'audio/pcm',
+          data,
+        },
+      };
+      this.sendClientEvent({
+        type: 'realtime_input',
+        value: realtimeInput,
+      });
     }
   }
 
@@ -1083,7 +1087,9 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   startUserActivity(): void {
-    this.openUserActivity(this.preActivityAudio.slice(-ACTIVITY_LEAD_CHUNKS));
+    // The activity opens once the user has been speaking for a while (VAD
+    // minDuration, minWords): the start of the turn is still held.
+    this.openUserActivity(this.preActivityAudio);
   }
 
   private openUserActivity(heldAudio: string[]): void {
@@ -2194,14 +2200,17 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   async commitAudio() {
-    // A turn too short to open an activity while spoken (a one-word answer) is
-    // still held: it goes to Gemini as its own activity.
+    // the partial chunk belongs to this turn, not the next
+    this.appendAudio(this.bstream.flush());
+    // A turn that opened no activity while spoken (a one-word answer, or manual
+    // turn detection) is still held: it goes to Gemini as its own activity.
     if (this.preActivityAudio.length > 0) {
       this.openUserActivity(this.preActivityAudio);
     }
   }
 
   async clearAudio() {
+    this.bstream.flush();
     this.preActivityAudio = [];
   }
 

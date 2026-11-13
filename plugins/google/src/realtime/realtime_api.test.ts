@@ -219,12 +219,20 @@ function createAudioInputSession({
   return session;
 }
 
+function pushSamples(session: AudioInputSessionInternals, samples: Int16Array): void {
+  session.pushAudio(new AudioFrame(samples, 16000, 1, samples.length));
+}
+
+function encode(samples: Int16Array): string {
+  return Buffer.from(samples.buffer).toString('base64');
+}
+
 function pushChunks(session: AudioInputSessionInternals, count: number): string[] {
   const chunks: string[] = [];
   for (let i = 0; i < count; i++) {
     const samples = new Int16Array(CHUNK_SAMPLES).fill(i + 1);
-    session.pushAudio(new AudioFrame(samples, 16000, 1, CHUNK_SAMPLES));
-    chunks.push(Buffer.from(samples.buffer).toString('base64'));
+    pushSamples(session, samples);
+    chunks.push(encode(samples));
   }
   return chunks;
 }
@@ -236,25 +244,23 @@ function audioEvent(data: string): [Record<string, unknown>] {
 }
 
 describe('Google Realtime audio input', () => {
-  it('holds the last 3 s of audio outside a user activity', () => {
+  it('holds at most the last 60 s of audio outside a user activity', () => {
     const session = createAudioInputSession({ manualActivity: true });
 
-    const chunks = pushChunks(session, 70);
+    const chunks = pushChunks(session, 1210);
 
     expect(session.sendClientEvent).not.toHaveBeenCalled();
-    expect(session.preActivityAudio).toEqual(chunks.slice(-60));
+    expect(session.preActivityAudio).toEqual(chunks.slice(-1200));
   });
 
-  it('opens a user activity with the last 1.5 s of held audio', () => {
+  it('opens a user activity with every held chunk', () => {
     const session = createAudioInputSession({ manualActivity: true });
-    const chunks = pushChunks(session, 40);
+    // the activity opens 4 s into the turn (a high minDuration or minWords)
+    const chunks = pushChunks(session, 80);
 
     session.startUserActivity();
 
-    expect(session.sendClientEvent.mock.calls).toEqual([
-      activityStart,
-      ...chunks.slice(-30).map(audioEvent),
-    ]);
+    expect(session.sendClientEvent.mock.calls).toEqual([activityStart, ...chunks.map(audioEvent)]);
     expect(session.preActivityAudio).toEqual([]);
 
     session.sendClientEvent.mockClear();
@@ -270,6 +276,55 @@ describe('Google Realtime audio input', () => {
 
     expect(session.sendClientEvent.mock.calls).toEqual([activityStart, ...chunks.map(audioEvent)]);
     expect(session.inUserActivity).toBe(true);
+  });
+
+  it('sends a held turn longer than 3 s whole on commit', async () => {
+    const session = createAudioInputSession({ manualActivity: true });
+    // manual turn detection: clearAudio at the start of the turn, commitAudio at its end
+    await session.clearAudio();
+    const chunks = pushChunks(session, 80);
+
+    await session.commitAudio();
+
+    expect(session.sendClientEvent.mock.calls).toEqual([activityStart, ...chunks.map(audioEvent)]);
+  });
+
+  it('sends a turn shorter than one chunk on commit', async () => {
+    const session = createAudioInputSession({ manualActivity: true });
+    // three 10 ms frames
+    for (let i = 0; i < 3; i++) {
+      pushSamples(session, new Int16Array(160).fill(7));
+    }
+
+    await session.commitAudio();
+
+    expect(session.sendClientEvent.mock.calls).toEqual([
+      activityStart,
+      audioEvent(encode(new Int16Array(480).fill(7))),
+    ]);
+  });
+
+  it('sends the partial chunk of an open activity on commit', async () => {
+    const session = createAudioInputSession({ manualActivity: true });
+    session.startUserActivity();
+    session.sendClientEvent.mockClear();
+    pushSamples(session, new Int16Array(160).fill(7));
+
+    await session.commitAudio();
+
+    expect(session.sendClientEvent.mock.calls).toEqual([
+      audioEvent(encode(new Int16Array(160).fill(7))),
+    ]);
+  });
+
+  it('does not carry a partial chunk past clearAudio', async () => {
+    const session = createAudioInputSession({ manualActivity: true });
+    pushSamples(session, new Int16Array(160).fill(7));
+
+    await session.clearAudio();
+    const chunks = pushChunks(session, 1);
+
+    expect(session.preActivityAudio).toEqual(chunks);
   });
 
   it('sends nothing on commit when no audio is held', async () => {

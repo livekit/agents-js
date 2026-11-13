@@ -3433,6 +3433,8 @@ export class AgentActivity implements RecognitionHooks {
       }
       if (this.realtimeSession) {
         if (info.skipReply) {
+          // the turn is not committed as audio: drop it so it can't open the next turn
+          this.realtimeSession.clearAudio();
           this.commitSkippedUserTurn(info);
           return;
         }
