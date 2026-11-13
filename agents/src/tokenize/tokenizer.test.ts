@@ -246,9 +246,43 @@ describe('tokenizer', () => {
         ['تم الحجز؛ شكراً', ['تم', 'الحجز', 'شكراً']],
         ['آپ کیسے ہیں۔', ['آپ', 'کیسے', 'ہیں']],
         ['आप कैसे हैं।', ['आप', 'कैसे', 'हैं']],
-        ['你好，我很好。', ['你好我很好']],
+        ['你好，我很好。', ['你好', '我很好']],
       ])('ignores non-ASCII punctuation in %s', (text, expected) => {
         expect(new WordTokenizer(true).tokenize(text)).toEqual(expected);
+      });
+
+      it.each([
+        ['好的，我可以帮您。需要提醒吗？', ['好的，', '我可以帮您。', '需要提醒吗？']],
+        ['はい、できます。', ['はい、', 'できます。']],
+        ['「はい」。わかりました。', ['「はい」。', 'わかりました。']],
+        [
+          'LiveKit是一个平台， 用于 voice agents',
+          ['LiveKit是一个平台，', '用于', 'voice', 'agents'],
+        ],
+        [
+          'お会計は１，０００。会議は１０：３０から。',
+          ['お会計は１，０００。', '会議は１０：３０から。'],
+        ],
+        [
+          'Say <phoneme alphabet="ipa" ph="ni，hao">hello</phoneme>',
+          ['Say', '<phoneme', 'alphabet="ipa"', 'ph="ni，hao">hello</phoneme>'],
+        ],
+      ])('splits CJK clauses at punctuation in %s', (text, expected) => {
+        expect(tokenizerPunct.tokenize(text)).toEqual(expected);
+      });
+
+      it('releases a CJK clause before the end of input', async () => {
+        const stream = tokenizerPunct.stream();
+        stream.pushText('好的，我可以');
+
+        expect((await stream.next()).value?.token).toBe('好的，');
+
+        stream.endInput();
+        const remaining = [];
+        for await (const event of stream) {
+          remaining.push(event.token);
+        }
+        expect(remaining).toEqual(['我可以']);
       });
     });
   });
