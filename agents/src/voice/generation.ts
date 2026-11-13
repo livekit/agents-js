@@ -27,7 +27,7 @@ import {
   isToolError,
   sortedToolNames,
 } from '../llm/tool_context.js';
-import { parseFunctionArguments } from '../llm/utils.js';
+import { parseFunctionArguments, repairedFunctionArgumentsJson } from '../llm/utils.js';
 import { isZodSchema, parseZodSchema } from '../llm/zod-utils.js';
 import { log } from '../log.js';
 import { IdentityTransform } from '../stream/identity_transform.js';
@@ -1470,11 +1470,6 @@ export function performToolExecutions({
           },
           `unknown AI function ${toolCall.name}`,
         );
-        try {
-          toolCall.args = JSON.stringify(parseFunctionArguments(toolCall.args || '{}'));
-        } catch {
-          toolCall.args = '{}';
-        }
         toolStarted(toolCall);
         toolCompleted(
           createToolOutput({
@@ -1497,17 +1492,15 @@ export function performToolExecutions({
       }
 
       let parsedArgs: object | undefined;
-      let argumentsParsed = false;
 
       // Ensure valid arguments
       try {
         const rawArgs = toolCall.args || '{}';
         const jsonArgs = parseFunctionArguments(rawArgs);
-        const canonicalArgs = JSON.stringify(jsonArgs);
-        if (canonicalArgs !== rawArgs) {
-          toolCall.args = canonicalArgs;
+        const repairedArgs = repairedFunctionArgumentsJson(rawArgs, jsonArgs);
+        if (repairedArgs !== undefined) {
+          toolCall.args = repairedArgs;
         }
-        argumentsParsed = true;
 
         if (isZodSchema(tool.parameters)) {
           const result = await parseZodSchema<object>(tool.parameters, jsonArgs);
@@ -1530,9 +1523,6 @@ export function performToolExecutions({
           },
           `tried to call AI function ${toolCall.name} with invalid arguments`,
         );
-        if (!argumentsParsed) {
-          toolCall.args = '{}';
-        }
         // Surface argument-validation errors to the LLM via ToolError so it can correct
         // its arguments instead of looping on the same invalid call. The argument schema
         // and the validator's error message do not contain server-side internals.
