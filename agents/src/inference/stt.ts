@@ -724,6 +724,13 @@ export class STT<TModel extends STTModels> extends BaseSTT {
   }
 
   override _pushConversationItem(ev: ConversationItemAddedEvent): void {
+    // A FallbackAdapter forwards every item to each STT it wraps, and the session's
+    // subscription outlives a model switch: skip models that cannot read agent_context.
+    if (!this.capabilities.chatContext) {
+      super._pushConversationItem(ev); // warns once, then ignores
+      return;
+    }
+
     const chatItem = ev.item;
     if (chatItem instanceof ChatMessage && chatItem.role === 'assistant' && chatItem.textContent) {
       // count code points, not UTF-16 units, to match the provider's character limit
