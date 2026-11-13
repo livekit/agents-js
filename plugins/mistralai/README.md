@@ -23,7 +23,7 @@ npm install @livekit/agents-plugin-mistralai
 
 ### LLM
 
-Uses the Mistral [Conversations API](https://docs.mistral.ai/capabilities/conversations/).
+Uses the Mistral [Conversations API](https://docs.mistral.ai/studio/agents/agents-api).
 
 ```ts
 import * as mistral from '@livekit/agents-plugin-mistralai';

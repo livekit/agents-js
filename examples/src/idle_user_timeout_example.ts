@@ -4,7 +4,7 @@
 
 /**
  * Minimal example demonstrating idle user timeout functionality.
- * Direct port of: https://github.com/livekit/agents/blob/main/examples/voice_agents/inactive_user.py
+ * Direct port of: https://github.com/livekit/agents/blob/61b14fdcd942ee630a4595dbe6376f51e51dce49/examples/voice_agents/inactive_user.py
  */
 import {
   type JobContext,
