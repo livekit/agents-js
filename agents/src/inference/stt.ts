@@ -107,6 +107,13 @@ export interface DeepgramOptions {
   /** Enable speaker diarization. Default: false. */
   diarize?: boolean;
   /**
+   * Gap after the last finalized word before Deepgram sends UtteranceEnd: 1000-5000 ms.
+   * Requires interim results. The gateway does not forward the event.
+   */
+  utterance_end_ms?: number;
+  /** Alias for `utterance_end_ms`; `true` is equivalent to 1000 ms. Prefer `utterance_end_ms`. */
+  utterance_end?: boolean;
+  /**
    * Languages to bias recognition toward. Only applies in Nova-3 multi language mode: the session
    * must also set `language: 'multi'`. Requires the gateway's `deepgram_stt_language_hint` flag.
    */
