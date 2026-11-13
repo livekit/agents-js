@@ -684,6 +684,30 @@ describe('ParticipantAudioOutput playback progress', () => {
     expect(progress[0]!.startedAt).toBeCloseTo(dryAt - 200);
   });
 
+  it('ends a run when it ran dry after a stalled capture', async () => {
+    const source = new QueuedAudioSource();
+    const { output, progress } = makeProgressOutput(source);
+    const capture = source.captureFrame.bind(source);
+
+    source.captureFrame = async (frame) => {
+      await capture(frame);
+      advance(300); // the loop resumes 300 ms later, after the frame has long played out
+      source.queuedDuration = 0;
+    };
+
+    const submittedAt = Date.now();
+    await output.captureFrame(audioFrame(50));
+    source.captureFrame = capture;
+    const played = output.sourcePushedDuration * 1000;
+
+    advance(500);
+    await output.captureFrame(audioFrame(100));
+
+    expect(progress).toHaveLength(1);
+    expect(progress[0]!.duration).toBeCloseTo(played);
+    expect(progress[0]!.startedAt).toBeCloseTo(submittedAt);
+  });
+
   it('ends a run at the moment the source ran dry when the flush trails it', async () => {
     const source = new QueuedAudioSource();
     const { output, progress } = makeProgressOutput(source);
