@@ -345,6 +345,8 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
   protected closed = false;
   #stt: STT;
   #terminalError?: Error;
+  #closedPromise: Promise<void>;
+  #resolveClosed!: () => void;
   private deferredInputStream: DeferredReadableStream<AudioFrame>;
   private logger = log();
   private _connOptions: APIConnectOptions;
@@ -362,6 +364,9 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
     this._connOptions = connectionOptions;
     this.deferredInputStream = new DeferredReadableStream<AudioFrame>();
     this.neededSampleRate = sampleRate;
+    this.#closedPromise = new Promise((resolve) => {
+      this.#resolveClosed = resolve;
+    });
     this.monitorMetrics();
     this.pumpInput();
 
@@ -377,6 +382,7 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
         this.#terminalError = toError(error);
       } finally {
         this.queue.close();
+        this.#resolveClosed();
       }
     };
     startSoon(() => {
@@ -440,7 +446,12 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
           }
 
           if (retryInterval > 0) {
-            await delay(retryInterval);
+            try {
+              await delay(retryInterval, { signal: this.abortController.signal });
+            } catch {
+              if (this.abortController.signal.aborted) return;
+              throw error;
+            }
           }
 
           this._numRetries += 1;
@@ -620,6 +631,11 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
   /** The error that ended the retry loop; set once the stream has stopped recognizing for good. */
   get terminalError(): Error | undefined {
     return this.#terminalError;
+  }
+
+  /** Wait until the stream's provider task and retry loop have fully settled. @internal */
+  async _waitClosed(): Promise<void> {
+    await this.#closedPromise;
   }
 
   /** Close both the input and output of the STT stream */

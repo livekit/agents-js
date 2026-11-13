@@ -1,7 +1,18 @@
 {
   "name": "@livekit/agents-plugin-fishaudio",
   "version": "1.9.5",
-  "description": "Fish Audio plugin for LiveKit Node Agents",
+  "description": "Agent Framework plugin for voice synthesis and speech recognition with Fish Audio's API.",
+  "keywords": [
+    "voice",
+    "ai",
+    "realtime",
+    "audio",
+    "video",
+    "livekit",
+    "fishaudio",
+    "stt",
+    "tts"
+  ],
   "main": "dist/index.js",
   "require": "dist/index.cjs",
   "types": "dist/index.d.ts",

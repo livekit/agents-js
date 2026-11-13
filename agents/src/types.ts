@@ -58,12 +58,19 @@ export interface APIConnectOptions {
   retryIntervalMs: number;
   /** Timeout for connecting to the API in milliseconds. Default: 10000 */
   timeoutMs: number;
+  /**
+   * Maximum time without inbound transport activity before a streaming connection fails.
+   * Providers that support liveness monitoring probe an idle connection after one-third of this
+   * interval. Default: 6000.
+   */
+  livenessTimeoutMs?: number;
 }
 
 export const DEFAULT_API_CONNECT_OPTIONS: APIConnectOptions = {
   maxRetry: 3,
   retryIntervalMs: 2000,
   timeoutMs: 10000,
+  livenessTimeoutMs: 6000,
 };
 
 /** Matches agents (Python), whose _interval_for_retry returns 0.1 seconds here. */

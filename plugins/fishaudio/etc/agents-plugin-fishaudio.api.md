@@ -4,11 +4,16 @@
 
 ```ts
 
-import type { AudioFrame } from '@livekit/rtc-node';
+import { AudioFrame } from '@livekit/rtc-node';
 import { AudioResampler } from '@livekit/rtc-node';
+import { Logger } from 'pino';
 import type { ReadableStream as ReadableStream_2 } from 'node:stream/web';
+import type { ReadableStreamDefaultReader as ReadableStreamDefaultReader_2 } from 'node:stream/web';
 import type { Span } from '@opentelemetry/api';
+import { TransformStream as TransformStream_2 } from 'node:stream/web';
 import type { TypedEventEmitter } from '@livekit/typed-emitter';
+import type { VideoFrame as VideoFrame_2 } from '@livekit/rtc-node';
+import type { WritableStreamDefaultWriter as WritableStreamDefaultWriter_2 } from 'node:stream/web';
 
 // Warning: (ae-forgotten-export) The symbol "tts" needs to be exported by the entry point index.d.ts
 //
@@ -32,6 +37,65 @@ export type MP3Bitrate = 64 | 128 | 192;
 
 // @public
 export type OpusBitrate = -1000 | 24000 | 32000 | 48000 | 64000;
+
+// Warning: (ae-forgotten-export) The symbol "stt" needs to be exported by the entry point index.d.ts
+//
+// @public
+export class SpeechStream extends stt.SpeechStream {
+    constructor(sttInstance: STT, connOptions?: APIConnectOptions);
+    close(): void;
+    label: string;
+    // @internal (undocumented)
+    protected run(): Promise<void>;
+}
+
+// @public
+export class STT extends stt.STT {
+    constructor(opts?: STTOptions);
+    close(): Promise<void>;
+    label: string;
+    get model(): string;
+    get provider(): string;
+    // Warning: (ae-forgotten-export) The symbol "ConversationItemAddedEvent" needs to be exported by the entry point index.d.ts
+    //
+    // @internal (undocumented)
+    _pushConversationItem(ev: ConversationItemAddedEvent): void;
+    // Warning: (ae-forgotten-export) The symbol "AudioBuffer_2" needs to be exported by the entry point index.d.ts
+    //
+    // @internal (undocumented)
+    protected _recognize(_buffer: AudioBuffer_2): Promise<stt.SpeechEvent>;
+    stream(options?: {
+        connOptions?: APIConnectOptions;
+    }): SpeechStream;
+    updateOptions(opts: STTUpdateOptions): void;
+    // @internal (undocumented)
+    _updateSessionKeyterms(keyterms: string[]): void;
+}
+
+// @public
+export type STTModels = 'transcribe-stream-1';
+
+// @public
+export interface STTOptions {
+    apiKey?: string;
+    baseURL?: string;
+    eagerEot?: boolean;
+    interimResults?: boolean;
+    keyterms?: string[];
+    model?: STTModels | string;
+    sampleRate?: number;
+    silenceTimeoutMs?: number;
+    tagAudioEvents?: boolean;
+    turnDetectionMode?: TurnDetectionMode;
+}
+
+// @public
+export interface STTUpdateOptions {
+    eagerEot?: boolean;
+    keyterms?: string[];
+    silenceTimeoutMs?: number;
+    tagAudioEvents?: boolean;
+}
 
 // @public (undocumented)
 export class SynthesizeStream extends tts.SynthesizeStream {
@@ -117,6 +181,9 @@ export interface TTSOptions {
     voiceId?: string;
     volume?: number;
 }
+
+// @public
+export type TurnDetectionMode = 'auto' | 'vad' | 'manual';
 
 // (No @packageDocumentation comment for this package)
 
