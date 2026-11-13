@@ -2402,6 +2402,11 @@ export class ChoiceResult {
 }
 
 // @public
+function choose<T>(knob: string, options: Record<string, T>, opts: {
+    default: string;
+}): T;
+
+// @public
 abstract class ChunkedStream implements AsyncIterableIterator<SynthesizedAudio> {
     // (undocumented)
     [Symbol.asyncIterator](): ChunkedStream;
@@ -7330,6 +7335,22 @@ interface SimpleOTLPHttpLogExporterUrlConfig {
     scopeName: string;
 }
 
+declare namespace simulation {
+    export {
+        choose,
+        parseSimulationDispatch,
+        Scenario,
+        ScenarioGroup,
+        SimulationDispatch,
+        SimulationMode,
+        SimulationRun,
+        SimulationRun_Job,
+        SimulationVerdict,
+        ScenarioUserdata,
+        SimulationContext
+    }
+}
+
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "simulatorVerdict"
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "userVerdict"
 // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "fail"
@@ -7344,6 +7365,7 @@ export class SimulationContext {
         simulatorVerdict: SimulationVerdict;
         run?: SimulationRun;
     }): void;
+    get choices(): Readonly<Record<string, string>>;
     // @internal (undocumented)
     _dispatch: SimulationDispatch;
     // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "fail"
