@@ -108,6 +108,8 @@ export type PersonaConfig = {
 export type SessionOptions = {
     videoWidth?: number;
     videoHeight?: number;
+    region?: 'eu' | 'us';
+    regionPolicy?: 'preferred' | 'strict';
 };
 
 // (No @packageDocumentation comment for this package)
