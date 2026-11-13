@@ -122,6 +122,22 @@ export interface PhonicToolConfig {
   speech_before_tool_call?: string; // keypad_input / natural_conversation_ending: required|optional|suppressed
 }
 
+/** Throw on per-tool option combinations Phonic rejects, which would otherwise end the session. */
+function checkToolConfigs(configs: PhonicToolConfig[] | undefined): void {
+  for (const cfg of configs ?? []) {
+    const mode = cfg.execution_mode ?? 'sync';
+    if (cfg.wait_for_response && mode !== 'async') {
+      throw new Error(`${cfg.name}: wait_for_response requires execution_mode 'async'`);
+    }
+    if (cfg.wait_for_response && cfg.allow_tool_chaining) {
+      throw new Error(`${cfg.name}: wait_for_response can't be combined with allow_tool_chaining`);
+    }
+    if (cfg.uninterruptible && mode !== 'sync') {
+      throw new Error(`${cfg.name}: uninterruptible requires execution_mode 'sync'`);
+    }
+  }
+}
+
 function toPhonicToolDefinition(tool: llm.FunctionTool): Phonic.ResponsesToolDefinition {
   return {
     name: tool.name,
@@ -418,6 +434,8 @@ export class RealtimeModel extends llm.RealtimeModel {
       model: options.model ?? DEFAULT_MODEL,
       baseUrl: options.baseUrl,
     };
+
+    checkToolConfigs(options.configsForTools);
 
     if (options.forbidSpeechAfterToolCall) {
       log().warn(
@@ -804,6 +822,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     if (this.closed || Object.keys(config).length === 0) {
       return;
     }
+    checkToolConfigs(config.configsForTools);
 
     if (
       config.defaultLanguage !== undefined &&
