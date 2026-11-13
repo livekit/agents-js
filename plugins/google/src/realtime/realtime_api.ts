@@ -1026,7 +1026,9 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     options.signal?.addEventListener('abort', onAbort, { once: true });
 
-    const endedUserActivity = this.inUserActivity;
+    // While a blocking tool call is pending, the send task drops the activityEnd.
+    const activityEndRequestsReply =
+      this.inUserActivity && !this.shouldBlockRealtimeInputForPendingTools();
     if (this.inUserActivity) {
       this.sendClientEvent({
         type: 'realtime_input',
@@ -1041,7 +1043,7 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     // Ending the user's activity already asks Gemini to reply; a turnComplete
     // on top starts a second generation that cuts the first one off.
-    if (!endedUserActivity || instructions !== undefined) {
+    if (!activityEndRequestsReply || instructions !== undefined) {
       this.sendClientEvent({
         type: 'content',
         value: {
