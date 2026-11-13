@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import type { APIConnectOptions } from '@livekit/agents';
+import type { APIConnectOptions, JobContext } from '@livekit/agents';
 import {
   AudioByteStream,
   DEFAULT_API_CONNECT_OPTIONS,
@@ -9,12 +9,19 @@ import {
   type TimedString,
   asError,
   createTimedString,
+  getJobContext,
   llm,
   log,
   shortuuid,
   stream,
 } from '@livekit/agents';
-import { AudioFrame, AudioResampler } from '@livekit/rtc-node';
+import {
+  AudioFrame,
+  AudioResampler,
+  type RemoteParticipant,
+  type Room,
+  RoomEvent,
+} from '@livekit/rtc-node';
 import type { Phonic } from 'phonic';
 import { PhonicClient } from 'phonic';
 import type { ServerEvent, Voice } from './api_proto.js';
@@ -26,6 +33,9 @@ const PHONIC_INPUT_FRAME_MS = 20;
 const DEFAULT_MODEL = 'merritt';
 const WS_CLOSE_NORMAL = 1000;
 const TOOL_CALL_OUTPUT_TIMEOUT_MS = 60_000;
+// Caller keypad presses are buffered and sent as one user turn once the caller pauses.
+const KEYPAD_INTER_DIGIT_TIMEOUT_MS = 2000;
+const KEYPAD_MAX_DIGITS = 32;
 const TOOL_CALL_OUTPUT_MAX_CHARS_FOR_HISTORY = 16_000;
 const CONVERSATION_HISTORY_PREFIX =
   '\n\nThis conversation is being continued from an existing ' +
@@ -72,6 +82,7 @@ export interface RealtimeModelOptions {
   configurationEndpoint?: Phonic.ConfigOptions['configuration_endpoint'];
   additionalParams?: NonNullable<Phonic.ConfigOptions['additional_params']>;
   externalId?: string;
+  forwardKeypadInput?: boolean;
   configsForTools?: PhonicToolConfig[];
   /** @deprecated Use `configsForTools` with `forbid_speech_after_tool_call` per tool instead. */
   forbidSpeechAfterToolCall?: string[];
@@ -84,12 +95,19 @@ export interface RealtimeModelOptions {
  * Phonic config fields that can be changed mid-session via `RealtimeModel.updateOptions` /
  * `RealtimeSession.updateOptions` — every field is optional so an update carries only what changes.
  * Connection-level fields (`apiKey`, `model`, `connOptions`, `baseUrl`), `externalId` (fixed for the
- * conversation) and `instructions` (managed through the Agent handoff) are excluded.
+ * conversation), `forwardKeypadInput` (set when the session starts) and `instructions` (managed
+ * through the Agent handoff) are excluded.
  */
 export type PhonicConfig = Partial<
   Omit<
     RealtimeModelOptions,
-    'apiKey' | 'model' | 'connOptions' | 'baseUrl' | 'externalId' | 'instructions'
+    | 'apiKey'
+    | 'model'
+    | 'connOptions'
+    | 'baseUrl'
+    | 'externalId'
+    | 'forwardKeypadInput'
+    | 'instructions'
   >
 >;
 
@@ -315,6 +333,11 @@ export class RealtimeModel extends llm.RealtimeModel {
        */
       externalId?: string;
       /**
+       * When true, the caller's keypad presses are sent to the agent as user turns. Leave it off if
+       * your agent already handles keypad input itself (e.g. a `RoomEvent.DtmfReceived` handler).
+       */
+      forwardKeypadInput?: boolean;
+      /**
        * Per-tool behavior overrides, one `PhonicToolConfig` per tool (keyed by `name`); omitted
        * fields fall back to the plugin defaults. See the README for the available fields.
        */
@@ -406,6 +429,7 @@ export class RealtimeModel extends llm.RealtimeModel {
       configurationEndpoint: options.configurationEndpoint,
       additionalParams: options.additionalParams,
       externalId: options.externalId,
+      forwardKeypadInput: options.forwardKeypadInput ?? false,
       configsForTools: options.configsForTools,
       forbidSpeechAfterToolCall: options.forbidSpeechAfterToolCall,
       onConversationCreated: options.onConversationCreated,
@@ -495,6 +519,11 @@ export class RealtimeSession extends llm.RealtimeSession {
   private generateReplyRequestId = 0;
   private systemPromptPostfix = '';
   private pendingUserText?: string;
+  // Keypad presses come from the job's agent session: its room and its linked participant.
+  private agentSession?: JobContext['_primaryAgentSession'];
+  private keypadRoom?: Room;
+  private keypadDigits = '';
+  private keypadFlushTimer?: ReturnType<typeof setTimeout>;
 
   constructor(realtimeModel: RealtimeModel, sessionOptions?: llm.RealtimeSessionOptions) {
     super(realtimeModel);
@@ -506,6 +535,11 @@ export class RealtimeSession extends llm.RealtimeSession {
       baseUrl: this.options.baseUrl,
       reconnectConversationOnAbnormalDisconnect: true,
     });
+    if (this.options.forwardKeypadInput) {
+      this.agentSession = getJobContext(false)?._primaryAgentSession;
+      this.keypadRoom = this.agentSession?._roomIO?.rtcRoom;
+      this.keypadRoom?.on(RoomEvent.DtmfReceived, this.onDtmfReceived);
+    }
     this.bstream = new AudioByteStream(
       PHONIC_INPUT_SAMPLE_RATE,
       PHONIC_NUM_CHANNELS,
@@ -930,6 +964,51 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.socket.sendGenerateReply({ type: 'generate_reply', system_message: systemMessage });
   }
 
+  /** Buffer a keypad press from the linked participant of the agent session using this session. */
+  private onDtmfReceived = (_code: number, digit: string, participant: RemoteParticipant) => {
+    // A job can run several agent sessions; only the one using this realtime session takes keys.
+    if (this.agentSession?._activity?.realtimeLLMSession !== this) {
+      return;
+    }
+    if (participant.identity !== this.agentSession._roomIO?.linkedParticipant?.identity) {
+      return;
+    }
+    // Every key, including * and #, is part of what the caller typed.
+    this.keypadDigits += digit;
+    clearTimeout(this.keypadFlushTimer);
+    if (this.keypadDigits.length >= KEYPAD_MAX_DIGITS) {
+      this.flushKeypadDigits();
+    } else {
+      this.keypadFlushTimer = setTimeout(this.flushKeypadDigits, KEYPAD_INTER_DIGIT_TIMEOUT_MS);
+    }
+  };
+
+  /** Clear the keypad buffer and send its digits as one user turn once the session is ready. */
+  private flushKeypadDigits = () => {
+    this.keypadFlushTimer = undefined;
+    const digits = this.keypadDigits;
+    this.keypadDigits = '';
+    if (!digits || this.closed) {
+      return;
+    }
+    void this.readyToStart.await.then(() => {
+      if (this.closed || !this.socket) {
+        return;
+      }
+      this.#logger.info('Sending caller keypad input');
+      try {
+        this.socket.sendGenerateReply({
+          type: 'generate_reply',
+          // The count saves the model from counting the keys itself, which it sometimes gets wrong.
+          user_message: `(User pressed ${digits} on the keypad: ${digits.length} ${digits.length === 1 ? 'key' : 'keys'})`,
+        });
+      } catch (error) {
+        this.#logger.error({ error }, 'Failed to send caller keypad input');
+        this.emitError(asError(error), true);
+      }
+    });
+  };
+
   async commitAudio(): Promise<void> {
     this.#logger.warn('commitAudio is not supported by the Phonic realtime model.');
   }
@@ -949,6 +1028,8 @@ export class RealtimeSession extends llm.RealtimeSession {
 
   async close(): Promise<void> {
     this.closed = true;
+    this.keypadRoom?.off(RoomEvent.DtmfReceived, this.onDtmfReceived);
+    clearTimeout(this.keypadFlushTimer);
     if (this.phonicModel._activeSession === this) {
       this.phonicModel._activeSession = undefined;
     }
