@@ -125,9 +125,9 @@ describe('Synthesia AvatarSession', () => {
     delete process.env.LIVEKIT_URL;
     delete process.env.LIVEKIT_API_KEY;
     delete process.env.LIVEKIT_API_SECRET;
-    voice.DataStreamAudioOutput._playbackFinishedRpcRegistered = false;
+    voice.DataStreamAudioOutput._playbackFinishedRpcRooms = new WeakSet();
     voice.DataStreamAudioOutput._playbackFinishedHandlers = {};
-    voice.DataStreamAudioOutput._playbackStartedRpcRegistered = false;
+    voice.DataStreamAudioOutput._playbackStartedRpcRooms = new WeakSet();
     voice.DataStreamAudioOutput._playbackStartedHandlers = {};
   });
 

@@ -60,9 +60,9 @@ function fakeAgentSession(): voice.AgentSession {
 describe('Protoface AvatarSession', () => {
   afterEach(() => {
     vi.restoreAllMocks();
-    voice.DataStreamAudioOutput._playbackFinishedRpcRegistered = false;
+    voice.DataStreamAudioOutput._playbackFinishedRpcRooms = new WeakSet();
     voice.DataStreamAudioOutput._playbackFinishedHandlers = {};
-    voice.DataStreamAudioOutput._playbackStartedRpcRegistered = false;
+    voice.DataStreamAudioOutput._playbackStartedRpcRooms = new WeakSet();
     voice.DataStreamAudioOutput._playbackStartedHandlers = {};
   });
 
