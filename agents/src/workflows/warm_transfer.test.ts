@@ -13,8 +13,11 @@ import { AgentTask } from '../voice/agent.js';
 import { AgentSession } from '../voice/agent_session.js';
 import { BackgroundAudioPlayer } from '../voice/background_audio.js';
 import { SpeechHandle } from '../voice/speech_handle.js';
+import type { TurnHandlingOptions } from '../voice/turn_config/turn_handling.js';
 import {
+  TwilioConnectorWarmTransferTask,
   type WarmTransferResult,
+  WarmTransferTask,
   createCallerHangupSpeech,
   createWarmTransferSpeech,
   createWarmTransferTask,
@@ -150,6 +153,114 @@ describe('resolveHumanAgentRoomName', () => {
 });
 
 describe('createWarmTransferTask', () => {
+  it.each(['sip', 'twilio'] as const)(
+    'accepts turnHandling for the %s warm transfer task',
+    (kind) => {
+      const turnHandling: TurnHandlingOptions = {
+        turnDetection: 'vad',
+        endpointing: { minDelay: 200 },
+        interruption: { enabled: false },
+        preemptiveGeneration: {},
+      };
+      const create = vi.spyOn(AgentTask, 'create');
+
+      if (kind === 'sip') {
+        new WarmTransferTask({
+          sipCallTo: '+15555550123',
+          sipTrunkId: 'test-trunk',
+          turnHandling,
+          turnDetection: 'stt',
+        });
+      } else {
+        new TwilioConnectorWarmTransferTask({
+          phoneNumber: '+15555550123',
+          twilioFromNumber: '+15555550124',
+          twilioAccountSid: 'test-account',
+          twilioAuthToken: 'test-token',
+          turnHandling,
+          turnDetection: 'stt',
+        });
+      }
+
+      const task = create.mock.results[0]!.value as AgentTask<WarmTransferResult>;
+      expect(task.turnHandling).toEqual(turnHandling);
+    },
+  );
+
+  it.each(['sip', 'twilio'] as const)(
+    'preserves legacy turn handling options for the %s warm transfer task',
+    (kind) => {
+      const create = vi.spyOn(AgentTask, 'create');
+
+      if (kind === 'sip') {
+        new WarmTransferTask({
+          sipCallTo: '+15555550123',
+          sipTrunkId: 'test-trunk',
+          turnDetection: 'vad',
+          allowInterruptions: false,
+        });
+      } else {
+        new TwilioConnectorWarmTransferTask({
+          phoneNumber: '+15555550123',
+          twilioFromNumber: '+15555550124',
+          twilioAccountSid: 'test-account',
+          twilioAuthToken: 'test-token',
+          turnDetection: 'vad',
+          allowInterruptions: false,
+        });
+      }
+
+      const task = create.mock.results[0]!.value as AgentTask<WarmTransferResult>;
+      expect(task.turnHandling).toEqual({
+        turnDetection: 'vad',
+        interruption: { enabled: false },
+      });
+    },
+  );
+
+  it('forwards turnHandling to the consultation session and agent', async () => {
+    vi.stubEnv('LIVEKIT_API_KEY', 'api-key');
+    vi.stubEnv('LIVEKIT_API_SECRET', 'api-secret');
+    vi.spyOn(AccessToken.prototype, 'toJwt').mockResolvedValue('token');
+    vi.spyOn(Room.prototype, 'connect').mockResolvedValue();
+    const start = vi.spyOn(AgentSession.prototype, 'start').mockResolvedValue();
+    vi.spyOn(SipClient.prototype, 'createSipParticipant').mockResolvedValue(
+      new SIPParticipantInfo(),
+    );
+
+    const turnHandling: TurnHandlingOptions = {
+      turnDetection: 'vad',
+      endpointing: {},
+      interruption: { minDuration: 300 },
+      preemptiveGeneration: {},
+      userTurnLimit: { maxWords: 50 },
+    };
+    const task = createWarmTransferTask({
+      sipCallTo: '+15555550123',
+      sipTrunkId: 'test-trunk',
+      holdAudio: null,
+      turnHandling,
+    });
+    task.turnHandling!.turnDetection = 'stt';
+    const callerSession = new AgentSession({ turnHandling: { turnDetection: 'vad' } });
+    task._agentActivity = { agentSession: callerSession } as never;
+    const callerRoom = createCallerRoom();
+
+    await job.runWithJobContextAsync(
+      {
+        room: callerRoom,
+        info: { url: 'wss://example.test', apiKey: 'api-key', apiSecret: 'api-secret' },
+      } as JobContext,
+      () => task.onEnter(),
+    );
+
+    const transferSession = start.mock.instances[0] as AgentSession;
+    const transferAgent = start.mock.calls[0]![0].agent;
+    const expected = { ...turnHandling, turnDetection: 'stt' };
+    expect(transferSession.sessionOptions.turnHandling).toMatchObject(expected);
+    expect(transferAgent.turnHandling).toEqual(expected);
+  });
+
   it('rejects an empty roomName', () => {
     expect(() =>
       createWarmTransferTask({
