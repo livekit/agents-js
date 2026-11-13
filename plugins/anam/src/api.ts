@@ -151,23 +151,30 @@ export class AnamAPI {
       livekitToken: params.livekitToken,
     };
 
+    const sessionOptionsPayload: Record<string, unknown> = {};
     if (
-      params.sessionOptions &&
-      (params.sessionOptions.videoWidth !== undefined ||
-        params.sessionOptions.videoHeight !== undefined)
+      params.sessionOptions?.videoWidth !== undefined ||
+      params.sessionOptions?.videoHeight !== undefined
     ) {
       if (
-        params.sessionOptions.videoWidth === undefined ||
-        params.sessionOptions.videoHeight === undefined
+        params.sessionOptions?.videoWidth === undefined ||
+        params.sessionOptions?.videoHeight === undefined
       ) {
         throw new AnamException(
           'videoWidth and videoHeight must be set together (both or neither)',
         );
       }
-      payload.sessionOptions = {
-        videoWidth: params.sessionOptions.videoWidth,
-        videoHeight: params.sessionOptions.videoHeight,
-      };
+      sessionOptionsPayload.videoWidth = params.sessionOptions.videoWidth;
+      sessionOptionsPayload.videoHeight = params.sessionOptions.videoHeight;
+    }
+    if (params.sessionOptions?.region !== undefined) {
+      sessionOptionsPayload.region = params.sessionOptions.region;
+    }
+    if (params.sessionOptions?.regionPolicy !== undefined) {
+      sessionOptionsPayload.regionPolicy = params.sessionOptions.regionPolicy;
+    }
+    if (Object.keys(sessionOptionsPayload).length > 0) {
+      payload.sessionOptions = sessionOptionsPayload;
     }
 
     return this.post<{ sessionId: string }>(this.startPath, payload);
