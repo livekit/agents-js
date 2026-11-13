@@ -1,0 +1,37 @@
+<!--
+SPDX-FileCopyrightText: 2026 LiveKit, Inc.
+
+SPDX-License-Identifier: Apache-2.0
+-->
+
+# Kalpa plugin for LiveKit Agents
+
+Support for text-to-speech with [Kalpa](https://kalpalabs.ai/) in LiveKit Agents.
+
+See the [Kalpa integration docs](https://docs.livekit.io/agents/models/tts/kalpa/) for more
+information, and the [Kalpa docs](https://docs.kalpalabs.ai/text-to-speech) for the API, models,
+and voices.
+
+## Installation
+
+```bash
+pnpm add @livekit/agents-plugin-kalpa
+```
+
+## Prerequisites
+
+You'll need an API key from Kalpa. It can be set as the `KALPA_API_KEY` environment variable. You
+can create one [here](https://kalpalabs.ai/dashboard/keys/).
+
+## Usage
+
+```typescript
+import { TTS } from '@livekit/agents-plugin-kalpa';
+
+const tts = new TTS({
+  voice: '18c26f49-9f9c-400c-bec9-7467f28e1db5', // Arjun
+});
+```
+
+`kalpa-tts-1` speaks English and Hindi. List the voices with
+`GET https://api.kalpalabs.ai/v1/voices`.
