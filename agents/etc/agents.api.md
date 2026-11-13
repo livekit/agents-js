@@ -4813,6 +4813,14 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
     // @internal
     _connectedMonoUs: number;
     deleteRoom(roomName?: string): Promise<void>;
+    // @internal
+    _hostedOutput?: {
+        readonly decided: boolean;
+        decide(choice: {
+            logs: boolean;
+            redaction: boolean;
+        }): void;
+    };
     // (undocumented)
     get inferenceExecutor(): InferenceExecutor;
     get inferenceHeaders(): Record<string, string>;
@@ -4850,6 +4858,11 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
     _recordingInitialized: boolean;
     // @internal (undocumented)
     _redactionEnabled: boolean;
+    // @internal
+    _rejectedRecording?: {
+        logs: boolean;
+        redaction: boolean;
+    };
     // (undocumented)
     get room(): Room;
     // (undocumented)
@@ -9972,9 +9985,9 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 // src/utils.ts:468:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "cancelled"
 // src/voice/agent_session.ts:411:3 - (ae-unresolved-link) The @link reference could not be resolved: This type of declaration is not supported yet by the resolver
 // src/voice/agent_session.ts:1089:5 - (ae-forgotten-export) The symbol "RecordingOptions" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1810:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1810:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1810:5 - (ae-forgotten-export) The symbol "LLMError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1808:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1808:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1808:5 - (ae-forgotten-export) The symbol "LLMError" needs to be exported by the entry point index.d.ts
 // src/voice/amd.ts:315:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "waitForTrackPublication" has more than one declaration; you need to add a TSDoc member reference selector
 // src/voice/amd.ts:315:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "gateListening"
 // src/voice/amd.ts:323:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "aclose"
