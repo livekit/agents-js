@@ -446,3 +446,97 @@ describe('TranscriptionSynchronizer playback-counter drift on a dropped frame', 
     await synchronizer.close();
   });
 });
+
+describe('TranscriptionSynchronizer pause, clear and resume', () => {
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  // starts a paused segment with 5 s of audio, so pacing alone would keep releasing words
+  async function startPausedSegment() {
+    const downstreamAudio = new MockAudioOutput();
+    const downstreamText = new MockTextOutput();
+    const synchronizer = new TranscriptionSynchronizer(downstreamAudio, downstreamText);
+
+    await synchronizer.textOutput.captureText(
+      'one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen',
+    );
+    synchronizer.textOutput.flush();
+    for (let i = 0; i < 50; i++) {
+      await synchronizer.audioOutput.captureFrame(
+        new AudioFrame(new Int16Array(800), 8000, 1, 800),
+      );
+    }
+    synchronizer.audioOutput.flush();
+
+    await sleep(600); // a few words go out while the segment plays
+    synchronizer.audioOutput.pause();
+    await sleep(600);
+    return { synchronizer, downstreamAudio, downstreamText };
+  }
+
+  it.each([
+    ['clear, then resume', ['clearBuffer', 'resume'] as const],
+    ['resume, then clear', ['resume', 'clearBuffer'] as const],
+  ])(
+    'does not release more words of a paused segment whose audio is cleared (%s)',
+    async (_name, calls) => {
+      const { synchronizer, downstreamAudio, downstreamText } = await startPausedSegment();
+      const beforeCut = downstreamText.captured.join('');
+      expect(beforeCut).not.toBe('');
+
+      // the paused speech is interrupted: its audio is cleared and the output resumes
+      // for the next speech, before the cut segment's playback_finished arrives
+      for (const call of calls) {
+        synchronizer.audioOutput[call]();
+      }
+      await sleep(300);
+      expect(downstreamText.captured.join('')).toBe(beforeCut);
+
+      const playout = synchronizer.audioOutput.waitForPlayout();
+      downstreamAudio.onPlaybackFinished({ playbackPosition: 0.6, interrupted: true });
+      expect((await playout).synchronizedTranscript).toBe(beforeCut);
+      await synchronizer.close();
+      expect(downstreamText.captured.join('')).toBe(beforeCut);
+    },
+  );
+
+  it('holds a due word when the clear lands after the resume', async () => {
+    const { synchronizer, downstreamAudio, downstreamText } = await startPausedSegment();
+
+    // AgentActivity order: the resume runs first, and the clear lands while the main task
+    // sleeps before its next word
+    synchronizer.audioOutput.resume();
+    await sleep(50);
+    const beforeClear = downstreamText.captured.join('');
+    synchronizer.audioOutput.clearBuffer();
+    await sleep(300);
+    expect(downstreamText.captured.join('')).toBe(beforeClear);
+
+    downstreamAudio.onPlaybackFinished({ playbackPosition: 0.6, interrupted: true });
+    await synchronizer.close();
+    expect(downstreamText.captured.join('')).toBe(beforeClear);
+  });
+
+  it('releases the remaining words when a paused segment resumes without a clear', async () => {
+    const { synchronizer, downstreamText } = await startPausedSegment();
+    const beforeResume = downstreamText.captured.join('');
+
+    synchronizer.audioOutput.resume();
+    await vi.waitFor(
+      () => expect(downstreamText.captured.join('').length).toBeGreaterThan(beforeResume.length),
+      { timeout: 2000 },
+    );
+    await synchronizer.close();
+  });
+
+  it('closes a segment cleared while paused', async () => {
+    const { synchronizer } = await startPausedSegment();
+    synchronizer.audioOutput.clearBuffer();
+    synchronizer.audioOutput.resume();
+
+    const result = await Promise.race([
+      synchronizer.close().then(() => 'closed' as const),
+      sleep(1000).then(() => 'timeout' as const),
+    ]);
+    expect(result).toBe('closed');
+  });
+});
