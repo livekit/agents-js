@@ -49,6 +49,8 @@ jobs:
         run: pnpm build
       - name: Test agents
         run: pnpm test agents --silent
+      - name: Test OpenAI-compatible model options
+        run: pnpm test plugins/openai/src/llm_options.test.ts --silent
       - name: Test OpenAI-compatible realtime models
         run: pnpm test plugins/openai/src/realtime plugins/xai/src/realtime --silent
       - name: Test LiveKit inference

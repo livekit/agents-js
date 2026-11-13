@@ -859,6 +859,7 @@ export class LLM extends llm.LLM {
         baseURL?: string;
         user?: string;
         temperature?: number;
+        modelOptions?: Record<string, unknown>;
     }): LLM;
     static withCerebras(opts?: Partial<{
         model: string | CerebrasChatModels;
@@ -866,6 +867,7 @@ export class LLM extends llm.LLM {
         baseURL?: string;
         user?: string;
         temperature?: number;
+        modelOptions?: Record<string, unknown>;
         client: OpenAI;
     }>): LLM;
     static withDeepSeek(opts?: Partial<{
@@ -874,6 +876,7 @@ export class LLM extends llm.LLM {
         baseURL?: string;
         user?: string;
         temperature?: number;
+        modelOptions?: Record<string, unknown>;
         client: OpenAI;
     }>): LLM;
     static withFireworks(opts?: Partial<LLMOptions>): LLM;
@@ -883,6 +886,7 @@ export class LLM extends llm.LLM {
         baseURL?: string;
         user?: string;
         temperature?: number;
+        modelOptions?: Record<string, unknown>;
         client: OpenAI;
     }>): LLM;
     static withMeta(opts?: Partial<{
@@ -891,6 +895,7 @@ export class LLM extends llm.LLM {
         client?: OpenAI;
         model?: string | MetaChatModels;
         temperature?: number;
+        modelOptions?: Record<string, unknown>;
         user?: string;
     }>): LLM;
     static withOcto(opts?: Partial<{
@@ -899,12 +904,14 @@ export class LLM extends llm.LLM {
         baseURL?: string;
         user?: string;
         temperature?: number;
+        modelOptions?: Record<string, unknown>;
         client: OpenAI;
     }>): LLM;
     static withOllama(opts?: Partial<{
         model: string;
         baseURL?: string;
         temperature?: number;
+        modelOptions?: Record<string, unknown>;
         client: OpenAI;
     }>): LLM;
     static withOVHcloud(opts?: Partial<LLMOptions>): LLM;
@@ -914,6 +921,7 @@ export class LLM extends llm.LLM {
         baseURL?: string;
         user?: string;
         temperature?: number;
+        modelOptions?: Record<string, unknown>;
         client: OpenAI;
     }>): LLM;
     static withTelnyx(opts?: Partial<{
@@ -922,6 +930,7 @@ export class LLM extends llm.LLM {
         baseURL?: string;
         user?: string;
         temperature?: number;
+        modelOptions?: Record<string, unknown>;
         client: OpenAI;
     }>): LLM;
     static withTogether(opts?: Partial<{
@@ -930,6 +939,7 @@ export class LLM extends llm.LLM {
         baseURL?: string;
         user?: string;
         temperature?: number;
+        modelOptions?: Record<string, unknown>;
         client: OpenAI;
     }>): LLM;
     static withXAI(opts?: Partial<{
@@ -938,6 +948,7 @@ export class LLM extends llm.LLM {
         baseURL?: string;
         user?: string;
         temperature?: number;
+        modelOptions?: Record<string, unknown>;
         client: OpenAI;
     }>): LLM;
 }
@@ -984,6 +995,7 @@ export interface LLMOptions {
     metadata?: Record<string, string>;
     // (undocumented)
     model: string | ChatModels;
+    modelOptions?: Record<string, unknown>;
     // (undocumented)
     parallelToolCalls?: boolean;
     // (undocumented)
