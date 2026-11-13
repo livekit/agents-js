@@ -38,6 +38,14 @@ function isGemini4Model(model: string): boolean {
   return model.toLowerCase().includes('gemini-4');
 }
 
+function putUserTurnBeforeOpeningToolCall(contents: types.Content[]): void {
+  // Gemini 4 rejects a function call that opens the conversation. Reuse the same placeholder
+  // user turn that is already sent when history ends with a model turn.
+  if (contents[0]?.parts?.[0]?.functionCall) {
+    contents.unshift({ role: 'user', parts: [{ text: '.' }] });
+  }
+}
+
 function isGemini3OrNewer(model: string): boolean {
   return isGemini3Model(model) || isGemini4Model(model);
 }
@@ -571,6 +579,9 @@ export class LLMStream extends llm.LLMStream {
         role: turn.role as types.Content['role'],
         parts: turn.parts as types.Part[],
       }));
+      if (isGemini4Model(this.#model)) {
+        putUserTurnBeforeOpeningToolCall(contents);
+      }
 
       let systemInstruction: types.Content | undefined = undefined;
       if (extraData.systemMessages && extraData.systemMessages.length > 0) {
