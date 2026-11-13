@@ -13,6 +13,10 @@ const ATTRIBUTION_HEADER = {
   'X-Pplx-Integration': `livekit-agents/${__PACKAGE_VERSION__}`,
 };
 
+const DEPRECATION_WARNING =
+  '[Perplexity] LLM uses Sonar Chat Completions and is deprecated. ' +
+  'Use responses.LLM for the Perplexity Agent API.';
+
 /** @public */
 export interface LLMOptions {
   model: string | PerplexityChatModels;
@@ -34,6 +38,9 @@ const defaultLLMOptions: LLMOptions = {
 /**
  * Create a new instance of Perplexity LLM.
  *
+ * @deprecated This client uses Sonar Chat Completions. Use `responses.LLM` for the Perplexity
+ * Agent API.
+ *
  * @public
  */
 export class LLM extends OpenAILLM {
@@ -41,6 +48,7 @@ export class LLM extends OpenAILLM {
   private readonly _opts: LLMOptions;
 
   constructor(opts: Partial<LLMOptions> = {}) {
+    console.warn(DEPRECATION_WARNING);
     const merged = { ...defaultLLMOptions, ...opts };
 
     merged.apiKey = merged.apiKey || process.env.PERPLEXITY_API_KEY;
