@@ -13,7 +13,7 @@ import {
   FunctionCallOutput,
   type ImageContent,
 } from './chat_context.js';
-import { ToolContext, tool } from './tool_context.js';
+import { ToolContext, ToolResult, tool } from './tool_context.js';
 import {
   ThinkingTokenFilter,
   _computeLCS,
@@ -561,6 +561,32 @@ describe('executeToolCall', () => {
 
     expect(result.isError).toBe(false);
     expect(JSON.parse(result.output)).toEqual({ default: 'eco', retries: 2 });
+  });
+
+  describe.each([true, false])('with a ToolResult (replyRequired: %s)', (replyRequired) => {
+    it.each([
+      { output: 'ok', expected: '"ok"' },
+      { output: { sent: '1' }, expected: '{"sent":"1"}' },
+      { output: undefined, expected: '' },
+    ])('keeps the output $expected and replyRequired', async ({ output, expected }) => {
+      const sendDtmf = tool({
+        name: 'send_dtmf',
+        description: 'Send DTMF events.',
+        execute: async () => new ToolResult(output, { replyRequired }),
+      });
+
+      const result = await executeToolCall(
+        FunctionCall.create({ callId: 'dtmf-1', name: 'send_dtmf', args: '{}' }),
+        new ToolContext([sendDtmf]),
+      );
+
+      expect(result).toMatchObject({
+        callId: 'dtmf-1',
+        output: expected,
+        isError: false,
+        replyRequired,
+      });
+    });
   });
 });
 

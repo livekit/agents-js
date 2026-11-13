@@ -12,7 +12,7 @@ import {
   RealtimeSession,
   type RealtimeSessionOptions,
 } from '../llm/realtime.js';
-import { type ToolChoice, ToolContext, handoff, tool } from '../llm/tool_context.js';
+import { type ToolChoice, ToolContext, ToolResult, handoff, tool } from '../llm/tool_context.js';
 import { initializeLogger } from '../log.js';
 import { Future } from '../utils.js';
 import { Agent } from './agent.js';
@@ -393,32 +393,106 @@ describe('Realtime tool output commit', () => {
     expect(items.indexOf(output!)).toBeGreaterThan(items.indexOf(call!));
   });
 
-  it('carries cancelToolReply to the realtime session output', async () => {
-    const model = new FakeRealtimeModel();
-    const session = new AgentSession({
-      llm: model,
-      vad: null,
-      turnHandling: { turnDetection: null },
-    });
-    const agent = new Agent({
-      instructions: 'test',
-      tools: { lookup_order: tool({ description: 'x', execute: async () => 'ok' }) },
-    });
-    session.on(AgentSessionEventTypes.FunctionToolsExecuted, (event) => event.cancelToolReply());
+  it.each([false, true])(
+    'carries cancelToolReply to the realtime session output (wrapped: %s)',
+    async (wrapped) => {
+      const model = new FakeRealtimeModel();
+      const session = new AgentSession({
+        llm: model,
+        vad: null,
+        turnHandling: { turnDetection: null },
+      });
+      const agent = new Agent({
+        instructions: 'test',
+        tools: {
+          lookup_order: tool({
+            description: 'x',
+            execute: async () => (wrapped ? new ToolResult('ok', { replyRequired: true }) : 'ok'),
+          }),
+        },
+      });
+      session.on(AgentSessionEventTypes.FunctionToolsExecuted, (event) => event.cancelToolReply());
 
-    await session.start({ agent });
-    try {
-      await session.generateReply().waitForPlayout();
-      await vi.waitFor(() =>
-        expect(
-          model.activeSession.chatCtx.items.some(
-            (item) => item.type === 'function_call_output' && !item.replyRequired,
-          ),
-        ).toBe(true),
-      );
-    } finally {
-      await session.close();
-    }
+      await session.start({ agent });
+      try {
+        await session.generateReply().waitForPlayout();
+        await vi.waitFor(() =>
+          expect(
+            model.activeSession.chatCtx.items.some(
+              (item) => item.type === 'function_call_output' && !item.replyRequired,
+            ),
+          ).toBe(true),
+        );
+      } finally {
+        await session.close();
+      }
+    },
+  );
+
+  describe.each([false, true])('with an interrupted turn: %s', (interrupt) => {
+    it.each([true, false])(
+      'syncs a ToolResult replyRequired (%s) to the realtime session',
+      async (replyRequired) => {
+        const model = new FakeRealtimeModel();
+        model.activeSession.emitAudio = interrupt;
+        model.activeSession.toolName = 'send_dtmf';
+        const session = new AgentSession({
+          llm: model,
+          vad: null,
+          turnHandling: { turnDetection: null },
+        });
+        if (interrupt) session.output.audio = new InterruptibleAudioOutput();
+        const toolFinished = new Future<void>();
+        const agent = new Agent({
+          instructions: 'test',
+          tools: {
+            send_dtmf: tool({
+              description: 'Send DTMF events.',
+              execute: async () => {
+                toolFinished.resolve();
+                return new ToolResult('Successfully sent DTMF events: 1', { replyRequired });
+              },
+            }),
+          },
+        });
+
+        await session.start({ agent });
+        try {
+          const speech = session.generateReply();
+          if (interrupt) {
+            await toolFinished.await;
+            await new Promise<void>((resolve) => setImmediate(resolve));
+            session.interrupt();
+          }
+          await speech.waitForPlayout();
+          await vi.waitFor(() =>
+            expect(
+              model.activeSession.chatCtx.items.some(
+                (item) => item.type === 'function_call_output',
+              ),
+            ).toBe(true),
+          );
+        } finally {
+          await session.close();
+        }
+
+        for (const [label, items] of [
+          ['agent chat context', agent.chatCtx.items],
+          ['session history', session.history.items],
+          ['realtime session', model.activeSession.chatCtx.items],
+        ] as const) {
+          const outputs = items.filter((item) => item.type === 'function_call_output');
+          expect(outputs, label).toHaveLength(1);
+          expect(outputs[0], label).toMatchObject({
+            callId: TOOL_CALL_ID,
+            output: JSON.stringify('Successfully sent DTMF events: 1'),
+            isError: false,
+            replyRequired: replyRequired && !interrupt,
+          });
+        }
+        expect(model.activeSession.generatedToolChoices).toHaveLength(1);
+      },
+    );
   });
 
   it('preserves and syncs a completed tool output when a realtime turn is interrupted', async () => {

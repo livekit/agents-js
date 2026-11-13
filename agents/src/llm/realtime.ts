@@ -192,11 +192,14 @@ export abstract class RealtimeSession extends EventEmitter {
   abstract pushAudio(frame: AudioFrame): void;
 
   /**
+   * `toolChoice` and `tools` apply only to this response. Models without
+   * {@link RealtimeCapabilities.perResponseToolChoice} ignore them.
+   *
    * @throws RealtimeError on Timeout
    */
   abstract generateReply(
     instructions?: string,
-    options?: { signal?: AbortSignal },
+    options?: { signal?: AbortSignal; toolChoice?: ToolChoice; tools?: ToolContext },
   ): Promise<GenerationCreatedEvent>;
 
   /**

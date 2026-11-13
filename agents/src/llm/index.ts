@@ -15,6 +15,7 @@ export {
   ToolContext,
   ToolError,
   ToolFlag,
+  ToolResult,
   Toolset,
   toToolContext,
   type AgentHandoff,

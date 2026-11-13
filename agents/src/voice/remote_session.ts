@@ -33,7 +33,7 @@ import type { SimulationContext } from '../simulation.js';
 import { AsyncIterableQueue, Event, Future, Task, asError, delay, shortuuid } from '../utils.js';
 import { version } from '../version.js';
 import type { AgentSession, AgentSessionUsage } from './agent_session.js';
-import { AMDCategory, type AMDPredictionEvent } from './amd.js';
+import { AMDCategory, type AMDCompletedEvent, type AMDPredictionEvent } from './amd/index.js';
 import type { TcpAudioInput, TcpAudioOutput } from './console_io.js';
 import {
   type AgentFalseInterruptionEvent,
@@ -75,6 +75,7 @@ export type RemoteSessionEventTypes =
   | 'function_tools_executed'
   | 'overlapping_speech'
   | 'amd_prediction'
+  | 'amd_completed'
   | 'eot_prediction'
   | 'session_usage'
   | 'debug_message'
@@ -91,6 +92,7 @@ export type RemoteSessionCallbacks = {
   function_tools_executed: (ev: pb.AgentSessionEvent_FunctionToolsExecuted) => void;
   overlapping_speech: (ev: pb.AgentSessionEvent_OverlappingSpeech) => void;
   amd_prediction: (ev: pb.AgentSessionEvent_AmdPrediction) => void;
+  amd_completed: (ev: pb.AgentSessionEvent_AmdCompleted) => void;
   eot_prediction: (ev: pb.AgentSessionEvent_EotPrediction) => void;
   session_usage: (ev: pb.AgentSessionEvent_SessionUsageUpdated) => void;
   debug_message: (ev: pb.DebugMessage) => void;
@@ -584,10 +586,26 @@ const USER_STATE_MAP: Record<UserState, pb.UserState> = {
 const AMD_CATEGORY_MAP: Record<AMDCategory, pb.AmdCategory> = {
   [AMDCategory.HUMAN]: pb.AmdCategory.AMD_HUMAN,
   [AMDCategory.MACHINE_IVR]: pb.AmdCategory.AMD_MACHINE_IVR,
+  [AMDCategory.MACHINE_SCREENING]: pb.AmdCategory.AMD_MACHINE_SCREENING,
   [AMDCategory.MACHINE_VM]: pb.AmdCategory.AMD_MACHINE_VM,
   [AMDCategory.MACHINE_UNAVAILABLE]: pb.AmdCategory.AMD_MACHINE_UNAVAILABLE,
   [AMDCategory.UNCERTAIN]: pb.AmdCategory.AMD_UNCERTAIN,
+  [AMDCategory.WAIT]: pb.AmdCategory.AMD_WAIT,
 };
+
+function encodeAmdPrediction(event: AMDPredictionEvent): pb.AgentSessionEvent_AmdPrediction {
+  return new pb.AgentSessionEvent_AmdPrediction({
+    speechDuration: msToDuration(event.speechDuration),
+    delay: msToDuration(event.delay),
+    category: AMD_CATEGORY_MAP[event.category],
+    reason: event.reason,
+    transcript: event.transcript,
+    turnId: event.turnId,
+    stage: AMD_CATEGORY_MAP[event.stage],
+    inferenceDuration:
+      event.inferenceDuration !== null ? msToDuration(event.inferenceDuration) : undefined,
+  });
+}
 
 // ===========================================================================
 // Chat item / timestamp conversion helpers
@@ -1112,14 +1130,22 @@ export class SessionHost {
    * `SessionHost._on_amd_prediction`.
    */
   _onAmdPrediction(event: AMDPredictionEvent): void {
+    this.emitEvent({ case: 'amdPrediction', value: encodeAmdPrediction(event) });
+  }
+
+  /**
+   * @internal — forwards an AMD run's result to the connected
+   * {@link RemoteSession} peer. Mirrors python `SessionHost._on_amd_completed`.
+   */
+  _onAmdCompleted(event: AMDCompletedEvent): void {
     this.emitEvent({
-      case: 'amdPrediction',
-      value: new pb.AgentSessionEvent_AmdPrediction({
-        speechDuration: msToDuration(event.speechDurationMs),
-        delay: msToDuration(event.delayMs),
+      case: 'amdCompleted',
+      value: new pb.AgentSessionEvent_AmdCompleted({
         category: AMD_CATEGORY_MAP[event.category],
         reason: event.reason,
-        transcript: event.transcript,
+        voicemailMessagePlayed: event.voicemailMessagePlayed,
+        prediction:
+          event.lastPrediction !== null ? encodeAmdPrediction(event.lastPrediction) : undefined,
       }),
     });
   }
@@ -1567,6 +1593,9 @@ export class RemoteSession extends (EventEmitter as new () => TypedEventEmitter<
         break;
       case 'amdPrediction':
         this.emit('amd_prediction', ev.value);
+        break;
+      case 'amdCompleted':
+        this.emit('amd_completed', ev.value);
         break;
       case 'eotPrediction':
         this.emit('eot_prediction', ev.value);

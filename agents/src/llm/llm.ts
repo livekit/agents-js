@@ -351,7 +351,11 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
           }
 
           if (retryInterval > 0) {
-            await delay(retryInterval);
+            await delay(retryInterval, { signal: this.abortController.signal }).catch(() => {});
+          }
+          // a closed stream stops retrying, like a cancelled Python task
+          if (this.abortController.signal.aborted) {
+            return;
           }
         } else {
           this.emitError({ error: toError(error), recoverable: false });

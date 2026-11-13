@@ -988,8 +988,11 @@ export class RealtimeSession extends llm.RealtimeSession {
 
   async generateReply(
     instructions?: string,
-    options: { signal?: AbortSignal } = {},
+    options: { signal?: AbortSignal; toolChoice?: llm.ToolChoice; tools?: llm.ToolContext } = {},
   ): Promise<llm.GenerationCreatedEvent> {
+    if (options.tools !== undefined) {
+      this.#logger.warn('per-response tools is not supported by Google Realtime API, ignoring');
+    }
     if (!this.realtimeModel.capabilities.midSessionChatCtxUpdate && instructions !== undefined) {
       throw new Error(
         `generateReply with 'instructions' is not compatible with '${this.options.model}'`,

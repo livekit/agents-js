@@ -1418,6 +1418,8 @@ class RealtimeSession_2 extends llm_2.RealtimeSession {
     // (undocumented)
     commitAudio(): Promise<void>;
     // (undocumented)
+    protected convertToolsToOai(_tools: llm_2.ToolContext): api_proto.Tool[];
+    // (undocumented)
     protected createChatCtxUpdateEvents(chatCtx: llm_2.ChatContext, addMockAudio?: boolean): Promise<(api_proto.ConversationItemCreateEvent | api_proto.ConversationItemDeleteEvent)[]>;
     // (undocumented)
     protected createSessionUpdateEvent(): api_proto.SessionUpdateEvent;
@@ -1435,6 +1437,8 @@ class RealtimeSession_2 extends llm_2.RealtimeSession {
     // (undocumented)
     generateReply(instructions?: string, options?: {
         signal?: AbortSignal;
+        toolChoice?: llm_2.ToolChoice;
+        tools?: llm_2.ToolContext;
     }): Promise<llm_2.GenerationCreatedEvent>;
     // (undocumented)
     protected handleConversationItemCreated(event: api_proto.ConversationItemCreatedEvent): void;

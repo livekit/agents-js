@@ -29,6 +29,14 @@ type SessionInternals = {
 
 type EmittedTranscript = llm.InputTranscriptionCompleted;
 
+describe('xAI realtime capabilities', () => {
+  it('does not support per-response tool choice', () => {
+    expect(new RealtimeModel({ apiKey: 'test-key' }).capabilities.perResponseToolChoice).toBe(
+      false,
+    );
+  });
+});
+
 describe('xAI realtime turn state', () => {
   beforeEach(() => {
     vi.spyOn(Task, 'from').mockReturnValue({

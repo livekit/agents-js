@@ -25,6 +25,7 @@ import {
   isAgentHandoff,
   isFunctionTool,
   isToolError,
+  isToolResult,
   sortedToolNames,
 } from '../llm/tool_context.js';
 import { parseFunctionArguments } from '../llm/utils.js';
@@ -223,6 +224,11 @@ function isValidToolOutput(toolOutput: unknown): boolean {
     return true;
   }
 
+  // only the top-level output, or a handoff's `returns`, can be a ToolResult
+  if (isToolResult(toolOutput)) {
+    return false;
+  }
+
   if (Array.isArray(toolOutput)) {
     return toolOutput.every(isValidToolOutput);
   }
@@ -340,6 +346,12 @@ export class _JsOutput {
       toolOutput = this.output.returns;
     }
 
+    let replyRequired = toolOutput !== undefined;
+    if (isToolResult(toolOutput)) {
+      replyRequired = toolOutput.replyRequired;
+      toolOutput = toolOutput.output;
+    }
+
     if (!isValidToolOutput(toolOutput)) {
       this.#logger.error(
         {
@@ -366,7 +378,7 @@ export class _JsOutput {
         callId: this.toolCall.callId,
         output: toolOutput !== undefined ? JSON.stringify(toolOutput) : '', // take the string representation of the output
         isError: false,
-        replyRequired: toolOutput !== undefined,
+        replyRequired,
       }),
       agentTask,
     });
@@ -470,6 +482,13 @@ export function createToolOutput(params: {
     toolOutput = finalOutput.returns;
   }
 
+  // a tool with nothing to say, such as a bare handoff, expects no reply
+  let replyRequired = toolOutput !== undefined;
+  if (isToolResult(toolOutput)) {
+    replyRequired = toolOutput.replyRequired;
+    toolOutput = toolOutput.output;
+  }
+
   if (!isValidToolOutput(toolOutput)) {
     logger.error(
       {
@@ -498,7 +517,7 @@ export function createToolOutput(params: {
       callId: toolCall.callId,
       output: toolOutput !== undefined ? JSON.stringify(toolOutput) : '', // take the string representation of the output
       isError: false,
-      replyRequired: toolOutput !== undefined,
+      replyRequired,
     }),
     agentTask,
     rawOutput: finalOutput,

@@ -834,7 +834,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     unlock();
   }
 
-  protected createToolsUpdateEvent(_tools: llm.ToolContext): api_proto.SessionUpdateEvent {
+  protected convertToolsToOai(_tools: llm.ToolContext): api_proto.Tool[] {
     const oaiTools: api_proto.Tool[] = [];
 
     for (const t of _tools.flatten()) {
@@ -860,6 +860,12 @@ export class RealtimeSession extends llm.RealtimeSession {
         continue;
       }
     }
+
+    return oaiTools;
+  }
+
+  protected createToolsUpdateEvent(_tools: llm.ToolContext): api_proto.SessionUpdateEvent {
+    const oaiTools = this.convertToolsToOai(_tools);
 
     const isLegacyAzure = this._options.isAzure && !!this._options.apiVersion;
     return {
@@ -953,7 +959,7 @@ export class RealtimeSession extends llm.RealtimeSession {
 
   async generateReply(
     instructions?: string,
-    options: { signal?: AbortSignal } = {},
+    options: { signal?: AbortSignal; toolChoice?: llm.ToolChoice; tools?: llm.ToolContext } = {},
   ): Promise<llm.GenerationCreatedEvent> {
     // In OpenAI realtime, the session-level instructions are completely replaced by the
     // per-response instructions for this response. Prepend the session instructions so they
@@ -966,6 +972,8 @@ export class RealtimeSession extends llm.RealtimeSession {
     const handle = this.createResponse({
       instructions: responseInstructions,
       userInitiated: true,
+      toolChoice: options.toolChoice,
+      tools: options.tools,
     });
     this.textModeRecoveryRetries = 0;
 
@@ -2330,10 +2338,14 @@ export class RealtimeSession extends llm.RealtimeSession {
   private createResponse({
     userInitiated,
     instructions,
+    toolChoice,
+    tools,
     oldHandle,
   }: {
     userInitiated: boolean;
     instructions?: string;
+    toolChoice?: llm.ToolChoice;
+    tools?: llm.ToolContext;
     oldHandle?: CreateResponseHandle;
   }): CreateResponseHandle {
     const handle = oldHandle || new CreateResponseHandle({ instructions });
@@ -2359,6 +2371,8 @@ export class RealtimeSession extends llm.RealtimeSession {
     const response: api_proto.ResponseCreateEvent['response'] = {};
     if (instructions) response.instructions = instructions;
     if (userInitiated) response.metadata = { client_event_id: eventId };
+    if (toolChoice !== undefined) response.tool_choice = toOaiToolChoice(toolChoice);
+    if (tools !== undefined) response.tools = this.convertToolsToOai(tools);
 
     this.sendEvent({
       type: 'response.create',
