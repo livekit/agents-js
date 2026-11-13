@@ -7,7 +7,7 @@ import { log } from '../../log.js';
 import { IdentityTransform } from '../../stream/identity_transform.js';
 import type { WordStream, WordTokenizer } from '../../tokenize/index.js';
 import { basic } from '../../tokenize/index.js';
-import { TranscriptMarkupStripper } from '../../tts/provider_format.js';
+import { TranscriptMarkupStripper, stripAllMarkup } from '../../tts/provider_format.js';
 import { Future, Task, delay } from '../../utils.js';
 import {
   AudioOutput,
@@ -291,6 +291,7 @@ class SegmentSynchronizerImpl {
     }
 
     this.audioData.done = true;
+    this.reestimateSpeed();
   }
 
   pushText(text: string | TimedString) {
@@ -334,6 +335,8 @@ class SegmentSynchronizerImpl {
     } else {
       this.textData.wordStream.endInput();
     }
+
+    this.reestimateSpeed();
   }
 
   pause(): void {
@@ -364,6 +367,26 @@ class SegmentSynchronizerImpl {
     }
     if (!this.outputEnabledFuture.done) {
       this.outputEnabledFuture.resolve();
+    }
+  }
+
+  private reestimateSpeed(): void {
+    // truncated audio covers only part of the text, so it would inflate the speed
+    if (!this.textData.done || !this.audioData.done || this.audioTruncated) {
+      return;
+    }
+
+    // count the hyphens as mainTask paces them: visible text only, one word token at a time
+    // (calcHyphens alone would count a whole run of Chinese, Japanese or Thai as one word)
+    const pushedText = this.options.expressiveEnabled()
+      ? stripAllMarkup(this.textData.pushedText)
+      : this.textData.pushedText;
+    const pushedHyphens = this.options.wordTokenizer
+      .tokenize(pushedText)
+      .reduce((hyphens, word) => hyphens + this.calcHyphens(word).length, 0);
+    // a segment without syllables (markup only, punctuation, emoji) keeps the default speed
+    if (pushedHyphens > 0 && this.audioData.pushedDuration > 0) {
+      this.speed = pushedHyphens / this.audioData.pushedDuration; // hyphens per second
     }
   }
 
@@ -443,18 +466,14 @@ class SegmentSynchronizerImpl {
         return;
       }
 
-      // Find the word in pushedText, then extend to include trailing attached punctuation
+      // Find the word in pushedText and forward it with the whitespace before it. Not extended to
+      // the next whitespace: Chinese, Japanese and Thai are split per character, and extending
+      // would forward a whole sentence at once, ahead of the audio.
       const wordIdx = this.textData.pushedText.indexOf(word, pushedTextCursor);
       if (wordIdx === -1) {
         continue;
       }
-      let wordEnd = wordIdx + word.length;
-      while (
-        wordEnd < this.textData.pushedText.length &&
-        !/\s/.test(this.textData.pushedText[wordEnd]!)
-      ) {
-        wordEnd++;
-      }
+      const wordEnd = wordIdx + word.length;
       const forwardedWord = this.textData.pushedText.slice(pushedTextCursor, wordEnd);
       pushedTextCursor = wordEnd;
 
@@ -605,7 +624,7 @@ export const defaultTextSyncOptions: TranscriptionSynchronizerOptions = {
   speed: 1,
   hyphenateWord: basic.hyphenateWord,
   splitWords: basic.splitWords,
-  wordTokenizer: new basic.WordTokenizer(false),
+  wordTokenizer: new basic.WordTokenizer(false, true),
   enabled: true,
 };
 
