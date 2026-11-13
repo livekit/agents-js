@@ -234,6 +234,7 @@ export function redirectJobOutput(jobId: string, redaction: boolean): JobOutput 
         level: 40,
         msg: "failed to open the hosted log file, dropping this job's output",
         jobID: jobId,
+        job_id: jobId,
       }) + '\n',
     );
     replaceWrite(process.stdout, () => {});

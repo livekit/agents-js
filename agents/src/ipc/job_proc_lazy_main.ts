@@ -401,6 +401,7 @@ const startJob = (
 
           logger = logger.child({
             jobID: msg.value.runningJob.job.id,
+            job_id: msg.value.runningJob.job.id,
             room_id: msg.value.runningJob.job.room?.sid,
             ...(msg.value.runningJob.job.agentName
               ? { agent_name: msg.value.runningJob.job.agentName }
