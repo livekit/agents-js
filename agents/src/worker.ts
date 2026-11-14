@@ -31,6 +31,7 @@ import { EOT_INFERENCE_METHOD } from './inference/eot/runner.js';
 import { InferenceRunner } from './inference_runner.js';
 import { InferenceProcExecutor } from './ipc/inference_proc_executor.js';
 import { type JobExecutor, JobStatus } from './ipc/job_executor.js';
+import { JobProcExecutor } from './ipc/job_proc_executor.js';
 import { monotonicUs } from './ipc/job_trace.js';
 import { ProcPool } from './ipc/proc_pool.js';
 import type { JobAcceptArguments, JobProcess, RunningJobInfo } from './job.js';
@@ -644,6 +645,28 @@ export class AgentServer {
     return this.#procPool.processes
       .filter((proc) => proc.runningJob)
       .map((proc) => proc.runningJob!);
+  }
+
+  /**
+   * Replaces the worker token (token mode), given by `lk agent dev` over its dev channel: the
+   * next connection registers with it, and jobs read it from `LIVEKIT_TOKEN`.
+   *
+   * @internal
+   */
+  _updateWorkerToken(token: string) {
+    if (!this.#tokenMode) {
+      this.#logger.warn('ignoring a worker token: the worker runs with an API key and secret');
+      return;
+    }
+    this.#opts.token = token;
+    // read here by getWorkerToken(); a job process gets it over IPC, from launchJob when its job
+    // starts and below when it already runs one
+    process.env.LIVEKIT_TOKEN = token;
+    for (const proc of this.#procPool.processes) {
+      if (proc.runningJob && proc instanceof JobProcExecutor) {
+        proc.updateWorkerToken(token);
+      }
+    }
   }
 
   #updateJobStatus(proc: JobExecutor, joinTiming?: JobJoinTiming) {

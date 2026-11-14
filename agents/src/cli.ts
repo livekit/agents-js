@@ -46,9 +46,12 @@ const runServer = async (args: CliArgs) => {
   const server = new AgentServer(serverOptions);
 
   // When launched by `lk agent dev`, report ServerInfo over the CLI's dev channel
-  // so it can surface e.g. a Cloud console link. Best-effort; never fatal.
+  // so it can surface e.g. a Cloud console link, and take the refreshed worker
+  // tokens it sends in token mode. Best-effort; never fatal.
   const cliClient = args.cliAddr
-    ? new CLIClient(args.cliAddr, serverOptions.agentName, serverOptions.wsURL)
+    ? new CLIClient(args.cliAddr, serverOptions.agentName, serverOptions.wsURL, (token) =>
+        server._updateWorkerToken(token),
+      )
     : undefined;
   cliClient?.start();
 

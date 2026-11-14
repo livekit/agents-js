@@ -63,6 +63,11 @@ export type IPCMessage =
       value: { requestId: string; token?: string; expiresAt?: number; error?: string };
     }
   | {
+      // a refreshed worker token (token mode), for the job process's LIVEKIT_TOKEN
+      case: 'updateWorkerToken';
+      value: { token: string };
+    }
+  | {
       case: 'exiting';
       value: { reason: string };
     }

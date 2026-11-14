@@ -8,24 +8,33 @@ import { log } from './log.js';
 /**
  * Client for the dev channel opened by the driving `lk` CLI (its address is
  * passed via `--cli-addr`). On connect it reports this agent server's
- * {@link AgentDev.ServerInfo | ServerInfo} (agent name + LiveKit URL) so the CLI
- * can surface things like a Cloud console link.
+ * {@link AgentDev.ServerInfo | ServerInfo} (agent name + LiveKit URL, and that it
+ * supports token mode) so the CLI can surface things like a Cloud console link.
+ * It then reads the CLI's messages: Credentials carry a refreshed worker token
+ * in token mode.
  *
- * This mirrors the Python `WatchClient`'s ServerInfo handshake. Unlike Python,
- * Node reloads are a plain kill+respawn, so there is no running-job capture /
- * restore — the client only sends ServerInfo. It is strictly best-effort: a
- * missing or broken dev channel must never take the agent down.
+ * This mirrors the Python `WatchClient`. Unlike Python, Node reloads are a plain
+ * kill+respawn, so there is no running-job capture / restore. It is strictly
+ * best-effort: a missing or broken dev channel must never take the agent down.
  */
 export class CLIClient {
   #cliAddr: string;
   #agentName: string;
   #url: string;
+  #onCredentials?: (token: string) => void;
   #socket?: Socket;
 
-  constructor(cliAddr: string, agentName: string, url: string) {
+  /** @param onCredentials - called with each worker token the CLI sends (token mode) */
+  constructor(
+    cliAddr: string,
+    agentName: string,
+    url: string,
+    onCredentials?: (token: string) => void,
+  ) {
     this.#cliAddr = cliAddr;
     this.#agentName = agentName;
     this.#url = url;
+    this.#onCredentials = onCredentials;
   }
 
   start(): void {
@@ -53,10 +62,28 @@ export class CLIClient {
         const msg = new AgentDev.AgentDevMessage({
           message: {
             case: 'serverInfo',
-            value: new AgentDev.ServerInfo({ agentName: this.#agentName, url: this.#url }),
+            value: new AgentDev.ServerInfo({
+              agentName: this.#agentName,
+              url: this.#url,
+              supportsTokenMode: true,
+            }),
           },
         });
         this.#sendProto(socket, msg.toBinary());
+      });
+
+      // Messages are framed with a 4-byte big-endian length prefix and can span
+      // or share 'data' chunks.
+      let pending = Buffer.alloc(0);
+      socket.on('data', (chunk: Buffer) => {
+        pending = Buffer.concat([pending, chunk]);
+        while (pending.length >= 4) {
+          const length = pending.readUInt32BE(0);
+          if (pending.length < 4 + length) break;
+          const payload = pending.subarray(4, 4 + length);
+          pending = pending.subarray(4 + length);
+          this.#handleMessage(payload);
+        }
       });
 
       // Best-effort: log and move on if the CLI isn't listening.
@@ -73,6 +100,20 @@ export class CLIClient {
   close(): void {
     this.#socket?.destroy();
     this.#socket = undefined;
+  }
+
+  #handleMessage(payload: Uint8Array): void {
+    let msg: AgentDev.AgentDevMessage;
+    try {
+      msg = AgentDev.AgentDevMessage.fromBinary(payload);
+    } catch (err) {
+      log().debug(`invalid dev channel message: ${(err as Error).message}`);
+      return;
+    }
+    // Other messages (the job capture / restore requests) are Python-only.
+    if (msg.message.case === 'credentials') {
+      this.#onCredentials?.(msg.message.value.token);
+    }
   }
 
   /** Frames a message with a 4-byte big-endian length prefix (matches the Go CLI). */

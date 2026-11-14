@@ -475,6 +475,11 @@ const startJob = (
           logger.debug('job started');
           break;
         }
+        case 'updateWorkerToken': {
+          // read by getWorkerToken(), for inference and telemetry
+          process.env.LIVEKIT_TOKEN = msg.value.token;
+          break;
+        }
         case 'shutdownRequest': {
           safeSend({ case: 'shutdownRequestAck', value: undefined });
           if (!job) {

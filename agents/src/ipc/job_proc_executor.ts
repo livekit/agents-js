@@ -6,7 +6,7 @@ import type { ChildProcess } from 'node:child_process';
 import { fork } from 'node:child_process';
 import { extname } from 'node:path';
 import type { RunningJobInfo } from '../job.js';
-import type { JobToken } from '../job_token.js';
+import { type JobToken, getWorkerToken } from '../job_token.js';
 import { log } from '../log.js';
 import type { InferenceExecutor } from './inference_executor.js';
 import type { JobExecutor } from './job_executor.js';
@@ -167,6 +167,18 @@ export class JobProcExecutor extends SupervisedProc implements JobExecutor {
       ...(info.job.agentName && { agent_name: info.job.agentName }),
     });
 
+    const token = getWorkerToken();
+    if (token) {
+      // the process may hold an older worker token in its environment, from when it started
+      this.proc!.send({ case: 'updateWorkerToken', value: { token } });
+    }
     this.proc!.send({ case: 'startJobRequest', value: { runningJob: info } });
+  }
+
+  /** Sends a refreshed worker token (token mode) to the process running a job. */
+  updateWorkerToken(token: string) {
+    if (this.proc?.connected) {
+      this.proc.send({ case: 'updateWorkerToken', value: { token } });
+    }
   }
 }

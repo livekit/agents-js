@@ -446,6 +446,8 @@ export class AgentServer {
     run(): Promise<void>;
     // (undocumented)
     simulateJob(roomName: string, participantIdentity?: string): Promise<void>;
+    // @internal
+    _updateWorkerToken(token: string): void;
 }
 
 // Warning: (ae-forgotten-export) The symbol "UnknownUserData" needs to be exported by the entry point index.d.ts

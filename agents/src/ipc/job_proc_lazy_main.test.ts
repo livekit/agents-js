@@ -274,4 +274,50 @@ describe('job API tokens', () => {
     );
     expect(claims).toMatchObject({ iss: 'devkey', video: { roomCreate: true } });
   }, 20_000);
+
+  it('in token mode, the job reads the current worker token: at start, and after a refresh', async () => {
+    tokenModeEnv(); // the process starts with 'worker-token'
+    const proc = new TestJobProcExecutor({
+      agent: 'unused',
+      initializeTimeout: 10_000,
+      closeTimeout: 1000,
+      memoryWarnMB: 0,
+      memoryLimitMB: 0,
+      pingInterval: 2500,
+      pingTimeout: 60_000,
+      highPingThreshold: 500,
+    });
+    const tokens: (string | undefined)[] = [];
+    try {
+      await proc.start();
+      proc.proc!.on('message', (message: { case: string; token?: string }) => {
+        if (message.case === 'testWorkerToken') tokens.push(message.token);
+      });
+      await proc.initialize({ sessionEndTimeout: 1000 });
+
+      // refreshed in the worker while the process was idle
+      process.env.LIVEKIT_TOKEN = 'refreshed-before-start';
+      await proc.launchJob({
+        acceptArguments: { name: 'n', identity: 'i', metadata: '' },
+        job: new Job({ id: 'AJ_token', metadata: 'worker token' }),
+        url: 'wss://example.com',
+        token: 'token',
+        workerId: 'W_1',
+      });
+      await vi.waitFor(() => expect(tokens).toEqual(['refreshed-before-start']));
+
+      // refreshed while the job runs
+      proc.updateWorkerToken('refreshed-while-running');
+      proc.proc!.send({ case: 'testReportWorkerToken' } as unknown as IPCMessage);
+      await vi.waitFor(() =>
+        expect(tokens).toEqual(['refreshed-before-start', 'refreshed-while-running']),
+      );
+
+      proc.proc!.send({ case: 'testEnd' } as unknown as IPCMessage);
+      await proc.join();
+      expect(proc.status).toBe(JobStatus.SUCCESS);
+    } finally {
+      await proc.close();
+    }
+  }, 20_000);
 });
