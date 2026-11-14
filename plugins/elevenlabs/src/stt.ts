@@ -31,6 +31,9 @@ import type { STTRealtimeSampleRates } from './models.js';
 const API_BASE_URL_V1 = 'https://api.elevenlabs.io/v1';
 const AUTHORIZATION_HEADER = 'xi-api-key';
 
+// Models served over the realtime WebSocket endpoint instead of the batch API.
+const REALTIME_MODELS: readonly string[] = ['scribe_v2_realtime', 'scribe_v3_live'];
+
 export interface VADOptions {
   vadSilenceThresholdSecs?: number | null;
   vadThreshold?: number | null;
@@ -38,7 +41,19 @@ export interface VADOptions {
   minSilenceDurationMs?: number | null;
 }
 
-export type ElevenLabsSTTModels = 'scribe_v1' | 'scribe_v2' | 'scribe_v2_realtime';
+// https://elevenlabs.io/docs/overview/models#models-overview
+export type ElevenLabsSTTModels =
+  | 'scribe_v1'
+  | 'scribe_v2'
+  | 'scribe_v2_realtime'
+  | 'scribe_v3'
+  | 'scribe_v3_live';
+
+/**
+ * How a realtime session commits transcript segments: `manual` on `flush()`, `vad` after a
+ * silence, or `turn_prediction` when the model predicts the end of the user's turn.
+ */
+export type STTCommitStrategy = 'manual' | 'vad' | 'turn_prediction';
 
 export interface STTHTTPSession {
   fetch?: typeof fetch;
@@ -58,7 +73,7 @@ export interface STTOptions {
   /**
    * Duration of each outgoing realtime audio chunk in milliseconds. Must be a positive integer.
    * Defaults to 50. Larger chunks reduce message frequency but increase buffering latency.
-   * Flushes send any shorter remaining chunk before committing. Only used for Scribe v2 realtime.
+   * Flushes send any shorter remaining chunk before committing. Only used for realtime models.
    */
   audioChunkDuration?: number;
   serverVad?: VADOptions | null;
@@ -76,17 +91,29 @@ export interface STTOptions {
   /**
    * Language codes to constrain speech prediction to in addition to `languageCode`. Useful for
    * bilingual applications where audio switches between a primary and a limited set of secondary
-   * languages. Only supported for Scribe v2 realtime. When omitted, the model predicts from its
+   * languages. Only supported for realtime models. When omitted, the model predicts from its
    * full set of supported languages.
    */
   secondaryLanguages?: string[];
   /**
    * Whether committed transcripts report the detected language. Defaults to true when no
-   * `languageCode` is set and false otherwise. Only supported for Scribe v2 realtime.
+   * `languageCode` is set and false otherwise. Only supported for realtime models.
    */
   includeLanguageDetection?: boolean;
   noVerbatim?: boolean;
   enableLogging?: boolean;
+  /**
+   * How the realtime session commits transcript segments. Defaults to `vad` when `serverVad` is
+   * set and `manual` otherwise. `turn_prediction` commits when the model predicts the end of the
+   * user's turn and still commits after the `serverVad` silence threshold. Only supported for
+   * realtime models; `turn_prediction` only for Scribe v3 Live.
+   */
+  commitStrategy?: STTCommitStrategy;
+  /**
+   * Follow speakers who switch languages during the session, including mid-sentence. Only
+   * supported for Scribe v3 Live. Defaults to false.
+   */
+  multilangMode?: boolean;
 }
 
 interface ResolvedSTTOptions {
@@ -104,6 +131,8 @@ interface ResolvedSTTOptions {
   includeLanguageDetection?: boolean;
   noVerbatim: boolean;
   enableLogging: boolean;
+  commitStrategy?: STTCommitStrategy;
+  multilangMode: boolean;
 }
 
 export interface STTRecognizeOptions {
@@ -270,26 +299,41 @@ export class STT extends stt.STT {
       }
     }
     const modelId = model ?? 'scribe_v1';
-    const useRealtime = modelId === 'scribe_v2_realtime';
+    const useRealtime = REALTIME_MODELS.includes(modelId);
 
     if (!useRealtime && opts.serverVad !== undefined) {
-      log().warn('Server-side VAD is only supported for Scribe v2 realtime model');
+      log().warn('Server-side VAD is only supported for realtime models');
     }
 
     let secondaryLanguages = opts.secondaryLanguages;
     if (!useRealtime && secondaryLanguages !== undefined) {
-      log().warn(
-        '`secondaryLanguages` is only supported for Scribe v2 realtime model and will be ignored',
-      );
+      log().warn('`secondaryLanguages` is only supported for realtime models and will be ignored');
       secondaryLanguages = undefined;
     }
 
     let includeLanguageDetection = opts.includeLanguageDetection;
     if (!useRealtime && includeLanguageDetection !== undefined) {
       log().warn(
-        '`includeLanguageDetection` is only supported for Scribe v2 realtime model and will be ignored',
+        '`includeLanguageDetection` is only supported for realtime models and will be ignored',
       );
       includeLanguageDetection = undefined;
+    }
+
+    let commitStrategy = opts.commitStrategy;
+    if (!useRealtime && commitStrategy !== undefined) {
+      log().warn('`commitStrategy` is only supported for realtime models and will be ignored');
+      commitStrategy = undefined;
+    } else if (commitStrategy === 'turn_prediction' && modelId !== 'scribe_v3_live') {
+      log().warn(
+        '`turn_prediction` commit strategy is only supported for Scribe v3 Live and will be ignored',
+      );
+      commitStrategy = undefined;
+    }
+
+    let multilangMode = opts.multilangMode ?? false;
+    if (multilangMode && modelId !== 'scribe_v3_live') {
+      log().warn('`multilangMode` is only supported for Scribe v3 Live and will be ignored');
+      multilangMode = false;
     }
 
     const includeTimestamps = opts.includeTimestamps ?? false;
@@ -321,6 +365,8 @@ export class STT extends stt.STT {
       includeLanguageDetection,
       noVerbatim: opts.noVerbatim ?? false,
       enableLogging: opts.enableLogging ?? true,
+      commitStrategy,
+      multilangMode,
     };
     this.#session = opts.httpSession ?? {};
   }
@@ -550,11 +596,11 @@ export class STT extends stt.STT {
 
     let secondaryLanguages = opts.secondaryLanguages;
     if (secondaryLanguages !== undefined) {
-      if (this.#opts.modelId === 'scribe_v2_realtime') {
+      if (REALTIME_MODELS.includes(this.#opts.modelId)) {
         this.#opts.secondaryLanguages = secondaryLanguages.map(normalizeLanguage);
       } else {
         this.#logger.warn(
-          '`secondaryLanguages` is only supported for Scribe v2 realtime model and will be ignored',
+          '`secondaryLanguages` is only supported for realtime models and will be ignored',
         );
         secondaryLanguages = undefined;
       }
@@ -664,6 +710,11 @@ export class SpeechStream extends stt.SpeechStream {
 
   get #languageDetection(): boolean {
     return this.#opts.includeLanguageDetection ?? !this.#language;
+  }
+
+  get #commitStrategy(): STTCommitStrategy {
+    if (this.#opts.commitStrategy !== undefined) return this.#opts.commitStrategy;
+    return this.#opts.serverVad === undefined || this.#opts.serverVad === null ? 'manual' : 'vad';
   }
 
   get #finalMessageType(): string {
@@ -834,16 +885,19 @@ export class SpeechStream extends stt.SpeechStream {
 
   async #connectWs(): Promise<WebSocket> {
     const serverVad = this.#opts.serverVad;
-    const commitStrategy = serverVad === undefined || serverVad === null ? 'manual' : 'vad';
     const params = [
       `model_id=${this.#opts.modelId}`,
       `audio_format=pcm_${this.#opts.sampleRate}`,
-      `commit_strategy=${commitStrategy}`,
+      `commit_strategy=${this.#commitStrategy}`,
       `enable_logging=${String(this.#opts.enableLogging).toLowerCase()}`,
     ];
 
     if (this.#languageDetection) {
       params.push('include_language_detection=true');
+    }
+
+    if (this.#opts.multilangMode) {
+      params.push('multilang_mode=true');
     }
 
     if (serverVad !== undefined && serverVad !== null) {
@@ -999,7 +1053,8 @@ export class SpeechStream extends stt.SpeechStream {
           type: stt.SpeechEventType.FINAL_TRANSCRIPT,
           alternatives: [speechData],
         });
-        if (this.#opts.serverVad !== undefined && this.#opts.serverVad !== null) {
+        // The server commits on its own unless commits are manual, so each commit ends the turn
+        if (this.#commitStrategy !== 'manual') {
           this.queue.put({ type: stt.SpeechEventType.END_OF_SPEECH });
           this.#speaking = false;
         }

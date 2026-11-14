@@ -32,7 +32,7 @@ export class ChunkedStream extends tts.ChunkedStream {
 // Warning: (ae-missing-release-tag) "ElevenLabsSTTModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-export type ElevenLabsSTTModels = 'scribe_v1' | 'scribe_v2' | 'scribe_v2_realtime';
+export type ElevenLabsSTTModels = 'scribe_v1' | 'scribe_v2' | 'scribe_v2_realtime' | 'scribe_v3' | 'scribe_v3_live';
 
 // Warning: (ae-missing-release-tag) "isDialogueModel" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -104,6 +104,11 @@ export class STT extends stt.STT {
     }): void;
 }
 
+// Warning: (ae-missing-release-tag) "STTCommitStrategy" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export type STTCommitStrategy = 'manual' | 'vad' | 'turn_prediction';
+
 // Warning: (ae-missing-release-tag) "STTHTTPSession" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
@@ -127,6 +132,7 @@ export interface STTOptions {
     audioChunkDuration?: number;
     // (undocumented)
     baseURL?: string;
+    commitStrategy?: STTCommitStrategy;
     // (undocumented)
     enableLogging?: boolean;
     // (undocumented)
@@ -141,6 +147,7 @@ export interface STTOptions {
     model?: ElevenLabsSTTModels | string;
     // @deprecated (undocumented)
     modelId?: ElevenLabsSTTModels | string;
+    multilangMode?: boolean;
     // (undocumented)
     noVerbatim?: boolean;
     // (undocumented)
