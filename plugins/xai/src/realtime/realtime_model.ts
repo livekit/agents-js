@@ -94,8 +94,8 @@ export class RealtimeModel extends OpenAIRealtimeModel {
     });
   }
 
-  override session(): RealtimeSession {
-    return new RealtimeSession(this);
+  override session(options?: llm.RealtimeSessionOptions): RealtimeSession {
+    return new RealtimeSession(this, options);
   }
 }
 

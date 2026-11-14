@@ -137,7 +137,7 @@ export { beta }
 // Warning: (ae-missing-release-tag) "ChatModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-export type ChatModels = 'gemini-4-argon' | 'gemini-3.5-flash' | 'gemini-3-pro-preview' | 'gemini-3-flash-preview' | 'gemini-2.5-flash' | 'gemini-2.5-pro-preview-05-06' | 'gemini-2.5-flash-preview-04-17' | 'gemini-2.5-flash-preview-05-20' | 'gemini-2.0-flash-001' | 'gemini-2.0-flash-lite-preview-02-05' | 'gemini-2.0-pro-exp-02-05' | 'gemini-1.5-pro';
+export type ChatModels = 'gemini-4-argon' | 'gemini-4-carbon' | 'gemini-4-hydrogen' | 'gemini-3.5-flash' | 'gemini-3-pro-preview' | 'gemini-3-flash-preview' | 'gemini-2.5-flash' | 'gemini-2.5-pro-preview-05-06' | 'gemini-2.5-flash-preview-04-17' | 'gemini-2.5-flash-preview-05-20' | 'gemini-2.0-flash-001' | 'gemini-2.0-flash-lite-preview-02-05' | 'gemini-2.0-pro-exp-02-05' | 'gemini-1.5-pro';
 
 // Warning: (ae-missing-release-tag) "ClientEvents" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -312,7 +312,9 @@ export interface LLMOptions {
     // (undocumented)
     temperature?: number;
     // (undocumented)
-    thinkingConfig?: types.ThinkingConfig;
+    thinkingConfig?: Omit<types.ThinkingConfig, 'thinkingLevel'> & {
+        thinkingLevel?: types.ThinkingLevel | 'xhigh' | 'XHIGH';
+    };
     // (undocumented)
     toolChoice?: llm.ToolChoice;
     // (undocumented)
@@ -404,8 +406,10 @@ class RealtimeModel_4 extends llm.RealtimeModel {
     _options: RealtimeOptions_2;
     // (undocumented)
     get provider(): string;
+    // @internal
+    _removeSession(session: RealtimeSession_4): void;
     // Warning: (ae-forgotten-export) The symbol "RealtimeSession_4" needs to be exported by the entry point index.d.ts
-    session(): RealtimeSession_4;
+    session(options?: llm.RealtimeSessionOptions): RealtimeSession_4;
     updateOptions(options: {
         voice?: Voice_2 | string;
         temperature?: number;
@@ -578,7 +582,7 @@ type Voice_2 = 'Achernar' | 'Achird' | 'Algenib' | 'Algieba' | 'Alnilam' | 'Aoed
 // Warnings were encountered during analysis:
 //
 // src/aiplatform_llm.ts:176:5 - (ae-forgotten-export) The symbol "APIConnectOptions" needs to be exported by the entry point index.d.ts
-// src/realtime/realtime_api.ts:359:7 - (ae-forgotten-export) The symbol "DEFAULT_IMAGE_ENCODE_OPTIONS" needs to be exported by the entry point index.d.ts
+// src/realtime/realtime_api.ts:360:7 - (ae-forgotten-export) The symbol "DEFAULT_IMAGE_ENCODE_OPTIONS" needs to be exported by the entry point index.d.ts
 
 // (No @packageDocumentation comment for this package)
 

@@ -1,6 +1,6 @@
 {
   "name": "@livekit/agents-plugin-vartaloop",
-  "version": "1.0.0",
+  "version": "1.10.0",
   "description": "Vartaloop plugin for LiveKit Node Agents",
   "main": "dist/index.js",
   "require": "dist/index.cjs",

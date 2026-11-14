@@ -5,7 +5,7 @@ import type OpenAI from 'openai';
 import type { Reasoning } from 'openai/resources/shared.js';
 
 /** GPT-Live wire types. Field names follow the service protocol. @public */
-export type DelegationTarget = 'responses' | 'client';
+export type DelegationTarget = 'responses' | 'client' | 'decisions';
 /** Roles accepted in initial session history. @public */
 export type InputRole = 'developer' | 'user' | 'assistant';
 /** A text message used to seed session history. @public */
@@ -26,8 +26,33 @@ export interface ResponsesConfig {
   service_tier?: 'auto' | 'default' | 'flex' | 'priority';
   max_output_tokens?: number;
 }
-/** Choose the backend Responses model or application callbacks. @public */
-export type Delegation = { type: 'client' } | { type: 'responses'; responses: ResponsesConfig };
+/** Decisions model and question definitions, using the upstream Decisions schema. @public */
+export interface DecisionsConfig {
+  model?: string;
+  questions?: Record<string, unknown>[];
+}
+/** Evaluate questions when a transcript event occurs. @public */
+export interface DecisionsTrigger {
+  type: 'decisions';
+  event_type: string;
+  decisions: DecisionsConfig;
+}
+/** An upstream decision event, including its answers and usage when present. @public */
+export interface DecisionEventEnvelope {
+  type: 'decision.event';
+  event_id?: string | null;
+  event: Record<string, unknown>;
+}
+/** Request a manual evaluation of the Decisions delegation's questions. @public */
+export interface DecisionCreateEvent {
+  type: 'decision.create';
+  event_id?: string;
+}
+/** Choose the backend Responses or Decisions model, or application callbacks. @public */
+export type Delegation =
+  | { type: 'client' }
+  | { type: 'responses'; responses: ResponsesConfig }
+  | { type: 'decisions'; decisions: DecisionsConfig };
 /** Initial voice, audio, context, and delegation configuration. @public */
 export interface SessionConfig {
   model: string;
@@ -38,6 +63,7 @@ export interface SessionConfig {
     output?: { voice?: string | Record<string, unknown> };
   };
   delegation?: Delegation;
+  triggers?: DecisionsTrigger[];
 }
 /** Commands sent to the GPT-Live WebSocket. @public */
 export type ClientEvent = { event_id?: string } & (
@@ -58,6 +84,7 @@ export type ClientEvent = { event_id?: string } & (
       content: string;
     }
   | { type: 'response.item.create'; item: OpenAI.Responses.ResponseInputItem }
+  | DecisionCreateEvent
 );
 /** Backend response token usage, separate from voice session duration. @public */
 export interface ResponseUsage {
@@ -108,6 +135,7 @@ export type ServerEvent =
       delegation?: { id?: string | null; target?: DelegationTarget | null };
     }
   | { type: 'response.event'; delegation_id?: string | null; event?: ResponsesEvent }
+  | DecisionEventEnvelope
   | {
       type: 'session.usage.updated';
       usage?: { seconds?: number };

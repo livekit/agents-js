@@ -25,6 +25,10 @@ interface GoogleFormatData {
   systemMessages: string[] | null;
 }
 
+type ThinkingConfig = Omit<types.ThinkingConfig, 'thinkingLevel'> & {
+  thinkingLevel?: types.ThinkingLevel | 'xhigh' | 'XHIGH';
+};
+
 function isGemini3Model(model: string): boolean {
   const modelLower = model.toLowerCase();
   return modelLower.includes('gemini-3');
@@ -32,6 +36,14 @@ function isGemini3Model(model: string): boolean {
 
 function isGemini4Model(model: string): boolean {
   return model.toLowerCase().includes('gemini-4');
+}
+
+function putUserTurnBeforeOpeningToolCall(contents: types.Content[]): void {
+  // Gemini 4 rejects a function call that opens the conversation. Reuse the same placeholder
+  // user turn that is already sent when history ends with a model turn.
+  if (contents[0]?.parts?.[0]?.functionCall) {
+    contents.unshift({ role: 'user', parts: [{ text: '.' }] });
+  }
 }
 
 function isGemini3OrNewer(model: string): boolean {
@@ -44,6 +56,30 @@ function isGemma4Model(model: string): boolean {
 
 function supportsThinkingLevel(model: string): boolean {
   return isGemini3OrNewer(model) || isGemma4Model(model);
+}
+
+function supportsXHighThinking(model: string): boolean {
+  return model.toLowerCase().includes('gemini-4-hydrogen');
+}
+
+function validateThinkingLevel(
+  model: string,
+  level: ThinkingConfig['thinkingLevel'] | undefined,
+): void {
+  if (level?.toUpperCase() === 'XHIGH' && !supportsXHighThinking(model)) {
+    throw new Error(`Model ${model} does not support thinkingLevel 'xhigh'.`);
+  }
+}
+
+function normalizeThinkingConfig(thinkingConfig: ThinkingConfig): types.ThinkingConfig {
+  if (thinkingConfig.thinkingLevel === undefined) {
+    return thinkingConfig as types.ThinkingConfig;
+  }
+  return {
+    ...thinkingConfig,
+    // @google/genai has no XHIGH enum member and would otherwise send it as typed.
+    thinkingLevel: thinkingConfig.thinkingLevel.toUpperCase() as ThinkingLevel,
+  };
 }
 
 export const LONG_DECODE_MIN_OUTPUT_TOKENS = 32768;
@@ -101,7 +137,9 @@ export interface LLMOptions {
   topK?: number;
   presencePenalty?: number;
   frequencyPenalty?: number;
-  thinkingConfig?: types.ThinkingConfig;
+  thinkingConfig?: Omit<types.ThinkingConfig, 'thinkingLevel'> & {
+    thinkingLevel?: types.ThinkingLevel | 'xhigh' | 'XHIGH';
+  };
   automaticFunctionCallingConfig?: types.AutomaticFunctionCallingConfig;
   geminiTools?: LLMTools;
   httpOptions?: types.HttpOptions;
@@ -241,6 +279,8 @@ export class LLM extends llm.LLM {
           `or 'high' (thinking on), got ${JSON.stringify(thinkingConfig.thinkingLevel)}.`,
       );
     }
+
+    validateThinkingLevel(model, thinkingConfig?.thinkingLevel);
 
     const clientOptions: types.GoogleGenAIOptions = useVertexAI
       ? {
@@ -427,7 +467,7 @@ export class LLM extends llm.LLM {
         extras.thinkingConfig = {
           includeThoughts,
           thinkingLevel:
-            thinkingLevel ??
+            (thinkingLevel as ThinkingLevel | undefined) ??
             (isGemini3Model(this.#opts.model)
               ? isGemini3FlashModel(this.#opts.model)
                 ? ThinkingLevel.MINIMAL
@@ -447,9 +487,14 @@ export class LLM extends llm.LLM {
           // Preserve includeThoughts so callers relying on visible reasoning keep receiving it.
           extras.thinkingConfig = { thinkingBudget, includeThoughts };
         } else {
-          extras.thinkingConfig = this.#opts.thinkingConfig;
+          extras.thinkingConfig = normalizeThinkingConfig(this.#opts.thinkingConfig);
         }
       }
+    }
+
+    if (extras.thinkingConfig !== undefined) {
+      extras.thinkingConfig = normalizeThinkingConfig(extras.thinkingConfig);
+      validateThinkingLevel(this.#opts.model, extras.thinkingConfig.thinkingLevel);
     }
 
     if (this.#opts.automaticFunctionCallingConfig !== undefined) {
@@ -534,6 +579,9 @@ export class LLMStream extends llm.LLMStream {
         role: turn.role as types.Content['role'],
         parts: turn.parts as types.Part[],
       }));
+      if (isGemini4Model(this.#model)) {
+        putUserTurnBeforeOpeningToolCall(contents);
+      }
 
       let systemInstruction: types.Content | undefined = undefined;
       if (extraData.systemMessages && extraData.systemMessages.length > 0) {

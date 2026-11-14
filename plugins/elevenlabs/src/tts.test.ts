@@ -297,7 +297,7 @@ describe('ElevenLabs text-to-dialogue', () => {
       apiKey: 'test-key',
       model: 'eleven_v3_conversational',
       voiceId: 'voice-1',
-      voiceSettings: { stability: 0.5, similarity_boost: 0.75 },
+      voiceSettings: { stability: 0.5, similarity_boost: 0.75, style: 0.3 },
       pronunciationDictionaryLocators: [
         { pronunciation_dictionary_id: 'dict-1', version_id: 'v1' },
       ],
@@ -314,7 +314,7 @@ describe('ElevenLabs text-to-dialogue', () => {
       inputs: [{ text: 'hello there', voice_id: 'voice-1' }],
       model_id: 'eleven_v3_conversational',
       apply_text_normalization: 'auto',
-      settings: { stability: 0.5 },
+      settings: { stability: 0.5, similarity: 0.75 },
       pronunciation_dictionary_locators: [
         { pronunciation_dictionary_id: 'dict-1', version_id: 'v1' },
       ],
@@ -327,11 +327,11 @@ describe('ElevenLabs text-to-dialogue', () => {
     new TTS({
       apiKey: 'test-key',
       model: 'eleven_v3_conversational',
-      voiceSettings: { stability: 0.5, similarity_boost: 0.75 },
+      voiceSettings: { stability: 0.5, similarity_boost: 0.75, style: 0.3 },
       enableSsmlParsing: true,
     });
 
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('voiceSettings.similarity_boost'));
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('voiceSettings.style'));
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('enableSsmlParsing'));
   });
 
@@ -354,7 +354,7 @@ describe('ElevenLabs text-to-dialogue', () => {
       baseURL,
       model: 'eleven_v3_conversational',
       voiceId: 'voice-1',
-      voiceSettings: { stability: 0.5, similarity_boost: 0.75 },
+      voiceSettings: { stability: 0.5, similarity_boost: 0.75, style: 0.3 },
       enableSsmlParsing: true,
       chunkLengthSchedule: [80, 120],
       pronunciationDictionaryLocators: [
@@ -380,7 +380,7 @@ describe('ElevenLabs text-to-dialogue', () => {
       expect(requestUrl).not.toContain('auto_mode');
       expect(messages[0]).toMatchObject({
         voices: ['voice-1'],
-        voice_settings: { stability: 0.5 },
+        voice_settings: { stability: 0.5, similarity: 0.75 },
         pronunciation_dictionary_locators: [
           { pronunciation_dictionary_id: 'dict-1', version_id: 'v1' },
         ],
@@ -396,6 +396,126 @@ describe('ElevenLabs text-to-dialogue', () => {
       await elevenlabs.close();
       await closeWebSocketServer(wss);
     }
+  });
+
+  it('sends clone strength to eleven_v4 over HTTP', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(Buffer.alloc(4410), {
+        status: 200,
+        headers: { 'Content-Type': 'audio/pcm' },
+      }),
+    );
+    const elevenlabs = new TTS({
+      apiKey: 'test-key',
+      model: 'eleven_v4',
+      voiceId: 'voice-1',
+      voiceSettings: { stability: 0.5, similarity_boost: 0.75, clone_strength: 0.3 },
+    });
+
+    for await (const _event of elevenlabs.synthesize('hello there')) {
+      // Consume the generated audio.
+    }
+
+    const [, init] = fetchSpy.mock.calls[0]!;
+    expect(JSON.parse(String(init?.body)).settings).toEqual({
+      stability: 0.5,
+      similarity: 0.75,
+      clone_strength: 0.3,
+    });
+    await elevenlabs.close();
+  });
+
+  it('sends clone strength to eleven_v4 over websocket', async () => {
+    const { messages } = await synthesizeWithMessages(
+      (ws, received) => {
+        if (received.length === 2) {
+          ws.send(JSON.stringify({ context_id: received[0]?.context_id, is_final: true }));
+        }
+      },
+      {
+        model: 'eleven_v4_turbo',
+        voiceId: 'voice-1',
+        voiceSettings: { stability: 0.5, similarity_boost: 0.75, clone_strength: 0.3 },
+      },
+    );
+
+    expect(messages[0]?.voice_settings).toEqual({
+      stability: 0.5,
+      similarity: 0.75,
+      clone_strength: 0.3,
+    });
+  });
+
+  it.each(['eleven_v3_conversational', 'eleven_flash_v2_5'])(
+    'warns and drops clone strength for %s',
+    async (model) => {
+      const warnSpy = vi.spyOn(log(), 'warn');
+      const { messages } = await synthesizeWithMessages(
+        (ws, received) => {
+          if (received.length === 2) {
+            ws.send(
+              JSON.stringify({
+                [isDialogueModel(model) ? 'context_id' : 'contextId']: received[0]?.context_id,
+                [isDialogueModel(model) ? 'is_final' : 'isFinal']: true,
+              }),
+            );
+          }
+        },
+        {
+          model,
+          voiceId: 'voice-1',
+          voiceSettings: { stability: 0.5, similarity_boost: 0.75, clone_strength: 0.3 },
+        },
+      );
+
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('voiceSettings.clone_strength'));
+      expect(messages[0]?.voice_settings).not.toHaveProperty('clone_strength');
+    },
+  );
+
+  it('warns when updateOptions sets ignored clone strength', () => {
+    const warnSpy = vi.spyOn(log(), 'warn');
+    const elevenlabs = new TTS({
+      apiKey: 'test-key',
+      model: 'eleven_flash_v2_5',
+      voiceId: 'voice-1',
+    });
+
+    elevenlabs.updateOptions({
+      voiceSettings: { stability: 0.5, similarity_boost: 0.75, clone_strength: 0.3 },
+    });
+
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('voiceSettings.clone_strength'));
+  });
+
+  it('sends clone strength again after switching back to eleven_v4', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(Buffer.alloc(4410), {
+        status: 200,
+        headers: { 'Content-Type': 'audio/pcm' },
+      }),
+    );
+    const elevenlabs = new TTS({
+      apiKey: 'test-key',
+      model: 'eleven_v4',
+      voiceId: 'voice-1',
+      voiceSettings: { stability: 0.5, similarity_boost: 0.75, clone_strength: 0.3 },
+    });
+
+    elevenlabs.updateOptions({ model: 'eleven_flash_v2_5' });
+    for await (const _event of elevenlabs.synthesize('first')) {
+      // Consume the generated audio.
+    }
+    expect(JSON.parse(String(fetchSpy.mock.calls[0]![1]?.body)).voice_settings).not.toHaveProperty(
+      'clone_strength',
+    );
+
+    elevenlabs.updateOptions({ model: 'eleven_v4' });
+    for await (const _event of elevenlabs.synthesize('second')) {
+      // Consume the generated audio.
+    }
+    expect(JSON.parse(String(fetchSpy.mock.calls[1]![1]?.body)).settings.clone_strength).toBe(0.3);
+    await elevenlabs.close();
   });
 
   it('parses dialogue audio and snake-case alignment, ignoring turn boundaries', async () => {

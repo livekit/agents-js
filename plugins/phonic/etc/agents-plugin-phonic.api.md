@@ -130,7 +130,7 @@ class RealtimeModel extends llm.RealtimeModel {
     _options: RealtimeModelOptions;
     // (undocumented)
     get provider(): string;
-    session(): RealtimeSession_2;
+    session(options?: llm.RealtimeSessionOptions): RealtimeSession_2;
     updateOptions(config: PhonicConfig): void;
 }
 
