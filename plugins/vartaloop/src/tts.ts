@@ -681,7 +681,6 @@ export class SynthesizeStream extends tts.SynthesizeStream {
           const text = event.token.trim();
           if (!text) continue;
           const utteranceId = shortuuid();
-          const body = _toVartaloopBody(this.#utteranceOptions(), text, utteranceId);
           if (ws.readyState !== WebSocket.OPEN) {
             throw new APIConnectionError({ message: 'Vartaloop WebSocket closed mid-generation' });
           }
@@ -696,6 +695,8 @@ export class SynthesizeStream extends tts.SynthesizeStream {
             }
           }
           lastSentSegment = Math.max(lastSentSegment, segment.index);
+          // Built after any wait above, so an updateOptions() made meanwhile applies.
+          const body = _toVartaloopBody(this.#utteranceOptions(), text, utteranceId);
           pending.push({ utteranceId, segmentId: segment.id, segmentIndex: segment.index });
           this.markStarted();
           ws.send(JSON.stringify(body));

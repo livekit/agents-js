@@ -1066,6 +1066,60 @@ describe('Vartaloop metrics', () => {
   });
 });
 
+describe('Vartaloop options while a segment waits', () => {
+  it('applies TTS- and stream-level updates made while the next segment waits', async () => {
+    const { wss, baseURL } = await startWebSocketServer();
+    // Hold the first utterance's reply until released, so the second segment is waiting.
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => (release = resolve));
+    let firstSeen!: () => void;
+    const firstUtterance = new Promise<void>((resolve) => (firstSeen = resolve));
+    const server = serveVartaloop(wss, {
+      onUtterance: (ws, utterance) => {
+        if (server.utterances.length !== 1) return true;
+        firstSeen();
+        const requestId = utterance.request_id;
+        void released.then(() => {
+          ws.send(JSON.stringify({ type: 'start', request_id: requestId, voice: utterance.voice }));
+          ws.send(Buffer.alloc(FRAME_BYTES, 1), { binary: true });
+          ws.send(JSON.stringify({ type: 'end', request_id: requestId, audio_s: 0.08 }));
+        });
+        return false;
+      },
+    });
+
+    const vartaloop = new TTS({ apiKey: 'test-key', baseUrl: baseURL });
+    try {
+      const stream = vartaloop.stream();
+      stream.pushText('Pehla vaakya yahan khatam hota hai.');
+      stream.flush();
+      stream.pushText('Doosra vaakya bhi yahan khatam hota hai.');
+      stream.endInput();
+      await waitFor(firstUtterance);
+      // Give the sender time to reach the second sentence and start waiting.
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(server.utterances).toHaveLength(1);
+
+      vartaloop.updateOptions({ voice: 'sahil' });
+      stream.updateOptions({ expression: 'sad' });
+      release();
+
+      for await (const event of stream) {
+        if (event === tts.SynthesizeStream.END_OF_STREAM) break;
+      }
+      stream.close();
+
+      expect(server.utterances).toHaveLength(2);
+      expect(server.utterances[0]).toMatchObject({ voice: 'saanvi' });
+      expect(server.utterances[0]).not.toHaveProperty('style');
+      expect(server.utterances[1]).toMatchObject({ voice: 'sahil', style: 'sad' });
+    } finally {
+      await vartaloop.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+});
+
 describe('Vartaloop connection release', () => {
   it('aborts a stalled prewarm handshake instead of waiting for the connect timeout', async () => {
     // Accepts TCP and never answers the WebSocket upgrade. The key is unique, so the test watches
