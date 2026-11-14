@@ -21,10 +21,14 @@ import {
 import { AudioFrame } from '@livekit/rtc-node';
 import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { type RawData, WebSocket } from 'ws';
 import type { TTSDigits, TTSExpressions, TTSModels, TTSProfiles, TTSVoices } from './models.js';
 
 const DEFAULT_BASE_URL = 'https://api.vartaloop.ai';
+// How the sender waits for the base stream's per-segment metrics mark (see sendTask).
+const METRICS_MARK_POLL_MS = 5;
+const METRICS_MARK_GRACE_MS = 200;
 const DEFAULT_MODEL: TTSModels = 'narad';
 const DEFAULT_VOICE: TTSVoices = 'saanvi';
 const API_KEY_ENV = 'VARTALOOP_API_KEY';
@@ -200,7 +204,7 @@ export class TTS extends tts.TTS {
     currentOptions.set(this, this.#opts);
 
     this.#pool = new ConnectionPool<WebSocket>({
-      connectCb: (timeoutMs) => this.#connectWebSocket(timeoutMs),
+      connectCb: (timeoutMs, signal) => this.#connectWebSocket(timeoutMs, signal),
       closeCb: async (ws) => safeCloseWebSocket(ws),
       maxSessionDuration: MAX_SESSION_DURATION_MS,
       markRefreshedOnGet: true,
@@ -271,7 +275,7 @@ export class TTS extends tts.TTS {
     await super.close();
   }
 
-  async #connectWebSocket(timeoutMs: number): Promise<WebSocket> {
+  async #connectWebSocket(timeoutMs: number, abortSignal?: AbortSignal): Promise<WebSocket> {
     // Snapshot the handshake inputs. If a concurrent updateOptions() changes one
     // of them while this connect is in flight, reconnect on the new value rather
     // than pooling a socket built on stale credentials.
@@ -281,6 +285,9 @@ export class TTS extends tts.TTS {
       url: `${baseUrl.replace(/^http/, 'ws')}/v1/tts/stream`,
       headers: authHeaders(apiKey),
       timeoutMs,
+      // The pool aborts this on releaseIdleConnections() and on a cancelled get(): settle the
+      // handshake now instead of holding its connect lock until the timeout.
+      abortSignal,
     });
     if (this.#closed) {
       safeCloseWebSocket(ws);
@@ -288,7 +295,7 @@ export class TTS extends tts.TTS {
     }
     if (apiKey !== this.#opts.apiKey || baseUrl !== this.#opts.baseUrl) {
       safeCloseWebSocket(ws);
-      return await this.#connectWebSocket(timeoutMs);
+      return await this.#connectWebSocket(timeoutMs, abortSignal);
     }
     // Drop a socket that closes (or errors) while idle in the pool, so the next turn does not
     // spend a retry on a dead one. The no-op error listener also keeps an idle 'error' from
@@ -644,6 +651,30 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         }
         return { id: (this.#segmentIds[index] ??= shortuuid()), index };
       };
+      // The base stream keeps one "segment started" mark and clears it when it emits a segment's
+      // metrics; a markStarted() made while an earlier segment still holds it is dropped. So the
+      // first sentence of a later (flush-delimited) segment waits until the earlier segment's
+      // metrics are out, then claims the mark itself. Sentences within a segment still pipeline.
+      // The wait is bounded: it ends on abort, a dead socket or a failed utterance, and allows a
+      // short grace once nothing of an earlier segment is pending (a segment with no audio never
+      // clears the mark).
+      let lastSentSegment = -1;
+      const waitForMetricsMark = async (ws: WebSocket, segmentIndex: number) => {
+        let idleSince: number | undefined;
+        while (this.startedTime !== undefined) {
+          if (this.abortController.signal.aborted || attemptOver || utteranceError || timedOut) {
+            return;
+          }
+          if (ws.readyState !== WebSocket.OPEN) return;
+          if (pending.some((p) => p.segmentIndex < segmentIndex)) {
+            idleSince = undefined;
+          } else {
+            idleSince ??= performance.now();
+            if (performance.now() - idleSince > METRICS_MARK_GRACE_MS) return;
+          }
+          await sleep(METRICS_MARK_POLL_MS);
+        }
+      };
       try {
         for await (const event of tokenizer) {
           if (this.abortController.signal.aborted || attemptOver || utteranceError) break;
@@ -655,6 +686,16 @@ export class SynthesizeStream extends tts.SynthesizeStream {
             throw new APIConnectionError({ message: 'Vartaloop WebSocket closed mid-generation' });
           }
           const segment = stableSegment(event.segmentId || requestId);
+          if (lastSentSegment !== -1 && segment.index > lastSentSegment) {
+            await waitForMetricsMark(ws, segment.index);
+            if (this.abortController.signal.aborted || attemptOver || utteranceError) break;
+            if (ws.readyState !== WebSocket.OPEN) {
+              throw new APIConnectionError({
+                message: 'Vartaloop WebSocket closed mid-generation',
+              });
+            }
+          }
+          lastSentSegment = Math.max(lastSentSegment, segment.index);
           pending.push({ utteranceId, segmentId: segment.id, segmentIndex: segment.index });
           this.markStarted();
           ws.send(JSON.stringify(body));
