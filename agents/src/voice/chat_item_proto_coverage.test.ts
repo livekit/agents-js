@@ -16,13 +16,13 @@ import { encodeChatItem } from '../proto.js';
 
 const TS = 1_700_000_000_500;
 
-// Fields the wire format declares but this SDK cannot supply yet. An entry here is a
-// deliberate parity gap; anything else missing is an accidental drop.
+// Fields the wire format declares but this SDK does not send, keyed `<oneof case>.<field path>`.
+// An entry here is a deliberate parity gap; anything else missing is an accidental drop.
 const KNOWN_GAPS = new Set([
   // llm tps/ttfs land in livekit/agents (#6373) but were never ported to this SDK,
   // so MetricsReport has no field to read them from.
-  'metrics.llm_node_tps',
-  'metrics.llm_node_ttfs',
+  'message.metrics.llm_node_tps',
+  'message.metrics.llm_node_ttfs',
 ]);
 
 // Every field carries a non-default value: a proto3 scalar left at its zero value is
@@ -108,7 +108,7 @@ describe('ChatItem proto coverage', () => {
     '%s reaches every proto field',
     (_type, item) => {
       const { which, message } = payloadOf(item);
-      const dropped = unsetFields(message).filter((f) => !KNOWN_GAPS.has(f));
+      const dropped = unsetFields(message).filter((f) => !KNOWN_GAPS.has(`${which}.${f}`));
       expect(dropped, `${which} drops: ${dropped.join(', ')}`).toEqual([]);
     },
   );
@@ -124,9 +124,16 @@ describe('ChatItem proto coverage', () => {
   });
 
   it('every known gap names a real proto field', () => {
-    const declared = new Set(pb.MetricsReport.fields.list().map((f) => `metrics.${f.name}`));
     for (const gap of KNOWN_GAPS) {
-      expect(declared, `${gap} is allowlisted but not in the proto`).toContain(gap);
+      const [which, ...path] = gap.split('.');
+      let field = pb.ChatContext_ChatItem.fields.list().find((f) => f.localName === which);
+      for (const name of path) {
+        field =
+          field?.kind === 'message'
+            ? field.T.fields.list().find((f) => f.name === name)
+            : undefined;
+      }
+      expect(field, `${gap} is allowlisted but not in the proto`).toBeDefined();
     }
   });
 
