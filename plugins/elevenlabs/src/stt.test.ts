@@ -291,7 +291,7 @@ describe('ElevenLabs STT', () => {
     new STT({ apiKey: 'test-key', model: 'scribe_v2', secondaryLanguages: ['ru'] });
 
     expect(warn).toHaveBeenCalledWith(
-      '`secondaryLanguages` is only supported for Scribe v2 realtime model and will be ignored',
+      '`secondaryLanguages` is only supported for realtime models and will be ignored',
     );
     warn.mockRestore();
   });
@@ -1157,6 +1157,145 @@ describe('ElevenLabs STT', () => {
       expect(third.searchParams.get('commit_strategy')).toBe('manual');
     } finally {
       await closeWebSocketServer(wss);
+    }
+  });
+});
+
+describe('ElevenLabs STT Scribe v3', () => {
+  it.each(['scribe_v2_realtime', 'scribe_v3_live'])(
+    'streams %s over the realtime WebSocket',
+    async (model) => {
+      expect(new STT({ apiKey: 'test-key', model }).capabilities.streaming).toBe(true);
+
+      const url = await realtimeConnectionUrl({
+        model,
+        languageCode: 'en',
+        secondaryLanguages: ['es'],
+        includeLanguageDetection: true,
+        serverVad: { vadSilenceThresholdSecs: 0.5 },
+      });
+
+      expect(url.pathname).toBe('/speech-to-text/realtime');
+      expect(url.searchParams.get('model_id')).toBe(model);
+      expect(url.searchParams.get('commit_strategy')).toBe('vad');
+      expect(url.searchParams.get('vad_silence_threshold_secs')).toBe('0.5');
+      expect(url.searchParams.getAll('secondary_languages')).toEqual(['es']);
+      expect(url.searchParams.get('include_language_detection')).toBe('true');
+      expect(url.searchParams.has('multilang_mode')).toBe(false);
+    },
+  );
+
+  it('keeps Scribe v3 on the batch API', () => {
+    expect(new STT({ apiKey: 'test-key', model: 'scribe_v3' }).capabilities.streaming).toBe(false);
+  });
+
+  it('applies secondary language updates to Scribe v3 Live streams', async () => {
+    const { wss, baseURL } = await startWebSocketServer();
+    const urls: string[] = [];
+    wss.on('connection', (_ws, req) => {
+      urls.push(req.url ?? '');
+    });
+
+    const eleven = new STT({
+      apiKey: 'test-key',
+      baseURL,
+      model: 'scribe_v3_live',
+      languageCode: 'en',
+    });
+    const stream = eleven.stream();
+    try {
+      await waitUntil(() => urls.length === 1);
+      eleven.updateOptions({ secondaryLanguages: ['es'] });
+      await waitUntil(() => urls.length === 2, 2000);
+
+      expect(
+        new URL(`ws://127.0.0.1${urls[1]}`).searchParams.getAll('secondary_languages'),
+      ).toEqual(['es']);
+    } finally {
+      stream.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('requests turn prediction for Scribe v3 Live', async () => {
+    const url = await realtimeConnectionUrl({
+      model: 'scribe_v3_live',
+      commitStrategy: 'turn_prediction',
+      serverVad: { vadSilenceThresholdSecs: 1.2 },
+    });
+
+    expect(url.searchParams.get('commit_strategy')).toBe('turn_prediction');
+    expect(url.searchParams.get('vad_silence_threshold_secs')).toBe('1.2');
+  });
+
+  it('ends the user turn on each commit with turn prediction', async () => {
+    const events = await processStreamEvents(
+      [partialTranscript('hello'), committedTranscript('hello there')],
+      4,
+      null,
+      {
+        model: 'scribe_v3_live',
+        commitStrategy: 'turn_prediction',
+        includeLanguageDetection: false,
+      },
+    );
+
+    expect(events.map((event) => event.type)).toEqual([
+      sttLib.SpeechEventType.START_OF_SPEECH,
+      sttLib.SpeechEventType.INTERIM_TRANSCRIPT,
+      sttLib.SpeechEventType.FINAL_TRANSCRIPT,
+      sttLib.SpeechEventType.END_OF_SPEECH,
+    ]);
+  });
+
+  it('lets an explicit commit strategy override the server VAD default', async () => {
+    const url = await realtimeConnectionUrl({ commitStrategy: 'vad' });
+
+    expect(url.searchParams.get('commit_strategy')).toBe('vad');
+  });
+
+  it('ignores turn prediction for other realtime models', async () => {
+    const warn = vi.spyOn(log(), 'warn').mockImplementation(() => undefined);
+    try {
+      const url = await realtimeConnectionUrl({ commitStrategy: 'turn_prediction' });
+
+      expect(warn).toHaveBeenCalledWith(
+        '`turn_prediction` commit strategy is only supported for Scribe v3 Live and will be ignored',
+      );
+      expect(url.searchParams.get('commit_strategy')).toBe('manual');
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('ignores the commit strategy for batch models', () => {
+    const warn = vi.spyOn(log(), 'warn').mockImplementation(() => undefined);
+
+    new STT({ apiKey: 'test-key', model: 'scribe_v3', commitStrategy: 'turn_prediction' });
+
+    expect(warn).toHaveBeenCalledWith(
+      '`commitStrategy` is only supported for realtime models and will be ignored',
+    );
+    warn.mockRestore();
+  });
+
+  it('requests multilingual mode for Scribe v3 Live', async () => {
+    const url = await realtimeConnectionUrl({ model: 'scribe_v3_live', multilangMode: true });
+
+    expect(url.searchParams.get('multilang_mode')).toBe('true');
+  });
+
+  it('ignores multilingual mode for other models', async () => {
+    const warn = vi.spyOn(log(), 'warn').mockImplementation(() => undefined);
+    try {
+      const url = await realtimeConnectionUrl({ multilangMode: true });
+
+      expect(warn).toHaveBeenCalledWith(
+        '`multilangMode` is only supported for Scribe v3 Live and will be ignored',
+      );
+      expect(url.searchParams.has('multilang_mode')).toBe(false);
+    } finally {
+      warn.mockRestore();
     }
   });
 });
