@@ -23,6 +23,8 @@ const KNOWN_GAPS = new Set([
   // so MetricsReport has no field to read them from.
   'message.metrics.llm_node_tps',
   'message.metrics.llm_node_ttfs',
+  // removed from the wire format by livekit/protocol#1978
+  'functionCall.extra',
 ]);
 
 // Every field carries a non-default value: a proto3 scalar left at its zero value is
