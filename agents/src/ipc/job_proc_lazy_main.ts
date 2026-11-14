@@ -24,6 +24,12 @@ import {
   validateSessionEndTimeout,
   waitForEntrypointShutdown,
 } from '../job_lifecycle.js';
+import {
+  JOB_TOKEN_IPC_TIMEOUT,
+  type JobToken,
+  JobTokenClient,
+  getWorkerToken,
+} from '../job_token.js';
 import { initializeLogger, log } from '../log.js';
 import { loggerOptions, setLoggerState } from '../log_core.js';
 import type { SimulationContext } from '../simulation.js';
@@ -120,6 +126,52 @@ class InfClient implements InferenceExecutor {
   }
 }
 
+/** Asks the worker for the job's tokens over IPC (token mode). */
+class JobTokenIPC {
+  #requests = new Map<
+    string,
+    (res: { token?: string; expiresAt?: number; error?: string }) => void
+  >();
+
+  constructor() {
+    process.on('message', (msg: IPCMessage) => {
+      if (msg.case !== 'createJobTokenResponse') return;
+      const resolve = this.#requests.get(msg.value.requestId);
+      this.#requests.delete(msg.value.requestId);
+      resolve?.(msg.value);
+    });
+  }
+
+  createJobToken = async (claims: string): Promise<JobToken> => {
+    const requestId = shortuuid('job_token_');
+    const response = new Promise<{ token?: string; expiresAt?: number; error?: string }>(
+      (resolve) => this.#requests.set(requestId, resolve),
+    );
+    if (!safeSend({ case: 'createJobTokenRequest', value: { requestId, claims } })) {
+      this.#requests.delete(requestId);
+      throw new Error('CreateJobToken aborted: IPC channel closed');
+    }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        this.#requests.delete(requestId);
+        reject(
+          new Error(
+            `the worker did not answer the job token request in ${JOB_TOKEN_IPC_TIMEOUT}ms`,
+          ),
+        );
+      }, JOB_TOKEN_IPC_TIMEOUT);
+    });
+    const { token, expiresAt, error } = await Promise.race([response, timeout]).finally(() =>
+      clearTimeout(timer),
+    );
+    if (error !== undefined || token === undefined || expiresAt === undefined) {
+      throw new Error(error ?? 'CreateJobToken failed');
+    }
+    return { token, expiresAt };
+  };
+}
+
 const startJob = (
   proc: JobProcess,
   func: (ctx: JobContext) => Promise<void>,
@@ -164,6 +216,10 @@ const startJob = (
 
   const ctx = new JobContext(proc, info, room, onConnect, onShutdown, new InfClient());
   ctx._simulationEndFnc = onSimulationEnd;
+  // token mode: the job holds no API key or secret, and gets its tokens from the server
+  if (!info.apiKey && !info.apiSecret && getWorkerToken()) {
+    ctx._jobTokens = new JobTokenClient(new JobTokenIPC().createJobToken);
+  }
 
   const task = (async () => {
     let closeReason = '';

@@ -40,6 +40,7 @@ import { ATTR_SERVICE_NAME } from '@opentelemetry/semantic-conventions';
 import FormData from 'form-data';
 import { AccessToken } from 'livekit-server-sdk';
 import fs from 'node:fs/promises';
+import { getWorkerToken } from '../job_token.js';
 import type { ChatItem } from '../llm/index.js';
 import { enableOtelLogging, log } from '../log.js';
 import { filterZeroValues } from '../metrics/model_usage.js';
@@ -582,6 +583,10 @@ interface PreparedCloudPipeline {
 let preparedCloud: PreparedCloudPipeline | undefined;
 
 async function cloudAuthHeaders(): Promise<Record<string, string>> {
+  // token mode: the worker token, as is
+  const workerToken = getWorkerToken();
+  if (workerToken) return { Authorization: `Bearer ${workerToken}` };
+
   const apiKey = process.env.LIVEKIT_API_KEY;
   const apiSecret = process.env.LIVEKIT_API_SECRET;
   if (!apiKey || !apiSecret) {
@@ -1151,16 +1156,20 @@ export async function uploadSessionReport(
     return;
   }
 
-  const apiKey = process.env.LIVEKIT_API_KEY;
-  const apiSecret = process.env.LIVEKIT_API_SECRET;
+  // token mode: the worker token, as is
+  let jwt = getWorkerToken();
+  if (!jwt) {
+    const apiKey = process.env.LIVEKIT_API_KEY;
+    const apiSecret = process.env.LIVEKIT_API_SECRET;
 
-  if (!apiKey || !apiSecret) {
-    throw new Error('LIVEKIT_API_KEY and LIVEKIT_API_SECRET must be set for session upload');
+    if (!apiKey || !apiSecret) {
+      throw new Error('LIVEKIT_API_KEY and LIVEKIT_API_SECRET must be set for session upload');
+    }
+
+    const token = new AccessToken(apiKey, apiSecret, { ttl: '6h' });
+    token.addObservabilityGrant({ write: true });
+    jwt = await token.toJwt();
   }
-
-  const token = new AccessToken(apiKey, apiSecret, { ttl: '6h' });
-  token.addObservabilityGrant({ write: true });
-  const jwt = await token.toJwt();
 
   const audioStartTime = report.audioRecordingStartedAt ?? 0;
   const headerMsg = new MetricsRecordingHeader({

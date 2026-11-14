@@ -7,6 +7,7 @@ import type { IncomingMessage } from 'node:http';
 import { WebSocket } from 'ws';
 import { APIConnectionError, APIStatusError, APITimeoutError } from '../_exceptions.js';
 import { getJobContext } from '../job.js';
+import { getWorkerToken } from '../job_token.js';
 import { version } from '../version.js';
 
 export type AnyString = string & NonNullable<unknown>;
@@ -46,10 +47,25 @@ export function getDefaultInferenceUrl(): string {
   return DEFAULT_INFERENCE_URL;
 }
 
+/**
+ * The worker token, when inference runs in token mode: no API key or secret was passed or set
+ * for inference, and the agent was given `LIVEKIT_TOKEN` in their place.
+ */
+export function inferenceWorkerToken(apiKey?: string, apiSecret?: string): string | undefined {
+  if (apiKey || apiSecret) return undefined;
+  if (process.env.LIVEKIT_INFERENCE_API_KEY || process.env.LIVEKIT_INFERENCE_API_SECRET) {
+    return undefined;
+  }
+  return getWorkerToken();
+}
+
+/** In token mode, both are empty: {@link createAccessToken} then returns the worker token. */
 export function resolveCredentials(
   apiKey?: string,
   apiSecret?: string,
 ): { apiKey: string; apiSecret: string } {
+  if (inferenceWorkerToken(apiKey, apiSecret)) return { apiKey: '', apiSecret: '' };
+
   const resolvedApiKey =
     apiKey || process.env.LIVEKIT_INFERENCE_API_KEY || process.env.LIVEKIT_API_KEY;
   if (!resolvedApiKey) {
@@ -70,6 +86,10 @@ export async function createAccessToken(
   apiSecret: string,
   ttl: number = 600,
 ): Promise<string> {
+  // token mode: the worker token, as is
+  const workerToken = inferenceWorkerToken(apiKey, apiSecret);
+  if (workerToken) return workerToken;
+
   const token = new AccessToken(apiKey, apiSecret, { identity: 'agent', ttl });
   token.addInferenceGrant({ perform: true });
 

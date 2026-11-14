@@ -513,6 +513,7 @@ export function createWarmTransferTask({
     }
 
     const ctx = jobCtx ?? getJobContext();
+    if (ctx._jobTokens) throw new Error('warm transfer needs an API key and secret (token mode)');
     const humanAgentRoomName = resolveHumanAgentRoomName(callerRoom.name, rawRoomName);
     const room = new Room();
     const transferAgent = new Agent({

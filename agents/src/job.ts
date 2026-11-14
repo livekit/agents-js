@@ -22,6 +22,7 @@ import type { Logger } from 'pino';
 import { INFERENCE_PRIORITY_HEADER } from './inference/utils.js';
 import type { InferenceExecutor } from './ipc/inference_executor.js';
 import { monotonicUs } from './ipc/job_trace.js';
+import type { JobTokenClient } from './job_token.js';
 import { log } from './log.js';
 import { SimulationContext, SimulationMode, parseSimulationDispatch } from './simulation.js';
 import {
@@ -208,6 +209,12 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
   } = {};
   #logger: Logger;
   #inferenceExecutor: InferenceExecutor;
+
+  /**
+   * @internal Token mode: the job holds no API key or secret, and its server API calls get their
+   * tokens from here. Injected by the job runner.
+   */
+  _jobTokens?: JobTokenClient;
 
   /** @internal */
   _primaryAgentSession?: AgentSession;
@@ -587,7 +594,12 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
     }
 
     try {
-      const client = new RoomServiceClient(this.#info.url, this.#info.apiKey, this.#info.apiSecret);
+      // token mode: the server issues the token for each call
+      const client = this._jobTokens
+        ? new RoomServiceClient(this.#info.url, undefined, undefined, {
+            tokenSource: this._jobTokens.tokenSource,
+          })
+        : new RoomServiceClient(this.#info.url, this.#info.apiKey, this.#info.apiSecret);
       await client.deleteRoom(targetRoomName);
       this.#logger.info({ roomName: targetRoomName }, 'room deleted');
     } catch (error) {

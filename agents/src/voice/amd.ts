@@ -11,6 +11,7 @@ import type { ReadableStream } from 'node:stream/web';
 import { z } from 'zod';
 import * as inference from '../inference/index.js';
 import type { LLMModels, STTModels } from '../inference/index.js';
+import { inferenceWorkerToken } from '../inference/utils.js';
 import { ChatContext } from '../llm/chat_context.js';
 import type { FunctionCall } from '../llm/chat_context.js';
 import { LLM, type LLMStream } from '../llm/llm.js';
@@ -340,7 +341,8 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
       const apiSecret = process.env.LIVEKIT_INFERENCE_API_SECRET || process.env.LIVEKIT_API_SECRET;
       let autoSelect = false;
       try {
-        autoSelect = isCloud(new URL(rawUrl)) && !!(apiKey && apiSecret);
+        autoSelect =
+          isCloud(new URL(rawUrl)) && !!((apiKey && apiSecret) || inferenceWorkerToken());
       } catch {
         // invalid URL — not cloud
       }

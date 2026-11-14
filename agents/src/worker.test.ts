@@ -2,12 +2,15 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import {
+  type CreateJobTokenRequest,
+  CreateJobTokenResponse,
   Job,
   JobJoinTiming,
   JobState,
   type MigrateJobRequest,
   JobStatus as ProtoJobStatus,
   RegisterWorkerResponse,
+  ServerInfo,
   ServerMessage,
   type UpdateJobStatus,
   WorkerMessage,
@@ -16,13 +19,13 @@ import {
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import { setTimeout as delay, setImmediate } from 'node:timers/promises';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { WebSocketServer } from 'ws';
 import { type JobExecutor, JobStatus } from './ipc/job_executor.js';
 import { JobProcExecutor } from './ipc/job_proc_executor.js';
 import { ProcPool } from './ipc/proc_pool.js';
 import { Future } from './utils.js';
-import { AgentServer, ServerOptions } from './worker.js';
+import { AgentServer, MissingCredentialsError, ServerOptions } from './worker.js';
 
 vi.mock('./inference/_warmup.js', () => ({
   _getLocalInferenceModule: () => undefined,
@@ -399,6 +402,241 @@ describe('AgentServer job status', () => {
       start.mockRestore();
       wss.close();
     }
+  });
+});
+
+describe('AgentServer token mode', () => {
+  const originalEnv = { ...process.env };
+
+  afterEach(() => {
+    process.env = { ...originalEnv };
+  });
+
+  /**
+   * A fake server of this agent protocol: registers the worker and answers its job token requests
+   * with `answer`.
+   */
+  const fakeServer = async (
+    answer?: (req: CreateJobTokenRequest) => CreateJobTokenResponse,
+    agentProtocol = 2,
+  ) => {
+    const wss = new WebSocketServer({ port: 0 });
+    await once(wss, 'listening');
+    const authorization = new Future<string | undefined>();
+    const registered = new Future();
+    const tokenRequests: CreateJobTokenRequest[] = [];
+    let connections = 0;
+    wss.on('connection', (ws, req) => {
+      connections++;
+      authorization.resolve(req.headers.authorization);
+      ws.on('message', (data: Buffer) => {
+        const msg = WorkerMessage.fromBinary(new Uint8Array(data));
+        if (msg.message.case === 'register') {
+          const res = new RegisterWorkerResponse({
+            workerId: 'AW_test',
+            serverInfo: new ServerInfo({ agentProtocol }),
+          });
+          ws.send(new ServerMessage({ message: { case: 'register', value: res } }).toBinary());
+          registered.resolve();
+        } else if (msg.message.case === 'createJobToken') {
+          tokenRequests.push(msg.message.value);
+          if (answer) {
+            const res = answer(msg.message.value);
+            ws.send(
+              new ServerMessage({ message: { case: 'createJobToken', value: res } }).toBinary(),
+            );
+          }
+        }
+      });
+    });
+    return { wss, authorization, registered, tokenRequests, connections: () => connections };
+  };
+
+  const newServer = (wss: WebSocketServer, opts: { apiKey?: string; apiSecret?: string } = {}) =>
+    new AgentServer(
+      new ServerOptions({
+        agent: 'test-agent.js',
+        wsURL: `ws://127.0.0.1:${(wss.address() as AddressInfo).port}`,
+        numIdleProcesses: 0,
+        simulation: true,
+        ...opts,
+      }),
+    );
+
+  const tokenModeEnv = () => {
+    delete process.env.LIVEKIT_API_KEY;
+    delete process.env.LIVEKIT_API_SECRET;
+    process.env.LIVEKIT_TOKEN = 'worker-token';
+  };
+
+  it('registers with LIVEKIT_TOKEN as the bearer, and routes job tokens by request id', async () => {
+    tokenModeEnv();
+    const { wss, authorization, registered, tokenRequests } = await fakeServer(
+      (req) =>
+        new CreateJobTokenResponse({
+          requestId: req.requestId,
+          token: `job-token-for-${req.jobId}`,
+          expiresAt: 1_700_000_600n,
+        }),
+    );
+    const start = vi.spyOn(ProcPool.prototype, 'start').mockImplementation(() => {});
+    const server = newServer(wss);
+
+    const workerRegistered = once(server.event, 'worker_registered');
+    const run = server.run().catch(() => undefined);
+    try {
+      expect(await authorization.await).toBe('Bearer worker-token');
+      await registered.await;
+      await workerRegistered;
+
+      const pool = start.mock.contexts[0] as ProcPool;
+      await expect(pool.createJobToken!('AJ_1', '{"identity":"a"}')).resolves.toEqual({
+        token: 'job-token-for-AJ_1',
+        expiresAt: 1_700_000_600_000,
+      });
+      expect(tokenRequests).toHaveLength(1);
+      expect(tokenRequests[0]!.jobId).toBe('AJ_1');
+      expect(tokenRequests[0]!.claims).toBe('{"identity":"a"}');
+      await expect(server.simulateJob('room')).rejects.toThrow(
+        'simulateJob needs an API key and secret',
+      );
+    } finally {
+      await server.close();
+      await run;
+      start.mockRestore();
+      wss.close();
+    }
+  });
+
+  it('fails up front, without retrying, on a server without token mode', async () => {
+    tokenModeEnv();
+    const { wss, registered, tokenRequests, connections } = await fakeServer(undefined, 1);
+    const start = vi.spyOn(ProcPool.prototype, 'start').mockImplementation(() => {});
+    const server = newServer(wss);
+    const registeredEvent = vi.fn();
+    server.event.on('worker_registered', registeredEvent);
+
+    const run = server.run();
+    run.catch(() => undefined); // asserted below
+    try {
+      await registered.await;
+      // a job token asked for now has no connection to go out on
+      const pool = start.mock.contexts[0] as ProcPool;
+      await expect(pool.createJobToken!('AJ_1', '{}')).rejects.toThrow(
+        'the worker is not connected to the LiveKit server',
+      );
+      await expect(run).rejects.toThrow(
+        'the LiveKit server does not support token mode (LIVEKIT_TOKEN): it reports agent ' +
+          'protocol 1, and token mode needs 2. Upgrade the server, or run the agent with ' +
+          'LIVEKIT_API_KEY and LIVEKIT_API_SECRET',
+      );
+      expect(connections(), 'no reconnect').toBe(1);
+      expect(tokenRequests).toEqual([]);
+      expect(registeredEvent).not.toHaveBeenCalled();
+    } finally {
+      await server.close();
+      await run.catch(() => undefined);
+      start.mockRestore();
+      wss.close();
+    }
+  });
+
+  it('runs in key mode on a server of agent protocol 1', async () => {
+    const { wss, registered } = await fakeServer(undefined, 1);
+    const server = newServer(wss, { apiKey: 'devkey', apiSecret: 'devsecret' });
+    const registeredEvent = new Future();
+    server.event.once('worker_registered', () => registeredEvent.resolve());
+
+    const run = server.run().catch(() => undefined);
+    try {
+      await registered.await;
+      await registeredEvent.await;
+      expect(server.id).toBe('AW_test');
+    } finally {
+      await server.close();
+      await run;
+      wss.close();
+    }
+  });
+
+  it('surfaces the server error of a refused job token', async () => {
+    tokenModeEnv();
+    const { wss, registered } = await fakeServer(
+      (req) =>
+        new CreateJobTokenResponse({
+          requestId: req.requestId,
+          error: 'claim not allowed: video.agent',
+        }),
+    );
+    const start = vi.spyOn(ProcPool.prototype, 'start').mockImplementation(() => {});
+    const server = newServer(wss);
+
+    const workerRegistered = once(server.event, 'worker_registered');
+    const run = server.run().catch(() => undefined);
+    try {
+      await registered.await;
+      await workerRegistered;
+      const pool = start.mock.contexts[0] as ProcPool;
+      await expect(pool.createJobToken!('AJ_1', '{"video":{"agent":true}}')).rejects.toThrow(
+        'the LiveKit server refused CreateJobToken: claim not allowed: video.agent',
+      );
+    } finally {
+      await server.close();
+      await run;
+      start.mockRestore();
+      wss.close();
+    }
+  });
+
+  it('signs its own token when an API key and secret are set, even with LIVEKIT_TOKEN', async () => {
+    process.env.LIVEKIT_TOKEN = 'worker-token';
+    const { wss, authorization } = await fakeServer();
+    const server = newServer(wss, { apiKey: 'devkey', apiSecret: 'devsecret' });
+
+    const run = server.run().catch(() => undefined);
+    try {
+      const bearer = (await authorization.await)!.replace('Bearer ', '');
+      const claims = JSON.parse(Buffer.from(bearer.split('.')[1]!, 'base64url').toString());
+      expect(claims).toMatchObject({ iss: 'devkey', video: { agent: true } });
+      expect(process.env.LIVEKIT_TOKEN, 'not exported in key mode').toBe('worker-token');
+    } finally {
+      await server.close();
+      await run;
+      wss.close();
+    }
+  });
+
+  it('reads an explicit token option, and exports it for the job processes', () => {
+    delete process.env.LIVEKIT_API_KEY;
+    delete process.env.LIVEKIT_API_SECRET;
+    delete process.env.LIVEKIT_TOKEN;
+    new AgentServer(
+      new ServerOptions({ agent: 'test-agent.js', wsURL: 'ws://localhost', token: 'explicit' }),
+    );
+    expect(process.env.LIVEKIT_TOKEN).toBe('explicit');
+  });
+
+  it('keeps the key mode errors without a token', () => {
+    delete process.env.LIVEKIT_API_KEY;
+    delete process.env.LIVEKIT_API_SECRET;
+    delete process.env.LIVEKIT_TOKEN;
+    expect(
+      () => new AgentServer(new ServerOptions({ agent: 'test-agent.js', wsURL: 'ws://localhost' })),
+    ).toThrow(MissingCredentialsError);
+    expect(
+      () =>
+        new AgentServer(
+          new ServerOptions({ agent: 'test-agent.js', wsURL: 'ws://localhost', apiKey: 'devkey' }),
+        ),
+    ).toThrow('API Secret is required');
+    // a key without a secret is key mode, even with a token
+    process.env.LIVEKIT_TOKEN = 'worker-token';
+    expect(
+      () =>
+        new AgentServer(
+          new ServerOptions({ agent: 'test-agent.js', wsURL: 'ws://localhost', apiKey: 'devkey' }),
+        ),
+    ).toThrow('API Secret is required');
   });
 });
 

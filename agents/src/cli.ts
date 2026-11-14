@@ -154,6 +154,12 @@ export const runApp = (opts: ServerOptions) => {
       ),
     )
     .addOption(
+      new Option(
+        '--token <string>',
+        'Pre-minted worker token, used in place of an API key and secret',
+      ).env('LIVEKIT_TOKEN'),
+    )
+    .addOption(
       new Option('--worker-token <string>', 'Internal use only')
         .env('LIVEKIT_WORKER_TOKEN')
         .hideHelp(),
@@ -185,6 +191,7 @@ export const runApp = (opts: ServerOptions) => {
       opts.wsURL = globalOptions.url || opts.wsURL;
       opts.apiKey = globalOptions.apiKey || opts.apiKey;
       opts.apiSecret = globalOptions.apiSecret || opts.apiSecret;
+      opts.token = globalOptions.token || opts.token;
       opts.logLevel = commandOptions.logLevel;
       opts.workerToken = globalOptions.workerToken || opts.workerToken;
       opts.simulation = commandOptions.simulation || opts.simulation;
@@ -214,6 +221,7 @@ export const runApp = (opts: ServerOptions) => {
       opts.wsURL = globalOptions.url || opts.wsURL;
       opts.apiKey = globalOptions.apiKey || opts.apiKey;
       opts.apiSecret = globalOptions.apiSecret || opts.apiSecret;
+      opts.token = globalOptions.token || opts.token;
       opts.logLevel = commandOptions.logLevel;
       opts.workerToken = globalOptions.workerToken || opts.workerToken;
       process.env.LIVEKIT_DEV_MODE = '1';
@@ -237,6 +245,7 @@ export const runApp = (opts: ServerOptions) => {
       opts.wsURL = globalOptions.url || opts.wsURL;
       opts.apiKey = globalOptions.apiKey || opts.apiKey;
       opts.apiSecret = globalOptions.apiSecret || opts.apiSecret;
+      opts.token = globalOptions.token || opts.token;
       opts.logLevel = commandOptions.logLevel;
       opts.workerToken = globalOptions.workerToken || opts.workerToken;
       process.env.LIVEKIT_DEV_MODE = '1';

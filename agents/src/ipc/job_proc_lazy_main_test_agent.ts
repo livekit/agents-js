@@ -49,6 +49,19 @@ export default defineAgent({
     });
 
     const scenario = ctx.job.metadata;
+    if (scenario === 'job api') {
+      return (async () => {
+        // the server API is the only external service replaced
+        globalThis.fetch = async (_input, init) => {
+          const authorization = new Headers(init?.headers).get('Authorization');
+          process.send!({ case: 'testFetch', authorization });
+          return new Response('{}', { headers: { 'Content-Type': 'application/json' } });
+        };
+        await ctx.deleteRoom('myroom');
+        await ctx.deleteRoom('myroom');
+        ctx.shutdown();
+      })();
+    }
     if (scenario === 'synchronous throw') throw new Error('synchronous entrypoint failure');
 
     return (async () => {
