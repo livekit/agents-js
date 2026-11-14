@@ -1282,16 +1282,17 @@ async function forwardAudio(
 
       if (resampler) {
         for (const f of resampler.push(frame)) {
-          await audioOutput.captureFrame(f);
+          if (signal?.aborted) break;
+          await audioOutput.captureFrame(f, { signal });
         }
       } else {
-        await audioOutput.captureFrame(frame);
+        await audioOutput.captureFrame(frame, { signal });
       }
     }
 
-    if (resampler) {
+    if (resampler && !signal?.aborted) {
       for (const f of resampler.flush()) {
-        await audioOutput.captureFrame(f);
+        await audioOutput.captureFrame(f, { signal });
       }
     }
   } catch (e) {
