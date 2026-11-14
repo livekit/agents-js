@@ -7,7 +7,7 @@ import EventEmitter from 'events';
 import { log } from '../../log.js';
 import type { InterruptionMetrics } from '../../metrics/base.js';
 import { asError } from '../../utils.js';
-import { getDefaultInferenceUrl } from '../utils.js';
+import { getDefaultInferenceUrl, inferenceWorkerToken } from '../utils.js';
 import { FRAMES_PER_SECOND, SAMPLE_RATE, interruptionOptionDefaults } from './defaults.js';
 import { InterruptionDetectionError } from './errors.js';
 import { InterruptionStreamBase } from './interruption_stream.js';
@@ -50,7 +50,9 @@ export class AdaptiveInterruptionDetector extends (EventEmitter as new () => Typ
 
     const lkApiKey =
       apiKey || process.env.LIVEKIT_INFERENCE_API_KEY || process.env.LIVEKIT_API_KEY || '';
-    if (!lkApiKey) {
+    // token mode: no key or secret, createAccessToken uses the worker token
+    const tokenMode = !!inferenceWorkerToken(apiKey, apiSecret);
+    if (!lkApiKey && !tokenMode) {
       throw new TypeError(
         'apiKey is required, either as argument or set LIVEKIT_API_KEY environmental variable',
       );
@@ -58,7 +60,7 @@ export class AdaptiveInterruptionDetector extends (EventEmitter as new () => Typ
 
     const lkApiSecret =
       apiSecret || process.env.LIVEKIT_INFERENCE_API_SECRET || process.env.LIVEKIT_API_SECRET || '';
-    if (!lkApiSecret) {
+    if (!lkApiSecret && !tokenMode) {
       throw new TypeError(
         'apiSecret is required, either as argument or set LIVEKIT_API_SECRET environmental variable',
       );

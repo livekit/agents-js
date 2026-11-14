@@ -4,6 +4,7 @@
 import { type DisconnectReason, Room } from '@livekit/rtc-node';
 import { defineAgent } from '../generator.js';
 import { JobContext } from '../job.js';
+import { getWorkerToken } from '../job_token.js';
 import { tracer } from '../telemetry/index.js';
 
 export default defineAgent({
@@ -49,6 +50,33 @@ export default defineAgent({
     });
 
     const scenario = ctx.job.metadata;
+    if (scenario === 'worker token') {
+      // reports the worker token it reads, at start and when the test asks
+      return new Promise<void>((resolve) => {
+        process.send!({ case: 'testWorkerToken', token: getWorkerToken() });
+        process.on('message', (msg: { case: string }) => {
+          if (msg.case === 'testReportWorkerToken') {
+            process.send!({ case: 'testWorkerToken', token: getWorkerToken() });
+          } else if (msg.case === 'testEnd') {
+            ctx.shutdown();
+            resolve();
+          }
+        });
+      });
+    }
+    if (scenario === 'job api') {
+      return (async () => {
+        // the server API is the only external service replaced
+        globalThis.fetch = async (_input, init) => {
+          const authorization = new Headers(init?.headers).get('Authorization');
+          process.send!({ case: 'testFetch', authorization });
+          return new Response('{}', { headers: { 'Content-Type': 'application/json' } });
+        };
+        await ctx.deleteRoom('myroom');
+        await ctx.deleteRoom('myroom');
+        ctx.shutdown();
+      })();
+    }
     if (scenario === 'synchronous throw') throw new Error('synchronous entrypoint failure');
 
     return (async () => {

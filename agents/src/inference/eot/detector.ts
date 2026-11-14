@@ -12,7 +12,7 @@ import { log } from '../../log.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../../types.js';
 import { isDevMode, isHosted, resolveEnvVar } from '../../utils.js';
 import { _getLocalInferenceModule } from '../_warmup.js';
-import { getDefaultInferenceUrl } from '../utils.js';
+import { getDefaultInferenceUrl, inferenceWorkerToken } from '../utils.js';
 import {
   BaseStreamingTurnDetector,
   type BaseStreamingTurnDetectorOptions,
@@ -93,10 +93,12 @@ export class TurnDetector extends BaseStreamingTurnDetector {
         'LIVEKIT_INFERENCE_API_SECRET',
         'LIVEKIT_API_SECRET',
       ]);
+      // token mode: no key or secret, createAccessToken uses the worker token
+      const tokenMode = !!inferenceWorkerToken(opts.apiKey, opts.apiSecret);
       const missing: string[] = [];
       if (!baseUrl) missing.push('LIVEKIT_INFERENCE_URL');
-      if (!apiKey) missing.push('LIVEKIT_API_KEY');
-      if (!apiSecret) missing.push('LIVEKIT_API_SECRET');
+      if (!apiKey && !tokenMode) missing.push('LIVEKIT_API_KEY');
+      if (!apiSecret && !tokenMode) missing.push('LIVEKIT_API_SECRET');
       if (missing.length > 0) {
         if (auto) {
           log().warn(
