@@ -133,11 +133,12 @@ export class AvatarSession extends (EventEmitter as new () => TypedEmitter<Avata
       const jobCtx = getJobContext(false);
       if (jobCtx !== undefined) {
         try {
-          const client = new RoomServiceClient(
-            jobCtx.info.url,
-            jobCtx.info.apiKey,
-            jobCtx.info.apiSecret,
-          );
+          // token mode: the server issues the token for each call
+          const client = jobCtx._jobTokens
+            ? new RoomServiceClient(jobCtx.info.url, undefined, undefined, {
+                tokenSource: jobCtx._jobTokens.tokenSource,
+              })
+            : new RoomServiceClient(jobCtx.info.url, jobCtx.info.apiKey, jobCtx.info.apiSecret);
           await client.removeParticipant(roomName, this.avatarIdentity);
         } catch (error) {
           if (isTwirpNotFoundError(error)) {

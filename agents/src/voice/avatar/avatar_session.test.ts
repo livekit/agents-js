@@ -6,6 +6,7 @@ import { Room } from '@livekit/rtc-node';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { JobContext, JobProcess } from '../../job.js';
 import * as jobModule from '../../job.js';
+import { JobTokenClient } from '../../job_token.js';
 import * as logModule from '../../log.js';
 import { AgentSession } from '../agent_session.js';
 import { AudioOutput } from '../io.js';
@@ -260,5 +261,27 @@ describe('AvatarSession base', () => {
     );
     expect(agentSession.off).toHaveBeenCalledWith(...agentSession.on.mock.calls[0]!);
     expect(room.off).toHaveBeenCalledWith(...room.on.mock.calls[0]!);
+  });
+
+  it('removes the avatar participant with a job token in token mode', async () => {
+    const jobContext = mockJobContext();
+    const jobTokens = new JobTokenClient(async () => ({ token: 'job-token', expiresAt: 0 }));
+    jobContext._jobTokens = jobTokens;
+
+    const agentSession = mockAgentSession();
+    const room = mockRoom();
+    const session = new TestAvatarSession();
+    await session.start(agentSession.session, room.room);
+    room.connect();
+
+    await session.aclose();
+
+    expect(roomServiceClientMock).toHaveBeenCalledWith(
+      'wss://example.livekit.cloud',
+      undefined,
+      undefined,
+      { tokenSource: jobTokens.tokenSource },
+    );
+    expect(removeParticipantMock).toHaveBeenCalledWith('test-room', 'avatar-identity');
   });
 });

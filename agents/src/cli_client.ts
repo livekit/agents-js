@@ -102,6 +102,7 @@ export class CLIClient {
     this.#socket = undefined;
   }
 
+  /** Decodes a dev channel message and passes the worker token of a Credentials message on. */
   #handleMessage(payload: Uint8Array): void {
     let msg: AgentDev.AgentDevMessage;
     try {
