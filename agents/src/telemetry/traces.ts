@@ -397,7 +397,7 @@ function setupCloudMetrics(
 
   const exporter = new UploadGateMetricExporter({
     url: `${observabilityUrl}/observability/metrics/otlp/v0`,
-    headers,
+    headers: cloudExporterHeaders(headers),
     compression: CompressionAlgorithm.GZIP,
     temporalityPreference: AggregationTemporality.DELTA,
   });
@@ -582,6 +582,16 @@ interface PreparedCloudPipeline {
 
 let preparedCloud: PreparedCloudPipeline | undefined;
 
+/**
+ * The headers option of a cloud exporter. In token mode the worker token can be replaced while
+ * the job runs (refresh), so the exporter gets the current one for each request.
+ */
+function cloudExporterHeaders(
+  headers: Record<string, string>,
+): Record<string, string> | (() => Promise<Record<string, string>>) {
+  return getWorkerToken() ? cloudAuthHeaders : headers;
+}
+
 async function cloudAuthHeaders(): Promise<Record<string, string>> {
   // token mode: the worker token, as is
   const workerToken = getWorkerToken();
@@ -658,7 +668,7 @@ export async function prepareCloudTracer(
   const gate = new JobSpanGateExporter(
     new UploadGateTraceExporter({
       url: `${observabilityUrl}/observability/traces/otlp/v0`,
-      headers,
+      headers: cloudExporterHeaders(headers),
       compression: CompressionAlgorithm.GZIP,
     }),
   );
@@ -791,7 +801,7 @@ export async function setupCloudTracer(
       const createCloudExporter = () =>
         new UploadGateTraceExporter({
           url,
-          headers,
+          headers: cloudExporterHeaders(headers),
           compression: CompressionAlgorithm.GZIP,
         });
 

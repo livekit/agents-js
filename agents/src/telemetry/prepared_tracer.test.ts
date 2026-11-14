@@ -15,6 +15,8 @@ import {
 import { ExportResultCode } from '@opentelemetry/core';
 import type { ReadableSpan, SpanExporter } from '@opentelemetry/sdk-trace-base';
 import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
+import { createServer } from 'node:http';
+import { type AddressInfo } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { initializeLogger } from '../log.js';
 import { ATTRIBUTE_REDACTION_ENABLED } from '../types.js';
@@ -343,5 +345,46 @@ describe('prepared cloud tracer', () => {
     });
     expect(seen).toHaveLength(1);
     expect(seen[0]!.attributes['lk.pii.user_transcript']).toBeUndefined();
+  });
+
+  it('sends the refreshed worker token on later uploads in token mode', async () => {
+    // token mode: no key or secret, the worker token is in LIVEKIT_TOKEN
+    delete process.env.LIVEKIT_API_KEY;
+    delete process.env.LIVEKIT_API_SECRET;
+    const prevToken = process.env.LIVEKIT_TOKEN;
+    process.env.LIVEKIT_TOKEN = 'token-1';
+
+    const traceAuth: (string | undefined)[] = [];
+    const server = createServer((req, res) => {
+      if (req.url?.includes('/traces/')) traceAuth.push(req.headers.authorization);
+      req.resume();
+      req.on('end', () => res.writeHead(200).end());
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const observabilityUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+
+    try {
+      await prepareCloudTracer({ roomId: 'RM_1', jobId: 'AJ_1', observabilityUrl });
+      await setupCloudTracer({
+        roomId: 'RM_1',
+        jobId: 'AJ_1',
+        observabilityUrl,
+        enableLogs: false,
+      });
+      tracer.startSpan({ name: 'agent_turn' }).end();
+      await flush();
+      expect(traceAuth).toEqual(['Bearer token-1']);
+
+      // the worker got a new token (UpdateWorkerToken sets it in the job's environment)
+      process.env.LIVEKIT_TOKEN = 'token-2';
+      tracer.startSpan({ name: 'agent_turn' }).end();
+      await flush();
+      expect(traceAuth).toEqual(['Bearer token-1', 'Bearer token-2']);
+    } finally {
+      await _resetPreparedCloudTracer();
+      await new Promise((resolve) => server.close(resolve));
+      if (prevToken === undefined) delete process.env.LIVEKIT_TOKEN;
+      else process.env.LIVEKIT_TOKEN = prevToken;
+    }
   });
 });
