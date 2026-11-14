@@ -1713,7 +1713,9 @@ export abstract class AudioOutput extends EventEmitter_2 {
     protected readonly capabilities: AudioOutputCapabilities;
     // @internal
     get capturedPlayoutSegments(): number;
-    captureFrame(_frame: AudioFrame): Promise<void>;
+    captureFrame(_frame: AudioFrame, _options?: {
+        signal?: AbortSignal;
+    }): Promise<void>;
     abstract clearBuffer(): void;
     // (undocumented)
     static readonly EVENT_PLAYBACK_FINISHED = "playbackFinished";
@@ -5940,7 +5942,9 @@ function participantAttributes(participant: {
 export class ParticipantAudioOutput extends AudioOutput {
     constructor(room: Room, options: AudioOutputOptions);
     // (undocumented)
-    captureFrame(frame: AudioFrame): Promise<void>;
+    captureFrame(frame: AudioFrame, options?: {
+        signal?: AbortSignal;
+    }): Promise<void>;
     // (undocumented)
     clearBuffer(): void;
     // (undocumented)
