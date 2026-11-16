@@ -5,8 +5,9 @@ import { once } from 'node:events';
 import type { IncomingHttpHeaders } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { WebSocket, WebSocketServer } from 'ws';
+import { type WebSocket, WebSocketServer } from 'ws';
 import { z } from 'zod';
+import { APIStatusError } from '../_exceptions.js';
 import { DuplexRealtimeAdapter } from '../llm/duplex_adapter.js';
 import type {
   ClientEvent,
@@ -23,6 +24,7 @@ import type { OpenAIDuplexOptions, OpenAIResponsesOptions } from './duplex.js';
 import * as inference from './index.js';
 import { LLM, llmFromModelString } from './llm.js';
 import { RealtimeModel } from './realtime.js';
+import { createQuotaWebSocketServer } from './test_utils.js';
 import * as inferenceUtils from './utils.js';
 
 const SECRET = 'secret-with-at-least-32-bytes-for-jwt';
@@ -155,6 +157,30 @@ describe('inference DuplexModel', () => {
     } finally {
       await Promise.all(sessions.map((session) => session.close()));
       await gateway.stop();
+    }
+  });
+
+  it('explains exhausted credits when the handshake fails', async () => {
+    const gateway = await createQuotaWebSocketServer();
+    try {
+      const session = track(
+        model({
+          baseURL: gateway.url,
+          connOptions: { maxRetry: 0, retryIntervalMs: 0, timeoutMs: 1_000 },
+        }).session(),
+      );
+      const [{ error }] = await once(session, 'error');
+
+      expect(error).toBeInstanceOf(APIStatusError);
+      expect(error).toMatchObject({
+        message: 'Credit quota exhausted.',
+        statusCode: 429,
+        retryable: false,
+        requestId: 'quota-test-request',
+        body: { category: 'MaxGatewayCredits' },
+      });
+    } finally {
+      await gateway.close();
     }
   });
 

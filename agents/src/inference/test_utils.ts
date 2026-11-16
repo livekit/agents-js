@@ -1,11 +1,44 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import http from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { describe, it, vi } from 'vitest';
 import type { LLM } from '../llm/llm.js';
 import type { STT } from '../stt/stt.js';
 import type { TTS } from '../tts/tts.js';
 import type { VAD } from '../vad.js';
+
+export async function createQuotaWebSocketServer(): Promise<{
+  url: string;
+  close: () => Promise<void>;
+}> {
+  const server = http.createServer((_request, response) => {
+    response.writeHead(429, {
+      'X-LiveKit-Inference-Quota-Category': 'MaxGatewayCredits',
+      'X-LiveKit-Inference-Quota-Message': 'Credit quota exhausted.',
+      'X-LiveKit-Request-Id': 'quota-test-request',
+      'X-Should-Retry': 'false',
+    });
+    response.end();
+  });
+  await new Promise<void>((resolve, reject) => {
+    const onError = (error: Error) => reject(error);
+    server.once('error', onError);
+    server.listen(0, '127.0.0.1', () => {
+      server.off('error', onError);
+      resolve();
+    });
+  });
+  const { port } = server.address() as AddressInfo;
+  return {
+    url: `http://127.0.0.1:${port}`,
+    close: () =>
+      new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      }),
+  };
+}
 
 interface InferenceTestHarness {
   llm: (model: LLM, skipOptionalArgs: boolean) => Promise<void>;
