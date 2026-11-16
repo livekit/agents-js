@@ -261,6 +261,27 @@ describe('inference RealtimeModel', () => {
     expect(model.capabilities.canDisableTurnDetection).toBe(false);
   });
 
+  it('keeps server turn detection for Google models', () => {
+    const model = new RealtimeModel({
+      model: 'google/gemini-3.8-live',
+      apiKey: 'key',
+      apiSecret: 'secret',
+    });
+
+    expect(model.capabilities.turnDetection).toBe(true);
+    expect(model.capabilities.canDisableTurnDetection).toBe(false);
+  });
+
+  it('allows OpenAI models to hand turn detection to the client', () => {
+    const model = new RealtimeModel({
+      model: 'openai/gpt-realtime',
+      apiKey: 'key',
+      apiSecret: 'secret',
+    });
+
+    expect(model.capabilities.canDisableTurnDetection).toBe(true);
+  });
+
   it('does not expose the deprecated temperature option', () => {
     const options: RealtimeModelOptions = {
       model: 'openai/gpt-realtime',
