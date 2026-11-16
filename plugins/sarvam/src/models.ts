@@ -5,6 +5,9 @@
 /** Supported Sarvam AI TTS models */
 export type TTSModels = 'bulbul:v2' | 'bulbul:v3';
 
+/** Supported Sarvam AI LLM models */
+export type LLMModels = 'gemma4' | 'sarvam-105b' | 'glm5.2' | 'sarvam-105b-conversations';
+
 /** Speakers available on bulbul:v3 (30+ voices) */
 export type TTSV3Speakers =
   | 'shubh'
