@@ -133,6 +133,8 @@ const SAFE_KEYS = new Set([
   'lk.tts.label',
   'lk.response.ttfb',
   // EOU detection
+  'lk.eou.model',
+  'lk.eou.provider',
   'lk.eou.probability',
   'lk.eou.unlikely_threshold',
   'lk.eou.endpointing_delay',

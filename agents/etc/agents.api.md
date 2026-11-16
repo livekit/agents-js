@@ -1165,6 +1165,9 @@ const ATTR_EOU_FROM_CACHE = "lk.eou.from_cache";
 // @public (undocumented)
 const ATTR_EOU_LANGUAGE = "lk.eou.language";
 
+// @public (undocumented)
+const ATTR_EOU_MODEL = "lk.eou.model";
+
 // @public
 const ATTR_EOU_NOT_COMMITTED_COUNT = "lk.eou.not_committed_count";
 
@@ -1173,6 +1176,9 @@ const ATTR_EOU_OUTCOME = "lk.eou.outcome";
 
 // @public (undocumented)
 const ATTR_EOU_PROBABILITY = "lk.eou.probability";
+
+// @public (undocumented)
+const ATTR_EOU_PROVIDER = "lk.eou.provider";
 
 // @public
 const ATTR_EOU_REARM_COUNT = "lk.eou.rearm_count";
@@ -8817,6 +8823,8 @@ declare namespace traceTypes {
         ATTR_TTS_STREAMING,
         ATTR_TTS_LABEL,
         ATTR_RESPONSE_TTFB,
+        ATTR_EOU_MODEL,
+        ATTR_EOU_PROVIDER,
         ATTR_EOU_PROBABILITY,
         ATTR_EOU_UNLIKELY_THRESHOLD,
         ATTR_EOU_DELAY,
@@ -9991,10 +9999,10 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 // src/voice/agent_session.ts:1810:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
 // src/voice/agent_session.ts:1810:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts
 // src/voice/agent_session.ts:1810:5 - (ae-forgotten-export) The symbol "LLMError" needs to be exported by the entry point index.d.ts
-// src/voice/amd.ts:315:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "waitForTrackPublication" has more than one declaration; you need to add a TSDoc member reference selector
-// src/voice/amd.ts:315:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "gateListening"
-// src/voice/amd.ts:323:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "aclose"
-// src/voice/amd.ts:517:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "gateListening"
+// src/voice/amd.ts:318:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "waitForTrackPublication" has more than one declaration; you need to add a TSDoc member reference selector
+// src/voice/amd.ts:318:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "gateListening"
+// src/voice/amd.ts:328:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "aclose"
+// src/voice/amd.ts:523:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "gateListening"
 // src/voice/events.ts:437:3 - (ae-forgotten-export) The symbol "InterruptionDetectionError" needs to be exported by the entry point index.d.ts
 // src/voice/room_io/_output.ts:183:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "segmentTags"
 // src/voice/testing/run_result.ts:94:5 - (ae-forgotten-export) The symbol "OutputSchema" needs to be exported by the entry point index.d.ts

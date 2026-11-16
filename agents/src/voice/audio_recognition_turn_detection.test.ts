@@ -32,8 +32,10 @@ import {
 } from '../inference/eot/base.js';
 import { type LanguageCode, asLanguageCode } from '../language.js';
 import { ChatContext } from '../llm/chat_context.js';
+import type { Logger } from '../log.js';
 import { initializeLogger } from '../log.js';
 import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
+import * as traceTypes from '../telemetry/trace_types.js';
 import { Future } from '../utils.js';
 import { type VAD, type VADEvent, VADEventType } from '../vad.js';
 import {
@@ -79,6 +81,7 @@ interface RecognitionInternals {
   sttPipeline?: { manualFlush: boolean; flush: () => boolean };
   sttFlushRequested: boolean;
   closeWakeController: AbortController;
+  logger: Logger;
   onSTTEvent: (ev: SpeechEvent) => Promise<void>;
 }
 
@@ -131,6 +134,10 @@ function makeRecognition(opts: Partial<AudioRecognitionOptions> = {}): {
  */
 function makeAudioStream(): BaseStreamingTurnDetectorStream {
   const stream = Object.create(BaseStreamingTurnDetectorStream.prototype);
+  Object.defineProperties(stream, {
+    model: { value: 'turn-detector-v1', writable: true },
+    provider: { value: 'livekit', writable: true },
+  });
   stream.supportsLanguage = vi.fn(async () => true);
   stream.unlikelyThreshold = vi.fn(async () => 0.5);
   // backchannel disabled by default (server sent no thresholds); the
@@ -764,8 +771,13 @@ describe('TestPredictionFutureLifecycle', () => {
   it('predict timeout signals fallback and drops the future', async () => {
     const { internals, hooks } = makeRecognition();
     const stream = makeAudioStream();
+    const debug = vi.fn();
+    internals.logger = { debug, warn: vi.fn(), error: vi.fn() } as unknown as Logger;
     internals.turnDetectorStream = stream;
     internals.turnDetector = makeAudioDetector(stream);
+    cancelInferenceMock(stream).mockImplementation(() => {
+      Object.defineProperty(stream, 'model', { value: 'turn-detector-v1-mini' });
+    });
     // A pending future that never resolves → times out at predictionTimeout.
     internals.turnDetectorPredictionFut = new Future<TurnDetectionEvent>();
 
@@ -779,6 +791,13 @@ describe('TestPredictionFutureLifecycle', () => {
     expect(hooks.onEotPrediction).not.toHaveBeenCalled();
     expect(stream.unlikelyThreshold).not.toHaveBeenCalled();
     expect(hooks.onEndOfTurn).toHaveBeenCalledTimes(1);
+    expect(debug).toHaveBeenCalledWith(
+      expect.objectContaining({
+        [traceTypes.ATTR_EOU_MODEL]: 'turn-detector-v1',
+        [traceTypes.ATTR_EOU_PROVIDER]: 'livekit',
+      }),
+      'eot prediction',
+    );
   });
 
   it('commit flushes the stream and marks the turn flushed', async () => {
