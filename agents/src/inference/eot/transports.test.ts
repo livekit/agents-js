@@ -141,6 +141,15 @@ function pcmFrame(samples = 320, value = 0): AudioFrame {
   return new AudioFrame(new Int16Array(samples).fill(value), 16000, 1, samples);
 }
 
+function stereoFrame(left: number[], right: number[]): AudioFrame {
+  const data = new Int16Array(left.length * 2);
+  for (let i = 0; i < left.length; i++) {
+    data[i * 2] = left[i]!;
+    data[i * 2 + 1] = right[i]!;
+  }
+  return new AudioFrame(data, 16000, 2, left.length);
+}
+
 describe('CloudStreamRetry', () => {
   it('num retries resets after a successful connect', async () => {
     const { stream, transport } = makeStream({
@@ -473,5 +482,25 @@ describe('LocalTransportInput', () => {
     const input = await predict(transport, calls);
     expect(input.pcm.length).toBe(1600);
     expect(input.turnSamples).toBe(1600);
+  });
+
+  it.each([
+    { left: [100, 200], right: [300, 400], expected: [200, 300] },
+    { left: [-100, 200], right: [100, -200], expected: [0, 0] },
+  ])('downmixes stereo audio by averaging channels', async ({ left, right, expected }) => {
+    const { transport, calls } = makeLocal();
+    await transport.pushFrame(stereoFrame(left, right));
+    const input = await predict(transport, calls);
+    expect(Array.from(input.pcm)).toEqual(expected);
+    expect(input.turnSamples).toBe(expected.length);
+  });
+
+  it('buffers mono audio after downmixed stereo audio', async () => {
+    const { transport, calls } = makeLocal();
+    await transport.pushFrame(stereoFrame([100, 200], [300, 400]));
+    await transport.pushFrame(new AudioFrame(new Int16Array([50, 60]), 16000, 1, 2));
+    const input = await predict(transport, calls);
+    expect(Array.from(input.pcm)).toEqual([200, 300, 50, 60]);
+    expect(input.turnSamples).toBe(4);
   });
 });
