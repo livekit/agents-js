@@ -134,7 +134,19 @@ export interface AMDCompletedEvent {
   voicemailMessagePlayed: boolean;
   /** The last classified turn's prediction; `null` when the run ended before one. */
   lastPrediction: AMDPredictionEvent | null;
+  /**
+   * Whether AMD stopped without detecting the call. Present on SDK-created events and not
+   * included in the wire format; optional so custom event fixtures remain structurally valid.
+   */
+  readonly isError?: boolean;
 }
+
+const ERROR_REASONS: ReadonlySet<AMDReason> = new Set([
+  AMDReason.INTERNAL_ERROR,
+  AMDReason.PARTICIPANT_MISSING,
+  AMDReason.AGENT_CHANGED,
+  AMDReason.CANCELLED,
+]);
 
 export const createAMDCompletedEvent = ({
   category,
@@ -146,13 +158,20 @@ export const createAMDCompletedEvent = ({
   reason: AMDReason;
   voicemailMessagePlayed?: boolean;
   lastPrediction?: AMDPredictionEvent | null;
-}): AMDCompletedEvent => ({
-  type: 'amd_completed',
-  category,
-  reason,
-  voicemailMessagePlayed,
-  lastPrediction,
-});
+}): AMDCompletedEvent => {
+  const event = {
+    type: 'amd_completed' as const,
+    category,
+    reason,
+    voicemailMessagePlayed,
+    lastPrediction,
+  } as AMDCompletedEvent;
+  Object.defineProperty(event, 'isError', {
+    enumerable: false,
+    get: () => ERROR_REASONS.has(event.reason),
+  });
+  return event;
+};
 
 export interface IVRMenuOption {
   label: string;

@@ -875,6 +875,7 @@ export enum AMDCategory {
 // @public (undocumented)
 export interface AMDCompletedEvent {
     category: AMDCategory;
+    readonly isError?: boolean;
     lastPrediction: AMDPredictionEvent | null;
     // (undocumented)
     reason: AMDReason;
@@ -1257,6 +1258,9 @@ const ATTR_EOU_FROM_CACHE = "lk.eou.from_cache";
 // @public (undocumented)
 const ATTR_EOU_LANGUAGE = "lk.eou.language";
 
+// @public (undocumented)
+const ATTR_EOU_MODEL = "lk.eou.model";
+
 // @public
 const ATTR_EOU_NOT_COMMITTED_COUNT = "lk.eou.not_committed_count";
 
@@ -1265,6 +1269,9 @@ const ATTR_EOU_OUTCOME = "lk.eou.outcome";
 
 // @public (undocumented)
 const ATTR_EOU_PROBABILITY = "lk.eou.probability";
+
+// @public (undocumented)
+const ATTR_EOU_PROVIDER = "lk.eou.provider";
 
 // @public
 const ATTR_EOU_REARM_COUNT = "lk.eou.rearm_count";
@@ -3809,6 +3816,16 @@ interface FakeUserSpeech {
 }
 
 // @public
+interface FallbackActivatedEvent {
+    cause: 'unknown' | 'timeout' | 'provider_error' | 'quota_exceeded';
+    fallbackType: 'unknown' | 'fallback' | 'system_default';
+    model: string;
+    provider: string;
+    sessionId: string;
+    voice: string;
+}
+
+// @public
 export class FallbackAdapter extends LLM {
     constructor(options: FallbackAdapterOptions);
     // (undocumented)
@@ -4346,7 +4363,7 @@ export function getLanguageRegion(language: string): string | undefined;
 function getMonitor(): EventLoopMonitor | undefined;
 
 // @public (undocumented)
-type GoogleModels = 'google/gemini-4-argon' | 'google/gemini-3.1-pro' | 'google/gemini-3-flash' | 'google/gemini-3.1-flash-lite' | 'google/gemini-3.5-flash' | 'google/gemini-2.5-pro' | 'google/gemini-2.5-flash' | 'google/gemini-2.5-flash-lite';
+type GoogleModels = 'google/gemini-4-argon' | 'google/gemini-4-hydrogen' | 'google/gemini-3.1-pro' | 'google/gemini-3-flash' | 'google/gemini-3.1-flash-lite' | 'google/gemini-3.5-flash' | 'google/gemini-2.5-pro' | 'google/gemini-2.5-flash' | 'google/gemini-2.5-flash-lite';
 
 // @public (undocumented)
 type GoogleRealtimeModels = 'google/gemini-3.8-live' | 'google/gemini-3.8-live-extended-thinking' | 'google/gemini-live';
@@ -4472,6 +4489,7 @@ declare namespace inference {
         normalizeTTSFallback,
         parseTTSModelString,
         TTS_2 as TTS,
+        FallbackActivatedEvent,
         TTSFallbackModel,
         TTSFallbackModelType,
         TTSModels,
@@ -4575,6 +4593,7 @@ interface InferenceTTSOptions<TModel extends TTSModels> {
     baseURL: string;
     // (undocumented)
     connOptions?: APIConnectOptions;
+    disableSystemDefaultFallback?: boolean;
     // (undocumented)
     encoding: TTSEncoding;
     // (undocumented)
@@ -7791,7 +7810,7 @@ abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent> {
 
 // @public (undocumented)
 class SpeechStream_2<TModel extends STTModels> extends SpeechStream {
-    constructor(sttImpl: STT_2<TModel>, opts: InferenceSTTOptions<TModel>, connOptions: APIConnectOptions);
+    constructor(sttImpl: STT_2<TModel>, opts: InferenceSTTOptions<TModel>, connOptions: APIConnectOptions, extraHeaders?: Record<string, string>);
     // (undocumented)
     get label(): string;
     // @internal (undocumented)
@@ -8055,7 +8074,7 @@ class STT_2<TModel extends STTModels> extends STT {
         vad?: VAD;
     });
     // (undocumented)
-    connectWs(timeout: number): Promise<WebSocket_2>;
+    connectWs(timeout: number, extraHeaders?: Record<string, string>): Promise<WebSocket_2>;
     // (undocumented)
     static fromModelString(modelString: string): STT_2<AnyString>;
     // (undocumented)
@@ -8070,10 +8089,10 @@ class STT_2<TModel extends STTModels> extends STT {
     protected _recognize(_: AudioBuffer_2): Promise<SpeechEvent>;
     // @internal
     _sessionKeyterms: string[];
-    // (undocumented)
     stream(options?: {
         language?: STTLanguages | string;
         connOptions?: APIConnectOptions;
+        extraHeaders?: Record<string, string>;
     }): SpeechStream_2<TModel>;
     // (undocumented)
     updateOptions(opts: Partial<Pick<InferenceSTTOptions<TModel>, 'model' | 'language' | 'modelOptions'>>): void;
@@ -8932,6 +8951,8 @@ declare namespace traceTypes {
         ATTR_TTS_STREAMING,
         ATTR_TTS_LABEL,
         ATTR_RESPONSE_TTFB,
+        ATTR_EOU_MODEL,
+        ATTR_EOU_PROVIDER,
         ATTR_EOU_PROBABILITY,
         ATTR_EOU_UNLIKELY_THRESHOLD,
         ATTR_EOU_DELAY,
@@ -9106,6 +9127,7 @@ abstract class TTS extends TTS_base {
 declare namespace tts {
     export {
         SynthesizedAudio,
+        FallbackActivatedEvent,
         TTSCapabilities,
         TTSCallbacks,
         TTS,
@@ -9155,6 +9177,7 @@ class TTS_2<TModel extends TTSModels> extends TTS {
         apiSecret?: string;
         modelOptions?: TTSOptions<TModel>;
         fallback?: TTSFallbackModelType | TTSFallbackModelType[];
+        disableSystemDefaultFallback?: boolean;
         connOptions?: APIConnectOptions;
     });
     // (undocumented)
@@ -9197,6 +9220,7 @@ declare namespace tts_2 {
         parseTTSModelString,
         hasAlignedTranscript,
         normalizeTTSFallback,
+        FallbackActivatedEvent,
         CartesiaModels_2 as CartesiaModels,
         DeepgramTTSModels,
         InworldModels,
@@ -9229,6 +9253,7 @@ export const TTS_INSTRUCTIONS_PLACEHOLDER = "{tts.markup.llm_instructions}";
 type TTSCallbacks = {
     ['metrics_collected']: (metrics: TTSMetrics) => void;
     ['error']: (error: TTSError) => void;
+    ['fallback_activated']: (event: FallbackActivatedEvent) => void;
 };
 
 // @public
@@ -10097,7 +10122,7 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 //
 // src/_exceptions.ts:90:5 - (ae-forgotten-export) The symbol "APIStatusErrorOptions" needs to be exported by the entry point index.d.ts
 // src/_exceptions.ts:128:5 - (ae-forgotten-export) The symbol "APIErrorOptions" needs to be exported by the entry point index.d.ts
-// src/inference/tts.ts:315:5 - (ae-forgotten-export) The symbol "TTSEncoding" needs to be exported by the entry point index.d.ts
+// src/inference/tts.ts:322:5 - (ae-forgotten-export) The symbol "TTSEncoding" needs to be exported by the entry point index.d.ts
 // src/llm/chat_context.ts:80:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "audio"
 // src/llm/tool_context.ts:740:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "ToolFlag" has more than one declaration; you need to add a TSDoc member reference selector
 // src/llm/tool_context.ts:787:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "ToolFlag" has more than one declaration; you need to add a TSDoc member reference selector

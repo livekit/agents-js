@@ -1748,6 +1748,10 @@ export class AudioRecognition {
             // Unsupported language: produce no span and emit no prediction event.
             this.logger.debug(`Turn detector does not support language ${this.lastLanguage}`);
           } else {
+            const eouModelAttributes = {
+              [traceTypes.ATTR_EOU_MODEL]: turnDetector.model,
+              [traceTypes.ATTR_EOU_PROVIDER]: turnDetector.provider,
+            };
             await tracer.startActiveSpan(
               async (span) => {
                 // ended explicitly: endEouWaitSpan closes it early if the user resumes
@@ -1837,6 +1841,7 @@ export class AudioRecognition {
 
                   this.logger.debug(
                     {
+                      ...eouModelAttributes,
                       endOfTurnProbability,
                       unlikelyThreshold,
                       endpointingDelay,
@@ -1941,6 +1946,7 @@ export class AudioRecognition {
               {
                 name: 'eou_detection',
                 context: eouWaitCtx,
+                attributes: eouModelAttributes,
                 endOnExit: false,
               },
             );

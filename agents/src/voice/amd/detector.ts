@@ -114,18 +114,19 @@ export interface AMDOptions {
   /**
    * Classification model, and menu model when it is an LLM. When omitted, use
    * `google/gemma-4-31b-it` if LiveKit Cloud credentials are available; otherwise use the
-   * current Agent's LLM. Pass `null` to always use the current Agent's LLM. A string
-   * selects a LiveKit Inference model. A `DecisionModel` that supports choice decisions
-   * classifies, but AMD then skips menu extraction. Calls use
+   * current Agent's LLM. Pass `null` to always use the current Agent's LLM, for example
+   * to keep AMD within the quota of the session's models. A string selects a LiveKit
+   * Inference model. AMD logs the selected models when it starts. A `DecisionModel` that
+   * supports choice decisions classifies, but AMD then skips menu extraction. Calls use
    * `session.connOptions.llmConnOptions`. Supplied models stay open when AMD completes.
    */
   llm?: LLM | DecisionModel | string | null;
   /**
    * Optional streaming STT model for AMD. When omitted, use `cartesia/ink-whisper` if
    * LiveKit Cloud credentials are available; otherwise use only the session transcript.
-   * Pass `null` to always use only the session transcript. With session STT configured,
-   * the classifier sees both transcripts of each turn. A string selects a LiveKit
-   * Inference model.
+   * Pass `null` to always use only the session transcript, with no extra STT usage. With
+   * session STT configured, the classifier sees both transcripts of each turn. A string
+   * selects a LiveKit Inference model.
    */
   stt?: STT | string | null;
   /** Select the participant before placing an outbound call. */
@@ -160,10 +161,14 @@ export interface AMDOptions {
   idleTimeout?: number;
   /**
    * Silent, inactive time in voicemail, in ms. Starts after playback finishes, to allow a
-   * delayed post-message menu to arrive. Defaults to 60 s.
+   * delayed post-message menu to arrive. Defaults to 10 s.
    */
   voicemailIdleTimeout?: number;
-  /** Hard limit from the start of listening, in ms. Defaults to 120 s. */
+  /**
+   * Hard limit from the start of listening, in ms. Defaults to 60 s. Lower it when AMD
+   * only needs to distinguish a person from a machine; raise it for screeners, IVR menus,
+   * or hold queues.
+   */
   timeout?: number;
   /** Prediction deadline per committed turn, in ms. Late results are ignored. Defaults to 2 s. */
   inferenceTimeout?: number;
@@ -289,6 +294,7 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
   private readonly ownsStt: boolean;
   private readonly sttModel: string | undefined;
   private stt: STT | undefined;
+  private readonly modelSources: readonly [llm: string, stt: string];
   private participantIdentity: string | undefined;
   private readonly waitUntilAnswered: boolean;
   private readonly instructions: ReadonlyMap<AMDCategory, string | null>;
@@ -359,14 +365,16 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
       ivrInstructions = DEFAULT_IVR_INSTRUCTIONS,
       humanInstructions = DEFAULT_HUMAN_INSTRUCTIONS,
       idleTimeout = 10_000,
-      voicemailIdleTimeout = 60_000,
-      timeout = 120_000,
+      voicemailIdleTimeout = 10_000,
+      timeout = 60_000,
       inferenceTimeout = 2_000,
       machineSilenceThreshold = MACHINE_SILENCE_THRESHOLD,
       maxUncertainTurns = 3,
       maxInferenceTimeouts = DEFAULT_MAX_INFERENCE_TIMEOUTS,
     } = options;
     let { llm, stt } = options;
+    let llmSource = llm === null ? 'session' : 'custom';
+    let sttSource = stt === null ? 'session' : 'custom';
 
     if (
       Math.min(idleTimeout, voicemailIdleTimeout, timeout, inferenceTimeout) <= 0 ||
@@ -392,9 +400,11 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
       }
       if (llm === undefined) {
         llm = autoSelect ? DEFAULT_LLM_MODEL : null;
+        llmSource = autoSelect ? 'default' : 'session';
       }
       if (stt === undefined) {
         stt = autoSelect ? DEFAULT_STT_MODEL : null;
+        sttSource = autoSelect ? 'default' : 'session';
       }
     }
 
@@ -406,6 +416,7 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     this.ownsStt = typeof stt === 'string';
     this.sttModel = typeof stt === 'string' ? stt : undefined;
     this.stt = typeof stt === 'string' ? undefined : stt ?? undefined;
+    this.modelSources = [llmSource, sttSource];
     if (this.stt !== undefined && !this.stt.capabilities.streaming) {
       throw new Error('amd requires a streaming STT');
     }
@@ -535,6 +546,17 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
       await this.closeResources();
       throw error;
     }
+
+    const [llmSource, sttSource] = this.modelSources;
+    this.logger.info(
+      {
+        llm: `${model.provider}/${model.model}`,
+        llmSource,
+        stt: this.stt ? `${this.stt.provider}/${this.stt.model}` : 'session transcript only',
+        sttSource,
+      },
+      'amd models selected; pass llm or stt to AMD to override',
+    );
 
     this._lifecycle = AMDLifecycle.PENDING;
     try {
@@ -830,6 +852,16 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
   ): Promise<void> {
     const late = await lateFinal.wait(signal);
     if (signal.aborted || this.lifecycle !== AMDLifecycle.ACTIVE) {
+      return;
+    }
+    if (turn.turnId !== this._turnId) {
+      // A newer turn owns classification and replies. Late text still belongs in history,
+      // but this older turn must not cancel or decide the newer request.
+      if (late !== undefined) {
+        turn.transcript = new AMDTranscript(turn.transcript.session, late);
+        this.chatCtx.addTranscript(turn);
+        this.addRealtimeTranscript(turn);
+      }
       return;
     }
     if (late !== undefined) {
@@ -1311,7 +1343,11 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     if (
       this.lifecycle === AMDLifecycle.FINISHED ||
       handle.interrupted ||
-      handle.exception() !== undefined
+      handle.exception() !== undefined ||
+      // A TTS failure can cut the message short without interrupting the handle itself.
+      handle.chatItems.some(
+        (item) => item instanceof ChatMessage && item.role === 'assistant' && item.interrupted,
+      )
     ) {
       return;
     }

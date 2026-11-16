@@ -4,8 +4,11 @@
 
 /** Stateless model calls and structured-output validation for AMD classification and menus. */
 import { z } from 'zod';
+import * as inference from '../../inference/index.js';
+import { CLIENT_FEATURE_HEADER } from '../../inference/utils.js';
 import { ChatContext } from '../../llm/chat_context.js';
 import { Choice, ChoiceResult, DecisionModel, formatTranscript } from '../../llm/decisions.js';
+import { FallbackAdapter } from '../../llm/fallback_adapter.js';
 import type { LLM } from '../../llm/llm.js';
 import { tool } from '../../llm/tool_context.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../../types.js';
@@ -186,6 +189,19 @@ export interface AMDIVRMenuResponse {
   options: IVRMenuOption[];
 }
 
+/** Value of {@link CLIENT_FEATURE_HEADER} on the gateway requests AMD makes itself. */
+export const CLIENT_FEATURE = 'AMD';
+
+/** @internal */
+export function reachesOnlyInference(model: LLM): boolean {
+  // other plugins would forward the header to their vendor, and a FallbackAdapter passes
+  // extraKwargs to every LLM it holds
+  if (model instanceof FallbackAdapter) {
+    return model.llms.every((m) => m instanceof inference.LLM);
+  }
+  return model instanceof inference.LLM;
+}
+
 async function structuredResponse<T>(
   model: LLM,
   chatCtx: ChatContext,
@@ -214,6 +230,9 @@ async function structuredResponse<T>(
     toolChoice: 'required',
     parallelToolCalls: false,
     connOptions,
+    extraKwargs: reachesOnlyInference(model)
+      ? { extra_headers: { [CLIENT_FEATURE_HEADER]: CLIENT_FEATURE } }
+      : undefined,
   });
   const onAbort = () => stream.close();
   signal?.addEventListener('abort', onAbort, { once: true });

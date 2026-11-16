@@ -1,5 +1,8 @@
 ---
-'@livekit/agents': patch
+'@livekit/agents': minor
+'@livekit/agents-plugin-google': patch
+'@livekit/agents-plugin-phonic': patch
+'@livekit/agents-plugin-xai': patch
 ---
 
 Replace the one-shot answering-machine detection (AMD) with multi-turn AMD, ported from livekit/agents#6202.
@@ -9,3 +12,5 @@ AMD now classifies each committed user turn through call screening, voicemail, a
 Remote sessions get screening and wait as their own AMD categories, each prediction's turn ID, stage, and inference duration, and a new `amd_completed` event with the run's result. This requires `@livekit/protocol` 1.53.3 or later.
 
 `AgentSession` gains internal turn hooks that AMD uses to observe committed turns and control their replies. `UserStateChangedEvent` gains `speechTimestamp`, and `FunctionToolsExecutedEvent` gains `hasAgentHandoff` and `cancelAgentHandoff()`. Agent handoffs throw while AMD runs. `sendDtmfEvents` returns a `ToolResult` that requests no follow-up reply and throws a `ToolError` without provider text when a publish fails. A realtime reply's tool follow-up keeps its instructions and tools, and the agent returns to `listening` when no tool reply follows. Realtime failure logs carry only the error type. A closed `LLMStream` no longer retries.
+
+AMD's own LiveKit Inference requests include `X-LiveKit-Client-Feature: AMD`. `inference.STT.stream()` accepts `extraHeaders`, which persist across reconnects, and Inference STT connections include SDK metadata headers.

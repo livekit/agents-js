@@ -4,11 +4,14 @@
 
 /** Attribute session and AMD STT transcripts to committed turns without access to AgentSession. */
 import type { AudioFrame } from '@livekit/rtc-node';
+import * as inference from '../../inference/index.js';
+import { CLIENT_FEATURE_HEADER } from '../../inference/utils.js';
 import { log } from '../../log.js';
 import { type STT, SpeechEventType, type SpeechStream } from '../../stt/stt.js';
 import type { APIConnectOptions } from '../../types.js';
 import { Event } from '../../utils.js';
 import { AMDTranscript, type AMDTranscriptSource } from './chat_context.js';
+import { CLIENT_FEATURE } from './inference.js';
 
 /** Buffer a turn's session and AMD transcripts. */
 export class AMDTurnTranscriptAccumulator {
@@ -88,7 +91,9 @@ export class AMDTranscriber {
   private current = new AMDTurnTranscriptAccumulator();
   /**
    * The turn just ended before its AMD final arrived: the AMD STT finalizes a sentence
-   * a little after the session commits it, so a final within the wait belongs to it.
+   * a little after the session commits it, so a final within the wait belongs to it. A
+   * newer turn takes over the wait; with session STT, the classifier sees both transcripts
+   * and can tell when the AMD one lags behind.
    */
   private late: LateAMDFinal | undefined;
   private stream: SpeechStream | undefined;
@@ -115,7 +120,14 @@ export class AMDTranscriber {
     }
     try {
       if (this.stream === undefined) {
-        const stream = this.model!.stream({ connOptions: this.connOptions });
+        const model = this.model!;
+        const stream =
+          model instanceof inference.STT
+            ? model.stream({
+                connOptions: this.connOptions,
+                extraHeaders: { [CLIENT_FEATURE_HEADER]: CLIENT_FEATURE },
+              })
+            : model.stream({ connOptions: this.connOptions });
         this.stream = stream;
         this.readTask = this.read(stream);
       }
@@ -131,6 +143,9 @@ export class AMDTranscriber {
         const text = event.alternatives?.[0]?.text;
         if (event.type === SpeechEventType.FINAL_TRANSCRIPT && text !== undefined) {
           const transcript = text.trim();
+          if (!transcript) {
+            continue;
+          }
           const late = this.late;
           this.late = undefined;
           if (late === undefined || !late.deliver(transcript)) {

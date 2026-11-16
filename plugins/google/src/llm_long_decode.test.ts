@@ -83,11 +83,19 @@ async function* responses(
 
 class FakeStreams {
   readonly configs: LongDecodeConfig[] = [];
+  readonly contents: types.Content[][] = [];
 
   constructor(private readonly hops: types.GenerateContentResponse[][]) {}
 
-  invoke = async ({ config }: { config: LongDecodeConfig }) => {
+  invoke = async ({
+    config,
+    contents,
+  }: {
+    config: LongDecodeConfig;
+    contents: types.Content[];
+  }) => {
     this.configs.push(structuredClone(config));
+    this.contents.push(structuredClone(contents));
     const index = Math.min(this.configs.length - 1, this.hops.length - 1);
     return responses(this.hops[index] ?? []);
   };
@@ -140,6 +148,8 @@ describe('Google Gemini 4 model behavior', () => {
   it.each([
     ['gemini-4-argon', true],
     ['gemini-4-argon-eap', true],
+    ['gemini-4-carbon', true],
+    ['gemini-4-hydrogen', true],
     ['gemini-3-pro-preview', false],
     ['gemini-2.5-flash', false],
     ['gemma-4-27b-it', false],
@@ -239,6 +249,96 @@ describe('Google Gemini 4 request shaping', () => {
     );
     expect(config.thinkingConfig?.thinkingBudget).toBeUndefined();
     expect(config.thinkingConfig?.thinkingLevel).toBe(ThinkingLevel.HIGH);
+  });
+
+  it.each(['xhigh', 'XHIGH'] as const)('sends %s upper case on Hydrogen', async (thinkingLevel) => {
+    const config = await requestConfig(
+      google('gemini-4-hydrogen', {
+        thinkingConfig: { thinkingLevel },
+      }),
+    );
+    expect(config.thinkingConfig?.thinkingLevel).toBe('XHIGH');
+  });
+
+  it('sends a per-call xhigh upper case on Hydrogen', async () => {
+    const config = await requestConfig(google('gemini-4-hydrogen'), {
+      extraKwargs: { thinkingConfig: { thinkingLevel: 'xhigh' } },
+    });
+    expect(config.thinkingConfig?.thinkingLevel).toBe('XHIGH');
+  });
+
+  it('rejects a per-call xhigh where unsupported', () => {
+    expect(() =>
+      google().chat({
+        chatCtx: llm.ChatContext.empty(),
+        extraKwargs: { thinkingConfig: { thinkingLevel: 'xhigh' } },
+      }),
+    ).toThrow(/xhigh/);
+  });
+
+  it.each([ARGON, 'gemini-4-carbon', 'gemini-3-pro-preview'])(
+    'rejects xhigh for unsupported model %s',
+    (model) => {
+      expect(() =>
+        google(model, {
+          thinkingConfig: { thinkingLevel: 'xhigh' },
+        }),
+      ).toThrow(/xhigh/);
+    },
+  );
+});
+
+function toolCallFirstCtx(): llm.ChatContext {
+  const chatCtx = llm.ChatContext.empty();
+  chatCtx.insert(
+    new llm.FunctionCall({
+      callId: 'c1',
+      name: 'lookup_weather',
+      args: '{"location": "Tokyo"}',
+    }),
+  );
+  chatCtx.insert(
+    new llm.FunctionCallOutput({
+      callId: 'c1',
+      name: 'lookup_weather',
+      output: 'sunny',
+      isError: false,
+    }),
+  );
+  chatCtx.addMessage({ role: 'user', content: 'hahahaa' });
+  return chatCtx;
+}
+
+async function sentContents(model: LLM, chatCtx: llm.ChatContext): Promise<types.Content[]> {
+  const streams = new FakeStreams([[response({ text: 'hi', finishReason: FinishReason.STOP })]]);
+  generateContentStreamMock.mockImplementation(streams.invoke);
+  await model.chat({ chatCtx }).collect();
+  return streams.contents[0] ?? [];
+}
+
+describe('Google Gemini 4 history shaping', () => {
+  beforeEach(() => {
+    generateContentStreamMock.mockReset();
+  });
+
+  it('puts a user turn before an opening tool call', async () => {
+    const contents = await sentContents(google(), toolCallFirstCtx());
+    expect(contents.map((content) => content.role)).toEqual(['user', 'model', 'user']);
+    expect(contents[0]?.parts?.[0]?.text).toBe('.');
+    expect(contents[1]?.parts?.[0]?.functionCall).toBeDefined();
+  });
+
+  it('leaves an opening reply with text alone', async () => {
+    const chatCtx = llm.ChatContext.empty();
+    chatCtx.addMessage({ role: 'assistant', content: 'Hi!' });
+    chatCtx.addMessage({ role: 'user', content: 'hahahaa' });
+    const contents = await sentContents(google(), chatCtx);
+    expect(contents.map((content) => content.role)).toEqual(['model', 'user']);
+  });
+
+  it('sends history as-is for older models', async () => {
+    const contents = await sentContents(google('gemini-2.5-flash'), toolCallFirstCtx());
+    expect(contents.map((content) => content.role)).toEqual(['model', 'user']);
   });
 });
 

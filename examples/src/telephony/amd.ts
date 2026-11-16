@@ -14,7 +14,7 @@ import {
   voice,
 } from '@livekit/agents';
 import { BackgroundVoiceCancellation } from '@livekit/noise-cancellation-node';
-import { RoomServiceClient, SipClient } from 'livekit-server-sdk';
+import { SipClient } from 'livekit-server-sdk';
 import { fileURLToPath } from 'node:url';
 
 /**
@@ -39,7 +39,8 @@ export class MyAgent extends voice.Agent {
         'Use end_call when the conversation with a human is complete.',
       tools: [
         beta.createEndCallTool({
-          deleteRoom: false, // The job shutdown callback deletes the room.
+          // The default also deletes the room; every exit path below already does that.
+          deleteRoom: false,
           extraDescription: 'Call after completing the appointment conversation with a human.',
         }),
       ],
@@ -80,15 +81,8 @@ export async function entry(ctx: JobContext): Promise<void> {
   });
 
   ctx.addShutdownCallback(async () => {
-    const roomName = ctx.room.name;
-    const { LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET } = process.env;
-    if (!roomName || !LIVEKIT_URL || !LIVEKIT_API_KEY || !LIVEKIT_API_SECRET) {
-      return;
-    }
-    // deleting the room disconnects the SIP participant
-    await new RoomServiceClient(LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET).deleteRoom(
-      roomName,
-    );
+    // Every exit deletes the room, which also disconnects the SIP participant.
+    await ctx.deleteRoom();
   });
 
   const phoneNumber = process.env.SIP_PHONE_NUMBER;
@@ -100,10 +94,7 @@ export async function entry(ctx: JobContext): Promise<void> {
     throw new Error('Cannot access room_io: the AgentSession was not started with a room.');
   }
 
-  const detector = new voice.AMD(session, {
-    participantIdentity,
-    voicemailIdleTimeout: 10_000,
-  });
+  const detector = new voice.AMD(session, { participantIdentity });
   detector.on('amd_prediction', (event) => {
     logger.info({ 'lk.pii.amd.prediction': event }, 'amd prediction');
   });
@@ -149,6 +140,8 @@ export async function entry(ctx: JobContext): Promise<void> {
 
   if (result.voicemailMessagePlayed && result.category !== voice.AMDCategory.HUMAN) {
     ctx.shutdown('voicemail completed');
+  } else if (result.category === voice.AMDCategory.MACHINE_UNAVAILABLE) {
+    ctx.shutdown('machine unavailable');
   }
 }
 

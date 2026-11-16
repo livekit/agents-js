@@ -30,7 +30,8 @@ handles any post-message menu before it completes. Once the message has played,
 a goodbye from the box does not make the result `machine-unavailable`: AMD
 completes with the stage before it, `machine-vm` or, after a menu, `machine-ivr`.
 If the final result reports a played voicemail and no human, the application
-shuts down the job. Human conversations can use `end_call` after AMD finishes.
+shuts down the job. It also shuts down when the machine cannot take a message.
+Human conversations can use `end_call` after AMD finishes.
 The shutdown callback deletes the room and disconnects the SIP participant.
 
 The example uses `BackgroundVoiceCancellation` from `@livekit/noise-cancellation-node`
@@ -123,6 +124,10 @@ The detection `timeout` starts when listening begins.
 - AMD creates models from strings in `start()`, after validating the session.
   It closes these models on completion or partial setup failure. It does not close
   supplied model instances. It closes its requests and STT streams in either case.
+- AMD logs the selected models and whether each came from the default, the session,
+  or an explicit option. Passing `null` keeps AMD on the session's model quota.
+- AMD tags only its own LiveKit Inference LLM and STT requests with
+  `X-LiveKit-Client-Feature: AMD`; ordinary Agent requests and provider plugins are untagged.
 
 Auto-selection requires a LiveKit Cloud `LIVEKIT_URL` and an API key and secret.
 AMD checks `LIVEKIT_INFERENCE_API_KEY` and `LIVEKIT_INFERENCE_API_SECRET`, with
@@ -157,8 +162,9 @@ At EOT, AMD commits each source's available transcript, even if it is empty.
 AMD's STT finalizes a sentence about 0.1 to 0.2 seconds after the session commits it.
 So a turn waits up to 300 ms for its AMD final when the AMD STT is active, the turn
 has no AMD text, and the turn has session text or there is no session STT. The first
-AMD final within the wait belongs to the turn. Later finals accumulate for the next
-turn. A turn with text starts its request at once, and the request waits for the AMD
+AMD final within the wait belongs to the newest waiting turn. A newer committed turn
+takes over the wait. Text already delivered to an older wait remains in classifier
+history. A turn with text starts its request at once, and the request waits for the AMD
 final before the model call; `inferenceTimeout` includes this wait. A turn without
 text starts its request when its AMD final arrives. If a pending request already gave
 that turn a reused prediction, AMD keeps it, and the next request covers the late text.
@@ -396,8 +402,8 @@ All durations are in milliseconds.
 | `inferenceTimeout`        | 2000    | Use the current stage on timeout; its silence rule still applies.                                                                                  |
 | `machineSilenceThreshold` | 1500    | Wait for continuous silence before authorizing a machine reply. Set to `0` to disable.                                                             |
 | `idleTimeout`             | 10000   | Complete after inactivity outside voicemail.                                                                                                       |
-| `voicemailIdleTimeout`    | 60000   | Allow a delayed post-message menu after playback.                                                                                                  |
-| `timeout`                 | 120000  | Fixed overall limit from the start of listening.                                                                                                   |
+| `voicemailIdleTimeout`    | 10000   | Allow a delayed post-message menu after playback.                                                                                                  |
+| `timeout`                 | 60000   | Fixed overall limit from the start of listening. Lower it for simple person-or-machine detection, or raise it for screeners, IVR menus, and holds. |
 | `maxUncertainTurns`       | 3       | Complete with the current stage after this many consecutive uncertain predictions. Any other valid prediction, including `wait`, resets the count. |
 | `maxInferenceTimeouts`    | 3       | Complete after this many prediction timeouts. A valid prediction resets the count.                                                                 |
 
@@ -414,8 +420,9 @@ Finishing AMD immediately clears `session.amd`, removes its listeners and turn
 hooks, and releases session audio and reply authorization. For `machine-unavailable`
 or a customer-handled stage, it also cancels pending speeches. Background cleanup
 then cancels outstanding work and closes owned resources. `execute()` waits for
-that cleanup and returns the final category and reason. Completion does not
-decide the next call action.
+that cleanup and returns the final category and reason. `result.isError` reports
+whether AMD stopped without detecting the call. Completion does not decide the
+next call action.
 
 ## Remote sessions
 
