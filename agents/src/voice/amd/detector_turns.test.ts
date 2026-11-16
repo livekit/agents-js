@@ -637,8 +637,10 @@ describe('AMD detector turns', () => {
     await waitFor(completed);
   });
 
-  it('voicemail idle defaults to one minute after playback', async () => {
+  it('defaults to ten seconds idle and one minute overall', async () => {
     const { detector, session, classifier, model } = await running();
+    expect(internals(detector).hardDeadline).toBeDefined();
+    expect(internals(detector).hardDeadline! - performance.now()).toBeCloseTo(60_000, -2);
     expect(nextDeadline(detector)).toBeDefined();
     expect(nextDeadline(detector)! - performance.now()).toBeCloseTo(10_000, -2);
     await commit(detector, session, classifier, { reply: true });
@@ -647,8 +649,9 @@ describe('AMD detector turns', () => {
     await eventually(
       () => internals(detector).voicemailMessagePlayed && noPendingSpeech(session._activity!),
     );
+    expect(internals(detector).options.voicemailIdleTimeout).toBe(10_000);
     expect(nextDeadline(detector)).toBeDefined();
-    expect(nextDeadline(detector)! - performance.now()).toBeCloseTo(60_000, -2);
+    expect(nextDeadline(detector)! - performance.now()).toBeCloseTo(10_000, -2);
     await detector.aclose();
     expect(nextDeadline(detector)).toBeUndefined();
   });

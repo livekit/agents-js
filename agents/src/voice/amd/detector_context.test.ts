@@ -442,8 +442,10 @@ describe('AMD detector context, inference, and wait', () => {
     }
     await delay(LATE_AMD_FINAL_WAIT + 10); // after the wait, a final is the next turn's
     expect(amd._turnId).toBe(21);
-    for (let turnId = 1; turnId <= 21; turnId++) {
-      expect(amd.turns.get(turnId)!.prediction).not.toBeNull();
+    // Only the latest turn takes a reused prediction; older turns never reply.
+    expect(amd.turns.get(21)!.prediction).not.toBeNull();
+    for (let turnId = 1; turnId < 21; turnId++) {
+      expect(amd.turns.get(turnId)!.prediction).toBeNull();
     }
     stream.sendFinal('Hello, can you hear me?');
     await eventually(
