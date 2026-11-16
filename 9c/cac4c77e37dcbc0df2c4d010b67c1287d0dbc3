@@ -1,0 +1,61 @@
+plugins/minimax/etc/agents-plugin-minimax.api.md
+  s_a689e894b1d0a1::t_6d75196bb86bcc 10
+plugins/cerebras/etc/agents-plugin-cerebras.api.md
+  s_a689e894b1d0a1::t_6d75196bb86bcc 10,13,27
+plugins/neuphonic/etc/agents-plugin-neuphonic.api.md
+  s_a689e894b1d0a1::t_6d75196bb86bcc 10
+plugins/perplexity/etc/agents-plugin-perplexity.api.md
+  s_a689e894b1d0a1::t_6d75196bb86bcc 11-12,15,26,29
+agents/etc/agents.api.md
+  s_a689e894b1d0a1::t_bd3b00768330d4 10002-10005
+plugins/sarvam/etc/agents-plugin-sarvam.api.md
+  s_a689e894b1d0a1::t_6d75196bb86bcc 12
+plugins/anam/etc/agents-plugin-anam.api.md
+  s_a689e894b1d0a1::t_6d75196bb86bcc 10,13,28
+plugins/hume/etc/agents-plugin-hume.api.md
+  s_a689e894b1d0a1::t_6d75196bb86bcc 10
+plugins/inworld/etc/agents-plugin-inworld.api.md
+  s_a689e894b1d0a1::t_277048e75dde63 12
+plugins/resemble/etc/agents-plugin-resemble.api.md
+  s_a689e894b1d0a1::t_6d75196bb86bcc 10
+plugins/baseten/etc/agents-plugin-baseten.api.md
+  s_a689e894b1d0a1::t_6d75196bb86bcc 12,26
+plugins/anthropic/etc/agents-plugin-anthropic.api.md
+  s_a689e894b1d0a1::t_fc0a309d0d6684 11,14,26,97
+plugins/bey/etc/agents-plugin-bey.api.md
+  s_a689e894b1d0a1::t_9cf95c02e1c950 10,13,28
+plugins/did/etc/agents-plugin-did.api.md
+  s_a689e894b1d0a1::t_8169333c0d798f 10,13,28
+plugins/liveavatar/etc/agents-plugin-liveavatar.api.md
+  s_a689e894b1d0a1::t_915b3af37e89b2 10,13,28
+plugins/livekit/etc/agents-plugin-livekit.api.md
+  s_a689e894b1d0a1::t_f321911ac57d5b 10,13,26
+plugins/phonic/etc/agents-plugin-phonic.api.md
+  s_a689e894b1d0a1::t_b2d5e8f3f6b347 10,13,26,46-47,111,172-173,244
+plugins/protoface/etc/agents-plugin-protoface.api.md
+  s_a689e894b1d0a1::t_d9ffeb1170f3cd 10,13,28
+plugins/runway/etc/agents-plugin-runway.api.md
+  s_a689e894b1d0a1::t_f48f26fbc7aee4 10,13,28
+plugins/synthesia/etc/agents-plugin-synthesia.api.md
+  s_a689e894b1d0a1::t_6ee8892bc354ff 10,28
+plugins/tavus/etc/agents-plugin-tavus.api.md
+  s_a689e894b1d0a1::t_05897c86eb4d62 10,13,28
+plugins/trugen/etc/agents-plugin-trugen.api.md
+  s_a689e894b1d0a1::t_f4192f28af50ae 10,13,28
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9ccac4c77e37dcbc0df2c4d010b67c1287d0dbc3",
+  "prompts": {},
+  "sessions": {
+    "s_a689e894b1d0a1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1e542-eefa-7bb1-8570-257f4acd1239",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
