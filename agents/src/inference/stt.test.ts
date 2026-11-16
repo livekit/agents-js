@@ -1141,6 +1141,158 @@ describe('Inference STT connection lifecycle', () => {
     }
   });
 
+  it('aborts when an error arrives in the same batch as readiness', async () => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const address = server.address() as AddressInfo;
+    let connections = 0;
+    let completeSeen = false;
+    const audioConnections: number[] = [];
+    let pausedResolve!: () => void;
+    let resumedResolve!: () => void;
+    const paused = new Promise<void>((resolve) => {
+      pausedResolve = resolve;
+    });
+    const resumed = new Promise<void>((resolve) => {
+      resumedResolve = resolve;
+    });
+    server.on('connection', (socket) => {
+      const connection = ++connections;
+      socket.on('message', (raw) => {
+        const event = JSON.parse(raw.toString()) as { type: string; handoff_id?: string };
+        if (event.type === 'session.create') {
+          if (connection === 2) {
+            // corked so all three frames reach the client in one read
+            const tcp = (socket as unknown as { _socket: { cork(): void; uncork(): void } })
+              ._socket;
+            tcp.cork();
+            socket.send(JSON.stringify({ type: 'session.created' }));
+            socket.send(JSON.stringify({ type: 'session.handoff.ready', handoff_id: 'h1' }));
+            socket.send(JSON.stringify({ type: 'error', code: 429 }));
+            process.nextTick(() => tcp.uncork());
+          } else socket.send(JSON.stringify({ type: 'session.created' }));
+        } else if (event.type === 'input_audio') {
+          audioConnections.push(connection);
+          if (audioConnections.length === 1) {
+            socket.send(JSON.stringify({ type: 'session.handoff.request', handoff_id: 'h1' }));
+          } else resumedResolve();
+        } else if (event.type === 'session.handoff.pause') pausedResolve();
+        else if (event.type === 'session.handoff.prepared')
+          socket.send(JSON.stringify({ type: 'session.handoff.drained', handoff_id: 'h1' }));
+        else if (event.type === 'session.handoff.complete') {
+          completeSeen = true;
+          socket.send(JSON.stringify({ type: 'session.handoff.accepted', handoff_id: 'h1' }));
+        }
+      });
+    });
+    const stt = makeStt({
+      model: 'soniox/stt-rt',
+      sampleRate: 16000,
+      baseURL: `http://127.0.0.1:${address.port}`,
+      connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1000 },
+    });
+    const stream = stt.stream();
+    const frame = new AudioFrame(new Int16Array(800), 16000, 1, 800);
+    try {
+      stream.pushFrame(frame);
+      await Promise.race([
+        paused,
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('pause timeout')), 2000),
+        ),
+      ]);
+      stream.pushFrame(frame);
+      await Promise.race([
+        resumed,
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('resume timeout')), 2000),
+        ),
+      ]);
+      expect(audioConnections).toEqual([1, 1]);
+      expect(completeSeen).toBe(false);
+    } finally {
+      stream.close();
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('ignores messages from the retired socket after a handoff', async () => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const address = server.address() as AddressInfo;
+    let connections = 0;
+    let pause!: () => void;
+    let replay!: () => void;
+    const paused = new Promise<void>((resolve) => {
+      pause = resolve;
+    });
+    const replayed = new Promise<void>((resolve) => {
+      replay = resolve;
+    });
+    server.on('connection', (socket) => {
+      const connection = ++connections;
+      socket.on('message', (raw) => {
+        const event = JSON.parse(raw.toString()) as { type: string };
+        if (event.type === 'session.create') {
+          socket.send(JSON.stringify({ type: 'session.created' }));
+          if (connection === 2)
+            socket.send(JSON.stringify({ type: 'session.handoff.ready', handoff_id: 'h1' }));
+        } else if (event.type === 'input_audio' && connection === 1) {
+          socket.send(JSON.stringify({ type: 'session.handoff.request', handoff_id: 'h1' }));
+        } else if (event.type === 'input_audio' && connection === 2) {
+          replay();
+          socket.send(JSON.stringify({ ...transcript('later', true), duration: 0.05 }));
+        } else if (event.type === 'session.handoff.pause') pause();
+        else if (event.type === 'session.handoff.prepared')
+          socket.send(JSON.stringify({ type: 'session.handoff.drained', handoff_id: 'h1' }));
+        else if (event.type === 'session.handoff.complete') {
+          socket.send(JSON.stringify({ type: 'session.handoff.accepted', handoff_id: 'h1' }));
+          socket.send(JSON.stringify({ type: 'session.closed' }));
+        } else if (event.type === 'session.handoff.switched') {
+          socket.send(JSON.stringify({ type: 'error', code: 500, message: 'retired' }));
+        }
+      });
+    });
+    const stt = makeStt({
+      model: 'soniox/stt-rt',
+      sampleRate: 16000,
+      baseURL: `http://127.0.0.1:${address.port}`,
+      connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1000 },
+    });
+    const errors: unknown[] = [];
+    stt.on('error', (error) => errors.push(error));
+    const stream = stt.stream();
+    const result = (async () => {
+      for await (const event of stream) {
+        if (event.type === SpeechEventType.FINAL_TRANSCRIPT) return event;
+      }
+      throw new Error('stream ended without a final transcript');
+    })();
+    void result.catch(() => {});
+    const frame = new AudioFrame(new Int16Array(800), 16000, 1, 800);
+    try {
+      stream.pushFrame(frame);
+      await paused;
+      stream.pushFrame(frame);
+      await Promise.race([
+        replayed,
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('replay timeout')), 2000),
+        ),
+      ]);
+      const final = await result;
+      expect(final.alternatives?.[0]?.text).toBe('later');
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(errors).toEqual([]);
+      expect(connections).toBe(2);
+    } finally {
+      stream.close();
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
   it.each([800, 400])(
     'replays %i samples after the old socket fails during a pause',
     async (samples) => {
@@ -2401,6 +2553,63 @@ describe('Inference STT connection lifecycle', () => {
 
       expect(connectionCount).toBe(2);
       expect(transcripts).toEqual(['final words']);
+    } finally {
+      stream.close();
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('reconnects with a deferred session keyterm replacement, not the replaced terms', async () => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const address = server.address() as AddressInfo;
+    const created: Record<string, unknown>[] = [];
+    let firstSocket: WebSocket | undefined;
+    let updated!: () => void;
+    const updateSeen = new Promise<void>((resolve) => {
+      updated = resolve;
+    });
+    let reconnected!: () => void;
+    const secondCreate = new Promise<void>((resolve) => {
+      reconnected = resolve;
+    });
+    server.on('connection', (socket) => {
+      socket.on('message', (raw) => {
+        const event = JSON.parse(raw.toString()) as {
+          type: string;
+          settings?: { extra?: Record<string, unknown> };
+        };
+        if (event.type === 'session.create') {
+          created.push(event.settings?.extra ?? {});
+          socket.send(JSON.stringify({ type: 'session.created' }));
+          if (created.length === 1) firstSocket = socket;
+          else reconnected();
+        } else if (event.type === 'session.update') updated();
+      });
+    });
+    const stt = makeStt({
+      model: 'deepgram/nova-3',
+      modelOptions: { keyterm: ['Acme'] },
+      baseURL: `http://127.0.0.1:${address.port}`,
+      connOptions: { maxRetry: 1, retryIntervalMs: 1, timeoutMs: 1_000 },
+    });
+    stt.on('error', () => {});
+    const stream = stt.stream();
+    try {
+      await vi.waitFor(() => expect(firstSocket).toBeDefined());
+      stt._updateSessionKeyterms(['Stale']);
+      await updateSeen;
+      stream['speaking'] = true;
+      stt._updateSessionKeyterms(['Fresh']);
+      firstSocket!.close();
+      await Promise.race([
+        secondCreate,
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('reconnect timeout')), 2000),
+        ),
+      ]);
+      expect(created[1]!.keyterm).toEqual(['Acme', 'Fresh']);
     } finally {
       stream.close();
       for (const client of server.clients) client.terminate();

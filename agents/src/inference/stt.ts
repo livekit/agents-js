@@ -1040,6 +1040,7 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
       let handoffCompleting = false;
 
       const eventChannel = createStreamChannel<SttServerEvent>();
+      const eventSources = new WeakMap<object, WebSocket>();
 
       const sendSessionClose = (socket: WebSocket) => {
         if (sessionCloseSent || sessionClosedReceived || socket.readyState !== 1) return;
@@ -1130,7 +1131,9 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
 
           attachSocket = (socket: WebSocket) => {
             socket.on('message', (data) => {
+              if (socket !== this.activeWs) return;
               const json = JSON.parse(data.toString()) as SttServerEvent;
+              if (typeof json === 'object' && json !== null) eventSources.set(json, socket);
               if (
                 json.type === 'session.handoff.abort' &&
                 (json as { handoff_id?: unknown }).handoff_id === this.requestedHandoffId
@@ -1293,6 +1296,9 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
             const result = await reader.read();
             if (signal.aborted) return;
             if (result.done) return;
+            // a retired socket's events queued behind the handoff acceptance
+            const source = eventSources.get(result.value);
+            if (source !== undefined && source !== this.activeWs) continue;
 
             const handoff = result.value as { type: string; handoff_id?: unknown };
             if (handoff.type === 'session.updated') {
@@ -1410,7 +1416,13 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
                   handoffKeyterms,
                   requestedId,
                 );
-                replacementWs = next;
+                const candidate = next;
+                replacementWs = candidate;
+                const replacementFailed = () => {
+                  if (replacementWs === candidate && this.handoffId === requestedId) {
+                    this.abortHandoff?.();
+                  }
+                };
                 const created = await new Promise<boolean>((resolve) => {
                   let sawCreated = false;
                   const timer = setTimeout(
@@ -1419,9 +1431,17 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
                   );
                   const finish = (ok: boolean) => {
                     clearTimeout(timer);
-                    next?.off('message', onMessage);
-                    next?.off('close', onClose);
-                    next?.off('error', onClose);
+                    candidate.off('message', onMessage);
+                    candidate.off('close', onClose);
+                    candidate.off('error', onClose);
+                    // installed before resolving: messages in the same batch as the ready
+                    // event are emitted before the await below resumes
+                    if (ok) {
+                      candidate.on('error', replacementFailed);
+                      candidate.on('close', replacementFailed);
+                      candidate.on('message', replacementFailed);
+                      replacementMessageMonitor = replacementFailed;
+                    }
                     resolve(ok);
                   };
                   const onMessage = (raw: RawData) => {
@@ -1449,9 +1469,9 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
                     }
                   };
                   const onClose = () => finish(false);
-                  next?.on('message', onMessage);
-                  next?.once('close', onClose);
-                  next?.once('error', onClose);
+                  candidate.on('message', onMessage);
+                  candidate.once('close', onClose);
+                  candidate.once('error', onClose);
                 });
                 if (!created) throw new Error('replacement STT session was refused');
                 if (signal.aborted || this.handoffId !== requestedId) {
@@ -1463,14 +1483,6 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
                 this.abortHandoff?.();
                 continue;
               }
-              replacementWs = next;
-              const replacementFailed = () => {
-                if (replacementWs === next && this.handoffId === requestedId) this.abortHandoff?.();
-              };
-              next.on('error', replacementFailed);
-              next.on('close', replacementFailed);
-              replacementMessageMonitor = replacementFailed;
-              next.on('message', replacementMessageMonitor);
               replacementPrepared = true;
               this.activeWs.send(
                 JSON.stringify({ type: 'session.handoff.prepared', handoff_id: this.handoffId }),
@@ -1615,6 +1627,16 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
           }
         }
       };
+
+      // the stream's keyterm extra already holds the applied session terms; connectWs merges in
+      // the current ones, so a deferred replacement must land first or removed terms come back
+      if (this.retryHandoffOpts === undefined && this._pendingExtra !== undefined) {
+        this.opts = {
+          ...this.opts,
+          modelOptions: { ...this.opts.modelOptions, ...this._pendingExtra } as STTOptions<TModel>,
+        };
+        this._pendingExtra = undefined;
+      }
 
       try {
         ws = await this.stt.connectWs(
