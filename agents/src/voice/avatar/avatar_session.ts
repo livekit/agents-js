@@ -136,7 +136,7 @@ export class AvatarSession extends (EventEmitter as new () => TypedEmitter<Avata
           // token mode: the server issues the token for each call
           const client = jobCtx._jobTokens
             ? new RoomServiceClient(jobCtx.info.url, undefined, undefined, {
-                tokenSource: jobCtx._jobTokens.tokenSource,
+                tokenProvider: jobCtx._jobTokens.tokenProvider,
               })
             : new RoomServiceClient(jobCtx.info.url, jobCtx.info.apiKey, jobCtx.info.apiSecret);
           await client.removeParticipant(roomName, this.avatarIdentity);

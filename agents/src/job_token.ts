@@ -6,7 +6,7 @@ import {
   type CreateJobTokenResponse,
   WorkerMessage,
 } from '@livekit/protocol';
-import { type TokenSource, claimsToJwtPayload } from 'livekit-server-sdk';
+import { type TokenProvider, claimsToJwtPayload } from 'livekit-server-sdk';
 import { randomUUID } from 'node:crypto';
 
 /** How long the worker waits for the server to answer a CreateJobTokenRequest. */
@@ -139,7 +139,7 @@ export class JobTokenClient {
   }
 
   /** For the server SDK clients: a token with the grants each call needs. */
-  tokenSource: TokenSource = (grants) => this.token(JSON.stringify(claimsToJwtPayload(grants)));
+  tokenProvider: TokenProvider = (grants) => this.token(JSON.stringify(claimsToJwtPayload(grants)));
 
   async #create(claims: string): Promise<string> {
     const requestedAt = Date.now();

@@ -137,7 +137,9 @@ export class AvatarSession extends voice.AvatarSession {
     const livekitUrl = options.livekitUrl || process.env.LIVEKIT_URL;
     const livekitApiKey = options.livekitApiKey || process.env.LIVEKIT_API_KEY;
     const livekitApiSecret = options.livekitApiSecret || process.env.LIVEKIT_API_SECRET;
-    if (!livekitUrl || !livekitApiKey || !livekitApiSecret) {
+    // in a job, a missing key and secret are left to createParticipantToken (token mode)
+    const jobCtx = getJobContext(false);
+    if (!livekitUrl || (!jobCtx && (!livekitApiKey || !livekitApiSecret))) {
       throw new TavusException(
         'livekitUrl, livekitApiKey, and livekitApiSecret must be set ' +
           'by arguments or environment variables',
@@ -145,13 +147,12 @@ export class AvatarSession extends voice.AvatarSession {
     }
 
     let localParticipantIdentity: string;
-    try {
-      const jobCtx = getJobContext();
+    if (jobCtx) {
       localParticipantIdentity = jobCtx.agent?.identity || '';
       if (!localParticipantIdentity && room.localParticipant) {
         localParticipantIdentity = room.localParticipant.identity;
       }
-    } catch {
+    } else {
       if (!room.isConnected || !room.localParticipant) {
         throw new TavusException('failed to get local participant identity');
       }
@@ -162,20 +163,33 @@ export class AvatarSession extends voice.AvatarSession {
       throw new TavusException('failed to get local participant identity');
     }
 
-    const at = new AccessToken(livekitApiKey, livekitApiSecret, {
-      identity: this.avatarIdentity,
-      name: this.avatarParticipantName,
-    });
-    at.kind = 'agent';
-    at.addGrant({
-      roomJoin: true,
-      room: room.name,
-    } as VideoGrant);
-    at.attributes = {
-      [ATTRIBUTE_PUBLISH_ON_BEHALF]: localParticipantIdentity,
-    };
+    let livekitToken: string;
+    if (jobCtx) {
+      livekitToken = await jobCtx.createParticipantToken({
+        identity: this.avatarIdentity,
+        name: this.avatarParticipantName,
+        kind: 'agent',
+        grant: { roomJoin: true, room: room.name },
+        attributes: { [ATTRIBUTE_PUBLISH_ON_BEHALF]: localParticipantIdentity },
+        apiKey: livekitApiKey,
+        apiSecret: livekitApiSecret,
+      });
+    } else {
+      const at = new AccessToken(livekitApiKey, livekitApiSecret, {
+        identity: this.avatarIdentity,
+        name: this.avatarParticipantName,
+      });
+      at.kind = 'agent';
+      at.addGrant({
+        roomJoin: true,
+        room: room.name,
+      } as VideoGrant);
+      at.attributes = {
+        [ATTRIBUTE_PUBLISH_ON_BEHALF]: localParticipantIdentity,
+      };
 
-    const livekitToken = await at.toJwt();
+      livekitToken = await at.toJwt();
+    }
 
     this.#logger.debug('starting avatar session');
     this.conversationId = await this.api.createConversation({

@@ -13,13 +13,14 @@ import { PinoCloudExporter } from './telemetry/pino_otel_transport.js';
 import { setupCloudTracer, tracer } from './telemetry/traces.js';
 import { uploadGate } from './telemetry/upload_gate.js';
 
-const traceExporterHeaders = vi.hoisted(() => [] as Record<string, string>[]);
+type HeadersOption = Record<string, string> | (() => Promise<Record<string, string>>);
+const traceExporterHeaders = vi.hoisted(() => [] as HeadersOption[]);
 vi.mock('./telemetry/upload_gate.js', async (importOriginal) => {
   const mod = await importOriginal<typeof import('./telemetry/upload_gate.js')>();
   class UploadGateTraceExporter extends mod.UploadGateTraceExporter {
     constructor(config: ConstructorParameters<typeof mod.UploadGateTraceExporter>[0]) {
       super(config);
-      traceExporterHeaders.push({ ...(config?.headers as Record<string, string>) });
+      traceExporterHeaders.push(config?.headers as HeadersOption);
     }
   }
   return { ...mod, UploadGateTraceExporter };
@@ -181,7 +182,7 @@ describe('JobTokenClient', () => {
     const client = new JobTokenClient(createJobToken);
 
     await expect(
-      client.tokenSource({ video: { roomAdmin: true, room: 'r' }, sip: { call: true } }),
+      client.tokenProvider({ video: { roomAdmin: true, room: 'r' }, sip: { call: true } }),
     ).resolves.toBe('t');
     expect(JSON.parse(createJobToken.mock.calls[0]![0])).toEqual({
       video: { roomAdmin: true, room: 'r' },
@@ -272,7 +273,10 @@ describe('telemetry in token mode', () => {
         observabilityUrl: 'https://example.livekit.cloud',
         enableLogs: false,
       });
-      expect(traceExporterHeaders).toEqual([{ Authorization: 'Bearer worker-token' }]);
+      // the exporter reads the headers for each request, so that it follows a token refresh
+      expect(traceExporterHeaders).toHaveLength(1);
+      const headers = traceExporterHeaders[0] as () => Promise<Record<string, string>>;
+      expect(await headers()).toEqual({ Authorization: 'Bearer worker-token' });
     } finally {
       await (tracer.getProvider() as NodeTracerProvider).shutdown?.();
       otelContext.disable();

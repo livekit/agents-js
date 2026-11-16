@@ -280,7 +280,7 @@ describe('AvatarSession base', () => {
       'wss://example.livekit.cloud',
       undefined,
       undefined,
-      { tokenSource: jobTokens.tokenSource },
+      { tokenProvider: jobTokens.tokenProvider },
     );
     expect(removeParticipantMock).toHaveBeenCalledWith('test-room', 'avatar-identity');
   });

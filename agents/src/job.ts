@@ -13,7 +13,12 @@ import type {
 import { ConnectionState, ParticipantKind, RoomEvent, TrackKind } from '@livekit/rtc-node';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import type { Context } from '@opentelemetry/api';
-import { RoomServiceClient } from 'livekit-server-sdk';
+import {
+  AccessToken,
+  RoomServiceClient,
+  type VideoGrant,
+  claimsToJwtPayload,
+} from 'livekit-server-sdk';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { mkdir, writeFile } from 'node:fs/promises';
 import * as os from 'node:os';
@@ -146,6 +151,26 @@ export type JobAcceptArguments = {
   metadata: string;
   attributes?: { [key: string]: string };
 };
+
+/** Options for {@link JobContext.createParticipantToken}. */
+export interface ParticipantTokenOptions {
+  identity: string;
+  name?: string;
+  /** Participant kind, such as `'agent'`. */
+  kind?: string;
+  attributes?: Record<string, string>;
+  /** Defaults to joining the job's room. */
+  grant?: VideoGrant;
+  /**
+   * Lifetime of a token signed here, in seconds or as a string such as `'4h'`; defaults to that
+   * of `AccessToken`. Ignored in token mode, where the server sets it.
+   */
+  ttl?: number | string;
+  /** API key to sign with, in place of the worker's. */
+  apiKey?: string;
+  /** API secret to sign with, in place of the worker's. */
+  apiSecret?: string;
+}
 
 export type RunningJobInfo = {
   acceptArguments: JobAcceptArguments;
@@ -391,6 +416,13 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
     return this.#room.localParticipant;
   }
 
+  /** The identity of the agent's participant: from the job's token, else from the room. */
+  get localParticipantIdentity(): string {
+    const payload = this.#info.token.split('.')[1];
+    const sub = payload ? JSON.parse(Buffer.from(payload, 'base64url').toString()).sub : undefined;
+    return sub || this.#room.localParticipant?.identity || '';
+  }
+
   /** @returns The global inference executor */
   get inferenceExecutor(): InferenceExecutor {
     return this.#inferenceExecutor;
@@ -597,7 +629,7 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
       // token mode: the server issues the token for each call
       const client = this._jobTokens
         ? new RoomServiceClient(this.#info.url, undefined, undefined, {
-            tokenSource: this._jobTokens.tokenSource,
+            tokenProvider: this._jobTokens.tokenProvider,
           })
         : new RoomServiceClient(this.#info.url, this.#info.apiKey, this.#info.apiSecret);
       await client.deleteRoom(targetRoomName);
@@ -605,6 +637,36 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
     } catch (error) {
       this.#logger.warn({ error, roomName: targetRoomName }, 'error while deleting room');
     }
+  }
+
+  /**
+   * Creates a token for another participant to join the room, such as an avatar worker.
+   *
+   * The token is signed with `apiKey` and `apiSecret` when both are given, else with the worker's
+   * credentials. In token mode (no API key or secret), the server creates it through the worker
+   * and sets its lifetime.
+   */
+  async createParticipantToken(options: ParticipantTokenOptions): Promise<string> {
+    const { identity, name, kind, attributes, ttl, apiKey, apiSecret } = options;
+    const grant = options.grant ?? { roomJoin: true, room: this.#info.job.room?.name };
+
+    if (!(apiKey && apiSecret) && this._jobTokens) {
+      const claims = claimsToJwtPayload({ name, kind, attributes, video: grant });
+      return this._jobTokens.token(JSON.stringify({ ...claims, identity }));
+    }
+
+    const key = apiKey || this.#info.apiKey || process.env.LIVEKIT_API_KEY;
+    const secret = apiSecret || this.#info.apiSecret || process.env.LIVEKIT_API_SECRET;
+    if (!key || !secret) {
+      throw new Error(
+        'apiKey and apiSecret are required to create a participant token: pass them, or set ' +
+          'LIVEKIT_API_KEY and LIVEKIT_API_SECRET',
+      );
+    }
+    const at = new AccessToken(key, secret, { identity, name, attributes, ttl });
+    if (kind) at.kind = kind;
+    at.addGrant(grant);
+    return at.toJwt();
   }
 
   makeSessionReport(session?: AgentSession): SessionReport {

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { log, voice } from '@livekit/agents';
+import { getJobContext, log, voice } from '@livekit/agents';
 import type { Room } from '@livekit/rtc-node';
 import { TrackKind } from '@livekit/rtc-node';
 import { AccessToken, type VideoGrant } from 'livekit-server-sdk';
@@ -89,7 +89,9 @@ export class AvatarSession extends voice.AvatarSession {
     const lkKey = params?.livekitApiKey ?? process.env.LIVEKIT_API_KEY;
     const lkSecret = params?.livekitApiSecret ?? process.env.LIVEKIT_API_SECRET;
 
-    if (!livekitUrl || !lkKey || !lkSecret) {
+    // in a job, a missing key and secret are left to createParticipantToken (token mode)
+    const jobCtx = getJobContext(false);
+    if (!livekitUrl || (!jobCtx && (!lkKey || !lkSecret))) {
       throw new AnamException('LIVEKIT_URL/API_KEY/API_SECRET must be set');
     }
 
@@ -108,13 +110,24 @@ export class AvatarSession extends voice.AvatarSession {
       'starting Anam avatar session',
     );
 
-    const jwt = await mintAvatarJoinToken({
-      roomName: room.name!,
-      avatarIdentity: this.avatarIdentity,
-      publishOnBehalf: localIdentity,
-      apiKey: lkKey,
-      apiSecret: lkSecret,
-    });
+    const jwt = jobCtx
+      ? await jobCtx.createParticipantToken({
+          identity: this.avatarIdentity,
+          name: 'Anam Avatar',
+          kind: 'agent',
+          ttl: '60s',
+          attributes: { 'lk.publish_on_behalf': localIdentity },
+          grant: { roomJoin: true, room: room.name! },
+          apiKey: lkKey,
+          apiSecret: lkSecret,
+        })
+      : await mintAvatarJoinToken({
+          roomName: room.name!,
+          avatarIdentity: this.avatarIdentity,
+          publishOnBehalf: localIdentity,
+          apiKey: lkKey,
+          apiSecret: lkSecret,
+        });
 
     const anam = new AnamAPI(apiKey, apiUrl, this.opts.connOptions);
     logger.debug({ livekitUrl }, 'starting Anam engine session');

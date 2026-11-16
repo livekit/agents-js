@@ -59,7 +59,7 @@ import type { SpanProcessor } from '@opentelemetry/sdk-trace-base';
 import type { TextStreamInfo } from '@livekit/rtc-node';
 import { Throws } from '@livekit/throws-transformer/throws';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
-import { TokenSource } from 'livekit-server-sdk';
+import { TokenProvider } from 'livekit-server-sdk';
 import { Tracer } from '@opentelemetry/api';
 import { TracerProvider } from '@opentelemetry/api';
 import { TrackKind } from '@livekit/rtc-node';
@@ -69,6 +69,7 @@ import { TranscriptionSegment } from '@livekit/protocol';
 import { TransformStream as TransformStream_2 } from 'node:stream/web';
 import type { TypedEventEmitter } from '@livekit/typed-emitter';
 import type { VideoFrame as VideoFrame_2 } from '@livekit/rtc-node';
+import { VideoGrant } from 'livekit-server-sdk';
 import { WebSocket as WebSocket_2 } from 'ws';
 import type { WritableStreamDefaultWriter as WritableStreamDefaultWriter_2 } from 'node:stream/web';
 import { z } from 'zod';
@@ -4812,6 +4813,7 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
     _connectCalledMonoUs: number;
     // @internal
     _connectedMonoUs: number;
+    createParticipantToken(options: ParticipantTokenOptions): Promise<string>;
     deleteRoom(roomName?: string): Promise<void>;
     // (undocumented)
     get inferenceExecutor(): InferenceExecutor;
@@ -4832,6 +4834,7 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
     //
     // @internal
     _jobTokens?: JobTokenClient;
+    get localParticipantIdentity(): string;
     // (undocumented)
     makeSessionReport(session?: AgentSession): SessionReport;
     // @internal
@@ -5966,6 +5969,21 @@ export class ParticipantLegacyTranscriptionOutput extends BaseParticipantTranscr
     publishTranscription(id: string, text: string, final: boolean, signal?: AbortSignal): Promise<void>;
     // (undocumented)
     protected resetState(): void;
+}
+
+// @public
+export interface ParticipantTokenOptions {
+    apiKey?: string;
+    apiSecret?: string;
+    // (undocumented)
+    attributes?: Record<string, string>;
+    grant?: VideoGrant;
+    // (undocumented)
+    identity: string;
+    kind?: string;
+    // (undocumented)
+    name?: string;
+    ttl?: number | string;
 }
 
 // @public (undocumented)

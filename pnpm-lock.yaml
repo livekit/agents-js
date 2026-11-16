@@ -17,8 +17,6 @@ catalogs:
       version: 8.21.3
 
 overrides:
-  '@livekit/protocol': file:/private/tmp/claude-501/-Users-davidzhao-dev-livekit/c15f7b1a-f81c-4f81-abf3-77139db69daa/scratchpad/protocol-main/packages/javascript
-  livekit-server-sdk: link:../node-sdks/packages/livekit-server-sdk
   adm-zip@<0.6.1: ^0.6.1
   uuid@<11.1.1: ^11.1.1
   lodash@<4.18.0: ^4.18.0
@@ -145,8 +143,8 @@ importers:
         specifier: ^1.1.1
         version: 1.1.1
       '@livekit/protocol':
-        specifier: file:/private/tmp/claude-501/-Users-davidzhao-dev-livekit/c15f7b1a-f81c-4f81-abf3-77139db69daa/scratchpad/protocol-main/packages/javascript
-        version: file:../../../../../private/tmp/claude-501/-Users-davidzhao-dev-livekit/c15f7b1a-f81c-4f81-abf3-77139db69daa/scratchpad/protocol-main/packages/javascript
+        specifier: ^1.54.1
+        version: 1.54.1
       '@livekit/throws-transformer':
         specifier: 0.1.8
         version: 0.1.8(typescript@5.9.3)
@@ -217,8 +215,8 @@ importers:
         specifier: ^3.14.0
         version: 3.14.1
       livekit-server-sdk:
-        specifier: link:../../node-sdks/packages/livekit-server-sdk
-        version: link:../../node-sdks/packages/livekit-server-sdk
+        specifier: ^2.20.0
+        version: 2.20.0
       ofetch:
         specifier: ^1.5.1
         version: 1.5.1
@@ -407,8 +405,8 @@ importers:
         specifier: ^1.28.0
         version: 1.43.0
       livekit-server-sdk:
-        specifier: link:../../node-sdks/packages/livekit-server-sdk
-        version: link:../../node-sdks/packages/livekit-server-sdk
+        specifier: ^2.15.0
+        version: 2.20.0
       ws:
         specifier: 'catalog:'
         version: 8.21.3
@@ -432,8 +430,8 @@ importers:
   plugins/anam:
     dependencies:
       livekit-server-sdk:
-        specifier: link:../../../node-sdks/packages/livekit-server-sdk
-        version: link:../../../node-sdks/packages/livekit-server-sdk
+        specifier: ^2.9.2
+        version: 2.20.0
       ws:
         specifier: 'catalog:'
         version: 8.21.3
@@ -587,8 +585,8 @@ importers:
   plugins/bey:
     dependencies:
       livekit-server-sdk:
-        specifier: link:../../../node-sdks/packages/livekit-server-sdk
-        version: link:../../../node-sdks/packages/livekit-server-sdk
+        specifier: ^2.13.3
+        version: 2.20.0
     devDependencies:
       '@livekit/agents':
         specifier: workspace:*
@@ -717,8 +715,8 @@ importers:
   plugins/did:
     dependencies:
       livekit-server-sdk:
-        specifier: link:../../../node-sdks/packages/livekit-server-sdk
-        version: link:../../../node-sdks/packages/livekit-server-sdk
+        specifier: ^2.13.3
+        version: 2.20.0
     devDependencies:
       '@livekit/agents':
         specifier: workspace:*
@@ -945,8 +943,8 @@ importers:
   plugins/lemonslice:
     dependencies:
       livekit-server-sdk:
-        specifier: link:../../../node-sdks/packages/livekit-server-sdk
-        version: link:../../../node-sdks/packages/livekit-server-sdk
+        specifier: ^2.13.3
+        version: 2.20.0
       ws:
         specifier: 'catalog:'
         version: 8.21.3
@@ -976,8 +974,8 @@ importers:
   plugins/liveavatar:
     dependencies:
       livekit-server-sdk:
-        specifier: link:../../../node-sdks/packages/livekit-server-sdk
-        version: link:../../../node-sdks/packages/livekit-server-sdk
+        specifier: ^2.13.3
+        version: 2.20.0
       ws:
         specifier: 'catalog:'
         version: 8.21.3
@@ -1284,8 +1282,8 @@ importers:
   plugins/protoface:
     dependencies:
       livekit-server-sdk:
-        specifier: link:../../../node-sdks/packages/livekit-server-sdk
-        version: link:../../../node-sdks/packages/livekit-server-sdk
+        specifier: ^2.13.3
+        version: 2.20.0
     devDependencies:
       '@livekit/agents':
         specifier: workspace:*
@@ -1383,8 +1381,8 @@ importers:
   plugins/runway:
     dependencies:
       livekit-server-sdk:
-        specifier: link:../../../node-sdks/packages/livekit-server-sdk
-        version: link:../../../node-sdks/packages/livekit-server-sdk
+        specifier: ^2.13.3
+        version: 2.20.0
     devDependencies:
       '@livekit/agents':
         specifier: workspace:*
@@ -1525,8 +1523,8 @@ importers:
   plugins/synthesia:
     dependencies:
       livekit-server-sdk:
-        specifier: link:../../../node-sdks/packages/livekit-server-sdk
-        version: link:../../../node-sdks/packages/livekit-server-sdk
+        specifier: ^2.13.3
+        version: 2.20.0
     devDependencies:
       '@livekit/agents':
         specifier: workspace:*
@@ -1550,8 +1548,8 @@ importers:
   plugins/tavus:
     dependencies:
       livekit-server-sdk:
-        specifier: link:../../../node-sdks/packages/livekit-server-sdk
-        version: link:../../../node-sdks/packages/livekit-server-sdk
+        specifier: ^2.13.3
+        version: 2.20.0
     devDependencies:
       '@livekit/agents':
         specifier: workspace:*
@@ -1606,8 +1604,8 @@ importers:
   plugins/trugen:
     dependencies:
       livekit-server-sdk:
-        specifier: link:../../../node-sdks/packages/livekit-server-sdk
-        version: link:../../../node-sdks/packages/livekit-server-sdk
+        specifier: ^2.13.3
+        version: 2.20.0
     devDependencies:
       '@livekit/agents':
         specifier: workspace:*
@@ -2583,8 +2581,11 @@ packages:
     cpu: [x64]
     os: [linux]
 
-  '@livekit/protocol@file:../../../../../private/tmp/claude-501/-Users-davidzhao-dev-livekit/c15f7b1a-f81c-4f81-abf3-77139db69daa/scratchpad/protocol-main/packages/javascript':
-    resolution: {directory: ../../../../../private/tmp/claude-501/-Users-davidzhao-dev-livekit/c15f7b1a-f81c-4f81-abf3-77139db69daa/scratchpad/protocol-main/packages/javascript, type: directory}
+  '@livekit/protocol@1.53.0':
+    resolution: {integrity: sha512-dM562Q7sEQbJ9ZghjIpcVuRxRApGNwJW/JfXRub+dJT8J1cC2Tep0SyYkDzOawix7+0x969fnjXt0qEZOxkjbQ==}
+
+  '@livekit/protocol@1.54.1':
+    resolution: {integrity: sha512-eW6iAeKQdljAD4aDmANnV2SE0iQ06Atw2F1F4kIiy4lXaD5bNTlfAnH27B+ZKgu49Nrnn172JnRQ3WxXVBhlBQ==}
 
   '@livekit/rtc-ffi-bindings-darwin-arm64@0.12.73':
     resolution: {integrity: sha512-gIGftVyO1Jl266AZPRzoL6dxck969dmIiaut3+D1aCZRkDb/gLz98BEGRfOSU3X0LS4QBkmiaYWsjN9ot/zmwg==}
@@ -4842,6 +4843,9 @@ packages:
   jju@1.4.0:
     resolution: {integrity: sha512-8wb9Yw966OSxApiCt0K3yNJL8pnNeIv+OEq2YMidz4FKP6nonSRoOXc80iXY4JaN2FC11B9qsNmDsm+ZOfMROA==}
 
+  jose@5.10.0:
+    resolution: {integrity: sha512-s+3Al/p9g32Iq+oqXxkW//7jk2Vig6FF1CFqzVXoTUXt2qz89YWbL+OwS17NFYEvxC35n0FKeGO2LGYSxeM2Gg==}
+
   jose@6.2.12:
     resolution: {integrity: sha512-9NiFmJEex0sy2Dk58j2UGBSHgUs2ypF9eZSu4L6vjOX3Dp96Sw1F3uL+H+D1sx02jZZdzUT0HgvCy59CuvXcWw==}
 
@@ -4944,6 +4948,10 @@ packages:
 
   lines-and-columns@1.2.4:
     resolution: {integrity: sha512-7ylylesZQ/PV29jhEDl3Ufjo6ZX7gCqJr5F7PKrqc93v7fzSymt1BpwEU8nAUXs8qzzvqhbjhK5QZg6Mt/HkBg==}
+
+  livekit-server-sdk@2.20.0:
+    resolution: {integrity: sha512-kkzvWp50q8oPGhJp7gpgGSPx2riQAzTZQXOBKz7ze58Be+dzdArneTbXM9ATZ5BdRFFvN+sxGEfGYyXAczLFig==}
+    engines: {node: '>=19'}
 
   load-tsconfig@0.2.5:
     resolution: {integrity: sha512-IXO6OCs9yg8tMKzfPZ1YmheJbZCiEsnBdcB03l0OcfK9prKnJb96siuHCr5Fl37/yo9DnKU+TLpxzTUspw9shg==}
@@ -6997,7 +7005,11 @@ snapshots:
   '@livekit/plugins-krisp-viva-x86_64-unknown-linux-gnu@0.2.3':
     optional: true
 
-  '@livekit/protocol@file:../../../../../private/tmp/claude-501/-Users-davidzhao-dev-livekit/c15f7b1a-f81c-4f81-abf3-77139db69daa/scratchpad/protocol-main/packages/javascript':
+  '@livekit/protocol@1.53.0':
+    dependencies:
+      '@bufbuild/protobuf': 1.10.1
+
+  '@livekit/protocol@1.54.1':
     dependencies:
       '@bufbuild/protobuf': 1.10.1
 
@@ -9475,6 +9487,8 @@ snapshots:
 
   jju@1.4.0: {}
 
+  jose@5.10.0: {}
+
   jose@6.2.12: {}
 
   joycon@3.1.1: {}
@@ -9569,6 +9583,12 @@ snapshots:
   lilconfig@3.1.2: {}
 
   lines-and-columns@1.2.4: {}
+
+  livekit-server-sdk@2.20.0:
+    dependencies:
+      '@bufbuild/protobuf': 1.10.1
+      '@livekit/protocol': 1.53.0
+      jose: 5.10.0
 
   load-tsconfig@0.2.5: {}
 
