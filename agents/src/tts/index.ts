@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 export {
   type SynthesizedAudio,
+  type FallbackActivatedEvent,
   type TTSCapabilities,
   type TTSCallbacks,
   TTS,
