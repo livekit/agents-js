@@ -51,6 +51,7 @@ describe('ToolExecutor deferred reply', () => {
     const session = {
       userData: {},
       history: new ChatContext(),
+      emit: () => true,
       currentAgent: agent,
       _globalRunState: undefined,
       async waitForIdle() {
