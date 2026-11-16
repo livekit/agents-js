@@ -11,9 +11,10 @@ import * as agents from '../index.js';
 import { asLanguageCode, normalizeLanguage } from '../language.js';
 import { AgentHandoffItem, ChatMessage } from '../llm/index.js';
 import { initializeLogger, log } from '../log.js';
+import { createStreamChannel } from '../stream/stream_channel.js';
 import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
-import { VAD, type VADStream } from '../vad.js';
+import { VAD, type VADEvent, VADEventType, type VADStream } from '../vad.js';
 import { createConversationItemAddedEvent } from '../voice/events.js';
 import {
   SpeechStream as InferenceSpeechStream,
@@ -756,121 +757,249 @@ describe('Inference STT handoff replay', () => {
 });
 
 describe('Inference STT connection lifecycle', () => {
-  it('buffers audio until a replacement session accepts a coordinated handoff', async () => {
+  it('keeps a VAD finalize after partial audio across handoff', async () => {
     const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
     await once(server, 'listening');
     const address = server.address() as AddressInfo;
-    let connectionCount = 0;
-    const audioConnections: number[] = [];
+    const vadEvents = createStreamChannel<VADEvent>();
+    let partialFrame!: () => void;
+    const partial = new Promise<void>((resolve) => {
+      partialFrame = resolve;
+    });
+    let frameCount = 0;
+    const vad = new (class extends VAD {
+      label = 'handoff-test';
+      constructor() {
+        super({ updateInterval: 1 });
+      }
+      stream(): VADStream {
+        const reader = vadEvents.stream().getReader();
+        return {
+          pushFrame() {
+            if (++frameCount === 2) partialFrame();
+          },
+          endInput() {},
+          next: () => reader.read(),
+          close() {
+            void reader.cancel();
+            void vadEvents.close().catch(() => {});
+          },
+          [Symbol.asyncIterator]() {
+            return this;
+          },
+        } as unknown as VADStream;
+      }
+    })();
     let pause!: () => void;
-    let complete!: () => void;
-    let completionSeen = false;
-    let replacementCreated!: () => void;
-    let replacementAudio!: () => void;
     const paused = new Promise<void>((resolve) => {
       pause = resolve;
     });
-    const completed = new Promise<void>((resolve) => {
-      complete = resolve;
-    });
-    const replacementStarted = new Promise<void>((resolve) => {
-      replacementCreated = resolve;
-    });
-    const received = new Promise<void>((resolve) => {
-      replacementAudio = resolve;
-    });
-    let oldSocket: import('ws').WebSocket | undefined;
-    let newSocket: import('ws').WebSocket | undefined;
+    let candidate: WebSocket | undefined;
+    const candidateMessages: string[] = [];
+    let connectionCount = 0;
     server.on('connection', (socket) => {
-      const connection = ++connectionCount;
+      const index = ++connectionCount;
       socket.on('message', (raw) => {
-        const event = JSON.parse(raw.toString()) as { type: string; handoff_id?: string };
+        const event = JSON.parse(raw.toString()) as { type: string };
         if (event.type === 'session.create') {
           socket.send(JSON.stringify({ type: 'session.created' }));
-          if (connection === 2) {
-            newSocket = socket;
-            replacementCreated();
-          }
-        }
-        if (event.type === 'input_audio') {
-          audioConnections.push(connection);
-          if (connection === 1) {
-            oldSocket = socket;
-            socket.send(JSON.stringify({ type: 'session.handoff.request', handoff_id: 'h1' }));
-          } else {
-            socket.send(
-              JSON.stringify({
-                type: 'final_transcript',
-                transcript: 'later',
-                language: 'en',
-                start: 0,
-                duration: 0.05,
-              }),
-            );
-            replacementAudio();
-          }
-        }
-        if (event.type === 'session.handoff.pause') pause();
-        if (event.type === 'session.handoff.complete') {
-          completionSeen = true;
-          complete();
-        }
+          if (index === 2) candidate = socket;
+        } else if (index === 1 && event.type === 'input_audio') {
+          socket.send(JSON.stringify({ type: 'session.handoff.request', handoff_id: 'h1' }));
+        } else if (event.type === 'session.handoff.pause') pause();
+        else if (event.type === 'session.handoff.prepared')
+          socket.send(JSON.stringify({ type: 'session.handoff.drained', handoff_id: 'h1' }));
+        else if (event.type === 'session.handoff.complete')
+          socket.send(JSON.stringify({ type: 'session.handoff.accepted', handoff_id: 'h1' }));
+        if (index === 2 && event.type !== 'session.create') candidateMessages.push(event.type);
       });
     });
-    const stt = makeStt({
-      model: 'soniox/stt-rt',
+    const stream = makeStt({
+      model: 'speechmatics/enhanced',
+      vad,
       sampleRate: 16000,
       baseURL: `http://127.0.0.1:${address.port}`,
       connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1000 },
-    });
-    const stream = stt.stream();
-    const result = (async () => {
-      for await (const event of stream) {
-        if (event.type === SpeechEventType.FINAL_TRANSCRIPT) return event;
-      }
-      throw new Error('stream ended without a final transcript');
-    })();
-    const frame = new AudioFrame(new Int16Array(800), 16000, 1, 800);
+    }).stream();
     try {
-      stream.pushFrame(frame);
-      await Promise.race([
-        paused,
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('pause timeout')), 2000),
-        ),
-      ]);
-      stream.pushFrame(frame);
-      await new Promise((resolve) => setTimeout(resolve, 50));
-      expect(audioConnections).toEqual([1]);
-      oldSocket!.send(JSON.stringify({ type: 'session.handoff.drained', handoff_id: 'h1' }));
-      await replacementStarted;
-      await new Promise((resolve) => setTimeout(resolve, 50));
-      expect(audioConnections).toEqual([1]);
-      expect(completionSeen).toBe(false);
-      newSocket!.send(JSON.stringify({ type: 'session.handoff.ready', handoff_id: 'h1' }));
-      await Promise.race([
-        completed,
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('completion timeout')), 2000),
-        ),
-      ]);
-      expect(audioConnections).toEqual([1]);
-      oldSocket!.send(JSON.stringify({ type: 'session.handoff.accepted', handoff_id: 'h1' }));
-      await Promise.race([
-        received,
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('audio timeout')), 2000),
-        ),
-      ]);
-      expect(audioConnections).toEqual([1, 2]);
-      const final = await result;
-      expect(final.alternatives?.[0]?.startTime).toBeCloseTo(0.05, 2);
+      stream.pushFrame(new AudioFrame(new Int16Array(800), 16000, 1, 800));
+      await paused;
+      stream.pushFrame(new AudioFrame(new Int16Array(320), 16000, 1, 320));
+      await partial;
+      await vadEvents.write({
+        type: VADEventType.END_OF_SPEECH,
+        samplesIndex: 1120,
+        timestamp: 0,
+        speechDuration: 70,
+        silenceDuration: 0,
+        frames: [],
+        probability: 0,
+        inferenceDuration: 0,
+        speaking: false,
+        rawAccumulatedSilence: 0,
+        rawAccumulatedSpeech: 70,
+      });
+      await vi.waitFor(() => expect(stream['handoffWrites'].length).toBeGreaterThan(0));
+      stream.flush();
+      await vi.waitFor(() => expect(candidate).toBeDefined());
+      candidate!.send(JSON.stringify({ type: 'session.handoff.ready', handoff_id: 'h1' }));
+      await vi.waitFor(() => expect(candidateMessages).toHaveLength(2));
+      expect(candidateMessages).toEqual(['input_audio', 'session.finalize']);
     } finally {
       stream.close();
-      for (const client of server.clients) client.terminate();
+      for (const socket of server.clients) socket.terminate();
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   });
+
+  it.each(['soniox/stt-rt', 'speechmatics/enhanced'])(
+    'prepares a ready replacement before draining %s',
+    async (model) => {
+      const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+      await once(server, 'listening');
+      const address = server.address() as AddressInfo;
+      let connectionCount = 0;
+      const audioConnections: number[] = [];
+      let pause!: () => void;
+      let complete!: () => void;
+      let completionSeen = false;
+      let replacementCreated!: () => void;
+      let replacementAudio!: () => void;
+      const paused = new Promise<void>((resolve) => {
+        pause = resolve;
+      });
+      const completed = new Promise<void>((resolve) => {
+        complete = resolve;
+      });
+      const replacementStarted = new Promise<void>((resolve) => {
+        replacementCreated = resolve;
+      });
+      const received = new Promise<void>((resolve) => {
+        replacementAudio = resolve;
+      });
+      let oldSocket: WebSocket | undefined;
+      let newSocket: WebSocket | undefined;
+      server.on('connection', (socket) => {
+        const connection = ++connectionCount;
+        socket.on('message', (raw) => {
+          const event = JSON.parse(raw.toString()) as { type: string; handoff_id?: string };
+          if (event.type === 'session.create') {
+            socket.send(JSON.stringify({ type: 'session.created' }));
+            if (connection === 2) {
+              newSocket = socket;
+              replacementCreated();
+            }
+          }
+          if (event.type === 'input_audio') {
+            audioConnections.push(connection);
+            if (connection === 1) {
+              oldSocket = socket;
+              socket.send(JSON.stringify({ type: 'session.handoff.request', handoff_id: 'h1' }));
+            } else {
+              socket.send(
+                JSON.stringify({
+                  type: 'final_transcript',
+                  transcript: 'later',
+                  language: 'en',
+                  start: 0,
+                  duration: 0.05,
+                }),
+              );
+              replacementAudio();
+            }
+          }
+          if (event.type === 'session.handoff.pause') pause();
+          if (event.type === 'session.handoff.prepared') {
+            expect(connection).toBe(1);
+            socket.send(JSON.stringify({ type: 'session.handoff.drained', handoff_id: 'h1' }));
+          }
+          if (event.type === 'session.handoff.complete') {
+            completionSeen = true;
+            complete();
+          }
+        });
+      });
+      const vad = new (class extends VAD {
+        label = 'handoff-test';
+        streams = 0;
+        constructor() {
+          super({ updateInterval: 1 });
+        }
+        stream(): VADStream {
+          this.streams++;
+          const channel = createStreamChannel<never>();
+          const reader = channel.stream().getReader();
+          return {
+            pushFrame() {},
+            endInput() {},
+            next: () => reader.read(),
+            close() {
+              void reader.cancel();
+              void channel.close().catch(() => {});
+            },
+            [Symbol.asyncIterator]() {
+              return this;
+            },
+          } as unknown as VADStream;
+        }
+      })();
+      const stt = makeStt({
+        model,
+        vad,
+        sampleRate: 16000,
+        baseURL: `http://127.0.0.1:${address.port}`,
+        connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1000 },
+      });
+      const stream = stt.stream();
+      const result = (async () => {
+        for await (const event of stream) {
+          if (event.type === SpeechEventType.FINAL_TRANSCRIPT) return event;
+        }
+        throw new Error('stream ended without a final transcript');
+      })();
+      void result.catch(() => {});
+      const frame = new AudioFrame(new Int16Array(800), 16000, 1, 800);
+      try {
+        stream.pushFrame(frame);
+        await Promise.race([
+          paused,
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('pause timeout')), 2000),
+          ),
+        ]);
+        stream.pushFrame(frame);
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        expect(audioConnections).toEqual([1]);
+        await replacementStarted;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        expect(audioConnections).toEqual([1]);
+        expect(completionSeen).toBe(false);
+        newSocket!.send(JSON.stringify({ type: 'session.handoff.ready', handoff_id: 'h1' }));
+        await Promise.race([
+          completed,
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('completion timeout')), 2000),
+          ),
+        ]);
+        expect(audioConnections).toEqual([1]);
+        oldSocket!.send(JSON.stringify({ type: 'session.handoff.accepted', handoff_id: 'h1' }));
+        await Promise.race([
+          received,
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('audio timeout')), 2000),
+          ),
+        ]);
+        expect(audioConnections).toEqual([1, 2]);
+        if (model.startsWith('speechmatics/')) expect(vad.streams).toBe(1);
+        const final = await result;
+        expect(final.alternatives?.[0]?.startTime).toBeCloseTo(0.05, 2);
+      } finally {
+        stream.close();
+        for (const client of server.clients) client.terminate();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      }
+    },
+  );
 
   it('resumes buffered audio if the replacement rejects after creation', async () => {
     const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
@@ -886,9 +1015,15 @@ describe('Inference STT connection lifecycle', () => {
     const resumed = new Promise<void>((resolve) => {
       onResume = resolve;
     });
-    let oldSocket: import('ws').WebSocket | undefined;
     server.on('connection', (socket) => {
       const connection = ++connections;
+      socket.on('message', (raw) => {
+        const event = JSON.parse(raw.toString()) as { type: string; handoff_id?: string };
+        if (event.type === 'session.handoff.prepared')
+          socket.send(
+            JSON.stringify({ type: 'session.handoff.drained', handoff_id: event.handoff_id }),
+          );
+      });
       socket.on('message', (raw) => {
         const event = JSON.parse(raw.toString()) as { type: string };
         if (event.type === 'session.create') {
@@ -897,7 +1032,6 @@ describe('Inference STT connection lifecycle', () => {
         } else if (event.type === 'input_audio') {
           audioConnections.push(connection);
           if (audioConnections.length === 1) {
-            oldSocket = socket;
             socket.send(JSON.stringify({ type: 'session.handoff.request', handoff_id: 'h1' }));
           } else onResume();
         } else if (event.type === 'session.handoff.pause') onPause();
@@ -920,7 +1054,6 @@ describe('Inference STT connection lifecycle', () => {
         ),
       ]);
       stream.pushFrame(frame);
-      oldSocket!.send(JSON.stringify({ type: 'session.handoff.drained', handoff_id: 'h1' }));
       await Promise.race([
         resumed,
         new Promise<never>((_, reject) =>
@@ -949,10 +1082,16 @@ describe('Inference STT connection lifecycle', () => {
     const resumed = new Promise<void>((resolve) => {
       resumedResolve = resolve;
     });
-    let oldSocket: import('ws').WebSocket | undefined;
-    let replacement: import('ws').WebSocket | undefined;
+    let replacement: WebSocket | undefined;
     server.on('connection', (socket) => {
       const connection = ++connections;
+      socket.on('message', (raw) => {
+        const event = JSON.parse(raw.toString()) as { type: string; handoff_id?: string };
+        if (event.type === 'session.handoff.prepared')
+          socket.send(
+            JSON.stringify({ type: 'session.handoff.drained', handoff_id: event.handoff_id }),
+          );
+      });
       socket.on('message', (raw) => {
         const event = JSON.parse(raw.toString()) as { type: string };
         if (event.type === 'session.create') {
@@ -964,7 +1103,6 @@ describe('Inference STT connection lifecycle', () => {
         } else if (event.type === 'input_audio') {
           audioConnections.push(connection);
           if (audioConnections.length === 1) {
-            oldSocket = socket;
             socket.send(JSON.stringify({ type: 'session.handoff.request', handoff_id: 'h1' }));
           } else resumedResolve();
         } else if (event.type === 'session.handoff.pause') pausedResolve();
@@ -989,7 +1127,6 @@ describe('Inference STT connection lifecycle', () => {
         ),
       ]);
       stream.pushFrame(frame);
-      oldSocket!.send(JSON.stringify({ type: 'session.handoff.drained', handoff_id: 'h1' }));
       await Promise.race([
         resumed,
         new Promise<never>((_, reject) =>
@@ -1011,7 +1148,7 @@ describe('Inference STT connection lifecycle', () => {
       await once(server, 'listening');
       const address = server.address() as AddressInfo;
       let connections = 0;
-      let oldSocket: import('ws').WebSocket | undefined;
+      let oldSocket: WebSocket | undefined;
       let pausedResolve!: () => void;
       let replayedResolve!: () => void;
       const paused = new Promise<void>((resolve) => {
@@ -1023,6 +1160,13 @@ describe('Inference STT connection lifecycle', () => {
       const audioConnections: number[] = [];
       server.on('connection', (socket) => {
         const connection = ++connections;
+        socket.on('message', (raw) => {
+          const event = JSON.parse(raw.toString()) as { type: string; handoff_id?: string };
+          if (event.type === 'session.handoff.prepared')
+            socket.send(
+              JSON.stringify({ type: 'session.handoff.drained', handoff_id: event.handoff_id }),
+            );
+        });
         socket.on('message', (raw) => {
           const event = JSON.parse(raw.toString()) as { type: string };
           if (event.type === 'session.create')
@@ -1063,7 +1207,7 @@ describe('Inference STT connection lifecycle', () => {
             setTimeout(() => reject(new Error('replay timeout')), 2000),
           ),
         ]);
-        expect(audioConnections).toEqual([1, 2]);
+        expect(audioConnections).toEqual([1, 3]);
       } finally {
         stream.close();
         for (const client of server.clients) client.terminate();
@@ -1112,6 +1256,13 @@ describe('Inference STT connection lifecycle', () => {
     server.on('connection', (socket) => {
       const connection = ++connections;
       socket.on('message', (raw) => {
+        const event = JSON.parse(raw.toString()) as { type: string; handoff_id?: string };
+        if (event.type === 'session.handoff.prepared')
+          socket.send(
+            JSON.stringify({ type: 'session.handoff.drained', handoff_id: event.handoff_id }),
+          );
+      });
+      socket.on('message', (raw) => {
         const event = JSON.parse(raw.toString()) as { type: string };
         if (event.type === 'session.create') {
           socket.send(JSON.stringify({ type: 'session.created' }));
@@ -1141,7 +1292,6 @@ describe('Inference STT connection lifecycle', () => {
       await paused;
       stream.pushFrame(frame);
       await new Promise((resolve) => setTimeout(resolve, 50));
-      oldSocket!.send(JSON.stringify({ type: 'session.handoff.drained', handoff_id: 'h1' }));
       await completed;
       oldSocket!.send(JSON.stringify({ type: 'session.handoff.accepted', handoff_id: 'h1' }));
       await Promise.race([
@@ -1166,7 +1316,6 @@ describe('Inference STT connection lifecycle', () => {
     const address = server.address() as AddressInfo;
     const events: { connection: number; type: string; language?: string }[] = [];
     let count = 0;
-    let oldSocket: import('ws').WebSocket | undefined;
     let pause!: () => void;
     let done!: () => void;
     const paused = new Promise<void>((resolve) => {
@@ -1186,7 +1335,6 @@ describe('Inference STT connection lifecycle', () => {
           if (connection === 2)
             socket.send(JSON.stringify({ type: 'session.handoff.ready', handoff_id: 'h1' }));
         } else if (e.type === 'input_audio' && connection === 1) {
-          oldSocket = socket;
           socket.send(JSON.stringify({ type: 'session.handoff.request', handoff_id: 'h1' }));
         } else if (
           e.type === 'input_audio' &&
@@ -1195,6 +1343,8 @@ describe('Inference STT connection lifecycle', () => {
         )
           done();
         else if (e.type === 'session.handoff.pause') pause();
+        else if (e.type === 'session.handoff.prepared')
+          socket.send(JSON.stringify({ type: 'session.handoff.drained', handoff_id: 'h1' }));
         else if (e.type === 'session.update')
           socket.send(JSON.stringify({ type: 'session.updated', success: true }));
         else if (e.type === 'session.handoff.complete')
@@ -1221,7 +1371,6 @@ describe('Inference STT connection lifecycle', () => {
       stream.pushFrame(frame);
       stream.updateOptions({ language: 'fr' });
       stream.pushFrame(frame);
-      oldSocket!.send(JSON.stringify({ type: 'session.handoff.drained', handoff_id: 'h1' }));
       await Promise.race([
         delivered,
         new Promise<never>((_, reject) =>

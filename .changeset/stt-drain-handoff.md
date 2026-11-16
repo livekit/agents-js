@@ -1,4 +1,4 @@
 ---
 '@livekit/agents': patch
 ---
-Preserve streaming STT input across coordinated gateway shutdown handoffs.
+Prepare STT replacements before gateway drain and preserve partial audio ordering through SDK VAD finalizes.

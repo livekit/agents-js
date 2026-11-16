@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { type AudioFrame } from '@livekit/rtc-node';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
-import type { WebSocket } from 'ws';
+import type { RawData, WebSocket } from 'ws';
 import { APIConnectionError, APIStatusError } from '../_exceptions.js';
 import { AudioByteStream } from '../audio.js';
 import { type LanguageCode, areLanguagesEquivalent, normalizeLanguage } from '../language.js';
@@ -31,7 +31,10 @@ import {
 import { type AnyString, connectWs, createAccessToken, getDefaultInferenceUrl } from './utils.js';
 import { VAD as InferenceVAD } from './vad.js';
 
-type STTWriterControl = { kind: 'update'; message: unknown } | { kind: 'handoff'; id: string };
+type STTWriterControl =
+  | { kind: 'update'; message: unknown }
+  | { kind: 'handoff'; id: string }
+  | { kind: 'finalize' };
 
 export type DeepgramModels =
   | 'deepgram/nova-3'
@@ -794,7 +797,7 @@ export class STT<TModel extends STTModels> extends BaseSTT {
     }
 
     const params = {
-      handoff_protocol: 1,
+      handoff_protocol: 2,
       settings: {
         sample_rate: String(opts.sampleRate),
         encoding: opts.encoding,
@@ -1031,6 +1034,10 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
       let handoffKeyterms: string[] = [];
       let audioStream: AudioByteStream | undefined;
       let handoffTimer: ReturnType<typeof setTimeout> | undefined;
+      let handoffDeadline = 0;
+      let waitingForUpdateAcks = false;
+      let replacementPrepared = false;
+      let handoffCompleting = false;
 
       const eventChannel = createStreamChannel<SttServerEvent>();
 
@@ -1124,6 +1131,12 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
           attachSocket = (socket: WebSocket) => {
             socket.on('message', (data) => {
               const json = JSON.parse(data.toString()) as SttServerEvent;
+              if (
+                json.type === 'session.handoff.abort' &&
+                (json as { handoff_id?: unknown }).handoff_id === this.requestedHandoffId
+              ) {
+                this.abortHandoff?.();
+              }
               if (json.type === 'final_transcript') {
                 finalTranscriptReceived = true;
               }
@@ -1210,6 +1223,9 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
               this.sendOrBuffer(control.message, () => {
                 this.pendingUpdateAcks++;
               });
+            } else if (control.kind === 'finalize') {
+              for (const frame of audioStream.flush()) sendAudioFrame(frame);
+              sendSessionFinalize();
             } else if (
               control.kind === 'handoff' &&
               control.id === this.requestedHandoffId &&
@@ -1220,6 +1236,10 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
               this.activeWs.send(
                 JSON.stringify({ type: 'session.handoff.pause', handoff_id: control.id }),
               );
+              await eventChannel.write({
+                type: 'session.handoff.paused',
+                handoff_id: control.id,
+              } as SttServerEvent);
             }
             continue;
           }
@@ -1254,7 +1274,13 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
           if (result.done) break;
           if (result.value.type !== VADEventType.END_OF_SPEECH) continue;
           if (this.activeWs?.readyState !== 1) return;
-          sendSessionFinalize();
+          try {
+            (this.input as unknown as { put(value: STTWriterControl): void }).put({
+              kind: 'finalize',
+            });
+          } catch {
+            return;
+          }
         }
       };
 
@@ -1274,6 +1300,15 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
               if (this.pendingUpdateAcks > 0) this.pendingUpdateAcks--;
               else this.updateUncertain = true;
               if (ack.success !== true) this.updateUncertain = true;
+              if (waitingForUpdateAcks && this.pendingUpdateAcks === 0 && this.handoffId) {
+                waitingForUpdateAcks = false;
+                void eventChannel
+                  .write({
+                    type: 'session.handoff.paused',
+                    handoff_id: this.handoffId,
+                  } as SttServerEvent)
+                  .catch(() => this.abortHandoff?.());
+              }
               continue;
             }
             if (
@@ -1282,7 +1317,7 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
               this.requestedHandoffId === undefined &&
               this.activeWs
             ) {
-              if (vadStream || this._pendingExtra !== undefined) {
+              if (this._pendingExtra !== undefined) {
                 this.activeWs.send(
                   JSON.stringify({ type: 'session.handoff.abort', handoff_id: handoff.handoff_id }),
                 );
@@ -1290,6 +1325,9 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
               }
               this.handoffSerialized = true;
               this.requestedHandoffId = handoff.handoff_id;
+              replacementPrepared = false;
+              handoffCompleting = false;
+              handoffDeadline = Date.now() + 10_000;
               handoffOpts = {
                 ...this.opts,
                 modelOptions: { ...this.opts.modelOptions },
@@ -1299,6 +1337,8 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
               this.retryHandoffKeyterms = handoffKeyterms;
               this.abortHandoff = () => {
                 if (this.requestedHandoffId === undefined || !this.activeWs) return;
+                if (handoffTimer) clearTimeout(handoffTimer);
+                waitingForUpdateAcks = false;
                 this.activeWs.send(
                   JSON.stringify({
                     type: 'session.handoff.abort',
@@ -1348,11 +1388,16 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
               continue;
             }
             if (
-              handoff.type === 'session.handoff.drained' &&
+              handoff.type === 'session.handoff.paused' &&
               handoff.handoff_id === this.handoffId &&
+              !replacementPrepared &&
               this.activeWs
             ) {
-              if (this.pendingUpdateAcks > 0 || this.updateUncertain) {
+              if (this.pendingUpdateAcks > 0) {
+                waitingForUpdateAcks = true;
+                continue;
+              }
+              if (this.updateUncertain) {
                 this.abortHandoff?.();
                 continue;
               }
@@ -1360,7 +1405,7 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
               let next: WebSocket | undefined;
               try {
                 next = await this.stt.connectWs(
-                  this.connOptions.timeoutMs,
+                  Math.min(this.connOptions.timeoutMs, Math.max(1, handoffDeadline - Date.now())),
                   handoffOpts,
                   handoffKeyterms,
                   requestedId,
@@ -1368,7 +1413,10 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
                 replacementWs = next;
                 const created = await new Promise<boolean>((resolve) => {
                   let sawCreated = false;
-                  const timer = setTimeout(() => finish(false), this.connOptions.timeoutMs);
+                  const timer = setTimeout(
+                    () => finish(false),
+                    Math.min(this.connOptions.timeoutMs, Math.max(1, handoffDeadline - Date.now())),
+                  );
                   const finish = (ok: boolean) => {
                     clearTimeout(timer);
                     next?.off('message', onMessage);
@@ -1376,7 +1424,7 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
                     next?.off('error', onClose);
                     resolve(ok);
                   };
-                  const onMessage = (raw: import('ws').RawData) => {
+                  const onMessage = (raw: RawData) => {
                     try {
                       const event = JSON.parse(raw.toString()) as {
                         type: string;
@@ -1386,6 +1434,11 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
                         sawCreated = true;
                         return;
                       }
+                      if (
+                        event.type === 'session.handoff.ready' &&
+                        event.handoff_id !== requestedId
+                      )
+                        return;
                       finish(
                         sawCreated &&
                           event.type === 'session.handoff.ready' &&
@@ -1418,13 +1471,31 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
               next.on('close', replacementFailed);
               replacementMessageMonitor = replacementFailed;
               next.on('message', replacementMessageMonitor);
+              replacementPrepared = true;
               this.activeWs.send(
-                JSON.stringify({ type: 'session.handoff.complete', handoff_id: this.handoffId }),
+                JSON.stringify({ type: 'session.handoff.prepared', handoff_id: this.handoffId }),
               );
               continue;
             }
             if (
+              handoff.type === 'session.handoff.drained' &&
+              !handoffCompleting &&
+              handoff.handoff_id === this.handoffId &&
+              this.activeWs
+            ) {
+              if (!replacementWs || replacementWs.readyState !== 1) {
+                this.abortHandoff?.();
+                continue;
+              }
+              this.activeWs.send(
+                JSON.stringify({ type: 'session.handoff.complete', handoff_id: this.handoffId }),
+              );
+              handoffCompleting = true;
+              continue;
+            }
+            if (
               handoff.type === 'session.handoff.accepted' &&
+              handoffCompleting &&
               handoff.handoff_id === this.handoffId &&
               replacementWs &&
               this.activeWs
