@@ -173,7 +173,7 @@ describe('AssemblyAI streaming configuration', () => {
     expect(updated.capabilities.interimResults).toBe(true);
   });
 
-  it('enables carryover for the existing default model, with explicit opt-out', () => {
+  it('enables carryover for the default model, with explicit opt-out', () => {
     expect(new STT({ apiKey: 'test' }).capabilities.chatContext).toBe(true);
     expect(new STT({ apiKey: 'test', agentContextCarryover: false }).capabilities.chatContext).toBe(
       false,
@@ -236,7 +236,7 @@ describe('AssemblyAI option validation', () => {
     await withProvider({}, async (provider, _query, messages, stream) => {
       provider.updateOptions({ speechModel: undefined });
       stream.updateOptions({ speechModel: undefined });
-      expect(provider.model).toBe('universal-3-5-pro');
+      expect(provider.model).toBe('universal-3-6-pro');
       provider.updateOptions({ interruptionDelay: 0 });
       await waitUntil(() => messages.length > 0);
       expect(messages).toEqual([{ type: 'UpdateConfiguration', interruption_delay: 0 }]);
@@ -310,7 +310,7 @@ describe('AssemblyAI option validation', () => {
     'accepts the existing model alias via %s without mutating input',
     async (target) => {
       await withProvider(
-        { speechModel: 'universal-3-5-pro' },
+        { speechModel: 'universal-3-6-pro' },
         async (provider, _q, messages, stream) => {
           const opts = Object.freeze({
             speechModel: 'u3-pro' as const,
