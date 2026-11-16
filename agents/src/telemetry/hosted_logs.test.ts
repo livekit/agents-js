@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import {
+  closeSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -219,6 +220,7 @@ describe('redirectJobOutput', () => {
     writeFileSync(stale, 'earlier attempt\n');
     writeFileSync(join(jobsDir, 'job-AJ_1.export.done.log'), 'older attempt\n');
     const oldInode = statSync(stale).ino;
+    const heldByRunner = openSync(stale, 'r');
     const write = { out: process.stdout.write, err: process.stderr.write };
     let out: JobOutput | undefined;
     try {
@@ -227,10 +229,14 @@ describe('redirectJobOutput', () => {
       process.stdout.write = write.out;
       process.stderr.write = write.err;
     }
-    expect(jobFiles()).toEqual(['job-AJ_1.log']);
-    expect(readFileSync(stale, 'utf8')).toBe('');
-    expect(statSync(stale).ino).not.toBe(oldInode);
-    out!.close();
+    try {
+      expect(jobFiles()).toEqual(['job-AJ_1.log']);
+      expect(readFileSync(stale, 'utf8')).toBe('');
+      expect(statSync(stale).ino).not.toBe(oldInode);
+    } finally {
+      closeSync(heldByRunner);
+      out!.close();
+    }
   });
 });
 
