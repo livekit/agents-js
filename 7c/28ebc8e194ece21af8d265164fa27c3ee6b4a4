@@ -1,0 +1,21 @@
+agents/src/inference/eot/transports.test.ts
+  s_420aedfe5daa30::t_cce3eb0afd809c 446-466,468-488,514-523
+  s_420aedfe5daa30::t_75bd48ddf03f8a 140-141,510-513
+  s_420aedfe5daa30::t_e9f7ccd22dacbe 524
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7c28ebc8e194ece21af8d265164fa27c3ee6b4a4",
+  "prompts": {},
+  "sessions": {
+    "s_420aedfe5daa30": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1e37a-c26b-7e00-972f-2da0b2584f18",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
