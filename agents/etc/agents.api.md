@@ -1165,6 +1165,9 @@ const ATTR_EOU_FROM_CACHE = "lk.eou.from_cache";
 // @public (undocumented)
 const ATTR_EOU_LANGUAGE = "lk.eou.language";
 
+// @public (undocumented)
+const ATTR_EOU_MODEL = "lk.eou.model";
+
 // @public
 const ATTR_EOU_NOT_COMMITTED_COUNT = "lk.eou.not_committed_count";
 
@@ -1173,6 +1176,9 @@ const ATTR_EOU_OUTCOME = "lk.eou.outcome";
 
 // @public (undocumented)
 const ATTR_EOU_PROBABILITY = "lk.eou.probability";
+
+// @public (undocumented)
+const ATTR_EOU_PROVIDER = "lk.eou.provider";
 
 // @public
 const ATTR_EOU_REARM_COUNT = "lk.eou.rearm_count";
@@ -8817,6 +8823,8 @@ declare namespace traceTypes {
         ATTR_TTS_STREAMING,
         ATTR_TTS_LABEL,
         ATTR_RESPONSE_TTFB,
+        ATTR_EOU_MODEL,
+        ATTR_EOU_PROVIDER,
         ATTR_EOU_PROBABILITY,
         ATTR_EOU_UNLIKELY_THRESHOLD,
         ATTR_EOU_DELAY,
