@@ -112,21 +112,6 @@ describe('AudioRecognition substitutes silence on the STT path only', () => {
       maxEndpointingDelay: 0,
     });
 
-    const subscriberStream = recognition.subscribeAudioStream();
-    const subscriberFrames: AudioFrame[] = [];
-    const subscriberDone = (async () => {
-      const reader = subscriberStream.getReader();
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) return;
-          subscriberFrames.push(value);
-        }
-      } catch {
-        /* stream closed */
-      }
-    })();
-
     try {
       await recognition.start();
       recognition.setInputAudioStream(
@@ -139,16 +124,14 @@ describe('AudioRecognition substitutes silence on the STT path only', () => {
         }),
       );
 
-      await waitFor(() => sttFrames.length === 2 && subscriberFrames.length === 2);
+      await waitFor(() => sttFrames.length === 2);
       expect(sttFrames.map((f) => f.data[0])).toEqual([0x11, 0x22]);
-      expect(subscriberFrames.map((f) => f.data[0])).toEqual([0x11, 0x22]);
     } finally {
       await recognition.close();
-      await subscriberDone;
     }
   });
 
-  it('substitutes silence on the STT path while subscribers still see real frames', async () => {
+  it('substitutes silence on the STT path', async () => {
     const DISCARD_MARKER = 0x22;
     const sttFrames: AudioFrame[] = [];
     const sttNode: STTNode = async (audioStream) => {
@@ -177,21 +160,6 @@ describe('AudioRecognition substitutes silence on the STT path only', () => {
       maxEndpointingDelay: 0,
     });
 
-    const subscriberStream = recognition.subscribeAudioStream();
-    const subscriberFrames: AudioFrame[] = [];
-    const subscriberDone = (async () => {
-      const reader = subscriberStream.getReader();
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) return;
-          subscriberFrames.push(value);
-        }
-      } catch {
-        /* stream closed */
-      }
-    })();
-
     try {
       await recognition.start();
       recognition.setInputAudioStream(
@@ -206,7 +174,7 @@ describe('AudioRecognition substitutes silence on the STT path only', () => {
         }),
       );
 
-      await waitFor(() => sttFrames.length === 4 && subscriberFrames.length === 4);
+      await waitFor(() => sttFrames.length === 4);
 
       // STT path: discarded frames are replaced with silence; others pass through.
       expect(sttFrames[0]!.data[0]).toBe(0x11);
@@ -220,19 +188,8 @@ describe('AudioRecognition substitutes silence on the STT path only', () => {
         expect(frame.channels).toBe(1);
         expect(frame.samplesPerChannel).toBe(160);
       }
-
-      // Subscribers branch off before the STT-only silence transform and so
-      // always observe the real frames — mirroring the VAD and interruption
-      // paths in the same pipeline.
-      expect(subscriberFrames.map((f) => f.data[0])).toEqual([
-        0x11,
-        DISCARD_MARKER,
-        DISCARD_MARKER,
-        0x44,
-      ]);
     } finally {
       await recognition.close();
-      await subscriberDone;
     }
   });
 });

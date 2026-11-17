@@ -15,7 +15,7 @@ export {
   type AgentUpdateOptions,
   type ModelSettings,
 } from './agent.js';
-export * from './amd.js';
+export * from './amd/index.js';
 export {
   AgentSession,
   type AgentSessionOptions,

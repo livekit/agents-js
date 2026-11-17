@@ -56,10 +56,19 @@ export type ShutdownReason = CloseReason | string;
 
 export type SpeechSource = 'say' | 'generate_reply' | 'tool_response';
 
+/**
+ * A user state transition.
+ *
+ * `createdAt` records event creation time. For speech timing or latency measurements, use
+ * `speechTimestamp` when it is set, otherwise `createdAt`.
+ */
 export type UserStateChangedEvent = {
   type: 'user_state_changed';
   oldState: UserState;
   newState: UserState;
+  /** Unix time (ms) of user speech start or end, often backdated, when known. */
+  speechTimestamp?: number;
+  /** Unix time (ms) when this event was created, not the speech-boundary time. */
   createdAt: number;
 };
 
@@ -67,10 +76,12 @@ export const createUserStateChangedEvent = (
   oldState: UserState,
   newState: UserState,
   createdAt: number = Date.now(),
+  speechTimestamp?: number,
 ): UserStateChangedEvent => ({
   type: 'user_state_changed',
   oldState,
   newState,
+  speechTimestamp,
   createdAt,
 });
 
@@ -216,11 +227,17 @@ export type FunctionToolsExecutedEvent = {
   createdAt: number;
   /** Whether any output in this batch asks the model to reply. */
   readonly hasToolReply: boolean;
+  /** Whether a tool in this batch hands off to another agent that will start. */
+  readonly hasAgentHandoff: boolean;
   /**
    * Ask the model not to reply to this batch. Each output is still delivered, since a realtime
    * model holds the call open until it is answered.
    */
   cancelToolReply(): void;
+  /** Keep the current agent: the handoff returned by a tool in this batch does not start. */
+  cancelAgentHandoff(): void;
+  /** @internal */
+  _handoffRequired: boolean;
 };
 
 export const createFunctionToolsExecutedEvent = ({
@@ -237,11 +254,18 @@ export const createFunctionToolsExecutedEvent = ({
     functionCalls,
     functionCallOutputs,
     createdAt,
+    _handoffRequired: false,
     get hasToolReply() {
       return functionCallOutputs.some((output) => output.replyRequired);
     },
+    get hasAgentHandoff() {
+      return this._handoffRequired;
+    },
     cancelToolReply() {
       for (const output of functionCallOutputs) output.replyRequired = false;
+    },
+    cancelAgentHandoff() {
+      this._handoffRequired = false;
     },
   };
 };

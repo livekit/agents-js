@@ -1534,6 +1534,7 @@ describe('AgentActivity - realtime reply chat context push', () => {
     userSilenceEvent.set();
     const generationEvent = {} as GenerationCreatedEvent;
     const realtimeSession = {
+      realtimeModel: { capabilities: { perResponseToolChoice: false } },
       chatCtx: ChatContext.empty(),
       tools: ToolContext.empty(),
       updateChatCtx: vi.fn(async (chatCtx: ChatContext) => {
@@ -1548,6 +1549,7 @@ describe('AgentActivity - realtime reply chat context push', () => {
     };
     const activity = {
       realtimeSession,
+      tools: ToolContext.empty(),
       toolChoice: undefined,
       _onEnterIgnoredTools: () => [],
       agent: { _chatCtx: ChatContext.empty() },

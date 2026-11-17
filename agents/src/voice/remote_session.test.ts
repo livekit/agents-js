@@ -17,6 +17,8 @@ import { initializeLogger, log } from '../log.js';
 import type { SimulationContext } from '../simulation.js';
 import { Future, waitUntilTimeout } from '../utils.js';
 import type { AgentSession } from './agent_session.js';
+import { createAMDCompletedEvent, createAMDPredictionEvent } from './amd/events.js';
+import { AMDCategory, AMDReason } from './amd/index.js';
 import { AgentSessionEventTypes, CloseReason, createCloseEvent } from './events.js';
 import { FinalizeSimulationError } from './index.js';
 import {
@@ -274,6 +276,140 @@ describe('SessionHost send order', () => {
     expect(transport.sent.map((m) => m.message.case)).toEqual(['event', 'response']);
     expect((transport.sent[1]!.message.value as pb.SessionResponse).error).toBe('session closed');
     await host.close();
+  });
+});
+
+function sentAmdEvents(transport: FakeTransport): pb.AgentSessionEvent['event'][] {
+  return transport.sent.map((msg) => (msg.message.value as pb.AgentSessionEvent).event);
+}
+
+function durationMs(duration: { seconds: bigint; nanos: number } | undefined): number {
+  return Number(duration!.seconds) * 1000 + duration!.nanos / 1_000_000;
+}
+
+describe('SessionHost AMD events', () => {
+  it.each(Object.entries(AMDCategory))(
+    'AMD prediction maps %s to its own category',
+    async (name, category) => {
+      const transport = new FakeTransport();
+      const host = new SessionHost(transport);
+      await host.start();
+      try {
+        host._onAmdPrediction(
+          createAMDPredictionEvent({
+            category,
+            reason: AMDReason.PREDICTION,
+            transcript: 'Please hold.',
+            speechDuration: 1_000,
+            delay: 100,
+          }),
+        );
+        await vi.waitFor(() => expect(transport.sent.length).toBe(1));
+        const [event] = sentAmdEvents(transport);
+        expect(event!.case).toBe('amdPrediction');
+        const prediction = event!.value as pb.AgentSessionEvent_AmdPrediction;
+        expect(pb.AmdCategory[prediction.category]).toBe(`AMD_${name}`);
+      } finally {
+        await host.close();
+      }
+    },
+  );
+
+  it('AMD prediction carries turn, stage, and inference duration', async () => {
+    const transport = new FakeTransport();
+    const host = new SessionHost(transport);
+    await host.start();
+    try {
+      const prediction = createAMDPredictionEvent({
+        category: AMDCategory.WAIT,
+        reason: AMDReason.PREDICTION,
+        transcript: 'Please hold while I connect your call.',
+        speechDuration: 1_000,
+        delay: 100,
+        turnId: 3,
+        stage: AMDCategory.MACHINE_SCREENING,
+        inferenceDuration: 250,
+      });
+      host._onAmdPrediction(prediction);
+      host._onAmdPrediction({ ...prediction, inferenceDuration: null });
+      await vi.waitFor(() => expect(transport.sent.length).toBe(2));
+      const [inferred, reused] = sentAmdEvents(transport).map(
+        (event) => event.value as pb.AgentSessionEvent_AmdPrediction,
+      );
+      expect(inferred!.turnId).toBe(3);
+      expect(inferred!.stage).toBe(pb.AmdCategory.AMD_MACHINE_SCREENING);
+      expect(durationMs(inferred!.inferenceDuration)).toBe(250);
+      expect(durationMs(inferred!.speechDuration)).toBe(1_000);
+      expect(durationMs(inferred!.delay)).toBe(100);
+      expect(reused!.inferenceDuration).toBeUndefined();
+    } finally {
+      await host.close();
+    }
+  });
+
+  it('AMD completion carries the last prediction', async () => {
+    const transport = new FakeTransport();
+    const host = new SessionHost(transport);
+    await host.start();
+    try {
+      const prediction = createAMDPredictionEvent({
+        category: AMDCategory.MACHINE_VM,
+        reason: AMDReason.PREDICTION,
+        transcript: 'Leave a message after the tone.',
+        speechDuration: 2_000,
+        delay: 100,
+        turnId: 2,
+        stage: AMDCategory.MACHINE_VM,
+      });
+      host._onAmdCompleted(
+        createAMDCompletedEvent({
+          category: AMDCategory.MACHINE_VM,
+          reason: AMDReason.TIMEOUT,
+          voicemailMessagePlayed: true,
+          lastPrediction: prediction,
+        }),
+      );
+      host._onAmdCompleted(
+        createAMDCompletedEvent({ category: AMDCategory.UNCERTAIN, reason: AMDReason.CANCELLED }),
+      );
+      await vi.waitFor(() => expect(transport.sent.length).toBe(2));
+      const events = sentAmdEvents(transport);
+      expect(events.map((event) => event.case)).toEqual(['amdCompleted', 'amdCompleted']);
+      const [completed, cancelled] = events.map(
+        (event) => event.value as pb.AgentSessionEvent_AmdCompleted,
+      );
+      expect(completed!.category).toBe(pb.AmdCategory.AMD_MACHINE_VM);
+      expect(completed!.reason).toBe('timeout');
+      expect(completed!.voicemailMessagePlayed).toBe(true);
+      expect(completed!.prediction!.turnId).toBe(2);
+      expect(completed!.prediction!.transcript).toBe('Leave a message after the tone.');
+      expect(cancelled!.reason).toBe('cancelled');
+      expect(cancelled!.prediction).toBeUndefined();
+    } finally {
+      await host.close();
+    }
+  });
+
+  // Python's RemoteSession emits every event under its oneof name; the JS switch needs a case
+  it('RemoteSession emits the AMD completion', async () => {
+    const [clientTransport, hostTransport] = createConnectedTransportPair();
+    const remote = new RemoteSession(clientTransport);
+    const host = new SessionHost(hostTransport);
+    await host.start();
+    await remote.start();
+    try {
+      const received: pb.AgentSessionEvent_AmdCompleted[] = [];
+      remote.on('amd_completed', (event) => received.push(event));
+      host._onAmdCompleted(
+        createAMDCompletedEvent({ category: AMDCategory.HUMAN, reason: AMDReason.FINISHED }),
+      );
+      await vi.waitFor(() => expect(received).toHaveLength(1));
+      expect(received[0]!.category).toBe(pb.AmdCategory.AMD_HUMAN);
+      expect(received[0]!.reason).toBe('finished');
+    } finally {
+      await remote.close();
+      await host.close();
+    }
   });
 });
 
