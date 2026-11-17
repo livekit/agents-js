@@ -699,6 +699,17 @@ describe('AgentServer token mode', () => {
     server._updateWorkerToken('worker-token');
     expect(process.env.LIVEKIT_TOKEN).toBeUndefined();
   });
+
+  it('ignores an empty worker token', () => {
+    process.env.LIVEKIT_TOKEN = 'worker-token';
+    delete process.env.LIVEKIT_API_KEY;
+    delete process.env.LIVEKIT_API_SECRET;
+    const server = new AgentServer(
+      new ServerOptions({ agent: 'test-agent.js', wsURL: 'ws://localhost' }),
+    );
+    server._updateWorkerToken('');
+    expect(getWorkerToken()).toBe('worker-token');
+  });
 });
 
 describe('ServerOptions sessionEndTimeout', () => {

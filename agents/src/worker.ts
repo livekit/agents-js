@@ -658,6 +658,10 @@ export class AgentServer {
       this.#logger.warn('ignoring a worker token: the worker runs with an API key and secret');
       return;
     }
+    if (!token) {
+      this.#logger.warn('ignoring an empty worker token');
+      return;
+    }
     this.#opts.token = token;
     // read here by getWorkerToken(); a job process gets it over IPC, from launchJob when its job
     // starts and below when it already runs one
