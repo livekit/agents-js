@@ -10,6 +10,7 @@ import {
   type RealtimeCapabilities,
   RealtimeModel,
   RealtimeSession,
+  type RealtimeSessionOptions,
 } from '../llm/realtime.js';
 import { type ToolChoice, ToolContext, handoff, tool } from '../llm/tool_context.js';
 import { initializeLogger } from '../log.js';
@@ -21,6 +22,7 @@ import {
   type FunctionToolsExecutedEvent,
   type SpeechCreatedEvent,
 } from './events.js';
+import { INSTRUCTIONS_MESSAGE_ID } from './generation.js';
 import { AudioOutput, type PlaybackFinishedEvent } from './io.js';
 
 initializeLogger({ pretty: false, level: 'silent' });
@@ -519,6 +521,44 @@ describe('Realtime tool output commit', () => {
         isError: true,
         replyRequired: false,
       });
+    }
+  });
+});
+
+describe('Realtime session creation', () => {
+  it('passes the agent configuration to the new session', async () => {
+    const model = new FakeRealtimeModel();
+    const created: Array<RealtimeSessionOptions | undefined> = [];
+    model.session = (options?: RealtimeSessionOptions) => {
+      created.push(options);
+      return model.activeSession;
+    };
+    const session = new AgentSession({
+      llm: model,
+      vad: null,
+      turnHandling: { turnDetection: null },
+    });
+    const chatCtx = ChatContext.empty();
+    chatCtx.addMessage({ role: 'user', content: 'earlier question' });
+    const agent = new Agent({
+      instructions: 'test instructions',
+      chatCtx,
+      tools: { lookup_order: tool({ description: 'x', execute: async () => 'ships tomorrow' }) },
+    });
+
+    await session.start({ agent });
+    try {
+      expect(created).toHaveLength(1);
+      const options = created[0]!;
+      expect(options.instructions).toBe('test instructions');
+      expect(Object.keys(options.tools!.functionTools)).toEqual(['lookup_order']);
+      // the same context _updateSession receives: the history without the instructions message
+      const itemIds = options.chatCtx!.items.map((item) => item.id);
+      expect(itemIds).toContain(chatCtx.items[0]!.id);
+      expect(itemIds).not.toContain(INSTRUCTIONS_MESSAGE_ID);
+      expect(options.turnDetectionDisabled).toBe(true);
+    } finally {
+      await session.close();
     }
   });
 });

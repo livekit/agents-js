@@ -4,6 +4,8 @@
 import {
   GPTLiveModel as BaseGPTLiveModel,
   GPTLiveSession as BaseGPTLiveSession,
+  type DecisionsOptions,
+  type DecisionsTrigger,
   type ResponsesDelegationOptions,
 } from '../llm/openai_realtime/gpt_live_model.js';
 import type { ErrorBody } from '../llm/openai_realtime/gpt_live_types.js';
@@ -18,6 +20,9 @@ import {
   getDefaultInferenceUrl,
   resolveCredentials,
 } from './utils.js';
+
+export type { DecisionEventEnvelope } from '../llm/openai_realtime/gpt_live_types.js';
+export type { DecisionsOptions, DecisionsTrigger } from '../llm/openai_realtime/gpt_live_model.js';
 
 export type OpenAIDuplexModels = 'openai/gpt-live-1';
 
@@ -38,24 +43,33 @@ const FATAL_ERROR_CODES = new Set([
   'unsupported_service_tier',
   'invalid_delegated_model',
   'unsupported_delegated_model',
+  'invalid_triggers',
+  'decisions_not_enabled',
+  'decisions_not_available',
 ]);
 
 /** The backend Responses model GPT-Live delegates work to, under `delegation: 'responses'`. */
 export type OpenAIResponsesOptions = Omit<ResponsesDelegationOptions, 'serviceTier'>;
 
 export interface OpenAIDuplexOptions {
-  /** Fixed at startup, `responses` by default. Client delegation requires an agent with no tools. */
-  delegation?: 'responses' | 'client';
+  /** Fixed at startup, `responses` by default. Other modes require an agent with no tools. */
+  delegation?: 'responses' | 'client' | 'decisions';
   /**
    * The backend Responses model when delegation is responses. Its model must be an OpenAI LLM
    * LiveKit Inference serves.
    */
   responsesOptions?: OpenAIResponsesOptions;
+  /** Model and questions when delegation is decisions. */
+  decisionsOptions?: DecisionsOptions;
+  /** Decisions configurations evaluated on transcript events, in any mode. */
+  triggers?: DecisionsTrigger[];
 }
 
 const OPENAI_DUPLEX_OPTIONS: ReadonlySet<string> = new Set<keyof OpenAIDuplexOptions>([
   'delegation',
   'responsesOptions',
+  'decisionsOptions',
+  'triggers',
 ]);
 
 export type DuplexOptions<TModel extends DuplexModels | AnyString> =
@@ -109,7 +123,7 @@ export class DuplexModel<
     if (unknown.length) {
       throw new Error(`unsupported modelOptions for ${model}: ${unknown.join(', ')}`);
     }
-    const { delegation, responsesOptions } = modelOptions;
+    const { delegation, responsesOptions, decisionsOptions, triggers } = modelOptions;
     const serviceTier = (responsesOptions as ResponsesDelegationOptions | undefined)?.serviceTier;
     if (serviceTier !== undefined && serviceTier !== 'default') {
       throw new Error('LiveKit Inference runs GPT-Live delegation on the default tier only');
@@ -121,6 +135,8 @@ export class DuplexModel<
       ...(options.voice !== undefined ? { voice: options.voice } : {}),
       ...(delegation !== undefined ? { delegation } : {}),
       ...(responsesOptions !== undefined ? { responsesOptions } : {}),
+      ...(decisionsOptions !== undefined ? { decisionsOptions } : {}),
+      ...(triggers !== undefined ? { triggers } : {}),
       ...(options.maxSessionDuration !== undefined
         ? { maxSessionDuration: options.maxSessionDuration }
         : {}),

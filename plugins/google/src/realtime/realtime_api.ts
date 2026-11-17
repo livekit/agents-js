@@ -247,6 +247,7 @@ export class RealtimeModel extends llm.RealtimeModel {
   #logger = log();
   /** @internal */
   _options: RealtimeOptions;
+  #sessions = new Set<RealtimeSession>();
 
   get model(): string {
     return this._options.model;
@@ -516,8 +517,21 @@ export class RealtimeModel extends llm.RealtimeModel {
   /**
    * Create a new realtime session
    */
-  session() {
-    return new RealtimeSession(this);
+  session(options?: llm.RealtimeSessionOptions) {
+    // Gemini drives manual turns through activity start/end, so turnDetectionDisabled is not
+    // honored yet (canDisableTurnDetection is false).
+    const session = new RealtimeSession(this, options);
+    this.#sessions.add(session);
+    return session;
+  }
+
+  /**
+   * Stop forwarding `updateOptions()` to a session. A session calls this when it closes or when
+   * its connection loop ends.
+   * @internal
+   */
+  _removeSession(session: RealtimeSession): void {
+    this.#sessions.delete(session);
   }
 
   /**
@@ -540,10 +554,13 @@ export class RealtimeModel extends llm.RealtimeModel {
     }
     if (options.toolResponseScheduling !== undefined) {
       this._options.toolResponseScheduling = options.toolResponseScheduling;
-      if (this._options.vertexai) warnVertexSchedulingUnsupported();
+      // an open session warns when it applies the change
+      if (this._options.vertexai && this.#sessions.size === 0) warnVertexSchedulingUnsupported();
     }
 
-    // TODO: Notify active sessions of option changes
+    for (const session of this.#sessions) {
+      session.updateOptions(options);
+    }
   }
 
   /**
@@ -600,10 +617,24 @@ export class RealtimeSession extends llm.RealtimeSession {
   // A session failure, rethrown by the main loop so it uses the connection retry budget.
   #sessionError?: Error;
 
-  constructor(realtimeModel: RealtimeModel) {
+  constructor(realtimeModel: RealtimeModel, sessionOptions?: llm.RealtimeSessionOptions) {
     super(realtimeModel);
 
-    this.options = realtimeModel._options;
+    // Each session changes its own instructions and options. The model forwards its
+    // updateOptions calls to open sessions.
+    this.options = { ...realtimeModel._options };
+
+    // The first connection sends the tools and instructions in its setup message. Seed them before
+    // #mainTask connects, so the same values from _updateSession do not force a reconnect.
+    if (sessionOptions?.instructions !== undefined) {
+      this.options.instructions = sessionOptions.instructions;
+    }
+    if (sessionOptions?.tools !== undefined) {
+      this._tools = sessionOptions.tools.copy();
+    }
+    if (sessionOptions?.chatCtx !== undefined) {
+      this._chatCtx = sessionOptions.chatCtx.copy();
+    }
     this.bstream = new AudioByteStream(
       INPUT_AUDIO_SAMPLE_RATE,
       INPUT_AUDIO_CHANNELS,
@@ -638,7 +669,8 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     this.#client = new GoogleGenAI(clientOptions);
 
-    this.#task = this.#mainTask();
+    // A session whose connection loop ended can no longer apply option updates.
+    this.#task = this.#mainTask().finally(() => realtimeModel._removeSession(this));
   }
 
   private async closeActiveSession(): Promise<void> {
@@ -1082,6 +1114,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   async close(): Promise<void> {
     super.close();
     this.#closed = true;
+    (this.realtimeModel as RealtimeModel)._removeSession(this);
 
     this.sessionShouldClose.set();
     this.inputResampler?.close();
@@ -1110,6 +1143,9 @@ export class RealtimeSession extends llm.RealtimeSession {
     while (!this.#closed) {
       // previous session might not be closed yet, we'll do it here.
       await this.closeActiveSession();
+
+      // close() may have run while we were waiting on the session lock
+      if (this.#closed) break;
 
       this.sessionShouldClose.clear();
       this.#sessionError = undefined;

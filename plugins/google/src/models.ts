@@ -100,6 +100,8 @@ export type GeminiTTSModels =
 
 export type ChatModels =
   | 'gemini-4-argon'
+  | 'gemini-4-carbon'
+  | 'gemini-4-hydrogen'
   | 'gemini-3.5-flash'
   | 'gemini-3-pro-preview'
   | 'gemini-3-flash-preview'

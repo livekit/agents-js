@@ -1783,8 +1783,7 @@ export class AgentSession<
   }
 
   async close(): Promise<void> {
-    this._closeSoon({ reason: CloseReason.USER_INITIATED });
-    await this.closingTask;
+    await this._closeImpl({ reason: CloseReason.USER_INITIATED });
   }
 
   shutdown(options?: { drain?: boolean; reason?: ShutdownReason }): void {
@@ -1794,6 +1793,24 @@ export class AgentSession<
       reason,
       drain,
     });
+  }
+
+  /**
+   * Close the session with the supplied reason and wait for teardown to finish.
+   * If closure is already in progress, wait for it and preserve its reason.
+   * @internal
+   */
+  async _closeImpl({
+    reason,
+    drain = false,
+    error = null,
+  }: {
+    reason: ShutdownReason;
+    drain?: boolean;
+    error?: RealtimeModelError | STTError | TTSError | LLMError | null;
+  }): Promise<void> {
+    this._closeSoon({ reason, drain, error });
+    await this.closingTask;
   }
 
   /** @internal */

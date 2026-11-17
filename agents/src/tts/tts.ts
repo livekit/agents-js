@@ -136,9 +136,29 @@ export interface TTSError {
   recoverable: boolean;
 }
 
+/** An inference fallback produced content-bearing synthesis output. @public */
+export interface FallbackActivatedEvent {
+  /** Inference gateway session that switched to the fallback. */
+  sessionId: string;
+  /**
+   * `fallback` is a model from the caller's `fallback` list; `system_default` is the gateway's
+   * default. Values the SDK does not recognize become `unknown`.
+   */
+  fallbackType: 'unknown' | 'fallback' | 'system_default';
+  /** Provider now serving synthesis. */
+  provider: string;
+  /** Model now serving synthesis. */
+  model: string;
+  /** Voice now serving synthesis. */
+  voice: string;
+  /** Why the previous candidate was abandoned. Values the SDK does not recognize become `unknown`. */
+  cause: 'unknown' | 'timeout' | 'provider_error' | 'quota_exceeded';
+}
+
 export type TTSCallbacks = {
   ['metrics_collected']: (metrics: TTSMetrics) => void;
   ['error']: (error: TTSError) => void;
+  ['fallback_activated']: (event: FallbackActivatedEvent) => void;
 };
 
 /**
