@@ -788,7 +788,7 @@ importers:
         version: link:../test
       '@livekit/rtc-node':
         specifier: 'catalog:'
-        version: 1.1.0
+        version: 1.2.2
       '@microsoft/api-extractor':
         specifier: ^7.58.12
         version: 7.58.12(@types/node@25.6.0)
@@ -797,7 +797,7 @@ importers:
         version: 8.18.1
       tsup:
         specifier: ^8.3.5
-        version: 8.4.0(@microsoft/api-extractor@7.58.12(@types/node@25.6.0))(postcss@8.5.23)(tsx@4.23.1)(typescript@5.9.3)
+        version: 8.4.0(@microsoft/api-extractor@7.58.12(@types/node@25.6.0))(postcss@8.5.32)(tsx@4.23.1)(typescript@5.9.3)
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
