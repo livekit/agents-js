@@ -171,6 +171,11 @@ export interface STTRecognizeOptions {
     language?: string;
 }
 
+// Warning: (ae-missing-release-tag) "supportsCloneStrength" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export function supportsCloneStrength(model: string): boolean;
+
 // Warning: (ae-missing-release-tag) "SynthesizeStream" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
@@ -321,6 +326,8 @@ export interface Voice {
 //
 // @public (undocumented)
 export interface VoiceSettings {
+    // (undocumented)
+    clone_strength?: number;
     // (undocumented)
     similarity_boost: number;
     // (undocumented)

@@ -1165,6 +1165,9 @@ const ATTR_EOU_FROM_CACHE = "lk.eou.from_cache";
 // @public (undocumented)
 const ATTR_EOU_LANGUAGE = "lk.eou.language";
 
+// @public (undocumented)
+const ATTR_EOU_MODEL = "lk.eou.model";
+
 // @public
 const ATTR_EOU_NOT_COMMITTED_COUNT = "lk.eou.not_committed_count";
 
@@ -1173,6 +1176,9 @@ const ATTR_EOU_OUTCOME = "lk.eou.outcome";
 
 // @public (undocumented)
 const ATTR_EOU_PROBABILITY = "lk.eou.probability";
+
+// @public (undocumented)
+const ATTR_EOU_PROVIDER = "lk.eou.provider";
 
 // @public
 const ATTR_EOU_REARM_COUNT = "lk.eou.rearm_count";
@@ -2517,6 +2523,7 @@ class CloudTransport implements StreamingTurnDetectionTransport {
     get numRetries(): number;
     // (undocumented)
     protected _numRetries: number;
+    onStartOfTurn(elapsed: number): void;
     // Warning: (ae-forgotten-export) The symbol "BaseStreamingTurnDetectorOptions" needs to be exported by the entry point index.d.ts
     //
     // (undocumented)
@@ -2531,7 +2538,7 @@ class CloudTransport implements StreamingTurnDetectionTransport {
     run(): Promise<void>;
     protected _runAbort: AbortController | undefined;
     // (undocumented)
-    runInference(requestId: string): void;
+    runInference(requestId: string, chatCtx?: ChatContext): void;
     // (undocumented)
     protected _runOnce(): Promise<void>;
     // Warning: (ae-forgotten-export) The symbol "ClientMsg" needs to be exported by the entry point index.d.ts
@@ -2542,6 +2549,8 @@ class CloudTransport implements StreamingTurnDetectionTransport {
     protected _streamRef: WeakRef<BaseStreamingTurnDetectorStream> | undefined;
     // @internal
     transportReady(): boolean;
+    // (undocumented)
+    protected _turnSamples: number;
     // Warning: (ae-forgotten-export) The symbol "CloudWebSocket" needs to be exported by the entry point index.d.ts
     //
     // (undocumented)
@@ -2843,6 +2852,16 @@ export interface DecisionCapabilities {
     decisionKinds: DecisionKind[];
 }
 
+// @public
+interface DecisionEventEnvelope {
+    // (undocumented)
+    event: Record<string, unknown>;
+    // (undocumented)
+    event_id?: string | null;
+    // (undocumented)
+    type: 'decision.event';
+}
+
 // @public (undocumented)
 export type DecisionKind = 'probability' | 'choice' | 'score';
 
@@ -2922,6 +2941,24 @@ export class DecisionResponse {
 
 // @public (undocumented)
 export type DecisionResult = ProbabilityResult | ChoiceResult | ScoreResult;
+
+// @public
+interface DecisionsOptions {
+    // (undocumented)
+    model?: string;
+    // (undocumented)
+    questions?: Record<string, unknown>[];
+}
+
+// @public
+interface DecisionsTrigger {
+    // (undocumented)
+    decisions: DecisionsOptions;
+    // (undocumented)
+    eventType: string;
+    // (undocumented)
+    type: 'decisions';
+}
 
 // @public
 export function dedent(strings: TemplateStringsArray, ...values: unknown[]): string;
@@ -3067,6 +3104,9 @@ type DtmfEvent = (typeof DTMF_EVENTS)[number];
 declare namespace duplex {
     export {
         isDuplexModel,
+        DecisionEventEnvelope,
+        DecisionsOptions,
+        DecisionsTrigger,
         OpenAIDuplexModels,
         DuplexModels,
         OpenAIResponsesOptions,
@@ -3683,6 +3723,16 @@ interface FakeUserSpeech {
 }
 
 // @public
+interface FallbackActivatedEvent {
+    cause: 'unknown' | 'timeout' | 'provider_error' | 'quota_exceeded';
+    fallbackType: 'unknown' | 'fallback' | 'system_default';
+    model: string;
+    provider: string;
+    sessionId: string;
+    voice: string;
+}
+
+// @public
 export class FallbackAdapter extends LLM {
     constructor(options: FallbackAdapterOptions);
     // (undocumented)
@@ -4217,7 +4267,7 @@ export function getLanguageRegion(language: string): string | undefined;
 function getMonitor(): EventLoopMonitor | undefined;
 
 // @public (undocumented)
-type GoogleModels = 'google/gemini-4-argon' | 'google/gemini-3.1-pro' | 'google/gemini-3-flash' | 'google/gemini-3.1-flash-lite' | 'google/gemini-3.5-flash' | 'google/gemini-2.5-pro' | 'google/gemini-2.5-flash' | 'google/gemini-2.5-flash-lite';
+type GoogleModels = 'google/gemini-4-argon' | 'google/gemini-4-hydrogen' | 'google/gemini-3.1-pro' | 'google/gemini-3-flash' | 'google/gemini-3.1-flash-lite' | 'google/gemini-3.5-flash' | 'google/gemini-2.5-pro' | 'google/gemini-2.5-flash' | 'google/gemini-2.5-flash-lite';
 
 // @public (undocumented)
 type GoogleRealtimeModels = 'google/gemini-3.8-live' | 'google/gemini-3.8-live-extended-thinking' | 'google/gemini-live';
@@ -4320,6 +4370,9 @@ declare namespace inference {
         DuplexModelOptions,
         DuplexModels,
         DuplexOptions,
+        DecisionsOptions,
+        DecisionsTrigger,
+        DecisionEventEnvelope,
         OpenAIDuplexOptions,
         OpenAIResponsesOptions,
         normalizeSTTFallback,
@@ -4340,6 +4393,7 @@ declare namespace inference {
         normalizeTTSFallback,
         parseTTSModelString,
         TTS_2 as TTS,
+        FallbackActivatedEvent,
         TTSFallbackModel,
         TTSFallbackModelType,
         TTSModels,
@@ -4443,6 +4497,7 @@ interface InferenceTTSOptions<TModel extends TTSModels> {
     baseURL: string;
     // (undocumented)
     connOptions?: APIConnectOptions;
+    disableSystemDefaultFallback?: boolean;
     // (undocumented)
     encoding: TTSEncoding;
     // (undocumented)
@@ -5277,7 +5332,7 @@ class LLMStream_2 extends llm_2.LLMStream {
     protected run(): Promise<void>;
 }
 
-// @public (undocumented)
+// @public
 const LOCAL_LANGUAGES: Readonly<Record<string, number>>;
 
 // @public
@@ -5300,20 +5355,23 @@ class LocalTransport implements StreamingTurnDetectionTransport {
     flush(_sentinel: FlushSentinel_2): Promise<void>;
     // (undocumented)
     protected _logger: Logger;
+    onStartOfTurn(elapsed: number): void;
     // (undocumented)
     protected _opts: BaseStreamingTurnDetectorOptions;
     // (undocumented)
-    protected _predict(requestId: string, pcmSnapshot: Int16Array): Promise<void>;
+    protected _predict(requestId: string, pcmSnapshot: Int16Array, turnSamples: number): Promise<void>;
     // (undocumented)
     pushFrame(frame: AudioFrame): Promise<void>;
     // (undocumented)
     run(): Promise<void>;
     // (undocumented)
-    runInference(requestId: string): void;
+    runInference(requestId: string, _chatCtx?: ChatContext): void;
     // (undocumented)
     protected _streamRef: WeakRef<BaseStreamingTurnDetectorStream> | undefined;
     // (undocumented)
     protected _tasks: Set<Promise<void>>;
+    // (undocumented)
+    protected _turnSamples: number;
     // (undocumented)
     protected _warnedNoExecutor: boolean;
 }
@@ -5413,6 +5471,9 @@ const MAX_SPANS_PER_MINUTE = 6;
 
 // @public
 function maxInputLen(provider: string): number | undefined;
+
+// @internal
+export function _maybeRegisterLocalEotRunner(): void;
 
 // @public (undocumented)
 export type MCPHTTPTransportType = 'sse' | 'streamable_http';
@@ -5820,8 +5881,10 @@ type OpenAIDuplexModels = 'openai/gpt-live-1';
 
 // @public (undocumented)
 interface OpenAIDuplexOptions {
-    delegation?: 'responses' | 'client';
+    decisionsOptions?: DecisionsOptions;
+    delegation?: 'responses' | 'client' | 'decisions';
     responsesOptions?: OpenAIResponsesOptions;
+    triggers?: DecisionsTrigger[];
 }
 
 // @public
@@ -8760,6 +8823,8 @@ declare namespace traceTypes {
         ATTR_TTS_STREAMING,
         ATTR_TTS_LABEL,
         ATTR_RESPONSE_TTFB,
+        ATTR_EOU_MODEL,
+        ATTR_EOU_PROVIDER,
         ATTR_EOU_PROBABILITY,
         ATTR_EOU_UNLIKELY_THRESHOLD,
         ATTR_EOU_DELAY,
@@ -8934,6 +8999,7 @@ abstract class TTS extends TTS_base {
 declare namespace tts {
     export {
         SynthesizedAudio,
+        FallbackActivatedEvent,
         TTSCapabilities,
         TTSCallbacks,
         TTS,
@@ -8983,6 +9049,7 @@ class TTS_2<TModel extends TTSModels> extends TTS {
         apiSecret?: string;
         modelOptions?: TTSOptions<TModel>;
         fallback?: TTSFallbackModelType | TTSFallbackModelType[];
+        disableSystemDefaultFallback?: boolean;
         connOptions?: APIConnectOptions;
     });
     // (undocumented)
@@ -9025,6 +9092,7 @@ declare namespace tts_2 {
         parseTTSModelString,
         hasAlignedTranscript,
         normalizeTTSFallback,
+        FallbackActivatedEvent,
         CartesiaModels_2 as CartesiaModels,
         DeepgramTTSModels,
         InworldModels,
@@ -9057,6 +9125,7 @@ export const TTS_INSTRUCTIONS_PLACEHOLDER = "{tts.markup.llm_instructions}";
 type TTSCallbacks = {
     ['metrics_collected']: (metrics: TTSMetrics) => void;
     ['error']: (error: TTSError) => void;
+    ['fallback_activated']: (event: FallbackActivatedEvent) => void;
 };
 
 // @public
@@ -9917,7 +9986,7 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 //
 // src/_exceptions.ts:90:5 - (ae-forgotten-export) The symbol "APIStatusErrorOptions" needs to be exported by the entry point index.d.ts
 // src/_exceptions.ts:128:5 - (ae-forgotten-export) The symbol "APIErrorOptions" needs to be exported by the entry point index.d.ts
-// src/inference/tts.ts:315:5 - (ae-forgotten-export) The symbol "TTSEncoding" needs to be exported by the entry point index.d.ts
+// src/inference/tts.ts:322:5 - (ae-forgotten-export) The symbol "TTSEncoding" needs to be exported by the entry point index.d.ts
 // src/llm/chat_context.ts:80:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "audio"
 // src/llm/tool_context.ts:709:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "ToolFlag" has more than one declaration; you need to add a TSDoc member reference selector
 // src/llm/tool_context.ts:756:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "ToolFlag" has more than one declaration; you need to add a TSDoc member reference selector
@@ -9930,10 +9999,10 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 // src/voice/agent_session.ts:1810:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
 // src/voice/agent_session.ts:1810:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts
 // src/voice/agent_session.ts:1810:5 - (ae-forgotten-export) The symbol "LLMError" needs to be exported by the entry point index.d.ts
-// src/voice/amd.ts:315:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "waitForTrackPublication" has more than one declaration; you need to add a TSDoc member reference selector
-// src/voice/amd.ts:315:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "gateListening"
-// src/voice/amd.ts:323:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "aclose"
-// src/voice/amd.ts:517:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "gateListening"
+// src/voice/amd.ts:318:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "waitForTrackPublication" has more than one declaration; you need to add a TSDoc member reference selector
+// src/voice/amd.ts:318:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "gateListening"
+// src/voice/amd.ts:328:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "aclose"
+// src/voice/amd.ts:523:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "gateListening"
 // src/voice/events.ts:437:3 - (ae-forgotten-export) The symbol "InterruptionDetectionError" needs to be exported by the entry point index.d.ts
 // src/voice/room_io/_output.ts:183:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "segmentTags"
 // src/voice/testing/run_result.ts:94:5 - (ae-forgotten-export) The symbol "OutputSchema" needs to be exported by the entry point index.d.ts

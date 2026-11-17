@@ -5,11 +5,17 @@ import { once } from 'node:events';
 import type { IncomingHttpHeaders } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { WebSocketServer } from 'ws';
+import { WebSocket, WebSocketServer } from 'ws';
+import { z } from 'zod';
 import { DuplexRealtimeAdapter } from '../llm/duplex_adapter.js';
-import type { ClientEvent, ErrorBody } from '../llm/openai_realtime/gpt_live_types.js';
+import type {
+  ClientEvent,
+  DecisionEventEnvelope,
+  ErrorBody,
+  ServerEvent,
+} from '../llm/openai_realtime/gpt_live_types.js';
 import { RealtimeError } from '../llm/realtime.js';
-import { ProviderTool, ToolContext } from '../llm/tool_context.js';
+import { ProviderTool, ToolContext, tool } from '../llm/tool_context.js';
 import { Agent } from '../voice/agent.js';
 import { AgentSession } from '../voice/agent_session.js';
 import { DuplexModel, type DuplexModelOptions, DuplexSession } from './duplex.js';
@@ -33,16 +39,27 @@ class HostedSearch extends ProviderTool {
   }
 }
 
+const weather = tool({
+  name: 'getWeather',
+  description: 'Get the weather.',
+  parameters: z.object({ location: z.string() }),
+  execute: async () => 'rainy',
+});
+
 class Gateway {
   readonly server = new WebSocketServer({ port: 0, host: '127.0.0.1' });
   readonly requests: { url?: string; headers: IncomingHttpHeaders }[] = [];
   readonly starts: Extract<ClientEvent, { type: 'session.start' }>[] = [];
+  readonly events: ClientEvent[] = [];
+  readonly sockets: WebSocket[] = [];
 
   constructor() {
     this.server.on('connection', (ws, req) => {
+      this.sockets.push(ws);
       this.requests.push({ url: req.url, headers: req.headers });
       ws.on('message', (data) => {
         const event = JSON.parse(data.toString()) as ClientEvent;
+        this.events.push(event);
         if (event.type === 'session.start') {
           this.starts.push(event);
           ws.send(JSON.stringify({ type: 'session.started', session: { id: 'live_test' } }));
@@ -51,6 +68,12 @@ class Gateway {
         }
       });
     });
+  }
+
+  async send(session: DuplexSession, event: ServerEvent): Promise<void> {
+    const received = once(session, 'openai_server_event_received');
+    this.sockets.at(-1)!.send(JSON.stringify(event));
+    await received;
   }
 
   get url(): string {
@@ -177,20 +200,108 @@ describe('inference DuplexModel', () => {
     }
   });
 
+  it('forwards Decisions delegation, events, manual evaluation, and tool rejection', async () => {
+    const gateway = new Gateway();
+    await once(gateway.server, 'listening');
+    try {
+      const decisionsOptions = {
+        model: 'gpt-6-luna',
+        questions: [{ type: 'choice', name: 'mood', choices: [{ value: 'happy' }] }],
+      };
+      const live = model({
+        baseURL: gateway.url,
+        modelOptions: { delegation: 'decisions', decisionsOptions },
+      });
+      const session = track(live.session());
+      const events: DecisionEventEnvelope[] = [];
+      session.on('decision_event', (event) => events.push(event));
+      await session._updateSession();
+      await vi.waitFor(() => expect(gateway.starts).toHaveLength(1));
+      expect(gateway.starts[0]!.session.delegation).toEqual({
+        type: 'decisions',
+        decisions: decisionsOptions,
+      });
+      const eventId = session.createDecision();
+      await vi.waitFor(() =>
+        expect(gateway.events).toContainEqual({ type: 'decision.create', event_id: eventId }),
+      );
+      const payload = {
+        type: 'decision.completed',
+        decision: { model: 'gpt-6-luna', answers: [{ name: 'mood', value: 'happy' }] },
+      };
+      await gateway.send(session, {
+        type: 'decision.event',
+        event_id: 'result-1',
+        event: payload,
+      });
+      expect(events).toEqual([{ type: 'decision.event', event_id: 'result-1', event: payload }]);
+      await expect(session._updateTools(new ToolContext([weather]))).rejects.toThrow(RealtimeError);
+    } finally {
+      await Promise.all(sessions.map((session) => session.close()));
+      await gateway.stop();
+    }
+  });
+
+  it.each(['client', 'responses'] as const)(
+    'forwards Decisions triggers without enabling manual evaluation under %s delegation',
+    async (delegation) => {
+      const gateway = new Gateway();
+      await once(gateway.server, 'listening');
+      try {
+        const live = model({
+          baseURL: gateway.url,
+          modelOptions: {
+            delegation,
+            triggers: [
+              {
+                type: 'decisions',
+                eventType: 'session.output_transcript.delta',
+                decisions: { questions: [{ type: 'choice', name: 'mood' }] },
+              },
+            ],
+          },
+        });
+        const session = track(live.session());
+        await session._updateSession();
+        await vi.waitFor(() => expect(gateway.starts).toHaveLength(1));
+        expect(gateway.starts[0]!.session.triggers).toEqual([
+          {
+            type: 'decisions',
+            event_type: 'session.output_transcript.delta',
+            decisions: { questions: [{ type: 'choice', name: 'mood' }] },
+          },
+        ]);
+        expect(() => session.createDecision()).toThrow('Decisions delegation');
+        expect(gateway.events.some((event) => event.type === 'decision.create')).toBe(false);
+      } finally {
+        await Promise.all(sessions.map((session) => session.close()));
+        await gateway.stop();
+      }
+    },
+  );
+
   it('rejects modelOptions it does not know', () => {
     expect(() =>
       model({ modelOptions: { serviceTier: 'priority' } as unknown as OpenAIDuplexOptions }),
     ).toThrow(/serviceTier/);
   });
 
-  it.each(['invalid_model', 'unsupported_server_tool', 'unsupported_delegated_model', 'forbidden'])(
-    'does not retry a session the gateway refused with %s',
-    (code) => {
-      const session = track(new TestSession(model()));
-      expect(session.fatal({ type: 'invalid_request_error', code })).toBe(true);
-      expect(session.fatal({ type: 'server_error', code: 'server_error' })).toBe(false);
-    },
-  );
+  it.each([
+    'invalid_model',
+    'unsupported_server_tool',
+    'unsupported_delegated_model',
+    'invalid_triggers',
+    'decisions_not_enabled',
+    'decisions_not_available',
+    'forbidden',
+  ])('does not retry a session the gateway refused with %s', (code) => {
+    const session = track(new TestSession(model()));
+    expect(session.fatal({ type: 'invalid_request_error', code })).toBe(true);
+    expect(session.fatal({ type: 'server_error', code: 'server_error' })).toBe(false);
+    expect(session.fatal({ type: 'invalid_request_error', code: 'decisions_rate_limited' })).toBe(
+      false,
+    );
+  });
 
   it('requires a provider-prefixed model', () => {
     expect(

@@ -299,7 +299,10 @@ describe('AgentServer job status', () => {
       }),
     );
 
-  it('reports a job launched, connected with its join instants, and ended', async () => {
+  it.each([
+    [JobStatus.FAILED, ProtoJobStatus.JS_FAILED],
+    [JobStatus.SUCCESS, ProtoJobStatus.JS_SUCCESS],
+  ])('reports a job launched, connected, and ended as %s', async (finalStatus, protoStatus) => {
     const wss = new WebSocketServer({ port: 0 });
     await once(wss, 'listening');
     const registered = new Future();
@@ -331,7 +334,7 @@ describe('AgentServer job status', () => {
       const timing = new JobJoinTiming({ acceptedUs: 7n, connectedUs: 9n });
       pool.onJobUpdate!(proc);
       pool.onJobUpdate!(proc, timing);
-      proc.status = JobStatus.FAILED;
+      proc.status = finalStatus;
       pool.onJobUpdate!(proc);
       await allUpdates.await;
 
@@ -339,7 +342,7 @@ describe('AgentServer job status', () => {
       expect(updates.map((u) => u.status)).toEqual([
         ProtoJobStatus.JS_RUNNING,
         ProtoJobStatus.JS_RUNNING,
-        ProtoJobStatus.JS_FAILED,
+        protoStatus,
       ]);
       expect(updates.map((u) => u.joinTiming)).toEqual([undefined, timing, undefined]);
     } finally {
