@@ -34,6 +34,12 @@ import type { VideoFrame as VideoFrame_2 } from '@livekit/rtc-node';
 import type { WritableStreamDefaultWriter as WritableStreamDefaultWriter_2 } from 'node:stream/web';
 import { z } from 'zod';
 
+// @public
+export interface AnthropicResponseData {
+    citations?: Anthropic.TextCitation[];
+    serverTools?: (Anthropic.ServerToolUseBlock | Anthropic.WebSearchToolResultBlock)[];
+}
+
 // Warning: (ae-missing-release-tag) "ChatModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
@@ -92,9 +98,23 @@ export class LLMStream extends llm.LLMStream {
     protected run(): Promise<void>;
 }
 
+// @public
+export class WebSearch extends llm.ProviderTool {
+    constructor(options?: WebSearchOptions);
+    toToolConfig(): Anthropic.WebSearchTool20250305;
+}
+
+// @public
+export interface WebSearchOptions {
+    allowedDomains?: string[];
+    blockedDomains?: string[];
+    maxUses?: number;
+    userLocation?: Anthropic.WebSearchTool20250305['user_location'];
+}
+
 // Warnings were encountered during analysis:
 //
-// src/llm.ts:220:5 - (ae-forgotten-export) The symbol "APIConnectOptions" needs to be exported by the entry point index.d.ts
+// src/llm.ts:258:5 - (ae-forgotten-export) The symbol "APIConnectOptions" needs to be exported by the entry point index.d.ts
 
 // (No @packageDocumentation comment for this package)
 
