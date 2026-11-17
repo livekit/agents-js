@@ -482,12 +482,14 @@ export class SpeechStream extends stt.SpeechStream {
           retries++;
 
           this.#logger.warn(
-            `failed to connect to AssemblyAI, retrying in ${retryDelaySeconds} seconds: ${e} (${retries}/${maxRetry})`,
+            { error: e },
+            `failed to connect to AssemblyAI, retrying in ${retryDelaySeconds} seconds (${retries}/${maxRetry})`,
           );
           await delay(retryDelaySeconds * 1000);
         } else {
           this.#logger.warn(
-            `AssemblyAI disconnected, connection is closed: ${e} (inputClosed: ${this.input.closed}, isClosed: ${this.closed})`,
+            { error: e },
+            `AssemblyAI disconnected, connection is closed (inputClosed: ${this.input.closed}, isClosed: ${this.closed})`,
           );
         }
       }
@@ -597,7 +599,7 @@ export class SpeechStream extends stt.SpeechStream {
       const closed = new Promise<void>((_, reject) => {
         ws.once('close', (code, reason) => {
           if (!closing) {
-            this.#logger.error(`WebSocket closed with code ${code}: ${reason}`);
+            this.#logger.error({ code, 'lk.pii.reason': reason.toString() }, 'WebSocket closed');
             reject(
               new APIConnectionError({
                 message: `AssemblyAI WebSocket closed unexpectedly with code ${code}`,

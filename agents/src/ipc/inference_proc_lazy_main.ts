@@ -109,7 +109,7 @@ const ORPHANED_TIMEOUT = 15 * 1000;
               join.resolve();
             })
             .catch((err) => {
-              logger.error('Error closing inference runners:', err);
+              logger.error({ error: err }, 'Error closing inference runners:');
             });
           break;
         case 'inferenceRequest':

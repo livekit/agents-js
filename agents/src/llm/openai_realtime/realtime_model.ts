@@ -721,7 +721,7 @@ export class RealtimeSession extends llm.RealtimeSession {
         const rejected = results.filter((result) => result.status === 'rejected');
         if (rejected.length > 0) {
           this.#logger.warn(
-            { errors: rejected.map((result) => String(result.reason)) },
+            { 'lk.pii.errors': rejected.map((result) => String(result.reason)) },
             `${this.oaiRealtimeModel.label()} rejected part of a chat context update`,
           );
         }
@@ -733,7 +733,7 @@ export class RealtimeSession extends llm.RealtimeSession {
         }
       }
     } catch (e) {
-      this.#logger.error((e as Error).message);
+      this.#logger.error({ error: e }, 'failed to update chat context');
       throw e;
     } finally {
       unlock();

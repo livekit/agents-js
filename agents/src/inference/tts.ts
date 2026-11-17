@@ -939,7 +939,10 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
         try {
           await serverEventStream.cancel();
         } catch (e) {
-          this.#logger.debug('Error cancelling serverEventStream (may already be cancelled):', e);
+          this.#logger.debug(
+            { error: e },
+            'Error cancelling serverEventStream (may already be cancelled):',
+          );
         }
       }
     };

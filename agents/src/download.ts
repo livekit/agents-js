@@ -148,7 +148,7 @@ export const main = async (cwd: string = process.cwd()): Promise<number> => {
       await import(pathToFileURL(entryAbs).href);
     } catch (error) {
       importFailures += 1;
-      logger.error(`failed to import ${pkg.name}: ${formatErrorMessage(error)}`);
+      logger.error({ error: error }, `failed to import ${pkg.name}`);
     }
   }
 
@@ -160,12 +160,15 @@ export const main = async (cwd: string = process.cwd()): Promise<number> => {
       logger.info(`Finished downloading files for ${plugin.title}`);
     } catch (error) {
       failures.push({ plugin, error });
-      logger.error(`Failed to download files for ${plugin.title}: ${formatErrorMessage(error)}`);
+      logger.error({ error: error }, `Failed to download files for ${plugin.title}`);
     }
   }
 
   if (failures.length > 0) {
-    logger.fatal(formatDownloadFailureMessage(failures));
+    logger.fatal(
+      { error: new Error(formatDownloadFailureMessage(failures)) },
+      'Failed to download plugin files',
+    );
   }
   return failures.length > 0 || importFailures > 0 ? 1 : 0;
 };

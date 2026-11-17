@@ -947,7 +947,7 @@ export class AudioRecognition {
       this.createInterruptionTask(this.interruptionDetection, signal),
     );
     this.interruptionTask.result.catch((err) => {
-      this.logger.error(`Error running interruption task: ${err}`);
+      this.logger.error({ error: err }, 'Error running interruption task');
     });
 
     // Open (or adopt) the audio EOT detector stream now that the activity is
@@ -1247,9 +1247,7 @@ export class AudioRecognition {
           }
           sent = true;
         } catch (e: unknown) {
-          this.logger.warn(
-            `could not forward interruption sentinel: ${e instanceof Error ? e.message : String(e)}`,
-          );
+          this.logger.warn({ error: e }, 'could not forward interruption sentinel');
         }
       }
     };
@@ -2198,12 +2196,12 @@ export class AudioRecognition {
 
     this.sttForwardTask = Task.from(({ signal }) => this.forwardInputAudioToStt(pipeline, signal));
     this.sttForwardTask.result.catch((err) => {
-      this.logger.error(`Error forwarding audio to STT pipeline: ${err}`);
+      this.logger.error({ error: err }, 'Error forwarding audio to STT pipeline');
     });
 
     this.sttConsumerTask = Task.from(({ signal }) => this.consumeSttEvents(pipeline, signal));
     this.sttConsumerTask.result.catch((err) => {
-      this.logger.error(`Error running STT task: ${err}`);
+      this.logger.error({ error: err }, 'Error running STT task');
     });
   }
 
@@ -2419,7 +2417,7 @@ export class AudioRecognition {
           eventReader.releaseLock();
           await stream.close();
         } catch (e) {
-          this.logger.debug('createInterruptionTask: error during cleanup:', e);
+          this.logger.debug({ error: e }, 'createInterruptionTask: error during cleanup:');
         }
       };
 
@@ -2620,7 +2618,7 @@ export class AudioRecognition {
     };
 
     void restartStt().catch((err) => {
-      this.logger.error(`Error resetting STT task: ${err}`);
+      this.logger.error({ error: err }, 'Error resetting STT task');
     });
   }
 
@@ -2631,7 +2629,7 @@ export class AudioRecognition {
    */
   private resetVad() {
     void this.resetVadTask().catch((err) => {
-      this.logger.error(`Error resetting VAD task: ${err}`);
+      this.logger.error({ error: err }, 'Error resetting VAD task');
     });
   }
 
@@ -2651,7 +2649,7 @@ export class AudioRecognition {
   private startVadTask(vad: VAD): void {
     this.vadTask = Task.from(({ signal }) => this.createVadTask(vad, signal));
     this.vadTask.result.catch((err) => {
-      this.logger.error(`Error running VAD task: ${err}`);
+      this.logger.error({ error: err }, 'Error running VAD task');
     });
   }
 

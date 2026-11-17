@@ -401,7 +401,7 @@ export class SpeechStream extends stt.SpeechStream {
       await Promise.all([sendPromise, recvPromise]);
       if (firstError !== undefined) throw firstError;
     } catch (error) {
-      this.#logger.error('Cartesia STT stream error', { error });
+      this.#logger.error({ error: error }, 'Cartesia STT stream error');
       throw error;
     } finally {
       abortController.abort();
@@ -498,7 +498,7 @@ export class SpeechStream extends stt.SpeechStream {
         try {
           msg = JSON.parse(data.toString());
         } catch (error) {
-          this.#logger.error('Failed to parse Cartesia STT message', { error });
+          this.#logger.error({ error: error }, 'Failed to parse Cartesia STT message');
           return;
         }
         try {
@@ -523,7 +523,7 @@ export class SpeechStream extends stt.SpeechStream {
             this.#processStreamEvent(msg);
           }
         } catch (error) {
-          this.#logger.error('Failed to process Cartesia STT message', { error });
+          this.#logger.error({ error: error }, 'Failed to process Cartesia STT message');
         }
       });
 

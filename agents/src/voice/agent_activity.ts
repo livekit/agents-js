@@ -275,7 +275,7 @@ export async function cleanupReusableResources(
         if (logger) {
           logger.error({ error: output.reason }, 'error cleaning up reusable resources');
         } else {
-          console.error('error cleaning up reusable resources', output.reason);
+          console.error('error cleaning up reusable resources');
         }
       }
     }
@@ -1031,7 +1031,7 @@ export class AgentActivity implements RecognitionHooks {
           addIfMissing: true,
         });
       } catch (error) {
-        this.logger.error('failed to update the instructions', error);
+        this.logger.error({ error: error }, 'failed to update the instructions');
       }
     }
 
@@ -2088,8 +2088,8 @@ export class AgentActivity implements RecognitionHooks {
       this.interrupt({ source: 'audio_activity' });
     } catch (error) {
       this.logger.error(
+        { error: error },
         'RealtimeAPI input_speech_started, but current speech is not interruptable, this should never happen!',
-        error,
       );
     }
   }

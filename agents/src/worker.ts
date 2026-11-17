@@ -777,7 +777,7 @@ export class AgentServer {
     });
 
     ws.addEventListener('error', (event) => {
-      this.#logger.error('worker error:', event.message);
+      this.#logger.error({ error: event.message }, 'worker error');
     });
 
     ws.addEventListener('message', (event) => {

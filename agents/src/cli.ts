@@ -25,9 +25,6 @@ type CliArgs = {
   cliAddr?: string;
 };
 
-const formatErrorMessage = (error: unknown): string =>
-  error instanceof Error ? error.message : String(error);
-
 const runServer = async (args: CliArgs) => {
   initializeLogger({ pretty: !args.production, level: args.opts.logLevel });
   const logger = log();
@@ -70,7 +67,7 @@ const runServer = async (args: CliArgs) => {
       try {
         await server.drain();
       } catch (e) {
-        logger.error(e);
+        logger.error({ error: e }, 'failed to drain worker after SIGINT');
       }
     }
     cliClient?.close();
@@ -91,7 +88,7 @@ const runServer = async (args: CliArgs) => {
       try {
         await server.drain();
       } catch (e) {
-        logger.error(e);
+        logger.error({ error: e }, 'failed to drain worker after SIGTERM');
       }
     }
     cliClient?.close();
@@ -273,7 +270,7 @@ export const runApp = (opts: ServerOptions) => {
           await dispose();
         }
       })().catch((error) => {
-        log().fatal(`console mode failed: ${formatErrorMessage(error)}`);
+        log().fatal({ error: error }, 'console mode failed');
         process.exit(1);
       });
     });
@@ -303,9 +300,7 @@ export const runApp = (opts: ServerOptions) => {
             logger.info(`Finished downloading files for ${plugin.title}`);
           } catch (error) {
             failures.push({ plugin, error });
-            logger.error(
-              `Failed to download files for ${plugin.title}: ${formatErrorMessage(error)}`,
-            );
+            logger.error({ error: error }, `Failed to download files for ${plugin.title}`);
           }
         }
 
@@ -319,7 +314,7 @@ export const runApp = (opts: ServerOptions) => {
           process.exit(0);
         })
         .catch((error) => {
-          logger.fatal(`Error during file downloads: ${error}`);
+          logger.fatal({ error: error }, 'Error during file downloads');
           process.exit(1);
         });
     });

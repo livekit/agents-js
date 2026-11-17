@@ -4,6 +4,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { Command } from 'commander';
 import { main as downloadFilesMain } from '../download.js';
+import { initializeLogger, log, loggerOptions } from '../log.js';
 import { version } from '../version.js';
 
 const program = new Command()
@@ -23,6 +24,7 @@ program
   });
 
 program.parseAsync(process.argv).catch((error) => {
-  console.error(`Fatal error: ${error}`);
+  if (!loggerOptions()) initializeLogger({ pretty: false });
+  log().fatal({ error }, 'Fatal error');
   process.exit(1);
 });

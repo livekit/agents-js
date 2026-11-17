@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { pino } from 'pino';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PinoCloudExporter } from './pino_otel_transport.js';
 import { uploadGate } from './upload_gate.js';
@@ -60,7 +61,7 @@ describe('PinoCloudExporter flush', () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response('secret customer response', { status: 500 }),
     );
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
     const exporter = new PinoCloudExporter({
       observabilityUrl: 'https://example.livekit.cloud',
       roomId: 'room1',
@@ -70,10 +71,54 @@ describe('PinoCloudExporter flush', () => {
     exporter.emit({ level: 30, time: 0, msg: 'record' });
     await exporter.flush();
 
-    expect(consoleError).toHaveBeenCalledWith(
-      '[PinoCloudExporter] Failed to flush logs:',
-      expect.objectContaining({ message: 'Log export failed: status 500' }),
-    );
-    expect(JSON.stringify(consoleError.mock.calls)).not.toContain('secret customer response');
+    const record = JSON.parse(String(stderr.mock.calls[0]?.[0]));
+    expect(record.msg).toBe('[PinoCloudExporter] Failed to flush logs');
+    expect(record.error.message).toBe('Log export failed: status 500');
+    expect(JSON.stringify(stderr.mock.calls)).not.toContain('secret customer response');
   });
+});
+
+describe('exception log redaction', () => {
+  const originalEnv = { ...process.env };
+  afterEach(() => {
+    vi.restoreAllMocks();
+    process.env = { ...originalEnv };
+    uploadGate.reset();
+  });
+
+  it.each([true, false])(
+    'keeps exception details out of messages (redaction=%s)',
+    async (redacted) => {
+      process.env.LIVEKIT_API_KEY = 'devkey';
+      process.env.LIVEKIT_API_SECRET = 'secretsecretsecretsecretsecretsecret';
+      const secret = 'provider rejected canary@example.com';
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValue(new Response('{}', { status: 200 }));
+      const exporter = new PinoCloudExporter({
+        observabilityUrl: 'https://example.livekit.cloud',
+        roomId: 'room1',
+        jobId: 'job1',
+        metadata: { 'lk.redaction.enabled': redacted },
+      });
+      const logger = pino(
+        { serializers: { error: pino.stdSerializers.err } },
+        {
+          write: (line) => exporter.emit(JSON.parse(line)),
+        },
+      );
+      for (const error of [new Error(secret), secret, { message: secret }, { detail: secret }]) {
+        logger.error({ error }, 'provider failed');
+      }
+      await exporter.flush();
+      const body = JSON.parse(String(fetchSpy.mock.calls[0]?.[1]?.body));
+      const records = body.resourceLogs[0].scopeLogs[0].logRecords;
+      expect(records).toHaveLength(4);
+      for (const record of records) {
+        expect(record.body.stringValue).toBe('provider failed');
+        expect(JSON.stringify(record).includes(secret)).toBe(!redacted);
+        if (redacted) expect(JSON.stringify(record)).toContain('exception details redacted');
+      }
+    },
+  );
 });
