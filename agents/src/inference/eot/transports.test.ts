@@ -16,16 +16,19 @@
  */
 import { AgentInference } from '@livekit/protocol';
 import { AudioFrame } from '@livekit/rtc-node';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { APIConnectionError } from '../../_exceptions.js';
+import type { InferenceExecutor } from '../../ipc/inference_executor.js';
+import { ChatContext, FunctionCall, FunctionCallOutput } from '../../llm/chat_context.js';
 import { DEFAULT_API_CONNECT_OPTIONS } from '../../types.js';
 import type { Task } from '../../utils.js';
 import { BaseStreamingTurnDetector, type BaseStreamingTurnDetectorOptions } from './base.js';
 import { TurnDetectorStreamImpl } from './detector.js';
 import { ThresholdOptions, type TurnDetectorModel } from './languages.js';
-import { CloudTransport, type CloudWebSocket } from './transports.js';
+import { CloudTransport, type CloudWebSocket, LocalTransport } from './transports.js';
 
 const { ClientMessage } = AgentInference;
+const EOT_MAX_SAMPLES = 32000;
 
 /** Fake WebSocket capturing outbound frames as parsed `ClientMessage`s. */
 class FakeWS implements CloudWebSocket {
@@ -134,8 +137,17 @@ async function waitForCond(predicate: () => boolean, ticks = 50): Promise<void> 
   }
 }
 
-function pcmFrame(samples = 320): AudioFrame {
-  return new AudioFrame(new Int16Array(samples), 16000, 1, samples);
+function pcmFrame(samples = 320, value = 0, channels = 1): AudioFrame {
+  return new AudioFrame(new Int16Array(samples * channels).fill(value), 16000, channels, samples);
+}
+
+function stereoFrame(left: number[], right: number[]): AudioFrame {
+  const data = new Int16Array(left.length * 2);
+  for (let i = 0; i < left.length; i++) {
+    data[i * 2] = left[i]!;
+    data[i * 2 + 1] = right[i]!;
+  }
+  return new AudioFrame(data, 16000, 2, left.length);
 }
 
 describe('CloudStreamRetry', () => {
@@ -223,20 +235,28 @@ describe('CloudWithoutLocalFallback', () => {
 });
 
 describe('CloudStreamSendOrdering', () => {
-  it('inferenceStart precedes inputAudio (FIFO)', async () => {
+  it('audio captured before predict precedes inferenceStart', async () => {
     const { stream, fakeWs, transport } = makeStream({ connectScript: [null] });
     try {
       await waitUntilConnected(transport);
+      stream.pushAudio(pcmFrame());
+      stream.pushAudio(pcmFrame());
       stream.predict();
       stream.pushAudio(pcmFrame());
       await drainSendQueue(transport);
 
-      const kinds = fakeWs.sent.map((m) => m.message.case);
-      const startIdx = kinds.indexOf('inferenceStart');
-      const audioIdx = kinds.indexOf('inputAudio');
-      expect(startIdx).toBeGreaterThanOrEqual(0);
-      expect(audioIdx).toBeGreaterThanOrEqual(0);
-      expect(startIdx).toBeLessThan(audioIdx);
+      const kinds = fakeWs.sent
+        .map((m) => m.message.case)
+        .filter((kind) => kind !== 'sessionCreate');
+      expect(kinds).toEqual([
+        'inputAudio',
+        'inputAudio',
+        'eotInputChatContext',
+        'inferenceStart',
+        'inputAudio',
+      ]);
+      const start = fakeWs.sent.find((m) => m.message.case === 'inferenceStart');
+      expect(start?.message.case === 'inferenceStart' && start.message.value.turnSamples).toBe(640);
     } finally {
       await stream.aclose();
     }
@@ -249,9 +269,14 @@ describe('CloudStreamSendOrdering', () => {
     const { stream, fakeWs, transport } = makeStream({ connectScript: [null] });
     try {
       await waitUntilConnected(transport);
-      stream.predict();
+      const firstCtx = ChatContext.empty();
+      firstCtx.addMessage({ role: 'assistant', content: 'First question' });
+      stream.predict(firstCtx);
       const firstId = (stream as unknown as { _requestId?: string })._requestId;
-      stream.predict();
+      await drainSendQueue(transport);
+      const secondCtx = ChatContext.empty();
+      secondCtx.addMessage({ role: 'assistant', content: 'Second question' });
+      stream.predict(secondCtx);
       const secondId = (stream as unknown as { _requestId?: string })._requestId;
       await drainSendQueue(transport);
 
@@ -262,8 +287,247 @@ describe('CloudStreamSendOrdering', () => {
         }
       }
       expect(startIds).toEqual([firstId, secondId]);
+      expect(
+        fakeWs.sent
+          .filter((m) => m.message.case === 'eotInputChatContext')
+          .map((m) =>
+            m.message.case === 'eotInputChatContext'
+              ? m.message.value.messages[0]?.content[0]?.payload.value
+              : undefined,
+          ),
+      ).toEqual(['First question', 'Second question']);
     } finally {
       await stream.aclose();
     }
+  });
+
+  it('does not send a request replaced before the transport reaches it', async () => {
+    const { stream, fakeWs, transport } = makeStream({ connectScript: [null] });
+    try {
+      await waitUntilConnected(transport);
+      stream.predict();
+      stream.predict();
+      const secondId = (stream as unknown as { _requestId?: string })._requestId;
+      await drainSendQueue(transport);
+      const starts = fakeWs.sent
+        .filter((m) => m.message.case === 'inferenceStart')
+        .map((m) => (m.message.case === 'inferenceStart' ? m.message.value.requestId : undefined));
+      expect(starts).toEqual([secondId]);
+    } finally {
+      await stream.aclose();
+    }
+  });
+});
+
+describe('CloudStreamChatContext', () => {
+  it('sends only the last assistant text and snapshots it at predict', async () => {
+    const chatCtx = ChatContext.empty();
+    chatCtx.addMessage({ role: 'system', content: 'System instructions' });
+    chatCtx.addMessage({ role: 'assistant', content: 'Earlier question' });
+    chatCtx.addMessage({ role: 'user', content: 'Earlier answer' });
+    chatCtx.addMessage({
+      role: 'assistant',
+      content: ['Which city?', "<expr value='curious'/>どちらですか？"],
+    });
+    chatCtx.items.push(FunctionCall.create({ callId: 'call', name: 'lookup', args: '{}' }));
+    chatCtx.items.push(FunctionCallOutput.create({ callId: 'call', output: 'result' }));
+    chatCtx.addMessage({ role: 'user', content: 'Current answer' });
+
+    const { stream, fakeWs, transport } = makeStream({ connectScript: [null] });
+    try {
+      await waitUntilConnected(transport);
+      stream.predict(chatCtx);
+      chatCtx.addMessage({ role: 'assistant', content: 'Later question' });
+      await drainSendQueue(transport);
+      const context = fakeWs.sent.find((m) => m.message.case === 'eotInputChatContext');
+      expect(context?.message.case).toBe('eotInputChatContext');
+      if (context?.message.case !== 'eotInputChatContext') throw new Error('missing context');
+      expect(context.message.value.messages).toHaveLength(1);
+      expect(context.message.value.messages[0]?.content[0]?.payload.value).toBe(
+        'Which city?\nどちらですか？',
+      );
+    } finally {
+      await stream.aclose();
+    }
+  });
+
+  const noAssistant = ChatContext.empty();
+  noAssistant.addMessage({ role: 'user', content: 'Hello' });
+  const emptyLastAssistant = ChatContext.empty();
+  emptyLastAssistant.addMessage({ role: 'assistant', content: 'Earlier question' });
+  emptyLastAssistant.addMessage({ role: 'assistant', content: [] });
+
+  it.each([undefined, ChatContext.empty(), noAssistant, emptyLastAssistant])(
+    'clears previous assistant text when context has none',
+    async (chatCtx) => {
+      const { stream, fakeWs, transport } = makeStream({ connectScript: [null] });
+      try {
+        await waitUntilConnected(transport);
+        const old = ChatContext.empty();
+        old.addMessage({ role: 'assistant', content: 'Old question' });
+        stream.predict(old);
+        await drainSendQueue(transport);
+        stream.predict(chatCtx);
+        await drainSendQueue(transport);
+        const contexts = fakeWs.sent.filter((m) => m.message.case === 'eotInputChatContext');
+        const last = contexts.at(-1);
+        expect(
+          last?.message.case === 'eotInputChatContext' && last.message.value.messages,
+        ).toHaveLength(0);
+      } finally {
+        await stream.aclose();
+      }
+    },
+  );
+});
+
+describe('CloudStreamTurnSamples', () => {
+  it('counts from the turn start and resets on flush', async () => {
+    const { stream, fakeWs, transport } = makeStream({ connectScript: [null] });
+    try {
+      await waitUntilConnected(transport);
+      await transport.pushFrame(pcmFrame(8000));
+      await transport.pushFrame(pcmFrame(4000));
+      transport.onStartOfTurn(250);
+      for (let i = 0; i < 100; i++) await transport.pushFrame(pcmFrame(1600));
+      transport.runInference('past-window');
+      await transport.flush({ kind: 'flush' });
+      await transport.pushFrame(pcmFrame(320));
+      transport.runInference('after-flush');
+      await drainSendQueue(transport);
+      const starts = Object.fromEntries(
+        fakeWs.sent
+          .filter((m) => m.message.case === 'inferenceStart')
+          .map((m) =>
+            m.message.case === 'inferenceStart'
+              ? [m.message.value.requestId, m.message.value.turnSamples]
+              : ['', 0],
+          ),
+      );
+      expect(starts).toEqual({ 'past-window': 164000, 'after-flush': 320 });
+    } finally {
+      await stream.aclose();
+    }
+  });
+});
+
+describe('LocalTransportInput', () => {
+  function makeLocal() {
+    const calls: Array<{ pcm: string; turnSamples: number }> = [];
+    const executor = {
+      doInference: vi.fn(async (_method: string, input: { pcm: string; turnSamples: number }) => {
+        calls.push(input);
+        return { probability: 0.5, inferenceDurationMs: 0 };
+      }),
+    } as unknown as InferenceExecutor;
+    const opts: BaseStreamingTurnDetectorOptions = {
+      sampleRate: 16000,
+      thresholds: new ThresholdOptions('turn-detector-v1-mini'),
+    };
+    const transport = new LocalTransport({ opts, executor });
+    transport.attach({ _resolvePrediction: vi.fn() } as unknown as TurnDetectorStreamImpl);
+    return { transport, calls };
+  }
+
+  async function predict(
+    transport: LocalTransport,
+    calls: Array<{ pcm: string; turnSamples: number }>,
+  ) {
+    transport.runInference('request');
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    const call = calls[0]!;
+    const bytes = Buffer.from(call.pcm, 'base64');
+    return {
+      pcm: new Int16Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 2),
+      turnSamples: call.turnSamples,
+    };
+  }
+
+  it.each([1, 2, 3])(
+    'passes the last model window and full turn length (%i channels)',
+    async (channels) => {
+      const { transport, calls } = makeLocal();
+      await transport.pushFrame(pcmFrame(8000, 1, channels));
+      await transport.pushFrame(pcmFrame(4000, 2, channels));
+      transport.onStartOfTurn(250);
+      for (let i = 0; i < (2 * EOT_MAX_SAMPLES) / 1600; i++) {
+        await transport.pushFrame(pcmFrame(1600, i, channels));
+      }
+      const input = await predict(transport, calls);
+      expect(input.pcm.length).toBe(EOT_MAX_SAMPLES);
+      expect(input.turnSamples).toBe(4000 + 2 * EOT_MAX_SAMPLES);
+      expect([...input.pcm]).toEqual(
+        Array.from(
+          { length: EOT_MAX_SAMPLES },
+          (_, i) => EOT_MAX_SAMPLES / 1600 + Math.floor(i / 1600),
+        ),
+      );
+    },
+  );
+
+  it.each([1, 2, 3])(
+    'drops audio before the turn start and resets on flush (%i channels)',
+    async (channels) => {
+      const { transport, calls } = makeLocal();
+      await transport.pushFrame(pcmFrame(EOT_MAX_SAMPLES, 1, channels));
+      await transport.pushFrame(pcmFrame(4000, 2, channels));
+      transport.onStartOfTurn(250);
+      await transport.pushFrame(pcmFrame(1600, 2, channels));
+      const first = await predict(transport, calls);
+      expect(first.pcm.length).toBe(5600);
+      expect(first.turnSamples).toBe(5600);
+      expect(first.pcm.every((sample) => sample === 2)).toBe(true);
+
+      await transport.flush({ kind: 'flush' });
+      calls.length = 0;
+      await transport.pushFrame(pcmFrame(6000, 0, channels));
+      const second = await predict(transport, calls);
+      expect(second.pcm.length).toBe(6000);
+      expect(second.turnSamples).toBe(6000);
+    },
+  );
+
+  it('clamps a turn start before the last flush to the buffered audio', async () => {
+    const { transport, calls } = makeLocal();
+    await transport.pushFrame(pcmFrame(1600));
+    transport.onStartOfTurn(1000);
+    const input = await predict(transport, calls);
+    expect(input.pcm.length).toBe(1600);
+    expect(input.turnSamples).toBe(1600);
+  });
+
+  it.each([
+    { left: [100, 200], right: [300, 400], expected: [200, 300] },
+    { left: [-100, 200], right: [100, -200], expected: [0, 0] },
+  ])('downmixes stereo audio by averaging channels', async ({ left, right, expected }) => {
+    const { transport, calls } = makeLocal();
+    await transport.pushFrame(stereoFrame(left, right));
+    const input = await predict(transport, calls);
+    expect(Array.from(input.pcm)).toEqual(expected);
+    expect(input.turnSamples).toBe(expected.length);
+  });
+
+  it.each([
+    { channels: 2, samples: [32767, 32767, -32768, -32768], mono: [32767, -32768] },
+    { channels: 2, samples: [-1, 0, 0, 1], mono: [-1, 0] },
+    { channels: 3, samples: [1000, 2000, 6000, -1, 0, 0], mono: [3000, -1] },
+  ])(
+    'downmixes $channels channels at sample boundaries: $samples',
+    async ({ channels, samples, mono }) => {
+      const { transport, calls } = makeLocal();
+      await transport.pushFrame(new AudioFrame(Int16Array.from(samples), 16000, channels, 2));
+      const input = await predict(transport, calls);
+      expect(input.turnSamples).toBe(2);
+      expect([...input.pcm]).toEqual(mono);
+    },
+  );
+
+  it('buffers mono audio after downmixed stereo audio', async () => {
+    const { transport, calls } = makeLocal();
+    await transport.pushFrame(stereoFrame([100, 200], [300, 400]));
+    await transport.pushFrame(new AudioFrame(new Int16Array([50, 60]), 16000, 1, 2));
+    const input = await predict(transport, calls);
+    expect(Array.from(input.pcm)).toEqual([200, 300, 50, 60]);
+    expect(input.turnSamples).toBe(4);
   });
 });

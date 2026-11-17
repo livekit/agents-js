@@ -51,6 +51,39 @@ const makeEotInfo = (newTranscript: string): EndOfTurnInfo => ({
   stoppedSpeakingAt: undefined,
 });
 
+const makeRoomFixture = (kind = ParticipantKind.STANDARD) => {
+  const room = new EventEmitter() as EventEmitter & {
+    isConnected: boolean;
+    remoteParticipants: Map<string, unknown>;
+  };
+  const publication = {
+    sid: 'track_sid',
+    kind: TrackKind.KIND_AUDIO,
+    subscribed: true,
+    track: {},
+  };
+  const participant = {
+    identity: 'callee',
+    kind,
+    attributes: {},
+    trackPublications: new Map([[publication.sid, publication]]),
+  };
+  room.isConnected = true;
+  room.remoteParticipants = new Map([[participant.identity, participant]]);
+  return { room, participant };
+};
+
+const makeVerdict = (category: AMDCategory) => ({
+  type: 'amd_prediction' as const,
+  category,
+  transcript: 'greeting',
+  reason: 'llm',
+  rawResponse: '',
+  isMachine: category !== AMDCategory.HUMAN && category !== AMDCategory.UNCERTAIN,
+  speechDurationMs: 3_000,
+  delayMs: 0,
+});
+
 class StaticLLM extends LLM {
   constructor(private readonly response: string | Error) {
     super();
@@ -1166,6 +1199,164 @@ describe('AMD', () => {
       category: AMDCategory.UNCERTAIN,
       reason: 'participant_missing',
     });
+  });
+
+  it('settles when the participant hangs up while listening', async () => {
+    const { room, participant } = makeRoomFixture();
+    const session = Object.assign(new MockSession(), { _roomIO: { rtcRoom: room } });
+    session.llm = new StaticLLM(JSON.stringify({ category: AMDCategory.HUMAN }));
+    const amd = new AMD(asAgentSession(session), {
+      llm: session.llm,
+      suppressCompatibilityWarning: true,
+    });
+    const promise = amd.execute();
+    await waitForListening(amd);
+
+    speechStart(amd);
+    room.emit(RoomEvent.ParticipantDisconnected, participant);
+    await amd.aclose();
+
+    await expect(promise).resolves.toMatchObject({
+      category: AMDCategory.UNCERTAIN,
+      reason: 'participant_disconnected',
+    });
+    expect(room.listenerCount(RoomEvent.ParticipantDisconnected)).toBe(0);
+  });
+
+  it.each([
+    AMDCategory.HUMAN,
+    AMDCategory.MACHINE_VM,
+    AMDCategory.MACHINE_IVR,
+    AMDCategory.UNCERTAIN,
+  ])('hangup overrides a held %s verdict', async (category) => {
+    const { room, participant } = makeRoomFixture();
+    const session = Object.assign(new MockSession(), { _roomIO: { rtcRoom: room } });
+    session.llm = new StaticLLM(JSON.stringify({ category: AMDCategory.HUMAN }));
+    const amd = new AMD(asAgentSession(session), {
+      llm: session.llm,
+      suppressCompatibilityWarning: true,
+    });
+    const promise = amd.execute();
+    await waitForListening(amd);
+
+    speechStart(amd);
+    (amd as unknown as { verdictResult: AMDPredictionEvent }).verdictResult = makeVerdict(category);
+    room.emit(RoomEvent.ParticipantDisconnected, participant);
+    await amd.aclose();
+
+    await expect(promise).resolves.toMatchObject({
+      category: AMDCategory.UNCERTAIN,
+      reason: 'participant_disconnected',
+    });
+    expect(session.interrupt).not.toHaveBeenCalled();
+  });
+
+  it('hangup keeps a held machine-unavailable verdict', async () => {
+    const { room, participant } = makeRoomFixture();
+    const session = Object.assign(new MockSession(), { _roomIO: { rtcRoom: room } });
+    session.llm = new StaticLLM(JSON.stringify({ category: AMDCategory.HUMAN }));
+    const amd = new AMD(asAgentSession(session), {
+      llm: session.llm,
+      suppressCompatibilityWarning: true,
+    });
+    const promise = amd.execute();
+    await waitForListening(amd);
+
+    speechStart(amd);
+    (amd as unknown as { verdictResult: AMDPredictionEvent }).verdictResult = makeVerdict(
+      AMDCategory.MACHINE_UNAVAILABLE,
+    );
+    room.emit(RoomEvent.ParticipantDisconnected, participant);
+    await amd.aclose();
+
+    await expect(promise).resolves.toMatchObject({
+      category: AMDCategory.MACHINE_UNAVAILABLE,
+      reason: 'llm',
+    });
+  });
+
+  it('hangup after a verdict changes nothing', async () => {
+    const { room, participant } = makeRoomFixture();
+    const session = Object.assign(new MockSession(), { _roomIO: { rtcRoom: room } });
+    session.llm = new StaticLLM(JSON.stringify({ category: AMDCategory.HUMAN }));
+    const amd = new AMD(asAgentSession(session), {
+      llm: session.llm,
+      suppressCompatibilityWarning: true,
+    });
+    const onPrediction = vi.fn();
+    amd.on('amd_prediction', onPrediction);
+    const promise = amd.execute();
+    await waitForListening(amd);
+    (
+      amd as unknown as {
+        settle: (category: AMDCategory, reason: string) => void;
+      }
+    ).settle(AMDCategory.HUMAN, 'short_greeting');
+    const result = await promise;
+
+    expect(room.listenerCount(RoomEvent.ParticipantDisconnected)).toBe(0);
+    room.emit(RoomEvent.ParticipantDisconnected, participant);
+
+    expect(result).toMatchObject({ category: AMDCategory.HUMAN, reason: 'short_greeting' });
+    expect(onPrediction).toHaveBeenCalledTimes(1);
+    expect(onPrediction).toHaveBeenCalledWith(result);
+    await amd.aclose();
+  });
+
+  it.each([0, 3])(
+    'hangup before SIP answer settles participant missing once after %i yields',
+    async (yieldsBeforeTeardown) => {
+      const { room, participant } = makeRoomFixture(ParticipantKind.SIP);
+      const session = Object.assign(new MockSession(), { _roomIO: { rtcRoom: room } });
+      session.llm = new StaticLLM(JSON.stringify({ category: AMDCategory.HUMAN }));
+      const amd = new AMD(asAgentSession(session), {
+        llm: session.llm,
+        suppressCompatibilityWarning: true,
+      });
+      const settle = vi.spyOn(
+        amd as unknown as {
+          settle: (category: AMDCategory, reason: string) => void;
+        },
+        'settle',
+      );
+      const promise = amd.execute();
+      await vi.waitFor(() => {
+        expect(room.listenerCount(RoomEvent.ParticipantDisconnected)).toBeGreaterThan(1);
+      });
+
+      room.emit(RoomEvent.ParticipantDisconnected, participant);
+      for (let i = 0; i < yieldsBeforeTeardown; i += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      await amd.aclose();
+
+      await expect(promise).resolves.toMatchObject({
+        category: AMDCategory.UNCERTAIN,
+        reason: 'participant_missing',
+      });
+      expect(
+        settle.mock.calls.filter(([, reason]) => reason === 'participant_missing'),
+      ).toHaveLength(1);
+    },
+  );
+
+  it('ignores another participant disconnecting', async () => {
+    const { room } = makeRoomFixture();
+    const session = Object.assign(new MockSession(), { _roomIO: { rtcRoom: room } });
+    session.llm = new StaticLLM(JSON.stringify({ category: AMDCategory.HUMAN }));
+    const amd = new AMD(asAgentSession(session), {
+      llm: session.llm,
+      suppressCompatibilityWarning: true,
+    });
+    const promise = amd.execute();
+    await waitForListening(amd);
+    speechStart(amd);
+
+    room.emit(RoomEvent.ParticipantDisconnected, { identity: 'someone-else' });
+
+    expect(amd).toMatchObject({ listening: true, settled: false });
+    await amd.aclose();
+    await expect(promise).rejects.toThrow('AMD closed');
   });
 
   it('settles when track publication times out', async () => {

@@ -1,5 +1,82 @@
 # @livekit/agents
 
+## 1.10.0
+
+### Minor Changes
+
+- Add agent context and user turn length inputs to audio end-of-turn detection, and update the local mini model to its 2-second window. - [#2982](https://github.com/livekit/agents-js/pull/2982) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Add GPT-Live Decisions delegation, transcript triggers, manual evaluations, and decision events. - [#2939](https://github.com/livekit/agents-js/pull/2939) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+### Patch Changes
+
+- Report job status to the server, as the Python SDK does: running when a process takes the job, running with the join instants once the agent connects, and success or failure when the process exits. Before, the server learned that a job ended only when the agent left the room or the worker disconnected. The join instants are readings of the host's monotonic clock at each step from the job offer to the room connection. - [#2912](https://github.com/livekit/agents-js/pull/2912) ([@boks1971](https://github.com/boks1971))
+
+- Drain accepted session responses and ordered events before shutdown, cancel expired remote runs, and surface transport send failures. Add `RemoteSession.waitForReady()` to retry startup pings. - [#2259](https://github.com/livekit/agents-js/pull/2259) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+  Cancel pending transcription reads and join reply cleanup while preserving interrupted text. Release Room stream writers after cancelled sends and close TCP connections on oversized frames.
+
+  Release unused speech text branches and join synthesis input cleanup so streaming `say()` finishes on interruption or output failure.
+
+  Keep transcription input available during deferred hook setup. Drain independent pipeline text after early TTS completion and always release segment queues when writer closure fails.
+
+  Release pending SDK input readers before joining public async-generator transcription hooks, so cooperative session close and remote-run cancellation join their history updates.
+
+  Cancel activity-owned transcription inputs while public hook setup is pending, including setup that reads input before returning its output.
+
+  Bound remote-host cancellation cleanup to a shared three-second grace after the response drain, so a stalled custom speech hook cannot keep the transport open indefinitely.
+
+  Keep cancelled runs busy through reentrant callbacks until speech cleanup settles. Release transcription abort listeners between segments and close outputs interrupted during setup handoff.
+
+  Join generated and realtime speech children, including pending audio captures, before admitting another run. Cancel pending realtime input reads and preserve interrupted text after child cleanup.
+
+  Stop Room intake before reader cleanup and close readers delivered after shutdown starts. Enforce readiness deadlines during blocked sends and discard obsolete send errors after retrying.
+
+  Dispose native RTC resources after console cleanup so the CLI can exit normally.
+
+- Add Voxtral 3 transcription, server-side turn detection, diarization, and voice-pipeline flushing for manually endpointed STT streams. - [#2901](https://github.com/livekit/agents-js/pull/2901) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Close temporary speech stream adapters when their owning pipeline or fallback lifecycle ends. - [#2449](https://github.com/livekit/agents-js/pull/2449) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+  Keep TTS cancellation from marking providers unavailable, and propagate synthesis failures to TTS node consumers while closing audio and timed-text outputs.
+
+- Register the local turn detector's inference runner in console mode, so `turn-detector-v1-mini` predicts instead of failing with "no inference runners registered". - [#2982](https://github.com/livekit/agents-js/pull/2982) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Warn when the agent applies noise cancellation to a participant track that already has client-side enhanced noise cancellation enabled. - [#2745](https://github.com/livekit/agents-js/pull/2745) ([@lukasIO](https://github.com/lukasIO))
+
+- A job process whose worker is gone now exits at once, without leaving the room, so the server dispatches the job again. Before, it shut down gracefully after 15s, and the server took the job as done. - [#2867](https://github.com/livekit/agents-js/pull/2867) ([@davidzhao](https://github.com/davidzhao))
+
+- Report jobs whose entrypoints throw before shutdown as failed after their normal cleanup completes, and disconnect them with the AGENT_ERROR reason. - [#2959](https://github.com/livekit/agents-js/pull/2959) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+  Also report failures during job setup before the entrypoint starts, and clean up per-job telemetry before exiting.
+
+  Require @livekit/rtc-node 1.2.2 or later for disconnect reason support.
+
+- Report worker status every 1.5s and keep reporting it while draining. The default load is now a moving average of CPU samples over 2.5s, as in the Python SDK. - [#2867](https://github.com/livekit/agents-js/pull/2867) ([@davidzhao](https://github.com/davidzhao))
+
+- Add session-scoped tool mocks for concurrent agent simulations. - [#2905](https://github.com/livekit/agents-js/pull/2905) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Add Google Gemini 4 Hydrogen to the Inference LLM models. - [#2990](https://github.com/livekit/agents-js/pull/2990) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- `RealtimeModel.session()` now accepts the initial instructions, chat context, and tools, and the agent passes them when it creates a session. A Gemini Live session with tools or instructions now connects once at startup instead of twice (#2324). The OpenAI, LiveKit Inference, xAI, and Phonic realtime sessions also apply these options, so a session you create directly starts configured. - [#2325](https://github.com/livekit/agents-js/pull/2325) ([@davidzhao](https://github.com/davidzhao))
+
+  Each Gemini Live session now keeps its own copy of the model options, so one session's instructions no longer change another session's. `RealtimeModel.updateOptions()` on the Google plugin now applies to open sessions, as in the Python plugin. Each Phonic session also keeps its own instructions, so a session no longer starts or resets with another session's instructions.
+
+- Add xai/stt-2 to the Inference STT models, with word-aligned transcripts. - [#2948](https://github.com/livekit/agents-js/pull/2948) ([@u9g](https://github.com/u9g))
+
+- Close agent sessions with the job shutdown reason when their job shuts down. - [#2962](https://github.com/livekit/agents-js/pull/2962) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Resolve a failed local turn-detector prediction to 1.0, and skip the executor when the native binding is missing, so turns commit after `minDelay` instead of waiting for the maximum delay. - [#2875](https://github.com/livekit/agents-js/pull/2875) ([@chenghao-mou](https://github.com/chenghao-mou))
+
+- Keep TTS fallback providers available when synthesis is cancelled or the input is empty or whitespace-only. Close active provider streams on cancellation, preserve the serving provider's trace attribution after partial audio, and preserve prompt failover when a provider fails while text is still arriving. - [#2906](https://github.com/livekit/agents-js/pull/2906) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Settle answering machine detection as `uncertain` with reason `participant_disconnected` when the callee hangs up while AMD is listening. Before this change, the hangup settled through session close, either with reason `session_closed` or with a held verdict for a callee who was gone. A held `machine-unavailable` verdict is still returned. - [`33ad19e`](https://github.com/livekit/agents-js/commit/33ad19ec3fdc384c73b701b69391520aee0fb0b7) ([@rosetta-livekit-bot[bot]](https://github.com/rosetta-livekit-bot%5Bbot%5D))
+
+- Keep the session host up for the whole job, so a simulation's `onSimulationEnd` verdict is no longer dropped when the agent ends the call before the simulator finalizes. - [#2793](https://github.com/livekit/agents-js/pull/2793) ([@u9g](https://github.com/u9g))
+
+- Stream channels: tolerate the consumer cancelling the readable side. Fire-and-forget write() and close() on a downstream-cancelled channel no longer surface as unhandled promise rejections (`Error: undefined`), the `closed` getter now reflects downstream cancellation, and the audio forwarder cancels its reader with a real reason. - [#2362](https://github.com/livekit/agents-js/pull/2362) ([@anzemur](https://github.com/anzemur))
+
+- While the worker reconnects, its messages to the server wait in a queue, as in the Python SDK, and go out once the new connection registers. Before, the worker dropped them. Load updates and pings are not kept. - [#2913](https://github.com/livekit/agents-js/pull/2913) ([@boks1971](https://github.com/boks1971))
+
 ## 1.9.5
 
 ### Patch Changes

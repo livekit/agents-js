@@ -39,6 +39,8 @@ import {
   resolveCredentials,
 } from './utils.js';
 
+export type { FallbackActivatedEvent } from '../tts/tts.js';
+
 export type CartesiaModels =
   | 'cartesia/sonic-3.6'
   | 'cartesia/sonic-3.5'
@@ -299,6 +301,11 @@ export interface InferenceTTSOptions<TModel extends TTSModels> {
   /** Flat provider-specific inference options forwarded as the `extra` payload field. */
   modelOptions: TTSOptions<TModel>;
   fallback?: TTSFallbackModel[];
+  /**
+   * Opt out of the gateway's system-default fallback models. Customer `fallback` models still
+   * apply. Set only at construction; `updateOptions` does not change it.
+   */
+  disableSystemDefaultFallback?: boolean;
   connOptions?: APIConnectOptions;
 }
 
@@ -325,6 +332,11 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
     /** Flat provider-specific inference options forwarded as the `extra` payload field. */
     modelOptions?: TTSOptions<TModel>;
     fallback?: TTSFallbackModelType | TTSFallbackModelType[];
+    /**
+     * Opt out of the gateway's system-default fallback models. Customer `fallback` models still
+     * apply. Set only at construction; `updateOptions` does not change it.
+     */
+    disableSystemDefaultFallback?: boolean;
     connOptions?: APIConnectOptions;
   }) {
     const sampleRate = opts?.sampleRate ?? DEFAULT_SAMPLE_RATE;
@@ -345,6 +357,7 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
       apiSecret,
       modelOptions = {} as TTSOptions<TModel>,
       fallback,
+      disableSystemDefaultFallback = false,
       connOptions,
     } = opts || {};
 
@@ -383,6 +396,7 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
       apiSecret: lkApiSecret,
       modelOptions,
       fallback: normalizedFallback,
+      disableSystemDefaultFallback,
       connOptions: connOptions ?? DEFAULT_API_CONNECT_OPTIONS,
     };
 
@@ -516,13 +530,16 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
     if (this.opts.model) (params as Record<string, unknown>).model = this.opts.model;
     if (this.opts.language) (params as Record<string, unknown>).language = this.opts.language;
 
-    if (this.opts.fallback?.length) {
+    if (this.opts.fallback?.length || this.opts.disableSystemDefaultFallback) {
       params.fallback = {
-        models: this.opts.fallback.map((m) => ({
+        models: (this.opts.fallback ?? []).map((m) => ({
           model: m.model,
           voice: m.voice,
           extra: m.extraKwargs ?? {},
         })),
+        ...(this.opts.disableSystemDefaultFallback
+          ? { disable_system_default_fallback: true }
+          : {}),
       };
     }
 
@@ -833,6 +850,16 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
           switch (serverEvent.type) {
             case 'session.created':
               currentSessionId = serverEvent.session_id;
+              break;
+            case 'fallback_activated':
+              this.tts.emit('fallback_activated', {
+                sessionId: serverEvent.session_id,
+                fallbackType: serverEvent.fallback_type,
+                provider: serverEvent.provider,
+                model: serverEvent.model,
+                voice: serverEvent.voice,
+                cause: serverEvent.cause,
+              });
               break;
             case 'output_audio':
               const base64Data = new Int8Array(Buffer.from(serverEvent.audio, 'base64'));

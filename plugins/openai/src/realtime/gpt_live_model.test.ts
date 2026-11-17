@@ -453,6 +453,7 @@ describe('GPTLiveModel', () => {
 
     server.sockets[0]!.terminate();
     await vi.waitFor(() => expect(session.sessionId).toBe('live_1'));
+    await waitCount(2, 1);
 
     // A replacement session starts unmuted, so restore the mute before queued input.
     expect(server.events(1).map((event) => event.type)).toEqual([

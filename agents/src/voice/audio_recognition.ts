@@ -1263,9 +1263,12 @@ export class AudioRecognition {
       return this.userTurnSpan;
     }
 
-    startTime ??= Date.now();
-    if (this.userTurnStart === undefined) {
-      this.userTurnStart = startTime;
+    if (startTime !== undefined) {
+      this.startUserTurn(startTime);
+    } else {
+      startTime = Date.now();
+      // With no known speech start, keep the detector count from its last flush.
+      this.userTurnStart ??= startTime;
     }
 
     this.userTurnSpan = tracer.startSpan({
@@ -1282,6 +1285,12 @@ export class AudioRecognition {
     this.stampSttIdentity(this.userTurnSpan);
 
     return this.userTurnSpan;
+  }
+
+  private startUserTurn(startTime: number): void {
+    if (this.userTurnStart !== undefined) return;
+    this.userTurnStart = startTime;
+    this.turnDetectorStream?.onStartOfTurn(startTime);
   }
 
   /** Name the STT on a user turn; read live, so a failover during the turn shows through. */
@@ -1763,6 +1772,10 @@ export class AudioRecognition {
             // Unsupported language: produce no span and emit no prediction event.
             this.logger.debug(`Turn detector does not support language ${this.lastLanguage}`);
           } else {
+            const eouModelAttributes = {
+              [traceTypes.ATTR_EOU_MODEL]: turnDetector.model,
+              [traceTypes.ATTR_EOU_PROVIDER]: turnDetector.provider,
+            };
             await tracer.startActiveSpan(
               async (span) => {
                 // ended explicitly: endEouWaitSpan closes it early if the user resumes
@@ -1852,6 +1865,7 @@ export class AudioRecognition {
 
                   this.logger.debug(
                     {
+                      ...eouModelAttributes,
                       endOfTurnProbability,
                       unlikelyThreshold,
                       endpointingDelay,
@@ -1956,6 +1970,7 @@ export class AudioRecognition {
               {
                 name: 'eou_detection',
                 context: eouWaitCtx,
+                attributes: eouModelAttributes,
                 endOnExit: false,
               },
             );
@@ -2320,7 +2335,9 @@ export class AudioRecognition {
               this.turnDetectorStream !== undefined &&
               this.turnDetectorPredictionFut === undefined
             ) {
-              this.turnDetectorPredictionFut = this.turnDetectorStream.predict();
+              this.turnDetectorPredictionFut = this.turnDetectorStream.predict(
+                this.hooks.retrieveChatCtx(),
+              );
             }
             break;
           case VADEventType.END_OF_SPEECH:
