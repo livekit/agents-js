@@ -948,7 +948,7 @@ export function asLanguageCode(language: string): LanguageCode;
 type AssemblyAIModels = 'assemblyai' | 'assemblyai/assemblyai-tts-1';
 
 // @public (undocumented)
-type AssemblyaiModels = 'assemblyai/universal-streaming' | 'assemblyai/universal-streaming-multilingual' | 'assemblyai/u3-rt-pro' | 'assemblyai/universal-3-5-pro' | 'assemblyai/universal-3-6-pro';
+type AssemblyaiModels = 'assemblyai/universal-streaming' | 'assemblyai/universal-streaming-multilingual' | 'assemblyai/u3-rt-pro' | 'assemblyai/universal-3-5-pro' | 'assemblyai/universal-3-6-pro' | 'assemblyai/assemblyai-stt-3-7-realtime-agent';
 
 // @public (undocumented)
 interface AssemblyAIOptions {
