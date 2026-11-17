@@ -7,36 +7,45 @@ import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 
 const methods = new Set(['debug', 'info', 'warn', 'error', 'fatal', 'trace', 'log']);
-const errorNames = /^(e|err|error|exc|exception|failure)$/i;
 
 export function checkSource(source, filename = 'source.ts') {
   const file = ts.createSourceFile(filename, source, ts.ScriptTarget.Latest, true);
   const calls = [];
   const exceptionIn = (node, exceptions) => {
     if (ts.isIdentifier(node) && exceptions.has(node.text)) return node.text;
-    if (ts.isPropertyAccessExpression(node)) {
-      if (
-        node.name.text === 'errorDetails' ||
-        (node.name.text === 'message' &&
-          ts.isIdentifier(node.expression) &&
-          errorNames.test(node.expression.text))
-      )
-        return node.expression.getText(file);
-      return exceptionIn(node.expression, exceptions);
-    }
+    if (ts.isPropertyAccessExpression(node)) return exceptionIn(node.expression, exceptions);
     if (ts.isPropertyAssignment(node)) return exceptionIn(node.initializer, exceptions);
     return ts.forEachChild(node, (child) => exceptionIn(child, exceptions));
   };
-  function visit(node, inherited) {
+  const wholeExceptionIn = (node, whole) => {
+    if (ts.isTypeOfExpression(node)) return undefined;
+    if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.InstanceOfKeyword)
+      return undefined;
+    if (ts.isConditionalExpression(node))
+      return wholeExceptionIn(node.whenTrue, whole) || wholeExceptionIn(node.whenFalse, whole);
+    if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) return undefined;
+    if (ts.isIdentifier(node)) return whole.has(node.text) ? node.text : undefined;
+    if (
+      ts.isCallExpression(node) &&
+      !['String', 'JSON.stringify'].includes(node.expression.getText(file))
+    )
+      return undefined;
+    return ts.forEachChild(node, (child) => wholeExceptionIn(child, whole));
+  };
+  function visit(node, inherited, inheritedWhole) {
     let exceptions = inherited;
+    let whole = inheritedWhole;
     if (ts.isCatchClause(node)) {
       exceptions = new Set(inherited);
+      whole = new Set(inheritedWhole);
       if (node.variableDeclaration && ts.isIdentifier(node.variableDeclaration.name)) {
         exceptions.add(node.variableDeclaration.name.text);
+        whole.add(node.variableDeclaration.name.text);
       }
     }
     if (ts.isFunctionLike(node)) {
       exceptions = new Set(inherited);
+      whole = new Set(inheritedWhole);
       const parent = node.parent;
       const rejection =
         ts.isCallExpression(parent) &&
@@ -48,12 +57,10 @@ export function checkSource(source, filename = 'source.ts') {
       for (const parameter of node.parameters) {
         if (!ts.isIdentifier(parameter.name)) continue;
         exceptions.delete(parameter.name.text);
-        if (
-          rejection ||
-          errorNames.test(parameter.name.text) ||
-          /\b\w*(Error|Exception)\b/.test(parameter.type?.getText(file) ?? '')
-        ) {
+        whole.delete(parameter.name.text);
+        if (rejection || /\b\w*(Error|Exception)\b/.test(parameter.type?.getText(file) ?? '')) {
           exceptions.add(parameter.name.text);
+          whole.add(parameter.name.text);
         }
       }
     }
@@ -61,10 +68,22 @@ export function checkSource(source, filename = 'source.ts') {
       if (
         exceptionIn(node.initializer, exceptions) ||
         (ts.isNewExpression(node.initializer) &&
-          /(?:Error|Exception)$/.test(node.initializer.expression.getText(file)))
+          /(?:Error|Exception)$/.test(node.initializer.expression.getText(file))) ||
+        (ts.isCallExpression(node.initializer) &&
+          /(?:errorFromFrame|toError|asError)$/.test(node.initializer.expression.getText(file)))
       )
         exceptions.add(node.name.text);
       else exceptions.delete(node.name.text);
+    }
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
+      const raw =
+        wholeExceptionIn(node.initializer, whole) ||
+        (ts.isNewExpression(node.initializer) &&
+          /(?:Error|Exception)$/.test(node.initializer.expression.getText(file))) ||
+        (ts.isCallExpression(node.initializer) &&
+          /(?:errorFromFrame|toError|asError)$/.test(node.initializer.expression.getText(file)));
+      if (raw) whole.add(node.name.text);
+      else whole.delete(node.name.text);
     }
     if (
       ts.isCallExpression(node) &&
@@ -80,6 +99,23 @@ export function checkSource(source, filename = 'source.ts') {
         const messageArgs =
           !target.includes('console') && (structured || rawException) ? args.slice(1) : args;
         const exception = messageArgs.map((arg) => exceptionIn(arg, exceptions)).find(Boolean);
+        if (structured && !target.includes('console')) {
+          for (const property of args[0].properties) {
+            if (!ts.isPropertyAssignment(property) && !ts.isShorthandPropertyAssignment(property))
+              continue;
+            const key = property.name.text;
+            if (['error', 'err'].includes(key) || /(^|\.)pii(\.|$)/i.test(key)) continue;
+            const raw = wholeExceptionIn(
+              ts.isPropertyAssignment(property) ? property.initializer : property.name,
+              whole,
+            );
+            if (raw)
+              calls.push({
+                line: file.getLineAndCharacterOfPosition(node.getStart(file)).line + 1,
+                exception: raw,
+              });
+          }
+        }
         if (exception)
           calls.push({
             line: file.getLineAndCharacterOfPosition(node.getStart(file)).line + 1,
@@ -87,9 +123,9 @@ export function checkSource(source, filename = 'source.ts') {
           });
       }
     }
-    ts.forEachChild(node, (child) => visit(child, exceptions));
+    ts.forEachChild(node, (child) => visit(child, exceptions, whole));
   }
-  visit(file, new Set());
+  visit(file, new Set(), new Set());
   return calls;
 }
 

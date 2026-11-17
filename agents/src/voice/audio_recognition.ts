@@ -656,7 +656,7 @@ export class AudioRecognition {
               if (!this.warnedTurnDetectorPushFailure) {
                 this.warnedTurnDetectorPushFailure = true;
                 this.logger.warn(
-                  { err: err instanceof Error ? err.message : String(err) },
+                  { err: err },
                   'audio EOT stream pushAudio failed; dropping frames for this turn',
                 );
               }

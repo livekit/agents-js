@@ -5589,7 +5589,7 @@ export class AgentActivity implements RecognitionHooks {
       } catch (error) {
         if (error instanceof RealtimeError) {
           this.logger.warn(
-            { error: error.message },
+            { error: error },
             'failed to update the chat context before generating the reply',
           );
         } else {
@@ -6109,7 +6109,16 @@ export class AgentActivity implements RecognitionHooks {
 
       return detector;
     } catch (error: unknown) {
-      this.logger.warn({ error }, 'could not instantiate AdaptiveInterruptionDetector');
+      // This constructor's TypeError/RangeError messages are fixed SDK validation text.
+      this.logger.warn(
+        {
+          error,
+          ...(error instanceof TypeError || error instanceof RangeError
+            ? { error_message: error.message }
+            : {}),
+        },
+        'could not instantiate AdaptiveInterruptionDetector',
+      );
     }
     return undefined;
   }

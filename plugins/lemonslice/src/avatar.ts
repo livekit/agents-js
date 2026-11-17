@@ -585,9 +585,17 @@ export class AvatarSession extends voice.AvatarSession {
           throw e;
         }
         if (e instanceof APIConnectionError) {
-          this.#logger.warn({ error: String(e) }, 'failed to call lemonslice api');
+          this.#logger.warn({ error: e }, 'failed to call lemonslice api');
         } else {
-          this.#logger.error({ error: e }, 'failed to call lemonslice api');
+          this.#logger.error(
+            {
+              error: e,
+              ...(e instanceof APIStatusError
+                ? { error_message: e.message, statusCode: e.statusCode, retryable: e.retryable }
+                : {}),
+            },
+            'failed to call lemonslice api',
+          );
         }
 
         if (i <= this.connOptions.maxRetry - 1) {
@@ -675,9 +683,17 @@ export class AvatarSession extends voice.AvatarSession {
           throw e;
         }
         if (e instanceof APIConnectionError) {
-          this.#logger.warn({ error: String(e) }, 'failed to call lemonslice api');
+          this.#logger.warn({ error: e }, 'failed to call lemonslice api');
         } else {
-          this.#logger.error({ error: e }, 'failed to call lemonslice api');
+          this.#logger.error(
+            {
+              error: e,
+              ...(e instanceof APIStatusError
+                ? { error_message: e.message, statusCode: e.statusCode, retryable: e.retryable }
+                : {}),
+            },
+            'failed to call lemonslice api',
+          );
         }
 
         if (i <= this.connOptions.maxRetry - 1) {

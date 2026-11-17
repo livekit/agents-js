@@ -220,9 +220,17 @@ export class AvatarSession extends voice.AvatarSession {
         if (e instanceof APIStatusError && !e.retryable) throw e;
 
         if (e instanceof APIConnectionError) {
-          this.#logger.warn({ error: String(e) }, 'failed to call Runway API');
+          this.#logger.warn({ error: e }, 'failed to call Runway API');
         } else {
-          this.#logger.error({ error: e }, 'failed to call Runway API');
+          this.#logger.error(
+            {
+              error: e,
+              ...(e instanceof APIStatusError
+                ? { error_message: e.message, statusCode: e.statusCode, retryable: e.retryable }
+                : {}),
+            },
+            'failed to call Runway API',
+          );
         }
 
         if (i < maxAttempts - 1) {
@@ -269,7 +277,7 @@ export class AvatarSession extends voice.AvatarSession {
         return;
       } catch (error) {
         this.#logger.warn(
-          { error: String(error) },
+          { error: error },
           'error ending Runway realtime session via data channel',
         );
       }
@@ -308,10 +316,7 @@ export class AvatarSession extends voice.AvatarSession {
         );
       }
     } catch (error) {
-      this.#logger.warn(
-        { sessionId, error: String(error) },
-        'error cancelling Runway realtime session',
-      );
+      this.#logger.warn({ sessionId, error: error }, 'error cancelling Runway realtime session');
     }
   }
 

@@ -186,7 +186,7 @@ export function createWsTransport(
         logger.warn(
           {
             'lk.pii.data': data.toString(),
-            err: err instanceof Error ? err.message : String(err),
+            err: err,
           },
           'Failed to parse WebSocket message',
         );
@@ -197,10 +197,7 @@ export function createWsTransport(
       try {
         handleMessage(message);
       } catch (err) {
-        logger.warn(
-          { type: message.type, err: err instanceof Error ? err.message : String(err) },
-          'Failed to handle WebSocket message',
-        );
+        logger.warn({ type: message.type, err: err }, 'Failed to handle WebSocket message');
       }
     });
 

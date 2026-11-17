@@ -218,10 +218,7 @@ export class LocalTransport implements StreamingTurnDetectionTransport {
       prob = out.probability;
       inferenceDurationMs = out.inferenceDurationMs;
     } catch (err) {
-      this._logger.error(
-        { err: err instanceof Error ? err.message : String(err) },
-        'local audio EOT inference (executor) failed',
-      );
+      this._logger.error({ err: err }, 'local audio EOT inference (executor) failed');
       prob = 1.0;
     }
     const freshStream = this._streamRef?.deref();
@@ -569,7 +566,7 @@ export class CloudTransport implements StreamingTurnDetectionTransport {
         }
         const retryIntervalMs = intervalForRetry(this._connOptions, this._numRetries);
         this._logger.warn(
-          { err: err.message, attempt: this._numRetries, retryIntervalMs },
+          { err: err, attempt: this._numRetries, retryIntervalMs },
           'livekit turn detector connection failed; retrying',
         );
         await delay(retryIntervalMs);

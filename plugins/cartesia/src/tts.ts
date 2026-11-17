@@ -566,7 +566,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
             const json = JSON.parse(rawMsg.toString());
             serverMsg = cartesiaMessageSchema.parse(json);
           } catch (parseErr) {
-            this.#logger.warn({ parseErr }, 'Failed to parse Cartesia message');
+            this.#logger.warn({ error: parseErr }, 'Failed to parse Cartesia message');
             continue;
           }
 

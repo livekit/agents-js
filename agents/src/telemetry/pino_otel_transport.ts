@@ -96,14 +96,29 @@ function redactSerializedException(value: unknown): unknown {
   }
 
   const exception = value as Record<string, unknown>;
-  if (typeof exception.type !== 'string') {
-    return REDACTED_EXCEPTION_MESSAGE;
+  const redacted: Record<string, unknown> = { message: REDACTED_EXCEPTION_MESSAGE };
+  if (typeof exception.type === 'string') redacted.type = exception.type;
+  // These are protocol/transport metadata, not free-form messages, bodies, stacks, or causes.
+  for (const key of [
+    'code',
+    'statusCode',
+    'status_code',
+    'status',
+    'errno',
+    'retryable',
+    'requestId',
+    'request_id',
+  ]) {
+    const value = exception[key];
+    if (
+      typeof value === 'string' ||
+      typeof value === 'boolean' ||
+      (typeof value === 'number' && Number.isFinite(value))
+    ) {
+      redacted[key] = value;
+    }
   }
-
-  return {
-    type: exception.type,
-    message: REDACTED_EXCEPTION_MESSAGE,
-  };
+  return redacted;
 }
 
 /**

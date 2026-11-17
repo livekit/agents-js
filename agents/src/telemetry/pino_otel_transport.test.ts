@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { pino } from 'pino';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { APIStatusError } from '../_exceptions.js';
 import { PinoCloudExporter } from './pino_otel_transport.js';
 import { uploadGate } from './upload_gate.js';
 
@@ -118,6 +119,77 @@ describe('exception log redaction', () => {
         expect(record.body.stringValue).toBe('provider failed');
         expect(JSON.stringify(record).includes(secret)).toBe(!redacted);
         if (redacted) expect(JSON.stringify(record)).toContain('exception details redacted');
+      }
+    },
+  );
+});
+
+describe('selected exception diagnostics', () => {
+  const originalEnv = { ...process.env };
+  afterEach(() => {
+    vi.restoreAllMocks();
+    process.env = { ...originalEnv };
+    uploadGate.reset();
+  });
+  it.each([true, false])(
+    'preserves reviewed SDK messages and codes (redaction=%s)',
+    async (redacted) => {
+      process.env.LIVEKIT_API_KEY = 'devkey';
+      process.env.LIVEKIT_API_SECRET = 'secretsecretsecretsecretsecretsecret';
+      const secret = 'provider body contains canary@example.com';
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValue(new Response('{}', { status: 200 }));
+      const exporter = new PinoCloudExporter({
+        observabilityUrl: 'https://example.livekit.cloud',
+        roomId: 'room1',
+        jobId: 'job1',
+        metadata: { 'lk.redaction.enabled': redacted },
+      });
+      const logger = pino(
+        { serializers: { error: pino.stdSerializers.err } },
+        { write: (line) => exporter.emit(JSON.parse(line)) },
+      );
+      const frameworkError = new APIStatusError({
+        message: 'Server returned an error',
+        options: { statusCode: 503, requestId: 'request-123', body: { detail: secret } },
+      });
+      logger.error(
+        {
+          error: frameworkError,
+          error_message: frameworkError.message,
+          code: frameworkError.statusCode,
+        },
+        'provider failed',
+      );
+      // The same class can also carry a provider-controlled message. Do not trust it by class.
+      const providerError = new APIStatusError({
+        message: secret,
+        options: { statusCode: 429, requestId: 'request-456' },
+      });
+      logger.error({ error: providerError }, 'provider failed');
+      await exporter.flush();
+      const records = JSON.parse(String(fetchSpy.mock.calls[0]?.[1]?.body)).resourceLogs[0]
+        .scopeLogs[0].logRecords;
+      expect(records).toHaveLength(2);
+      for (const [index, record] of records.entries()) {
+        const attributes = Object.fromEntries(
+          record.attributes.map(
+            (attribute: { key: string; value: { stringValue?: string; intValue?: string } }) => [
+              attribute.key,
+              attribute.value.stringValue ?? attribute.value.intValue,
+            ],
+          ),
+        );
+        const error = JSON.parse(attributes.error);
+        expect(error.statusCode).toBe(index === 0 ? 503 : 429);
+        expect(error.retryable).toBe(true);
+        expect(error.requestId).toBe(index === 0 ? 'request-123' : 'request-456');
+        expect(JSON.stringify(record).includes(secret)).toBe(!redacted);
+        if (index === 0) {
+          expect(attributes.error_message).toBe(frameworkError.message);
+          expect(attributes.code).toBe('503');
+        }
       }
     },
   );

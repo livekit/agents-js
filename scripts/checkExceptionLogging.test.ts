@@ -42,10 +42,35 @@ describe('exception log fields', () => {
     expect(
       checkSource('const failure = new Error("secret"); logger.error(failure.message)'),
     ).not.toEqual([]);
-    expect(checkSource('logger.error(`failed: ${evt.errorDetails}`)')).not.toEqual([]);
+    expect(checkSource('logger.error(`status: ${status.message}`)')).toEqual([]);
   });
 
   it('does not confuse a message property name with a caught error binding', () => {
     expect(checkSource('task.catch(error => logger.error({ error }, messages.error))')).toEqual([]);
   });
+});
+
+it('allows reviewed message and code fields without trusting the entire error', () => {
+  expect(
+    checkSource(
+      'task.catch(error => logger.error({ error_message: error.message, code: error.code, error }, "failed"))',
+    ),
+  ).toEqual([]);
+  expect(checkSource('function status(error: string) { logger.info(error); }')).toEqual([]);
+});
+
+it('rejects whole exceptions under arbitrary fields but allows selected-field aliases', () => {
+  expect(
+    checkSource('task.catch(error => logger.error({ details: String(error) }, "failed"))'),
+  ).not.toEqual([]);
+  expect(
+    checkSource(
+      'task.catch(error => { const diagnostic = error.message; logger.error({ error_message: diagnostic }, "failed"); })',
+    ),
+  ).toEqual([]);
+  expect(
+    checkSource(
+      'task.catch(error => { const diagnostic = String(error); logger.error({ details: diagnostic }, "failed"); })',
+    ),
+  ).not.toEqual([]);
 });

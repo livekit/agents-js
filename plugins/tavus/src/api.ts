@@ -247,7 +247,12 @@ export class TavusAPI {
             throw e;
           }
           this.#logger.warn(
-            { attempt: attempt + 1, statusCode: e.statusCode },
+            {
+              attempt: attempt + 1,
+              error_message: e.message,
+              statusCode: e.statusCode,
+              retryable: e.retryable,
+            },
             'failed to call tavus api',
           );
           if (attempt >= this.connOptions.maxRetry) {
@@ -257,7 +262,7 @@ export class TavusAPI {
           e instanceof TypeError ||
           (e instanceof DOMException && e.name === 'TimeoutError')
         ) {
-          this.#logger.warn({ attempt: attempt + 1, error: String(e) }, 'failed to call tavus api');
+          this.#logger.warn({ attempt: attempt + 1, error: e }, 'failed to call tavus api');
           if (attempt >= this.connOptions.maxRetry) {
             const error = new APIConnectionError({
               message: 'Failed to call Tavus API after all retries',
