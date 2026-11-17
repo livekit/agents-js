@@ -4,7 +4,7 @@
 import { AgentSession as pb } from '@livekit/protocol';
 import { AudioFrame } from '@livekit/rtc-node';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { initializeLogger } from '../log.js';
+import { initializeLogger, log } from '../log.js';
 import type { AgentSession } from './agent_session.js';
 import { AgentsConsole, TcpAudioInput, TcpAudioOutput } from './console_io.js';
 import { SessionHost, SessionTransport } from './remote_session.js';
@@ -103,6 +103,33 @@ describe('TcpAudioOutput', () => {
     const samples = 24000 * seconds;
     return new AudioFrame(new Int16Array(samples), 24000, 1, samples);
   }
+
+  it.each(['flush', 'clearBuffer'] as const)(
+    'handles rejected %s control sends',
+    async (method) => {
+      const transport = new FakeTransport();
+      const error = new Error('tcp session transport is closed');
+      vi.spyOn(transport, 'sendMessage').mockRejectedValue(error);
+      const debug = vi.spyOn(log(), 'debug').mockImplementation(() => {});
+      try {
+        const out = new TcpAudioOutput(transport);
+        out[method]();
+        await vi.waitFor(() =>
+          expect(debug).toHaveBeenCalledWith({ error }, 'failed to send console control message'),
+        );
+      } finally {
+        debug.mockRestore();
+      }
+    },
+  );
+
+  it('propagates a rejected audio frame send to its caller', async () => {
+    const transport = new FakeTransport();
+    const error = new Error('tcp session transport is closed');
+    vi.spyOn(transport, 'sendMessage').mockRejectedValue(error);
+    const out = new TcpAudioOutput(transport);
+    await expect(out.captureFrame(agentFrame(1))).rejects.toBe(error);
+  });
 
   it('streams resampled frames and completes the flush handshake on playout finished', async () => {
     const transport = new FakeTransport();

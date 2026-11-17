@@ -181,7 +181,7 @@ export class RealtimeModel extends OpenAIRealtimeModel {
     return new RealtimeModel({ model });
   }
 
-  override session(options?: { turnDetectionDisabled?: boolean }): RealtimeSession {
+  override session(options?: llm.RealtimeSessionOptions): RealtimeSession {
     return new RealtimeSession(this, options);
   }
 }
@@ -191,7 +191,7 @@ export class RealtimeSession extends OpenAIRealtimeSession {
   private pendingTranscription?: apiProto.ConversationItemInputAudioTranscriptionCompletedEvent;
   private responseSpoke = false;
 
-  constructor(realtimeModel: RealtimeModel, options?: { turnDetectionDisabled?: boolean }) {
+  constructor(realtimeModel: RealtimeModel, options?: llm.RealtimeSessionOptions) {
     super(realtimeModel, options);
     this.isXAI = realtimeModel._inferenceOptions.isXAI;
   }

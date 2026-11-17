@@ -257,6 +257,29 @@ describe('TTS stream idle timeout', () => {
     expect(audioOutput.capturedFrames).toHaveLength(0);
   });
 
+  it('performTTSInference completes when TTS node returns null', async () => {
+    const textInput = new ReadableStream<string>({
+      start(controller) {
+        controller.close();
+      },
+    });
+    const [task, data] = performTTSInference(
+      async () => null,
+      textInput,
+      {},
+      new AbortController(),
+    );
+
+    await task.result;
+
+    expect(data.error).toBeNull();
+    await expect(data.timedTextsFut.await).resolves.toBeNull();
+    await expect(data.audioStream.getReader().read()).resolves.toEqual({
+      value: undefined,
+      done: true,
+    });
+  });
+
   it('performTTSInference completes when TTS node returns stalled stream', async () => {
     const stalledTtsStream = new ReadableStream<AudioFrame>({
       start(controller) {

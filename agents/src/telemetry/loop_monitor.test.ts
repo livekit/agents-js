@@ -196,6 +196,24 @@ describe.sequential('event loop monitor', () => {
   });
 
   it('attributes garbage collection pauses inside a block', async () => {
+    // Heavy allocation can exhaust a constrained CI CPU quota and starve the watchdog too,
+    // making this synthetic block look like host contention. This test only covers GC accounting.
+    monitor.stop();
+    reports = [];
+    monitor = new EventLoopMonitor({
+      warnThreshold: WARN,
+      errorThreshold: ERROR,
+      tickInterval: TICK,
+      stacks: 'never',
+      watchdog: false,
+    });
+    monitor.onReport = (report) => reports.push(report);
+    const session = { rootSpanContext: trace.setSpan(ROOT_CONTEXT, sessionRoot) };
+    monitor.setReportContext(trace.setSpan(ROOT_CONTEXT, sessionRoot), (fn) =>
+      runWithJobContext(fakeJob(session), fn),
+    );
+    monitor.start();
+
     blockLoopWithGarbage(200);
     await settle();
     // the longest stall is the block above; a loaded host can add shorter ones around it

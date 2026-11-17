@@ -42,3 +42,18 @@ Two tools handle cart management:
 - `removeOrderItem` removes one or more items by `orderId`. Modifications, such as upsizing fries, are done by removing the old item and re-adding it with the new parameters.
 
 `maxToolSteps=10` is set on the session to give the agent enough budget to call `listOrderItems` followed by `removeOrderItem` in a single turn when needed.
+
+### Simulations
+
+`scenarios.yaml` holds scenarios that run the agent against a simulated customer, covering ordering, removal, combos, sizes, quantities, unavailable items, and tool failures. Build the repository and run them from the repo root:
+
+```bash
+pnpm build
+lk agent simulate text examples/dist/drive-thru/drivethru_agent.js --scenarios examples/src/drive-thru/scenarios.yaml
+```
+
+All simulation glue lives in `simulation.ts`. Each scenario's `userdata` can set:
+
+- `expectedOrder`: the items the order must hold when the run ends (order IDs are ignored). `onSimulationEnd` fails the run on a mismatch, even if the simulator passed it.
+- `unavailableItems`: menu item IDs marked unavailable before the agent starts.
+- `failingTools`: tools that throw instead of running, mocked only on the scenario's live session.

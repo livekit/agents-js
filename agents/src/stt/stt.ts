@@ -124,6 +124,12 @@ export interface SpeechEvent {
 }
 
 /**
+ * @internal Placed in a {@link SpeechStream}'s input audio to flush the stream once the audio
+ * before it has been pushed.
+ */
+export const _FLUSH_MARKER = Symbol('stt_flush_marker');
+
+/**
  * Describes the capabilities of the STT provider.
  *
  * @remarks
@@ -132,6 +138,17 @@ export interface SpeechEvent {
 export interface STTCapabilities {
   streaming: boolean;
   interimResults: boolean;
+  /**
+   * Whether the STT supports flushing the stream to finalize a segment.
+   *
+   * When enabled, manual turn commits request a flush. With a turn detector, automatic flushing
+   * occurs immediately for positive or unavailable end-of-turn predictions, or halfway through
+   * the maximum endpointing delay for negative ones. Without a turn detector, VAD end of speech
+   * requests the flush. Text-based end-of-turn detection uses final transcripts only, so flushing
+   * precedes its first prediction if no final transcript is available. Disable this for custom
+   * STT nodes that buffer audio and manage flushing themselves.
+   */
+  manualFlush?: boolean;
   /**
    * Whether this STT supports aligned transcripts with word/chunk timestamps.
    * - 'word': Provider returns word-level timestamps
@@ -454,7 +471,11 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        this.pushFrame(value);
+        if ((value as unknown) === _FLUSH_MARKER) {
+          this.flush();
+        } else {
+          this.pushFrame(value);
+        }
       }
     } catch (error) {
       this.logger.error('Error in STTStream mainTask:', error);
@@ -506,6 +527,11 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
   }
 
   protected abstract run(): Promise<void>;
+
+  /** Mark meaningful provider activity so a healthy stream does not exhaust its retry budget. */
+  protected markProviderProgress(): void {
+    this._numRetries = 0;
+  }
 
   protected get abortSignal(): AbortSignal {
     return this.abortController.signal;
