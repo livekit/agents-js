@@ -1,0 +1,104 @@
+agents/src/download.ts
+  s_64f4ed07eec395::t_82395e03e1c2e6 168-171
+  s_64f4ed07eec395::t_520b4bd6c3e38e 151,163
+plugins/deepgram/src/tts.ts
+  s_64f4ed07eec395::t_1da5c30c8e069b 285
+plugins/cartesia/src/stt.ts
+  s_64f4ed07eec395::t_520b4bd6c3e38e 404,501,526
+plugins/inworld/src/stt.ts
+  s_64f4ed07eec395::t_5e98801bfeefa8 328-331
+agents/src/telemetry/pino_otel_transport.ts
+  s_64f4ed07eec395::t_f2625abefd5800 13,19-21,95,99-100,227
+agents/src/telemetry/traces.ts
+  s_64f4ed07eec395::t_f918bfefb36e17 45,430-432,866-868
+agents/src/worker.ts
+  s_64f4ed07eec395::t_4e5d8ac0898009 780
+plugins/assemblyai/src/tts.ts
+  s_64f4ed07eec395::t_7a90c7eaafd558 1035,1039
+agents/src/telemetry/pino_otel_transport.test.ts
+  s_64f4ed07eec395::t_09f9421bd3c26f 108,122-123
+  s_64f4ed07eec395::t_afeb0adcbe5366 4,64,74-86,88-107,109-121
+plugins/baseten/src/stt.ts
+  s_64f4ed07eec395::t_6932f652d88d42 138,144
+  s_64f4ed07eec395::t_520b4bd6c3e38e 137,143
+package.json
+  s_64f4ed07eec395::t_e2689bcc734f5b 17
+plugins/assemblyai/src/stt.ts
+  s_64f4ed07eec395::t_520b4bd6c3e38e 485,491
+  s_64f4ed07eec395::t_2d64280bdfc818 486,492,602
+plugins/openai/src/stt.ts
+  s_64f4ed07eec395::t_236a5802795224 17,745
+plugins/deepgram/src/stt_v2.ts
+  s_64f4ed07eec395::t_e69bd80e4f71d8 544-547
+  s_64f4ed07eec395::t_520b4bd6c3e38e 539
+agents/src/inference/avatar.ts
+  s_64f4ed07eec395::t_80f4dd1d99e130 456
+agents/package.json
+  s_64f4ed07eec395::t_0b10d62686e1e1 48
+agents/src/bin/livekit-agents.ts
+  s_64f4ed07eec395::t_f4fb374cc587c7 7,27-28
+agents/src/ipc/inference_proc_lazy_main.ts
+  s_64f4ed07eec395::t_520b4bd6c3e38e 112
+agents/src/vad.ts
+  s_64f4ed07eec395::t_edc64284493910 153
+.changeset/quiet-errors-redacted.md
+  s_64f4ed07eec395::t_60d8581be3f75a 1-17
+agents/src/cli_client.ts
+  s_64f4ed07eec395::t_bfd87c4c24bef0 64,69
+scripts/checkExceptionLogging.js
+  s_64f4ed07eec395::t_eb78efb2a77458 25-27
+  s_64f4ed07eec395::t_eafd5cafcdaa7e 1-11,13-24,28-82,88-118
+  s_64f4ed07eec395::t_60d8581be3f75a 12,83-87
+plugins/google/src/realtime/realtime_api.ts
+  s_64f4ed07eec395::t_23395635440b54 1219-1222,1291,1427,1550
+  s_64f4ed07eec395::t_520b4bd6c3e38e 1180,1897
+plugins/azure/src/stt.ts
+  s_64f4ed07eec395::t_42557f16b65268 424,426
+agents/src/cli.ts
+  s_64f4ed07eec395::t_52e48bda13701d 70,91,273,317
+  s_64f4ed07eec395::t_520b4bd6c3e38e 303
+plugins/deepgram/src/stt.ts
+  s_64f4ed07eec395::t_f816e76d7a8748 400,406
+  s_64f4ed07eec395::t_520b4bd6c3e38e 399,405
+agents/src/inference/tts.ts
+  s_64f4ed07eec395::t_520b4bd6c3e38e 942-943,945
+  s_64f4ed07eec395::t_074da23861390a 944
+plugins/resemble/src/tts.ts
+  s_64f4ed07eec395::t_520b4bd6c3e38e 164
+agents/src/inference/stt.ts
+  s_64f4ed07eec395::t_520b4bd6c3e38e 1210-1211,1213
+  s_64f4ed07eec395::t_0dc92b0cc4d066 1212
+plugins/sarvam/src/stt.ts
+  s_64f4ed07eec395::t_eda7256e309073 655
+agents/src/llm/openai_realtime/realtime_model.ts
+  s_64f4ed07eec395::t_9627324d1d7c3c 724,736
+agents/src/audio.ts
+  s_64f4ed07eec395::t_f8254e7730925a 189
+agents/src/voice/audio_recognition.ts
+  s_64f4ed07eec395::t_520b4bd6c3e38e 2420
+  s_64f4ed07eec395::t_2e16f10a3c1c76 950,1250,2199,2204,2621,2632,2652
+agents/src/stt/stt.ts
+  s_64f4ed07eec395::t_520b4bd6c3e38e 481
+agents/src/voice/agent_activity.ts
+  s_64f4ed07eec395::t_520b4bd6c3e38e 1034,2091
+  s_64f4ed07eec395::t_d82655ee8795ae 278
+scripts/checkExceptionLogging.test.ts
+  s_64f4ed07eec395::t_60d8581be3f75a 17,27,30,34-51
+  s_64f4ed07eec395::t_438d6e68266a45 1-16,18-26,28-29,31-33
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "19b12dec02f9b08dfd8fbe7289c6b70654fb336b",
+  "prompts": {},
+  "sessions": {
+    "s_64f4ed07eec395": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1e9f7-b2d8-7663-a1e4-d6ecad76c415",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
