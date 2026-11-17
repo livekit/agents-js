@@ -2,12 +2,14 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { MultiMutex, Mutex } from '@livekit/mutex';
+import type { JobJoinTiming } from '@livekit/protocol';
 import { type Throws, ThrowsPromise } from '@livekit/throws-transformer/throws';
 import type { RunningJobInfo } from '../job.js';
 import { Queue } from '../utils.js';
 import type { InferenceExecutor } from './inference_executor.js';
 import type { JobExecutor } from './job_executor.js';
 import { JobProcExecutor } from './job_proc_executor.js';
+import { monotonicUs } from './job_trace.js';
 
 type ProcPoolOptions = {
   agent: string;
@@ -18,6 +20,8 @@ type ProcPoolOptions = {
   inferenceExecutor?: InferenceExecutor;
   memoryWarnMB: number;
   memoryLimitMB: number;
+  /** A job was launched, connected (with its join instants) or ended: report its status. */
+  onJobUpdate?: (proc: JobExecutor, joinTiming?: JobJoinTiming) => void;
 };
 
 export class ProcPool {
@@ -37,6 +41,7 @@ export class ProcPool {
   inferenceExecutor?: InferenceExecutor;
   memoryWarnMB: number;
   memoryLimitMB: number;
+  onJobUpdate?: (proc: JobExecutor, joinTiming?: JobJoinTiming) => void;
 
   constructor({
     agent,
@@ -47,6 +52,7 @@ export class ProcPool {
     inferenceExecutor,
     memoryWarnMB,
     memoryLimitMB,
+    onJobUpdate,
   }: ProcPoolOptions) {
     this.agent = agent;
     if (numIdleProcesses > 0) {
@@ -58,6 +64,7 @@ export class ProcPool {
     this.inferenceExecutor = inferenceExecutor;
     this.memoryWarnMB = memoryWarnMB;
     this.memoryLimitMB = memoryLimitMB;
+    this.onJobUpdate = onJobUpdate;
   }
 
   get processes(): JobExecutor[] {
@@ -70,7 +77,10 @@ export class ProcPool {
 
   async launchJob(info: RunningJobInfo): Promise<Throws<void, Error>> {
     let proc: JobExecutor;
+    // get() takes an idle process before its first await, so no other job races this
+    let warm = false;
     if (this.procMutex) {
+      warm = this.warmedProcQueue.items.length > 0;
       const entry = await this.warmedProcQueue.get();
       proc = entry.proc;
       // Release exactly the slot that produced this warmed process.
@@ -86,6 +96,7 @@ export class ProcPool {
         pingInterval: 2500,
         pingTimeout: 60000,
         highPingThreshold: 500,
+        onJoinTiming: (timing) => this.onJobUpdate?.(proc, timing),
       });
       this.executors.push(proc);
       await proc.start();
@@ -93,11 +104,15 @@ export class ProcPool {
     }
     // dispatch timeline: a warm process is now handling this job
     info.launchedAt = Date.now();
+    info.launchedMonoUs = monotonicUs();
+    info.launchedWarm = warm;
     await proc.launchJob(info);
+    this.onJobUpdate?.(proc);
+    void proc.join().then(() => this.onJobUpdate?.(proc));
   }
 
   async procWatchTask(procUnlock: () => void) {
-    const proc = new JobProcExecutor({
+    const proc: JobProcExecutor = new JobProcExecutor({
       agent: this.agent,
       inferenceExecutor: this.inferenceExecutor,
       initializeTimeout: this.initializeTimeout,
@@ -107,6 +122,7 @@ export class ProcPool {
       pingInterval: 2500,
       pingTimeout: 60000,
       highPingThreshold: 500,
+      onJoinTiming: (timing) => this.onJobUpdate?.(proc, timing),
     });
 
     try {

@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { AgentSession as pb } from '@livekit/protocol';
 import type { Room } from '@livekit/rtc-node';
+import { EventEmitter } from 'node:events';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { InferenceExecutor } from '../ipc/inference_executor.js';
 import {
@@ -14,15 +15,22 @@ import {
 import { ChatMessage } from '../llm/chat_context.js';
 import { initializeLogger, log } from '../log.js';
 import type { SimulationContext } from '../simulation.js';
-import { Future } from '../utils.js';
+import { Future, waitUntilTimeout } from '../utils.js';
 import type { AgentSession } from './agent_session.js';
+import { AgentSessionEventTypes, CloseReason, createCloseEvent } from './events.js';
 import { FinalizeSimulationError } from './index.js';
-import { RemoteSession, SessionHost, SessionTransport } from './remote_session.js';
+import {
+  NO_ACTIVE_SESSION_ERROR,
+  RemoteSession,
+  SessionHost,
+  SessionTransport,
+} from './remote_session.js';
 import {
   InMemoryTransport as FakeTransport,
   InMemoryTransport as Transport,
   createConnectedTransportPair,
   messageEvent,
+  pingMessage,
 } from './testing/remote_session.js';
 
 beforeAll(() => initializeLogger({ pretty: false, level: 'warn' }));
@@ -36,6 +44,7 @@ afterEach(async () => {
 const FORWARDED_EVENTS = new Set([
   'agent_false_interruption',
   'agent_state_changed',
+  'close',
   'conversation_item_added',
   'debug_message',
   'eot_prediction',
@@ -129,6 +138,142 @@ describe('SessionHost event forwarding', () => {
 
     const unsubscribed = new Set(off.mock.calls.map(([event]) => event));
     expect(unsubscribed).toEqual(FORWARDED_EVENTS);
+  });
+});
+
+describe('SessionHost without an attached session', () => {
+  it('refuses a session request', async () => {
+    const transport = new FakeTransport();
+    const host = new SessionHost(transport);
+    await host.start();
+
+    transport.push(pingMessage('p1'));
+    await vi.waitFor(() => expect(transport.sent.length).toBe(1));
+
+    const resp = transport.sent[0]!.message.value as pb.SessionResponse;
+    expect(resp.requestId).toBe('p1');
+    expect(resp.error).toBe(NO_ACTIVE_SESSION_ERROR);
+    await host.close();
+  });
+
+  it('still answers finalizeSimulation once the session has detached', async () => {
+    const ctx = fakeSimJobContext((simCtx) => simCtx.fail('verdict after hangup'));
+    const transport = new FakeTransport();
+    const host = new SessionHost(transport);
+    host.registerSession({ on: vi.fn(), off: vi.fn() } as unknown as AgentSession);
+    await runWithJobContextAsync(ctx, async () => host.start());
+    host.unregisterSession();
+
+    transport.push(finalizeMessage('f1', true, 'ok'));
+    await host._waitForSimulationFinalized();
+
+    const value = (transport.sent[0]!.message.value as pb.SessionResponse).response
+      .value as pb.SessionResponse_FinalizeSimulationResponse;
+    expect(value.userVerdict?.reason).toBe('verdict after hangup');
+    await host.close();
+  });
+
+  it('ends the finalize wait even when the reply fails to send', async () => {
+    // the job waits on this before it shuts down; a reply the transport can't deliver must
+    // not hold the shutdown for the whole sessionEndTimeout
+    class BrokenTransport extends FakeTransport {
+      override async sendMessage(): Promise<void> {
+        throw new Error('room session transport is closed');
+      }
+    }
+    const ctx = fakeSimJobContext((simCtx) => simCtx.fail('verdict after hangup'));
+    const transport = new BrokenTransport();
+    const host = new SessionHost(transport);
+    await runWithJobContextAsync(ctx, async () => host.start());
+
+    transport.push(finalizeMessage('f1', true, 'ok'));
+    await expect(
+      waitUntilTimeout(host._waitForSimulationFinalized(), 1_000),
+    ).resolves.toBeUndefined();
+    await host.close();
+  });
+
+  it('stops forwarding a detached session', () => {
+    const off = vi.fn();
+    const session = { on: vi.fn(), off } as unknown as AgentSession;
+    const host = new SessionHost(new FakeTransport());
+
+    host.registerSession(session);
+    host.unregisterSession();
+
+    expect(new Set(off.mock.calls.map(([event]) => event))).toEqual(FORWARDED_EVENTS);
+    expect(host.attachedSession).toBeUndefined();
+  });
+});
+
+describe('SessionHost session_closed', () => {
+  it('tells the client the attached session closed, and why', async () => {
+    const [clientTransport, hostTransport] = createConnectedTransportPair();
+    const session = new EventEmitter();
+    const host = new SessionHost(hostTransport);
+    host.registerSession(session as unknown as AgentSession);
+    await host.start();
+    const client = new RemoteSession(clientTransport);
+    await client.start();
+    const closed = new Promise<pb.AgentSessionEvent_SessionClosed>((resolve) =>
+      client.once('session_closed', resolve),
+    );
+
+    session.emit(AgentSessionEventTypes.Close, createCloseEvent(CloseReason.USER_INITIATED, null));
+
+    expect((await closed).reason).toBe(pb.CloseReason.CR_USER_INITIATED);
+    await client.close();
+    await host.close();
+  });
+});
+
+describe('SessionHost send order', () => {
+  it('sends the reply to a run the close cut short after session_closed', async () => {
+    // an event still on the wire holds back everything sent after it, as the real
+    // transports' FIFO send lock does
+    class SlowEventsTransport extends FakeTransport {
+      private wire: Promise<void> = Promise.resolve();
+      override sendMessage(msg: pb.AgentSessionMessage): Promise<void> {
+        const sent = this.wire.then(async () => {
+          if (msg.message.case === 'event') await new Promise((r) => setTimeout(r, 10));
+          await super.sendMessage(msg);
+        });
+        this.wire = sent.catch(() => {});
+        return sent;
+      }
+    }
+    const transport = new SlowEventsTransport();
+    let failRun!: (error: Error) => void;
+    const run = new Promise<void>((_, reject) => {
+      failRun = reject;
+    });
+    const session = Object.assign(new EventEmitter(), {
+      interrupt: () => ({ await: Promise.resolve() }),
+      run: () => ({ wait: () => run, events: [] }),
+    });
+    const host = new SessionHost(transport);
+    host.registerSession(session as unknown as AgentSession);
+    await host.start();
+
+    transport.push(
+      new pb.AgentSessionMessage({
+        message: {
+          case: 'request',
+          value: new pb.SessionRequest({
+            requestId: 'r1',
+            request: { case: 'runInput', value: new pb.SessionRequest_RunInput({ text: 'bye' }) },
+          }),
+        },
+      }),
+    );
+    await new Promise((r) => setTimeout(r, 0));
+    session.emit(AgentSessionEventTypes.Close, createCloseEvent(CloseReason.USER_INITIATED, null));
+    failRun(new Error('session closed'));
+    await vi.waitFor(() => expect(transport.sent.length).toBe(2));
+
+    expect(transport.sent.map((m) => m.message.case)).toEqual(['event', 'response']);
+    expect((transport.sent[1]!.message.value as pb.SessionResponse).error).toBe('session closed');
+    await host.close();
   });
 });
 

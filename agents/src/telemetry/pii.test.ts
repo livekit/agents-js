@@ -34,6 +34,8 @@ const SAFE_ATTRS: Attributes = {
   [traceTypes.ATTR_GEN_AI_OPERATION_NAME]: 'chat',
   [traceTypes.ATTR_GEN_AI_USAGE_INPUT_TOKENS]: 100,
   [traceTypes.ATTR_SPEECH_ID]: 'speech_1',
+  [traceTypes.ATTR_EOU_MODEL]: 'turn-detector-v1',
+  [traceTypes.ATTR_EOU_PROVIDER]: 'livekit',
 };
 
 function emit(options: { redaction?: boolean; exporterFirst?: boolean; allowPii?: boolean }) {

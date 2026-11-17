@@ -11,6 +11,7 @@ import { getJobContext } from '../../job.js';
 import { log } from '../../log.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../../types.js';
 import { isDevMode, isHosted, resolveEnvVar } from '../../utils.js';
+import { _getLocalInferenceModule } from '../_warmup.js';
 import { getDefaultInferenceUrl } from '../utils.js';
 import {
   BaseStreamingTurnDetector,
@@ -31,7 +32,7 @@ export interface TurnDetectorOptions {
    * auto-selects `'v1'` on hosted/dev environments (falling back to `'v1-mini'`
    * if cloud creds are missing) and `'v1-mini'` otherwise. The worker still
    * preloads the mini weights unless `LIVEKIT_AGENTS_PRELOAD_LOCAL_INFERENCE=0`
-   * is set.
+   * is set. The shared inference process holds approximately 450 MB of mini model weights.
    */
   version?: TurnDetectorVersion;
   unlikelyThreshold?: number | Record<string, number>;
@@ -140,6 +141,9 @@ export class TurnDetector extends BaseStreamingTurnDetector {
     // (the local model then resolves a positive default) rather than throwing.
     if (opts.executor !== undefined) {
       this._executor = opts.executor;
+    } else if (_getLocalInferenceModule() === undefined) {
+      // without the binding the inference process has no EOT runner
+      this._executor = undefined;
     } else {
       try {
         this._executor = getJobContext().inferenceExecutor;
@@ -423,7 +427,6 @@ export class TurnDetectorStreamImpl extends BaseStreamingTurnDetectorStream {
           return;
         }
         this._onLocalFailure(e);
-        return;
       }
     }
   }

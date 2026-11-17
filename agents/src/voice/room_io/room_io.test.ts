@@ -404,6 +404,7 @@ describe('RoomIO deleteRoomOnClose', () => {
     const deleteRoom = vi.fn(async () => {});
     vi.spyOn(jobModule, 'getJobContext').mockReturnValue({
       deleteRoom,
+      simulationContext: () => undefined,
     } as unknown as ReturnType<typeof jobModule.getJobContext>);
     const room = createFakeRoom();
     const session = createFakeSession();
@@ -431,6 +432,7 @@ describe('RoomIO deleteRoomOnClose', () => {
     const deleteRoom = vi.fn(async () => {});
     vi.spyOn(jobModule, 'getJobContext').mockReturnValue({
       deleteRoom,
+      simulationContext: () => undefined,
     } as unknown as ReturnType<typeof jobModule.getJobContext>);
     const room = createFakeRoom();
     const session = createFakeSession();
@@ -457,11 +459,41 @@ describe('RoomIO deleteRoomOnClose', () => {
     expect(deleteRoom).toHaveBeenCalledWith(room.name);
   });
 
+  it('defers the deletion to job shutdown under a simulation', async () => {
+    const room = createFakeRoom();
+    const deleteRoom = vi.fn(async () => {});
+    const addShutdownCallback = vi.fn();
+    const shutdown = vi.fn();
+    vi.spyOn(jobModule, 'getJobContext').mockReturnValue({
+      deleteRoom,
+      addShutdownCallback,
+      shutdown,
+      simulationContext: () => ({}),
+      room,
+    } as unknown as ReturnType<typeof jobModule.getJobContext>);
+    const session = createFakeSession();
+    const roomIO = new RoomIO({
+      agentSession: session as unknown as RoomIOArgs['agentSession'],
+      room: room as unknown as RoomIOArgs['room'],
+      inputOptions: { audioEnabled: false, textEnabled: false, deleteRoomOnClose: true },
+      outputOptions: { audioEnabled: false, transcriptionEnabled: false },
+    });
+
+    roomIO.start();
+    session.emit(AgentSessionEventTypes.Close, createCloseEvent(CloseReason.USER_INITIATED, null));
+    await roomIO.close();
+
+    expect(deleteRoom).not.toHaveBeenCalled();
+    expect(addShutdownCallback).toHaveBeenCalledOnce();
+    expect(shutdown).toHaveBeenCalledWith(CloseReason.USER_INITIATED);
+  });
+
   it('uses the job context captured at construction when close runs outside job context', async () => {
     const deleteRoom = vi.fn(async () => {});
     vi.spyOn(jobModule, 'getJobContext')
       .mockReturnValueOnce({
         deleteRoom,
+        simulationContext: () => undefined,
       } as unknown as ReturnType<typeof jobModule.getJobContext>)
       .mockReturnValue(undefined);
     const room = createFakeRoom();
@@ -493,6 +525,7 @@ describe('RoomIO deleteRoomOnClose', () => {
     const deleteRoom = vi.fn(() => new Promise<void>(() => {}));
     vi.spyOn(jobModule, 'getJobContext').mockReturnValue({
       deleteRoom,
+      simulationContext: () => undefined,
     } as unknown as ReturnType<typeof jobModule.getJobContext>);
     const room = createFakeRoom();
     const session = createFakeSession();

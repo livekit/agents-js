@@ -7,9 +7,10 @@
 import { AgentSession as AgentSession_2 } from '@livekit/protocol';
 import { AudioFrame } from '@livekit/rtc-node';
 import { AudioResampler } from '@livekit/rtc-node';
-import type { Context } from '@opentelemetry/api';
+import { Context } from '@opentelemetry/api';
 import { EventEmitter } from 'events';
 import { EventEmitter as EventEmitter_2 } from 'node:events';
+import type { EventMap } from '@livekit/typed-emitter';
 import { FrameProcessor } from '@livekit/rtc-node';
 import { JsonObject } from '@bufbuild/protobuf';
 import type { JSONSchema7 } from 'json-schema';
@@ -24,7 +25,7 @@ import { RemoteParticipant } from '@livekit/rtc-node';
 import { RemoteTrackPublication } from '@livekit/rtc-node';
 import { Room } from '@livekit/rtc-node';
 import { RpcInvocationData } from '@livekit/rtc-node';
-import type { Span } from '@opentelemetry/api';
+import { Span } from '@opentelemetry/api';
 import type { TextStreamInfo } from '@livekit/rtc-node';
 import { Throws } from '@livekit/throws-transformer/throws';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
@@ -72,12 +73,14 @@ export interface AvatarSessionOptions {
     agentPrompt?: string | null;
     apiKey?: string;
     apiUrl?: string;
+    audioSampleRate?: number;
     avatarParticipantIdentity?: string;
     avatarParticipantName?: string;
     // Warning: (ae-forgotten-export) The symbol "APIConnectOptions" needs to be exported by the entry point index.d.ts
     connOptions?: APIConnectOptions;
     extraPayload?: Record<string, unknown> | null;
     idleTimeout?: number | null;
+    model?: string | null;
 }
 
 // Warning: (ae-missing-release-tag) "LemonSliceException" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)

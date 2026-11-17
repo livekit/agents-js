@@ -8,6 +8,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   RealtimeModel,
   RealtimeSession,
+  goAwayTimeLeftMs,
   replyTurns,
   toClientContentParams,
 } from './realtime_api.js';
@@ -679,6 +680,15 @@ describe('Google Realtime client content params', () => {
       turns,
       turnComplete: false,
     });
+  });
+});
+
+describe('Google Realtime goAway', () => {
+  it('parses the Duration string the server sends', () => {
+    expect(goAwayTimeLeftMs('300s')).toBe(300_000);
+    expect(goAwayTimeLeftMs('0.5s')).toBe(500);
+    expect(goAwayTimeLeftMs(undefined)).toBe(0);
+    expect(goAwayTimeLeftMs('soon')).toBe(0);
   });
 });
 

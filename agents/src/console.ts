@@ -19,7 +19,7 @@ import { log } from './log.js';
 import { Future, shortuuid } from './utils.js';
 import { AgentsConsole, TcpAudioInput, TcpAudioOutput } from './voice/console_io.js';
 import { TcpSessionTransport } from './voice/remote_session.js';
-import { defaultInitializeProcessFunc } from './worker.js';
+import { _maybeRegisterLocalEotRunner, defaultInitializeProcessFunc } from './worker.js';
 
 const formatErrorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
@@ -138,6 +138,7 @@ export async function runConsole({
     // worker path. Without any runners the fallback executor just raises if
     // reached.
     let inferenceExecutor: InferenceExecutor = new ConsoleInferenceExecutor();
+    _maybeRegisterLocalEotRunner();
     inferenceProc = InferenceProcExecutor.createIfNeeded();
     if (inferenceProc) {
       try {

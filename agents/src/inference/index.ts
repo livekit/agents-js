@@ -65,6 +65,9 @@ export {
   type DuplexModelOptions,
   type DuplexModels,
   type DuplexOptions,
+  type DecisionsOptions,
+  type DecisionsTrigger,
+  type DecisionEventEnvelope,
   type OpenAIDuplexOptions,
   type OpenAIResponsesOptions,
 } from './duplex.js';
@@ -91,6 +94,7 @@ export {
   normalizeTTSFallback,
   parseTTSModelString,
   TTS,
+  type FallbackActivatedEvent,
   type TTSFallbackModel,
   type TTSFallbackModelType,
   type TTSModels,

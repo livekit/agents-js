@@ -1,0 +1,11 @@
+// SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+//
+// SPDX-License-Identifier: MIT
+
+syntax = "proto3";
+
+package nvidia.riva;
+
+message RequestId {
+  string value = 1;
+}

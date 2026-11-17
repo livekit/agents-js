@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { JobJoinTiming } from '@livekit/protocol';
 import type { ChildProcess } from 'node:child_process';
 import { fork } from 'node:child_process';
 import { extname } from 'node:path';
@@ -21,22 +22,26 @@ export class JobProcExecutor extends SupervisedProc implements JobExecutor {
   #agent: string;
   #inferenceExecutor?: InferenceExecutor;
   #inferenceTasks: Promise<void>[] = [];
+  #onJoinTiming?: (timing: JobJoinTiming) => void;
 
   constructor({
     agent,
     inferenceExecutor,
+    onJoinTiming,
     ...opts
   }: ProcOpts & {
     agent: string;
     inferenceExecutor?: InferenceExecutor;
+    onJoinTiming?: (timing: JobJoinTiming) => void;
   }) {
     super(opts);
     this.#agent = agent;
     this.#inferenceExecutor = inferenceExecutor;
+    this.#onJoinTiming = onJoinTiming;
   }
 
   get status(): JobStatus {
-    if (this.#jobStatus) {
+    if (this.#jobStatus !== undefined) {
       return this.#jobStatus;
     }
     throw new Error('job status not available');
@@ -74,6 +79,9 @@ export class JobProcExecutor extends SupervisedProc implements JobExecutor {
       switch (msg.case) {
         case 'inferenceRequest':
           this.#inferenceTasks.push(this.#doInferenceTask(proc, msg.value));
+          break;
+        case 'joinTiming':
+          this.#onJoinTiming?.(JobJoinTiming.fromJson(msg.value));
       }
     });
   }
@@ -96,6 +104,14 @@ export class JobProcExecutor extends SupervisedProc implements JobExecutor {
       proc.send({ case: 'inferenceResponse', value: { requestId: req.requestId, data } });
     } catch (error) {
       proc.send({ case: 'inferenceResponse', value: { requestId: req.requestId, error } });
+    }
+  }
+
+  async join() {
+    await super.join();
+    // a killed process has no exit code
+    if (this.#runningJob) {
+      this.#jobStatus = this.proc?.exitCode === 0 ? JobStatus.SUCCESS : JobStatus.FAILED;
     }
   }
 

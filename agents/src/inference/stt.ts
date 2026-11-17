@@ -53,7 +53,7 @@ export type AssemblyaiModels =
   | 'assemblyai/universal-3-5-pro'
   | 'assemblyai/universal-3-6-pro';
 
-export type XaiSTTModels = 'xai/stt-1';
+export type XaiSTTModels = 'xai/stt-1' | 'xai/stt-2';
 
 export type SpeechmaticsModels =
   | 'speechmatics/enhanced'
@@ -342,6 +342,7 @@ const WORD_ALIGNED_MODELS = new Set([
   'assemblyai/universal-3-5-pro',
   'assemblyai/universal-3-6-pro',
   'xai/stt-1',
+  'xai/stt-2',
   'speechmatics/enhanced',
   'speechmatics/standard',
 ]);

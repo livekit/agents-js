@@ -9,6 +9,7 @@ import { AudioResampler } from '@livekit/rtc-node';
 import { Logger } from 'pino';
 import type { ReadableStream as ReadableStream_2 } from 'node:stream/web';
 import type { ReadableStreamDefaultReader as ReadableStreamDefaultReader_2 } from 'node:stream/web';
+import type { Span } from '@opentelemetry/api';
 import { TransformStream as TransformStream_2 } from 'node:stream/web';
 import type { TypedEventEmitter } from '@livekit/typed-emitter';
 import type { VideoFrame as VideoFrame_2 } from '@livekit/rtc-node';
@@ -154,8 +155,7 @@ export interface TTSOptions {
     baseURL: string;
     // (undocumented)
     bitRate: number;
-    // (undocumented)
-    bufferCharThreshold: number;
+    bufferCharThreshold?: number;
     deliveryMode?: DeliveryMode;
     // (undocumented)
     encoding: Encoding;
@@ -177,8 +177,6 @@ export interface TTSOptions {
     // (undocumented)
     timestampType?: TimestampType;
     // Warning: (ae-forgotten-export) The symbol "tokenize" needs to be exported by the entry point index.d.ts
-    //
-    // (undocumented)
     tokenizer?: tokenize.SentenceTokenizer;
     // (undocumented)
     voice: string;
