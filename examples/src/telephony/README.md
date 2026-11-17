@@ -24,14 +24,16 @@ To return at the first voicemail prediction, as one-shot AMD did, set
 `voicemailInstructions: null` (see [Customer-handled stages](#customer-handled-stages)).
 The application still decides whether to continue or end the call.
 
-The example hides `end_call` while AMD is active. After voicemail playback, it
+After voicemail playback, the example
 waits up to 10 seconds for another prompt (`voicemailIdleTimeout: 10_000`). AMD
 handles any post-message menu before it completes. Once the message has played,
 a goodbye from the box does not make the result `machine-unavailable`: AMD
 completes with the stage before it, `machine-vm` or, after a menu, `machine-ivr`.
-If the final result reports a played voicemail and no human, the application
-shuts down the job. It also shuts down when the machine cannot take a message.
-Human conversations can use `end_call` after AMD finishes.
+If the callee hung up (`participant_disconnected`) or `isError` is true, such as
+`cancelled` after `end_call` closed the session, the application shuts down the
+job. Otherwise, if the final result reports a played
+voicemail and no human, the application shuts down the job. It also shuts down
+when the machine cannot take a message.
 The shutdown callback deletes the room and disconnects the SIP participant.
 
 The example uses `BackgroundVoiceCancellation` from `@livekit/noise-cancellation-node`

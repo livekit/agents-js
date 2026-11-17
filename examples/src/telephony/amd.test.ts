@@ -82,9 +82,9 @@ interface Harness {
 type AgentActivity = NonNullable<AgentSession['_activity']>;
 
 const harness = await source.load<Harness>('voice/amd/amd_test_utils.js');
-const { DEFAULT_VOICEMAIL_INSTRUCTIONS } = await source.load<{
-  DEFAULT_VOICEMAIL_INSTRUCTIONS: string;
-}>('voice/amd/detector.js');
+const { createAMDCompletedEvent } = await source.load<{
+  createAMDCompletedEvent: (event: Omit<AMDCompletedEvent, 'type'>) => AMDCompletedEvent;
+}>('voice/amd/events.js');
 const {
   commit,
   endOfTurn,
@@ -177,6 +177,9 @@ describe('AMD telephony example', () => {
     'voicemail_menu',
     'voicemail_failed',
     'human_after_voicemail',
+    'hung_up',
+    'agent_ended',
+    'amd_failed',
     'disconnected',
     'missing',
     'timeout',
@@ -204,17 +207,32 @@ describe('AMD telephony example', () => {
           voicemail: AMDCategory.MACHINE_VM,
           voicemail_menu: AMDCategory.MACHINE_IVR,
           voicemail_failed: AMDCategory.MACHINE_VM,
+          hung_up: AMDCategory.UNCERTAIN,
+          agent_ended: AMDCategory.MACHINE_VM,
+          amd_failed: AMDCategory.UNCERTAIN,
         } as Record<string, agents.voice.AMDCategory>
       )[outcome] ?? AMDCategory.HUMAN;
-    const result: AMDCompletedEvent = {
-      type: 'amd_completed',
+    const reason =
+      (
+        {
+          hung_up: AMDReason.PARTICIPANT_DISCONNECTED,
+          // end_call closes the session, which cancels AMD
+          agent_ended: AMDReason.CANCELLED,
+          amd_failed: AMDReason.INTERNAL_ERROR,
+        } as Record<string, agents.voice.AMDReason>
+      )[outcome] ?? (category === AMDCategory.HUMAN ? AMDReason.FINISHED : AMDReason.IDLE_TIMEOUT);
+    // the SDK factory, so the event has isError
+    const result = createAMDCompletedEvent({
       category,
-      reason: category === AMDCategory.HUMAN ? AMDReason.FINISHED : AMDReason.IDLE_TIMEOUT,
-      voicemailMessagePlayed: ['voicemail', 'voicemail_menu', 'human_after_voicemail'].includes(
-        outcome,
-      ),
+      reason,
+      voicemailMessagePlayed: [
+        'voicemail',
+        'voicemail_menu',
+        'human_after_voicemail',
+        'agent_ended',
+      ].includes(outcome),
       lastPrediction: null,
-    };
+    });
     const detector = {
       on: vi.fn(),
       start: vi.fn(async () => detector),
@@ -273,10 +291,16 @@ describe('AMD telephony example', () => {
         'voicemail_menu',
         'voicemail_failed',
         'human_after_voicemail',
+        'hung_up',
+        'agent_ended',
+        'amd_failed',
       ].includes(outcome)
     ) {
       expect(detector.execute).toHaveBeenCalledOnce();
-      if (outcome === 'voicemail' || outcome === 'voicemail_menu') {
+      if (['hung_up', 'agent_ended', 'amd_failed'].includes(outcome)) {
+        // the call ended or AMD stopped first, even after a played voicemail message
+        expect(ctx.shutdown).toHaveBeenCalledExactlyOnceWith(result.reason);
+      } else if (outcome === 'voicemail' || outcome === 'voicemail_menu') {
         expect(ctx.shutdown).toHaveBeenCalledExactlyOnceWith('voicemail completed');
       } else {
         expect(ctx.shutdown).not.toHaveBeenCalled();
@@ -311,13 +335,9 @@ describe('AMD telephony example', () => {
       // Python patches only the tools' job context; AgentSession reads it at start
       jobContext.current = job;
       const activity = session._activity!;
-      responses(model).get(DEFAULT_VOICEMAIL_INSTRUCTIONS)!.toolCalls = [
-        { name: 'end_call', args: {} },
-      ];
       await commit(detector, session, classifier, { reply: true });
       classifier.prediction(1, AMDCategory.MACHINE_VM);
       let call = await waitFor(model.calls.get());
-      expect(toolIds(call).has('end_call')).toBe(false);
       await eventually(
         () => internals(detector).voicemailMessagePlayed && noPendingSpeech(activity),
       );
@@ -337,12 +357,6 @@ describe('AMD telephony example', () => {
         return;
       }
 
-      // The rejected tool call can produce an error follow-up before the next menu.
-      while (!model.calls.empty) {
-        call = await model.calls.get();
-        expect(toolIds(call).has('end_call')).toBe(false);
-      }
-
       const instructions = internals(detector)._getInstructions(AMDCategory.MACHINE_IVR);
       responses(model).set(instructions, {
         input: instructions,
@@ -358,7 +372,7 @@ describe('AMD telephony example', () => {
       await classifier.request();
       classifier.prediction(2, AMDCategory.MACHINE_IVR);
       call = await waitFor(model.calls.get());
-      expect(toolIds(call)).toEqual(new Set(['send_dtmf_events']));
+      expect(toolIds(call).has('send_dtmf_events')).toBe(true);
       // the tool's publish delay uses node:timers/promises, which fake timers do not advance:
       // let it pass in real time, as Python's virtual loop skips it
       await eventually(() =>

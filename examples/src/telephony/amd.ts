@@ -3,13 +3,11 @@
 // SPDX-License-Identifier: Apache-2.0
 import {
   type JobContext,
-  type ModelSettings,
   ServerOptions,
   beta,
   cli,
   defineAgent,
   inference,
-  type llm,
   log,
   voice,
 } from '@livekit/agents';
@@ -46,25 +44,13 @@ export class MyAgent extends voice.Agent {
       ],
     });
   }
-
-  override async llmNode(
-    chatCtx: llm.ChatContext,
-    toolCtx: llm.ToolContext,
-    modelSettings: ModelSettings,
-  ) {
-    if (this.session.amd !== null) {
-      // edit in place: the same context executes the tool calls
-      toolCtx.updateTools(toolCtx.tools.filter((tool) => tool.id !== 'end_call'));
-    }
-    return voice.Agent.default.llmNode(this, chatCtx, toolCtx, modelSettings);
-  }
 }
 
 export async function entry(ctx: JobContext): Promise<void> {
   const logger = log().child({ room: ctx.room.name });
   const session = new voice.AgentSession({
     stt: new inference.STT({ model: 'deepgram/nova-3', language: 'multi' }),
-    llm: new inference.LLM({ model: 'openai/gpt-4.1-mini' }),
+    llm: new inference.LLM({ model: 'google/gemma-4-31b-it' }),
     tts: new inference.TTS({
       model: 'cartesia/sonic-3',
       voice: '9626c31c-bec5-4cca-baa8-f8ba9e84c8bc',
@@ -138,7 +124,11 @@ export async function entry(ctx: JobContext): Promise<void> {
     await detector.aclose();
   }
 
-  if (result.voicemailMessagePlayed && result.category !== voice.AMDCategory.HUMAN) {
+  if (result.isError || result.reason === voice.AMDReason.PARTICIPANT_DISCONNECTED) {
+    // the callee hung up, or AMD stopped without detecting the call, such as when
+    // end_call closed the session (cancelled)
+    ctx.shutdown(result.reason);
+  } else if (result.voicemailMessagePlayed && result.category !== voice.AMDCategory.HUMAN) {
     ctx.shutdown('voicemail completed');
   } else if (result.category === voice.AMDCategory.MACHINE_UNAVAILABLE) {
     ctx.shutdown('machine unavailable');
