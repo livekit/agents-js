@@ -163,6 +163,7 @@ const validate = (opts: Partial<TTSOptions>): void => {
 export class TTS extends tts.TTS {
   #opts: ResolvedTTSOptions;
   #streams = new Set<SynthesizeStream>();
+  #closed = false;
   /** Pooled Finesse connections. */
   pool: ConnectionPool<WebSocket>;
   label = 'finesse.TTS';
@@ -243,6 +244,11 @@ export class TTS extends tts.TTS {
     return new ChunkedStream(this, text, connOptions, abortSignal);
   }
 
+  /** @internal The current options, copied so a later updateOptions() doesn't change them. */
+  _options(): ResolvedTTSOptions {
+    return { ...this.#opts };
+  }
+
   stream(options?: { connOptions?: APIConnectOptions }): SynthesizeStream {
     const stream = new SynthesizeStream(this, { ...this.#opts }, options?.connOptions);
     this.#streams.add(stream);
@@ -264,6 +270,8 @@ export class TTS extends tts.TTS {
   }
 
   async close(): Promise<void> {
+    // A handshake still in flight checks this once it opens, so its socket never joins the pool.
+    this.#closed = true;
     for (const stream of this.#streams) {
       stream.close();
     }
@@ -283,6 +291,12 @@ export class TTS extends tts.TTS {
     try {
       // A refused handshake reports only its status code, never the request headers.
       await waitForWebSocketOpen(ws, 'Finesse');
+      if (this.#closed) {
+        throw new APIConnectionError({
+          message: 'Finesse TTS was closed',
+          options: { retryable: false },
+        });
+      }
       // Between syntheses a pooled socket has no other listeners: the no-op error listener stops
       // an idle error from crashing the process, and a socket that closes while idle leaves the
       // pool so the next synthesis doesn't pick it up.
@@ -316,33 +330,48 @@ export class TTS extends tts.TTS {
 /** Synthesize a whole text as one Finesse context. */
 export class ChunkedStream extends tts.ChunkedStream {
   label = 'finesse.ChunkedStream';
+  #logger = log();
   #tts: TTS;
+  #opts: ResolvedTTSOptions;
   #text: string;
   #connOptions: APIConnectOptions;
+  #callerSignal?: AbortSignal;
 
   constructor(tts: TTS, text: string, connOptions?: APIConnectOptions, abortSignal?: AbortSignal) {
     super(text, tts, connOptions, abortSignal);
     this.#tts = tts;
+    this.#opts = tts._options();
     this.#text = text;
     this.#connOptions = connOptions ?? DEFAULT_API_CONNECT_OPTIONS;
+    this.#callerSignal = abortSignal;
   }
 
+  // One context, run here directly rather than through a SynthesizeStream: the base class's
+  // retries, error reporting and usage metrics then apply once, to this stream.
   protected async run(): Promise<void> {
-    const stream = this.#tts.stream({ connOptions: this.#connOptions });
-    const onAbort = () => stream.close();
-    this.abortSignal.addEventListener('abort', onAbort, { once: true });
-
+    // A signal that was already aborted never fires its listener, so check it here.
+    if (this.abortSignal.aborted || this.#callerSignal?.aborted) return;
+    let emittedAudio = false;
     try {
-      stream.pushText(this.#text);
-      stream.endInput();
-
-      for await (const audio of stream) {
-        if (audio === tts.SynthesizeStream.END_OF_STREAM) break;
-        this.queue.put(audio);
-      }
-    } finally {
-      this.abortSignal.removeEventListener('abort', onAbort);
-      stream.close();
+      await runContext({
+        tts: this.#tts,
+        opts: this.#opts,
+        timeoutMs: this.#connOptions.timeoutMs,
+        abortSignal: this.abortSignal,
+        pieces: [this.#text],
+        inputEnded: () => true,
+        waitForInput: async () => {},
+        markStarted: () => {},
+        put: (audio) => {
+          this.queue.put(audio);
+          emittedAudio = true;
+        },
+        logger: this.#logger,
+      });
+    } catch (e) {
+      if (this.abortSignal.aborted) return;
+      const error = toFinesseError(e);
+      throw emittedAudio && error.retryable ? notRetryable(error) : error;
     }
   }
 }
@@ -378,12 +407,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       await this.#attempt();
     } catch (e) {
       if (this.abortSignal.aborted) return;
-      const error =
-        e instanceof APIStatusError || e instanceof APIConnectionError
-          ? e
-          : new APIConnectionError({
-              message: `Finesse TTS failed (${e instanceof Error ? e.name : typeof e})`,
-            });
+      const error = toFinesseError(e);
       throw this.#emittedAudio && error.retryable ? notRetryable(error) : error;
     }
 
@@ -425,212 +449,258 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     });
   }
 
-  async #attempt(): Promise<void> {
-    const contextId = shortuuid();
-    const opts = this.#opts;
-    const bstream = new AudioByteStream(opts.sampleRate, NUM_CHANNELS);
-    let lastFrame: AudioFrame | undefined;
-
-    const sendLastFrame = (final: boolean) => {
-      if (lastFrame) {
-        this.queue.put({ requestId: contextId, segmentId: contextId, frame: lastFrame, final });
+  #attempt(): Promise<void> {
+    return runContext({
+      tts: this.#tts,
+      opts: this.#opts,
+      timeoutMs: this.connOptions.timeoutMs,
+      abortSignal: this.abortSignal,
+      pieces: this.#pieces,
+      inputEnded: () => this.#inputEnded,
+      waitForInput: (signal) => this.#waitForInput(signal),
+      markStarted: () => this.markStarted(),
+      put: (audio) => {
+        this.queue.put(audio);
         this.#emittedAudio = true;
-        lastFrame = undefined;
+      },
+      logger: this.#logger,
+    });
+  }
+}
+
+/** What one Finesse context needs from the stream that runs it. */
+interface ContextHost {
+  tts: TTS;
+  opts: ResolvedTTSOptions;
+  timeoutMs: number;
+  abortSignal: AbortSignal;
+  /** The text so far; it grows while the input is open. */
+  pieces: readonly string[];
+  inputEnded: () => boolean;
+  /** Wait until more input arrives, the input ends, or `signal` aborts. */
+  waitForInput: (signal: AbortSignal) => Promise<void>;
+  /** Called once the first text goes to the server. */
+  markStarted: () => void;
+  put: (audio: tts.SynthesizedAudio) => void;
+  logger: ReturnType<typeof log>;
+}
+
+/** Run one Finesse context on a pooled connection: send the text, emit its audio. */
+async function runContext(host: ContextHost): Promise<void> {
+  // Already aborted: don't connect or send anything.
+  if (host.abortSignal.aborted) return;
+  const contextId = shortuuid();
+  const { opts } = host;
+  const bstream = new AudioByteStream(opts.sampleRate, NUM_CHANNELS);
+  let lastFrame: AudioFrame | undefined;
+
+  const sendLastFrame = (final: boolean) => {
+    if (lastFrame) {
+      host.put({ requestId: contextId, segmentId: contextId, frame: lastFrame, final });
+      lastFrame = undefined;
+    }
+  };
+
+  await host.tts.pool.withConnection(
+    async (ws) => {
+      if (ws.readyState !== WebSocket.OPEN) {
+        throw new APIConnectionError({ message: 'Finesse connection closed while idle' });
       }
-    };
 
-    await this.#tts.pool.withConnection(
-      async (ws) => {
-        if (ws.readyState !== WebSocket.OPEN) {
-          throw new APIConnectionError({ message: 'Finesse connection closed while idle' });
+      const events = new AsyncIterableQueue<WebSocketEvent>();
+      // Stops this attempt's sender when the receiver fails or the stream is aborted.
+      const attempt = new AbortController();
+      // Resolves true once the context is open, or false if the input ended without text.
+      const opened = new Future<boolean>();
+      let finished = false;
+      let inputDone = false;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+
+      // The timeout only runs once the input is finalized: while the LLM is still writing
+      // (or calling a tool), the server can rightly have nothing to send.
+      const armTimer = () => {
+        if (timer) clearTimeout(timer);
+        if (inputDone) {
+          timer = setTimeout(() => events.put({ type: 'timeout' }), host.timeoutMs);
         }
+      };
 
-        const events = new AsyncIterableQueue<WebSocketEvent>();
-        // Stops this attempt's sender when the receiver fails or the stream is aborted.
-        const attempt = new AbortController();
-        // Resolves true once the context is open, or false if the input ended without text.
-        const opened = new Future<boolean>();
-        let finished = false;
-        let inputDone = false;
-        let timer: ReturnType<typeof setTimeout> | undefined;
-
-        // The timeout only runs once the input is finalized: while the LLM is still writing
-        // (or calling a tool), the server can rightly have nothing to send.
-        const armTimer = () => {
-          if (timer) clearTimeout(timer);
-          if (inputDone) {
-            timer = setTimeout(() => events.put({ type: 'timeout' }), this.connOptions.timeoutMs);
+      const onMessage = (data: RawData, isBinary: boolean) =>
+        events.put({ type: 'message', data, isBinary });
+      const onClose = (code: number) => events.put({ type: 'close', code });
+      const onError = (error: Error) => events.put({ type: 'error', error });
+      // The user interrupted the agent: stop the server synthesizing the turn right away.
+      const onAbort = () => {
+        attempt.abort();
+        if (opened.done && !finished) {
+          try {
+            ws.send(JSON.stringify({ type: 'task_cancel', context_id: contextId }));
+          } catch {
+            // the connection may already be gone, which stops the context too
           }
-        };
+        }
+      };
 
-        const onMessage = (data: RawData, isBinary: boolean) =>
-          events.put({ type: 'message', data, isBinary });
-        const onClose = (code: number) => events.put({ type: 'close', code });
-        const onError = (error: Error) => events.put({ type: 'error', error });
-        // The user interrupted the agent: stop the server synthesizing the turn right away.
-        const onAbort = () => {
-          attempt.abort();
-          if (opened.done && !finished) {
-            try {
-              ws.send(JSON.stringify({ type: 'task_cancel', context_id: contextId }));
-            } catch {
-              // the connection may already be gone, which stops the context too
-            }
-          }
-        };
+      ws.on('message', onMessage);
+      ws.on('close', onClose);
+      ws.on('error', onError);
+      host.abortSignal.addEventListener('abort', onAbort, { once: true });
+      if (host.abortSignal.aborted) onAbort();
 
-        ws.on('message', onMessage);
-        ws.on('close', onClose);
-        ws.on('error', onError);
-        this.abortSignal.addEventListener('abort', onAbort, { once: true });
-
-        const sendTask = async () => {
-          let isOpen = false;
-          // Leading whitespace waits for real text: the server rejects a context with none.
-          let pending = '';
-          let next = 0;
-          for (;;) {
-            while (next < this.#pieces.length) {
-              if (attempt.signal.aborted) return;
-              const data = this.#pieces[next++]!;
-              if (!isOpen) {
-                pending += data;
-                if (!pending.trim()) continue;
-                this.markStarted();
-                sendText(ws, opts, contextId, pending, { opened: false });
-                isOpen = true;
-                opened.resolve(true);
-              } else {
-                sendText(ws, opts, contextId, data, { opened: true });
-              }
-            }
-            if (this.#inputEnded) break;
-            await this.#waitForInput(attempt.signal);
-            if (attempt.signal.aborted) return;
-          }
-          if (isOpen) {
-            sendText(ws, opts, contextId, '', { opened: true, finalize: true });
-          }
-          inputDone = true;
-          armTimer();
+      const sendTask = async () => {
+        try {
+          await sendInput();
+        } finally {
+          // Stopped before any text: let the receiver finish instead of waiting forever.
           if (!opened.done) opened.resolve(false);
-        };
+        }
+      };
+      const sendInput = async () => {
+        let isOpen = false;
+        // Leading whitespace waits for real text: the server rejects a context with none.
+        let pending = '';
+        let next = 0;
+        for (;;) {
+          while (next < host.pieces.length) {
+            if (attempt.signal.aborted) return;
+            const data = host.pieces[next++]!;
+            if (!isOpen) {
+              pending += data;
+              if (!pending.trim()) continue;
+              host.markStarted();
+              sendText(ws, opts, contextId, pending, { opened: false });
+              isOpen = true;
+              opened.resolve(true);
+            } else {
+              sendText(ws, opts, contextId, data, { opened: true });
+            }
+          }
+          if (host.inputEnded()) break;
+          await host.waitForInput(attempt.signal);
+          if (attempt.signal.aborted) return;
+        }
+        if (isOpen) {
+          sendText(ws, opts, contextId, '', { opened: true, finalize: true });
+        }
+        inputDone = true;
+        armTimer();
+        if (!opened.done) opened.resolve(false);
+      };
 
-        const recvTask = async () => {
-          if (!(await opened.await)) return;
-          // Each binary frame belongs to the context named by the audio_chunk just before it.
-          let audioContext: string | undefined;
-          for await (const event of events) {
-            armTimer();
-            if (event.type === 'timeout') {
-              throw new APITimeoutError({ message: 'Finesse did not finish the turn in time' });
-            }
-            if (event.type === 'error') {
-              throw new APIConnectionError({
-                message: `Finesse WebSocket error (${event.error.name})`,
-              });
-            }
-            if (event.type === 'close') {
-              throw new APIStatusError({
-                message: 'Finesse connection closed unexpectedly',
-                options: {
-                  statusCode: event.code || -1,
-                  requestId: contextId,
-                  retryable: !NON_RETRYABLE_CLOSE_CODES.has(event.code),
-                },
-              });
-            }
+      const recvTask = async () => {
+        if (!(await opened.await)) return;
+        // Each binary frame belongs to the context named by the audio_chunk just before it.
+        let audioContext: string | undefined;
+        for await (const event of events) {
+          armTimer();
+          if (event.type === 'timeout') {
+            throw new APITimeoutError({ message: 'Finesse did not finish the turn in time' });
+          }
+          if (event.type === 'error') {
+            throw new APIConnectionError({
+              message: `Finesse WebSocket error (${event.error.name})`,
+            });
+          }
+          if (event.type === 'close') {
+            throw new APIStatusError({
+              message: 'Finesse connection closed unexpectedly',
+              options: {
+                statusCode: event.code || -1,
+                requestId: contextId,
+                retryable: !NON_RETRYABLE_CLOSE_CODES.has(event.code),
+              },
+            });
+          }
 
-            if (event.isBinary) {
-              if (audioContext === contextId) {
-                for (const frame of bstream.write(toBuffer(event.data))) {
-                  sendLastFrame(false);
-                  lastFrame = frame;
-                }
-              }
-              audioContext = undefined;
-              continue;
-            }
-
-            let data: Record<string, unknown>;
-            try {
-              data = JSON.parse(toBuffer(event.data).toString()) as Record<string, unknown>;
-            } catch {
-              this.#logger.warn('Unexpected non-JSON Finesse message');
-              continue;
-            }
-            const kind = data.type;
-            const eventContext = data.context_id;
-
-            if (kind === 'audio_chunk') {
-              audioContext = typeof eventContext === 'string' ? eventContext : undefined;
-            } else if (kind === 'error') {
-              // A fatal error ends the session; a non-fatal one only rejected one message.
-              if (data.fatal || eventContext === undefined || eventContext === contextId) {
-                throw eventError(data, contextId);
-              }
-            } else if (kind === 'session_ended') {
-              throw new APIStatusError({
-                message: 'Finesse session ended',
-                options: { requestId: contextId, body: { reason: identifier(data.reason) } },
-              });
-            } else if (eventContext !== contextId) {
-              continue;
-            } else if (kind === 'task_done') {
-              for (const frame of bstream.flush()) {
+          if (event.isBinary) {
+            if (audioContext === contextId) {
+              for (const frame of bstream.write(toBuffer(event.data))) {
                 sendLastFrame(false);
                 lastFrame = frame;
               }
-              sendLastFrame(true);
-              finished = true;
-              return;
-            } else if (kind === 'task_cancelled') {
-              // The plugin only cancels a context it has stopped reading, so this came from the
-              // server: the speech is incomplete.
-              throw new APIStatusError({
-                message: 'Finesse cancelled the context',
-                options: { requestId: contextId },
-              });
-            } else if (kind === 'task_failed') {
+            }
+            audioContext = undefined;
+            continue;
+          }
+
+          let data: Record<string, unknown>;
+          try {
+            data = JSON.parse(toBuffer(event.data).toString()) as Record<string, unknown>;
+          } catch {
+            host.logger.warn('Unexpected non-JSON Finesse message');
+            continue;
+          }
+          const kind = data.type;
+          const eventContext = data.context_id;
+
+          if (kind === 'audio_chunk') {
+            audioContext = typeof eventContext === 'string' ? eventContext : undefined;
+          } else if (kind === 'error') {
+            // A fatal error ends the session; a non-fatal one only rejected one message.
+            if (data.fatal || eventContext === undefined || eventContext === contextId) {
               throw eventError(data, contextId);
-            } else if (kind === 'task_started') {
-              if (data.sample_rate !== undefined && data.sample_rate !== opts.sampleRate) {
-                this.#logger.warn(
-                  { requested: opts.sampleRate, returned: data.sample_rate },
-                  'Finesse returned a different sample rate',
-                );
-              }
+            }
+          } else if (kind === 'session_ended') {
+            throw new APIStatusError({
+              message: 'Finesse session ended',
+              options: { requestId: contextId, body: { reason: identifier(data.reason) } },
+            });
+          } else if (eventContext !== contextId) {
+            continue;
+          } else if (kind === 'task_done') {
+            for (const frame of bstream.flush()) {
+              sendLastFrame(false);
+              lastFrame = frame;
+            }
+            sendLastFrame(true);
+            finished = true;
+            return;
+          } else if (kind === 'task_cancelled') {
+            // The plugin only cancels a context it has stopped reading, so this came from the
+            // server: the speech is incomplete.
+            throw new APIStatusError({
+              message: 'Finesse cancelled the context',
+              options: { requestId: contextId },
+            });
+          } else if (kind === 'task_failed') {
+            throw eventError(data, contextId);
+          } else if (kind === 'task_started') {
+            if (data.sample_rate !== undefined && data.sample_rate !== opts.sampleRate) {
+              host.logger.warn(
+                { requested: opts.sampleRate, returned: data.sample_rate },
+                'Finesse returned a different sample rate',
+              );
             }
           }
-        };
-
-        // If either side fails, stop the other and wait for it, so a failed attempt's sender
-        // can't keep running against a discarded socket.
-        const stopOnFailure = (task: Promise<void>) =>
-          task.catch((e: unknown) => {
-            attempt.abort();
-            throw e;
-          });
-        try {
-          const results = await Promise.allSettled([
-            stopOnFailure(recvTask()),
-            stopOnFailure(sendTask()),
-          ]);
-          const failed = results.find((r) => r.status === 'rejected');
-          if (failed) throw (failed as PromiseRejectedResult).reason;
-        } finally {
-          attempt.abort();
-          if (timer) clearTimeout(timer);
-          ws.off('message', onMessage);
-          ws.off('close', onClose);
-          ws.off('error', onError);
-          this.abortSignal.removeEventListener('abort', onAbort);
-          events.close();
         }
-      },
-      { timeout: this.connOptions.timeoutMs, signal: this.abortSignal },
-    );
-  }
+      };
+
+      // If either side fails, stop the other and wait for it, so a failed attempt's sender
+      // can't keep running against a discarded socket.
+      const stopOnFailure = (task: Promise<void>) =>
+        task.catch((e: unknown) => {
+          attempt.abort();
+          throw e;
+        });
+      try {
+        const results = await Promise.allSettled([
+          stopOnFailure(recvTask()),
+          stopOnFailure(sendTask()),
+        ]);
+        const failed = results.find((r) => r.status === 'rejected');
+        if (failed) throw (failed as PromiseRejectedResult).reason;
+      } finally {
+        attempt.abort();
+        if (timer) clearTimeout(timer);
+        ws.off('message', onMessage);
+        ws.off('close', onClose);
+        ws.off('error', onError);
+        host.abortSignal.removeEventListener('abort', onAbort);
+        events.close();
+      }
+    },
+    { timeout: host.timeoutMs, signal: host.abortSignal },
+  );
 }
 
 /** Build the `task_start` frame that opens a context. */
@@ -696,6 +766,14 @@ const eventError = (data: Record<string, unknown>, requestId: string): APIStatus
 /** A server-sent value, kept only if it is an identifier (so it can't carry speech). */
 const identifier = (value: unknown): string | undefined =>
   typeof value === 'string' && ERROR_CODE_RE.test(value) ? value : undefined;
+
+/** A thrown value as an APIStatusError or APIConnectionError. */
+const toFinesseError = (e: unknown): APIStatusError | APIConnectionError =>
+  e instanceof APIStatusError || e instanceof APIConnectionError
+    ? e
+    : new APIConnectionError({
+        message: `Finesse TTS failed (${e instanceof Error ? e.name : typeof e})`,
+      });
 
 /** The same error, marked not retryable. */
 const notRetryable = (

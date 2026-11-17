@@ -60,6 +60,8 @@ export class TTS extends tts.TTS {
     label: string;
     // (undocumented)
     get model(): string;
+    // @internal
+    _options(): ResolvedTTSOptions;
     // Warning: (ae-forgotten-export) The symbol "ConnectionPool" needs to be exported by the entry point index.d.ts
     pool: ConnectionPool<WebSocket_2>;
     // (undocumented)

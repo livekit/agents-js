@@ -53,6 +53,7 @@ class FakeFinesse {
   connections = 0;
   rejectStatus?: number;
   answerFinalize = true;
+  handshakeDelayMs = 0;
   onTask?: (ws: WebSocket, ctx: string) => void;
 
   async start(): Promise<void> {
@@ -62,6 +63,7 @@ class FakeFinesse {
       handleProtocols: (protocols) => (protocols.has('finesse.v1') ? 'finesse.v1' : false),
       verifyClient: (_info, done) => {
         if (this.rejectStatus) done(false, this.rejectStatus);
+        else if (this.handshakeDelayMs) setTimeout(() => done(true), this.handshakeDelayMs);
         else done(true);
       },
     });
@@ -600,5 +602,68 @@ describe('review fixes', () => {
       void collect(stream);
     });
     expect(error.body).toEqual({ reason: kept });
+  });
+});
+
+describe('synthesize', () => {
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+  it('reports a failed synthesis on the stream itself', async () => {
+    const t = await makeTTS();
+    server.onTask = (ws, ctx) =>
+      ws.send(JSON.stringify({ type: 'error', context_id: ctx, code: 'voice_not_found' }));
+    const errors: unknown[] = [];
+    t.on('error', (e) => errors.push(e));
+    const stream = t.synthesize('Hello.', NO_RETRY);
+    expect((await collect(stream)).length).toBe(0);
+    await until(() => stream.error !== undefined);
+    expect(stream.error).toBeInstanceOf(APIStatusError);
+    expect((stream.error as APIStatusError).retryable).toBe(false);
+    expect(errors).toHaveLength(1);
+  });
+
+  it('reports usage once per synthesis', async () => {
+    const t = await makeTTS();
+    let metrics = 0;
+    t.on('metrics_collected', () => metrics++);
+    await collect(t.synthesize('Hello.', NO_RETRY));
+    await sleep(50);
+    expect(metrics).toBe(1);
+  });
+
+  it('sends nothing for a synthesis cancelled before it starts', async () => {
+    const t = await makeTTS();
+    const cancel = new AbortController();
+    cancel.abort();
+    await collect(t.synthesize('Hello.', NO_RETRY, cancel.signal));
+    await sleep(50);
+    expect(server.types()).not.toContain('task_start');
+  });
+
+  it('does not keep a connection that opens after close()', async () => {
+    const t = await makeTTS();
+    server.handshakeDelayMs = 150;
+    const stream = t.stream({ connOptions: NO_RETRY });
+    stream.pushText('Hello.');
+    stream.endInput();
+    await sleep(30); // the handshake is in flight
+    await t.close();
+    await sleep(300); // it completes after close()
+    expect(server.wss.clients.size).toBe(0);
+  });
+
+  it('closes the connection of a stream closed before any text, and the next one works', async () => {
+    const t = await makeTTS();
+    const idle = t.stream({ connOptions: NO_RETRY });
+    await until(() => server.connections === 1);
+    idle.close();
+    // The pool discards a connection whose operation was aborted.
+    await until(() => server.wss.clients.size === 0);
+    const stream = t.stream({ connOptions: NO_RETRY });
+    stream.pushText('Hello.');
+    stream.endInput();
+    expect((await collect(stream)).length).toBeGreaterThan(0);
+    // The stream closed before any text sent nothing.
+    expect(server.types().filter((type) => type === 'task_start')).toHaveLength(1);
   });
 });
