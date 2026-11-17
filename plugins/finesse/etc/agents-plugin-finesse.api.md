@@ -48,18 +48,27 @@ export function toFinesseLanguage(language: string): string;
 // @public
 export class TTS extends tts.TTS {
     constructor(opts: TTSOptions);
+    // @internal
+    _apiBase: string;
     // (undocumented)
     close(): Promise<void>;
     // @internal
     get _closeSignal(): AbortSignal;
     // @internal (undocumented)
     closeWs(ws: WebSocket_2): Promise<void>;
+    // @internal
+    connectDirect(timeout: number): Promise<WebSocket_2>;
     // @internal (undocumented)
     connectWs(timeout: number): Promise<WebSocket_2>;
     // @internal
     _forgetStream(stream: SynthesizeStream): void;
     // (undocumented)
     label: string;
+    // @internal
+    mintSession(timeout: number): Promise<{
+        url: string;
+        token: string;
+    }>;
     // (undocumented)
     get model(): string;
     // @internal
@@ -93,6 +102,7 @@ export interface TTSOptions {
     lengthScale?: number;
     numStep?: number;
     sampleRate?: number;
+    useDirectSession?: boolean;
     voice: string;
 }
 

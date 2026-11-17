@@ -22,8 +22,14 @@ import type { AudioFrame } from '@livekit/rtc-node';
 import { type RawData, WebSocket } from 'ws';
 
 const FINESSE_WS_URL = 'wss://fi.production.flamapis.com/flam-voice-svc/api/v1/public/stream';
+const FINESSE_API_BASE = 'https://fi.production.flamapis.com/flam-voice-svc/api/v1/public';
 const SUBPROTOCOL = 'finesse.v1';
 const NUM_CHANNELS = 1;
+
+// A direct session is minted with a generous character budget so a single call rarely exhausts
+// it; the server clamps this to its own maximum. When a session does run out (or its ~1 hour TTL
+// expires) the next synthesis mints a fresh one.
+const SESSION_BUDGET_CHARS = 200_000;
 
 /**
  * Finesse synthesizes at 24 kHz and upsamples above it. Below it, it produces only 8 kHz
@@ -70,6 +76,10 @@ const NON_RETRYABLE_CODES = new Set([
   'plan_limit_reached',
 ]);
 
+// On a direct session these codes signal the session's own budget is spent (not the account's
+// credits), so a freshly minted session continues; see eventError.
+const SESSION_RENEWABLE_CODES = new Set(['insufficient_credits']);
+
 // Close codes that fail the same way on a new connection: out of credits, frame too large.
 // Any other close (normal, going away, service restart, engine failure) is retried.
 const NON_RETRYABLE_CLOSE_CODES = new Set([1008, 1009]);
@@ -92,6 +102,13 @@ export interface TTSOptions {
   lengthScale?: number;
   /** Speak a pending partial sentence after this many milliseconds without new text, 200-5000. Defaults to the server's 800. */
   idleFlushMs?: number;
+  /**
+   * Connect straight to the synthesis GPU in your account's region over a short-lived,
+   * voice-scoped session, instead of the relayed public stream. Lowers first-audio latency for
+   * live agents. The session is minted for the current voice; changing the voice mints a new
+   * one. Defaults to false.
+   */
+  useDirectSession?: boolean;
 }
 
 interface ResolvedTTSOptions {
@@ -103,6 +120,7 @@ interface ResolvedTTSOptions {
   guidanceScale?: number;
   lengthScale?: number;
   idleFlushMs?: number;
+  useDirectSession: boolean;
 }
 
 type WebSocketEvent =
@@ -171,6 +189,8 @@ export class TTS extends tts.TTS {
   label = 'finesse.TTS';
   /** @internal The realtime WebSocket URL; tests point it at a local server. */
   _wsUrl = FINESSE_WS_URL;
+  /** @internal The direct-session mint base; tests point it at a local server. */
+  _apiBase = FINESSE_API_BASE;
 
   /**
    * Create a Finesse TTS.
@@ -198,6 +218,7 @@ export class TTS extends tts.TTS {
       guidanceScale: opts.guidanceScale,
       lengthScale: opts.lengthScale,
       idleFlushMs: opts.idleFlushMs,
+      useDirectSession: opts.useDirectSession ?? false,
     };
 
     // Every setting travels in each context's task_start, so a settings change applies to the
@@ -231,7 +252,12 @@ export class TTS extends tts.TTS {
     >,
   ): void {
     validate(opts);
-    if (opts.voice !== undefined) this.#opts.voice = opts.voice;
+    if (opts.voice !== undefined && opts.voice !== this.#opts.voice) {
+      this.#opts.voice = opts.voice;
+      // A direct session is pinned to its voice, so drop pooled sessions; the next synthesis
+      // mints one for the new voice.
+      if (this.#opts.useDirectSession) this.pool.invalidate();
+    }
     if (opts.language !== undefined) this.#opts.language = toFinesseLanguage(opts.language);
     if (opts.numStep !== undefined) this.#opts.numStep = opts.numStep;
     if (opts.guidanceScale !== undefined) this.#opts.guidanceScale = opts.guidanceScale;
@@ -287,6 +313,7 @@ export class TTS extends tts.TTS {
 
   /** @internal */
   async connectWs(timeout: number): Promise<WebSocket> {
+    if (this.#opts.useDirectSession) return this.connectDirect(timeout);
     const ws = new WebSocket(this._wsUrl, [SUBPROTOCOL], {
       headers: {
         'X-API-Key': this.#opts.apiKey,
@@ -325,6 +352,99 @@ export class TTS extends tts.TTS {
         message: `failed to connect to Finesse (${e instanceof Error ? e.name : typeof e})`,
       });
     }
+  }
+
+  /**
+   * @internal Mint a direct realtime session and connect straight to the GPU region.
+   *
+   * The backend issues a short-lived, voice-scoped session token; the client then opens the
+   * socket against the synthesis GPU itself, one hop closer than the relayed stream. The
+   * per-turn protocol is identical.
+   */
+  async connectDirect(timeout: number): Promise<WebSocket> {
+    const started = Date.now();
+    const minted = await this.mintSession(timeout);
+    const remaining = Math.max(0, timeout - (Date.now() - started));
+    // The session token is the auth; it travels as the second subprotocol, not an API key.
+    const ws = new WebSocket(minted.url, [SUBPROTOCOL, minted.token], {
+      headers: { 'X-Finesse-Client': `livekit-agents-js/${__PACKAGE_VERSION__}` },
+      handshakeTimeout: remaining,
+    });
+    try {
+      await waitForWebSocketOpen(ws, 'Finesse');
+      if (this.#closeController.signal.aborted) {
+        throw new APIConnectionError({
+          message: 'Finesse TTS was closed',
+          options: { retryable: false },
+        });
+      }
+      ws.on('error', () => {});
+      ws.on('close', () => this.pool.remove(ws));
+      return ws;
+    } catch (e) {
+      try {
+        ws.on('error', () => {});
+        if (ws.readyState === WebSocket.CONNECTING) {
+          ws.close();
+        } else {
+          ws.terminate();
+        }
+      } catch {
+        // ignore
+      }
+      if (e instanceof APIStatusError || e instanceof APIConnectionError) throw e;
+      throw new APIConnectionError({
+        message: `failed to connect to Finesse (${e instanceof Error ? e.name : typeof e})`,
+      });
+    }
+  }
+
+  /** @internal Create a direct realtime session on the backend, returning the GPU URL and token. */
+  async mintSession(timeout: number): Promise<{ url: string; token: string }> {
+    let resp: Response;
+    try {
+      resp = await fetch(`${this._apiBase}/realtime/sessions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-Key': this.#opts.apiKey,
+          'X-Finesse-Client': `livekit-agents-js/${__PACKAGE_VERSION__}`,
+        },
+        body: JSON.stringify({
+          voice_ids: [this.#opts.voice],
+          budget_chars: SESSION_BUDGET_CHARS,
+        }),
+        signal: AbortSignal.timeout(timeout),
+      });
+    } catch (e) {
+      throw new APIConnectionError({
+        message: `failed to reach Finesse (${e instanceof Error ? e.name : typeof e})`,
+      });
+    }
+    let payload: unknown;
+    try {
+      payload = await resp.json();
+    } catch {
+      payload = undefined;
+    }
+    const body = (payload ?? {}) as Record<string, unknown>;
+    if (resp.status !== 200 && resp.status !== 201) {
+      const code = identifier(body.code);
+      throw new APIStatusError({
+        message: `Finesse could not create a realtime session${code ? `: ${code}` : ''}`,
+        options: { statusCode: resp.status, body },
+      });
+    }
+    const data = body.data as Record<string, unknown> | undefined;
+    const url = data?.url;
+    const token = data?.token;
+    if (typeof url !== 'string' || typeof token !== 'string') {
+      throw new APIStatusError({
+        message: 'Finesse returned an unexpected session response',
+        options: { statusCode: resp.status, body },
+      });
+    }
+    return { url, token };
   }
 
   /** @internal */
@@ -654,7 +774,7 @@ async function runContext(host: ContextHost): Promise<void> {
           } else if (kind === 'error') {
             // A fatal error ends the session; a non-fatal one only rejected one message.
             if (data.fatal || eventContext === undefined || eventContext === contextId) {
-              throw eventError(data, contextId);
+              throw eventError(data, contextId, opts.useDirectSession);
             }
           } else if (kind === 'session_ended') {
             throw new APIStatusError({
@@ -679,7 +799,7 @@ async function runContext(host: ContextHost): Promise<void> {
               options: { requestId: contextId },
             });
           } else if (kind === 'task_failed') {
-            throw eventError(data, contextId);
+            throw eventError(data, contextId, opts.useDirectSession);
           } else if (kind === 'task_started') {
             if (data.sample_rate !== undefined && data.sample_rate !== opts.sampleRate) {
               host.logger.warn(
@@ -771,11 +891,22 @@ const sendText = (
   });
 };
 
-const eventError = (data: Record<string, unknown>, requestId: string): APIStatusError => {
+const eventError = (
+  data: Record<string, unknown>,
+  requestId: string,
+  direct = false,
+): APIStatusError => {
   const code = identifier(data.code) ?? 'unknown_error';
+  let retryable = !NON_RETRYABLE_CODES.has(code);
+  if (direct && SESSION_RENEWABLE_CODES.has(code)) {
+    // On a direct session this means the session's character budget is spent, not that the
+    // account is out of credits: the next attempt mints a fresh session and continues. A truly
+    // empty account instead fails when that mint is refused.
+    retryable = true;
+  }
   return new APIStatusError({
     message: `Finesse ${String(data.type)}: ${code}`,
-    options: { requestId, body: { code }, retryable: !NON_RETRYABLE_CODES.has(code) },
+    options: { requestId, body: { code }, retryable },
   });
 };
 

@@ -48,12 +48,27 @@ PCM by default) as it arrives. When the user interrupts, the reply is cancelled 
 server straight away. Connections are pooled across replies, and `prewarm()` opens one before the
 first reply. Each open connection holds one of your plan's concurrent streams.
 
-| Option          | Default              | Notes                                                                          |
-| --------------- | -------------------- | ------------------------------------------------------------------------------ |
-| `voice`         | required             | id of a ready Finesse voice, including cloned voices                           |
-| `language`      | `en`                 | Finesse language code; region subtags such as `hi-IN` work                     |
-| `sampleRate`    | `24000`              | 8000 (telephony), or 24000 (native) to 48000 Hz                                |
-| `numStep`       | server default (32)  | 1-32, quality vs latency                                                       |
-| `guidanceScale` | server default (2.0) | 0-10                                                                           |
-| `lengthScale`   | server default (1.0) | speaking rate, greater than 0 up to 5; higher is slower                        |
-| `idleFlushMs`   | server default (800) | 200-5000 ms; speak a pending partial sentence after this long without new text |
+| Option             | Default              | Notes                                                                           |
+| ------------------ | -------------------- | ------------------------------------------------------------------------------- |
+| `voice`            | required             | id of a ready Finesse voice, including cloned voices                            |
+| `language`         | `en`                 | Finesse language code; region subtags such as `hi-IN` work                      |
+| `sampleRate`       | `24000`              | 8000 (telephony), or 24000 (native) to 48000 Hz                                 |
+| `numStep`          | server default (32)  | 1-32, quality vs latency                                                        |
+| `guidanceScale`    | server default (2.0) | 0-10                                                                            |
+| `lengthScale`      | server default (1.0) | speaking rate, greater than 0 up to 5; higher is slower                         |
+| `idleFlushMs`      | server default (800) | 200-5000 ms; speak a pending partial sentence after this long without new text  |
+| `useDirectSession` | `false`              | connect straight to the synthesis GPU in your account's region, for lower first-audio latency |
+
+### Direct sessions
+
+With `useDirectSession: true`, the plugin connects straight to the synthesis GPU in your account's
+region over a short-lived, voice-scoped session, rather than the relayed public stream — one hop
+fewer, for noticeably lower first-audio latency on live calls:
+
+```typescript
+const tts = new finesse.TTS({ voice: '<voice-id>', useDirectSession: true });
+```
+
+The plugin mints a session for the current voice and reuses it across turns; changing the voice
+(via `updateOptions`) mints a new one, and a session is renewed automatically when it ends.
+Everything else behaves exactly the same.
