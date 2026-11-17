@@ -582,6 +582,7 @@ export class LLMStream extends llm.LLMStream {
         },
       });
     } catch (e: unknown) {
+      if (this.abortController.signal.aborted) return;
       if (e instanceof Anthropic.APIError) {
         if (e.status === 408) {
           throw new APITimeoutError({

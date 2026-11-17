@@ -2,8 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import Anthropic from '@anthropic-ai/sdk';
-import { type APIError, llm } from '@livekit/agents';
-import { describe, expect, it } from 'vitest';
+import { type APIError, llm, voice } from '@livekit/agents';
+import { describe, expect, it, vi } from 'vitest';
 import { LLM } from './llm.js';
 import * as tools from './tools.js';
 
@@ -326,6 +326,73 @@ describe('Anthropic web search', () => {
     expect(signal?.aborted).toBe(true);
     expect(requests).toBe(1);
     await model.aclose();
+  });
+
+  it('keeps a real session open when request creation rejects on cancellation', async () => {
+    vi.stubEnv('LIVEKIT_URL', '');
+    let started!: () => void;
+    const pendingRequest = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    let requests = 0;
+    const client = new Anthropic({
+      apiKey: 'offline-test',
+      maxRetries: 0,
+      fetch: async (url, options) => {
+        if (new URL(url.toString()).pathname !== '/v1/messages') {
+          return new Response(JSON.stringify({ data: [], has_more: false }), {
+            headers: { 'content-type': 'application/json' },
+          });
+        }
+        if (++requests > 1) {
+          return new Response(
+            events()
+              .map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`)
+              .join(''),
+            { headers: { 'content-type': 'text/event-stream' } },
+          );
+        }
+        return new Promise<Response>((_resolve, reject) => {
+          const abort = () =>
+            reject(new DOMException('Request cancelled before headers', 'AbortError'));
+          if (options?.signal?.aborted) abort();
+          else options?.signal?.addEventListener('abort', abort, { once: true });
+          started();
+        });
+      },
+    });
+    const model = new LLM({ client });
+    const errors = vi.fn();
+    const closed = vi.fn();
+    model.on('error', errors);
+    const session = new voice.AgentSession({
+      llm: model,
+      vad: null,
+      turnDetection: 'manual',
+      connOptions: { maxUnrecoverableErrors: 0, llmConnOptions: { maxRetry: 0 } },
+    });
+    session.on(voice.AgentSessionEventTypes.Close, closed);
+    try {
+      await session.start({
+        agent: new voice.Agent({ instructions: 'Answer briefly.' }),
+        outputOptions: { audioEnabled: false },
+      });
+      const speech = session.generateReply({ userInput: 'Search' });
+      await pendingRequest;
+      speech.interrupt();
+      await speech.waitForPlayout();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(errors).not.toHaveBeenCalled();
+      expect(closed).not.toHaveBeenCalled();
+      await session.generateReply({ userInput: 'Try again' }).waitForPlayout();
+      expect(requests).toBe(2);
+      expect(errors).not.toHaveBeenCalled();
+      expect(closed).not.toHaveBeenCalled();
+    } finally {
+      await session.close();
+      await model.aclose();
+      vi.unstubAllEnvs();
+    }
   });
 
   it('bounds pause continuations and never retries the original search', async () => {
