@@ -1,0 +1,25 @@
+examples/src/telephony/README.md
+  s_c9fa01ab24948b::t_0bcf6034576a27 450-463
+examples/src/telephony/amd_twilio_connector.test.ts
+  s_c9fa01ab24948b::t_8877c5b4bb2445 1-174
+examples/src/telephony/amd_twilio_connector.ts
+  s_c9fa01ab24948b::t_c632fbfae73e3d 1-213
+turbo.json
+  s_c9fa01ab24948b::t_e0a48a78424f01 114
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "26231d30bcd58460853951133db163ce0ec1b837",
+  "prompts": {},
+  "sessions": {
+    "s_c9fa01ab24948b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "16d4b070-3315-410b-8e32-1f2ab17907a1",
+        "model": "unknown"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
