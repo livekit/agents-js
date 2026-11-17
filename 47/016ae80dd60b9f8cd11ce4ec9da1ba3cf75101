@@ -1,0 +1,41 @@
+agents/src/voice/agent_session.ts
+  s_c9fa01ab24948b::t_1989245e376451 1256-1259,1446-1449
+agents/src/voice/room_io/room_io.ts
+  s_c9fa01ab24948b::t_6ff20a56bd0f09 511-515
+agents/src/voice/tool_executor.ts
+  s_c9fa01ab24948b::t_69bbe6183f9dc0 631-636
+.changeset/multi-turn-amd.md
+  s_c9fa01ab24948b::t_3357e376b54e0b 14
+agents/etc/agents.api.md
+  s_c9fa01ab24948b::t_1395f9364eb925 6825-6826,10137-10139
+agents/src/voice/agent_activity.ts
+  s_c9fa01ab24948b::t_f800281898aa85 2583-2585,5341,5492,5726,5731
+agents/src/voice/agent_activity_handoff.test.ts
+  s_c9fa01ab24948b::t_4697d6eb71de94 317
+agents/src/voice/amd/detector.ts
+  s_c9fa01ab24948b::t_f388f73ad1b374 27,133-136,471-472,481-484,670-681,684
+agents/src/voice/amd/detector_lifecycle.test.ts
+  s_c9fa01ab24948b::t_297c099c07eb99 26-27,35,637-772
+agents/src/voice/amd/detector_turns.test.ts
+  s_c9fa01ab24948b::t_47b6dcf5e51a7c 296
+agents/src/voice/realtime_error_logging.test.ts
+  s_c9fa01ab24948b::t_83144995ca6577 196-198,254-257
+agents/src/voice/tool_executor.test.ts
+  s_c9fa01ab24948b::t_a46855bfc4a821 103-127
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "47016ae80dd60b9f8cd11ce4ec9da1ba3cf75101",
+  "prompts": {},
+  "sessions": {
+    "s_c9fa01ab24948b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "16d4b070-3315-410b-8e32-1f2ab17907a1",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
