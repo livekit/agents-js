@@ -100,6 +100,31 @@ describe('ToolExecutor', () => {
     expect(agent.chatCtx.items.some((item) => item.type === 'function_call_output')).toBe(true);
   });
 
+  it('drops the deferred reply while amd runs', async () => {
+    const executor = new ToolExecutor();
+    const { runCtx, agent } = buildRunContext();
+    // AMD rejects direct replies; its next reply sees the updates in the chat context
+    (runCtx.session as unknown as { amd: unknown }).amd = {};
+    const reply = vi.spyOn(runCtx.session, 'generateReply');
+    const release = new Future<void>();
+    const lookup = tool({
+      name: 'slow_lookup',
+      description: '',
+      execute: async (_, { ctx }) => {
+        await ctx.update('working');
+        await release.await;
+        return 'found it';
+      },
+    });
+
+    await executor.execute({ tool: lookup, runCtx, rawArguments: {} });
+    release.resolve();
+    await executor.waitForAll();
+
+    expect(reply).not.toHaveBeenCalled();
+    expect(agent.chatCtx.items.some((item) => item.type === 'function_call_output')).toBe(true);
+  });
+
   it.each([null, undefined, ''])(
     'delivers an empty final return after progress (%s)',
     async (output) => {

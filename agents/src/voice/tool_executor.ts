@@ -628,6 +628,12 @@ export class ToolExecutor {
       }
       if (signal.aborted) return;
 
+      if (session.amd) {
+        // AMD owns replies while it runs; its next reply sees the updates in the chat context
+        this.pendingUpdates = [];
+        return;
+      }
+
       const updates = [...this.pendingUpdates];
       this.pendingUpdates = [];
       const pendingItems = updates.flatMap((update) => update.items);

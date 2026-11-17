@@ -193,8 +193,9 @@ describe('realtime error logging', () => {
     expect(records()).toHaveLength(contextError !== undefined ? 1 : 0);
     for (const record of records()) {
       expect(message(record)).toBe('failed to update the chat context before generating the reply');
-      expect(record[0]).toEqual({ errorType: error.name });
-      expect(JSON.stringify(record)).not.toContain(PRIVATE_ERROR);
+      // the error rides in `error`, which export redaction replaces; the message never quotes it
+      expect(record[0]).toEqual({ error });
+      expect(message(record)).not.toContain(PRIVATE_ERROR);
     }
   });
 
@@ -250,8 +251,10 @@ describe('realtime error logging', () => {
           ? 'failed to sync the tool results of an interrupted generation'
           : 'failed to update chat context before generating the function calls results',
       );
-      expect(logged[0]![0]).toEqual({ errorType: 'RealtimeError' });
-      expect(JSON.stringify(logged[0])).not.toContain(PRIVATE_ERROR);
+      const { error } = logged[0]![0] as { error: unknown };
+      expect(error).toBeInstanceOf(RealtimeError);
+      expect((error as RealtimeError).message).toBe(PRIVATE_ERROR);
+      expect(message(logged[0]!)).not.toContain(PRIVATE_ERROR);
     },
   );
 });

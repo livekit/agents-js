@@ -23,8 +23,8 @@ import { ToolError, ToolResult, handoff, tool } from '../../llm/tool_context.js'
 import { FakeSTT } from '../../stt/testing/fake_stt.js';
 import { SynthesizeStream, TTS } from '../../tts/tts.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../../types.js';
-import { Event, delay } from '../../utils.js';
-import { Agent } from '../agent.js';
+import { Event, Future, delay } from '../../utils.js';
+import { Agent, AgentTask } from '../agent.js';
 import type { AgentActivity } from '../agent_activity.js';
 import { AgentSession } from '../agent_session.js';
 import {
@@ -32,6 +32,7 @@ import {
   type FunctionToolsExecutedEvent,
   type SpeechCreatedEvent,
   createAgentFalseInterruptionEvent,
+  createUserTurnExceededEvent,
 } from '../events.js';
 import { SpeechHandle } from '../speech_handle.js';
 import { FakeLLM } from '../testing/fake_llm.js';
@@ -629,6 +630,142 @@ describe('AMD lifecycle', () => {
         }
       } finally {
         await session.close();
+      }
+    },
+  );
+
+  it('amd cannot enter while an AgentTask runs', async () => {
+    const taskEntered = new Event();
+    const results: string[] = [];
+
+    class Task extends AgentTask<string> {
+      constructor() {
+        super({ instructions: 'Collect a value.' });
+      }
+      override async onEnter(): Promise<void> {
+        taskEntered.set();
+      }
+    }
+
+    class Parent extends Agent {
+      readonly task = new Task();
+      override async onEnter(): Promise<void> {
+        results.push(await this.task.run());
+      }
+    }
+
+    const parent = new Parent({ instructions: 'Test' });
+    const session = new AgentSession({ llm: new FakeLLM() });
+    try {
+      await session.start({ agent: parent });
+      await waitFor(taskEntered.wait());
+      const detector = new AMD(session, { llm: null, stt: null });
+      // AMD would reject the task's return to its caller and strand the session
+      await expect(detector.start()).rejects.toThrow('finish the AgentTask before entering AMD');
+      expect(session.amd).toBeNull();
+      expect(detector.lifecycle).toBe(AMDLifecycle.INITIALIZED);
+
+      parent.task.complete('done');
+      await eventually(() => session.currentAgent === parent);
+      expect(results).toEqual(['done']);
+      await detector.start();
+      try {
+        expect(session.amd).toBe(detector);
+      } finally {
+        await detector.aclose();
+      }
+    } finally {
+      await session.close();
+    }
+  });
+
+  it.each(['say', 'generateReply'])(
+    'direct replies are rejected while amd runs (%s)',
+    async (call) => {
+      const { detector, session } = await running({ idleTimeout: 50 });
+      const created: unknown[] = [];
+      session.on(AgentSessionEventTypes.SpeechCreated, (ev) => created.push(ev));
+      // a held reply would keep the idle timer off and play after AMD completes
+      expect(() =>
+        call === 'say'
+          ? session.say('Hello there.')
+          : session.generateReply({ instructions: 'Greet the caller.' }),
+      ).toThrow(`${call}() is not supported while AMD is running`);
+      expect(created).toHaveLength(0);
+      expect((await waitFor(detector.execute())).reason).toBe(AMDReason.IDLE_TIMEOUT);
+
+      const handle = call === 'say' ? session.say('Hello there.') : session.generateReply();
+      await waitFor(handle.waitForPlayout());
+    },
+  );
+
+  it('user turn limit does not reply while amd runs', async () => {
+    const { detector, session } = await running();
+    const activity = activityOf(session);
+    // a voicemail greeting can run past the limit; AMD owns replies
+    activity.onUserTurnExceeded(
+      createUserTurnExceededEvent({
+        transcript: "Hi, you've reached Sam.",
+        accumulatedTranscript: "Hi, you've reached Sam.",
+        accumulatedWordCount: 50,
+        duration: 30,
+      }),
+    );
+    expect((activity as unknown as { userTurnExceededTask?: unknown }).userTurnExceededTask).toBe(
+      undefined,
+    );
+    expect(detector.lifecycle).toBe(AMDLifecycle.ACTIVE);
+  });
+
+  it.each([true, false])(
+    'without an identity amd listens to the linked participant (linked: %s)',
+    async (linked) => {
+      useVirtualTime();
+      const room = new FakeRoom();
+      const callee = fakeParticipant({
+        kind: ParticipantKind.SIP,
+        attributes: { 'sip.callStatus': 'active' },
+        publications: [
+          { sid: 'callee-track', kind: TrackKind.KIND_AUDIO, subscribed: true, track: {} },
+        ],
+      });
+      // another audio publisher joins first; AgentSession does not hear it
+      const other = fakeParticipant({
+        publications: [
+          { sid: 'other-track', kind: TrackKind.KIND_AUDIO, subscribed: true, track: {} },
+        ],
+      });
+      (other as unknown as { identity: string }).identity = 'other';
+      room.remoteParticipants.set('other', other);
+      room.remoteParticipants.set('callee', callee);
+      const { session, setParticipant } = await sessionWithRoom(room);
+      const link = new Future<RemoteParticipant>();
+      (session._roomIO as unknown as Record<string, unknown>)._waitForLinkedParticipant = () =>
+        link.await;
+      try {
+        const detector = new AMD(session, { llm: null, stt: null });
+        await detector.start();
+        try {
+          if (linked) {
+            link.resolve(callee);
+            await eventually(() => detector.lifecycle === AMDLifecycle.ACTIVE);
+            room.emit(RoomEvent.ParticipantDisconnected, other);
+            expect(detector.lifecycle).toBe(AMDLifecycle.ACTIVE);
+            room.emit(RoomEvent.ParticipantDisconnected, callee);
+            expect((await waitFor(detector.execute())).reason).toBe(
+              AMDReason.PARTICIPANT_DISCONNECTED,
+            );
+          } else {
+            await vi.advanceTimersByTimeAsync(5_100);
+            expect((await waitFor(detector.execute())).reason).toBe(AMDReason.PARTICIPANT_MISSING);
+            expect(link.done).toBe(false);
+          }
+          expect(setParticipant).not.toHaveBeenCalled();
+        } finally {
+          await detector.aclose();
+        }
+      } finally {
+        await closeSessionWithRoom(session);
       }
     },
   );

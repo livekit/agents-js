@@ -24,6 +24,7 @@ import {
   isCloud,
   waitForParticipantAttribute,
   waitForTrackPublication,
+  waitUntilAborted,
 } from '../../utils.js';
 import type { Agent } from '../agent.js';
 import type { AgentSession, AgentSessionCallbacks } from '../agent_session.js';
@@ -129,7 +130,10 @@ export interface AMDOptions {
    * selects a LiveKit Inference model.
    */
   stt?: STT | string | null;
-  /** Select the participant before placing an outbound call. */
+  /**
+   * Select the participant before placing an outbound call. When omitted, AMD listens to
+   * the participant that room I/O links.
+   */
   participantIdentity?: string;
   /**
    * Discard pre-answer audio from AMD and AgentSession when `true`. When `false`, listen
@@ -464,6 +468,8 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     // Imported lazily, like Python, to keep the beta tools out of the voice import graph.
     // Import first, so the checks below and the installation run without a yield.
     this.dtmfTool ??= (await import('../../beta/tools/send_dtmf.js')).sendDtmfEvents;
+    // lazy as well: agent.js imports the session, which imports AMD
+    const { AgentTask } = await import('../agent.js');
     const session = this.session;
     const activity = session._activity;
     if (activity === undefined) {
@@ -471,6 +477,10 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     }
     if (activity._newTurnsBlocked || session._nextActivity !== undefined) {
       throw new Error('wait for the agent handoff to finish before entering AMD');
+    }
+    if (activity.agent instanceof AgentTask) {
+      // the task's return to its caller is a handoff, which AMD rejects
+      throw new Error('finish the AgentTask before entering AMD');
     }
     if (activity.llm instanceof RealtimeModel) {
       if (activity._rtTurnDetectionEnabled) {
@@ -657,9 +667,21 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     try {
       let publication;
       try {
+        let identity = this.participantIdentity;
+        if (identity === undefined) {
+          // the participant AgentSession hears, not any other audio publisher
+          const linked = await waitUntilAborted(
+            roomIO._waitForLinkedParticipant(),
+            waitController.signal,
+          );
+          if (linked.isAborted) {
+            throw new Error('no participant linked');
+          }
+          identity = linked.result.identity;
+        }
         publication = await waitForTrackPublication({
           room,
-          identity: this.participantIdentity,
+          identity,
           kind: TrackKind.KIND_AUDIO,
           waitForSubscription: true,
           signal: waitController.signal,

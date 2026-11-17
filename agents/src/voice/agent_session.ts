@@ -1253,6 +1253,10 @@ export class AgentSession<
     if (!this.activity) {
       throw new Error('AgentSession is not running');
     }
+    if (this._amd) {
+      // AMD would hold the speech and play it after detection
+      throw new Error('say() is not supported while AMD is running');
+    }
 
     const doSay = (activity: AgentActivity, nextActivity?: AgentActivity) => {
       if (activity.schedulingPaused) {
@@ -1438,6 +1442,10 @@ export class AgentSession<
   }): SpeechHandle {
     if (!this.activity) {
       throw new Error('AgentSession is not running');
+    }
+    if (this._amd) {
+      // AMD would hold the reply and play it after detection
+      throw new Error('generateReply() is not supported while AMD is running');
     }
 
     const userMessage =

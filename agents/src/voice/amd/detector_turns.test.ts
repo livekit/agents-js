@@ -293,7 +293,7 @@ describe('AMD detector turns', () => {
     };
     expect(state._preemptiveGeneration).toBeDefined();
     const preemptive = state._preemptiveGeneration!.speechHandle;
-    const queued = session.say('Please call me back.');
+    const queued = activity.say('Please call me back.');
 
     activity._cancelPendingSpeeches();
 

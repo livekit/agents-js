@@ -6822,6 +6822,8 @@ export class RoomIO {
     get transcriptionOutput(): TextOutput | undefined;
     // (undocumented)
     unsetParticipant(): void;
+    // @internal
+    _waitForLinkedParticipant(): Promise<RemoteParticipant>;
 }
 
 // @public (undocumented)
@@ -10132,9 +10134,9 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 // src/utils.ts:468:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "cancelled"
 // src/voice/agent_session.ts:412:3 - (ae-unresolved-link) The @link reference could not be resolved: This type of declaration is not supported yet by the resolver
 // src/voice/agent_session.ts:1089:5 - (ae-forgotten-export) The symbol "RecordingOptions" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1824:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1824:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1824:5 - (ae-forgotten-export) The symbol "LLMError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1832:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1832:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1832:5 - (ae-forgotten-export) The symbol "LLMError" needs to be exported by the entry point index.d.ts
 // src/voice/events.ts:461:3 - (ae-forgotten-export) The symbol "InterruptionDetectionError" needs to be exported by the entry point index.d.ts
 // src/voice/room_io/_output.ts:183:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "segmentTags"
 // src/voice/testing/run_result.ts:94:5 - (ae-forgotten-export) The symbol "OutputSchema" needs to be exported by the entry point index.d.ts
