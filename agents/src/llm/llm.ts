@@ -194,6 +194,8 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
   protected logger = log();
 
   #llm: LLM;
+  // the main task's final failure, re-raised to the consumer once the output is drained
+  #mainTaskError?: unknown;
   #chatCtx: ChatContext;
   #toolCtx?: ToolContext;
   #llmRequestSpan?: Span;
@@ -237,8 +239,10 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
     const runMainTask = async () => {
       try {
         await this.mainTask();
-      } catch {
-        // already surfaced via emitError; swallow to avoid unhandled rejection.
+      } catch (error) {
+        // surfaced via emitError for listeners; also kept for the consumer, which gets it
+        // from next() once the output is drained (as Python's LLMStream.__anext__ does)
+        this.#mainTaskError = error;
       } finally {
         this.queue.close();
       }
@@ -372,6 +376,12 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
   };
 
   private emitError({ error, recoverable }: { error: Error; recoverable: boolean }) {
+    // Node's EventEmitter throws on an `error` event nobody listens to (a standalone LLM, a
+    // FallbackAdapter child). That throw would replace the provider's error and end the retry
+    // loop, and the failure reaches the consumer through iteration anyway.
+    if (this.#llm.listenerCount('error') === 0) {
+      return;
+    }
     this.#llm.emit('error', {
       type: 'llm_error',
       timestamp: Date.now(),
@@ -507,8 +517,12 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
     return this._connOptions;
   }
 
-  next(): Promise<IteratorResult<ChatChunk>> {
-    return this.output.next();
+  async next(): Promise<IteratorResult<ChatChunk>> {
+    const result = await this.output.next();
+    if (result.done && this.#mainTaskError !== undefined && !this.abortController.signal.aborted) {
+      throw this.#mainTaskError;
+    }
+    return result;
   }
 
   close() {
