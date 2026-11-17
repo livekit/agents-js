@@ -867,9 +867,15 @@ export function performLLMInference(
         });
       }
       llmStreamReader?.releaseLock();
-      await llmStream?.cancel();
-      await textWriter.close();
-      await toolCallWriter.close();
+      try {
+        // rejects with the stream's error once the node's stream has errored
+        await llmStream?.cancel();
+      } finally {
+        // a throw in this finally must not skip closing the writers: the reply's text
+        // and tool-call readers wait for them, and the speech would never finish
+        await textWriter.close();
+        await toolCallWriter.close();
+      }
     }
   };
 
