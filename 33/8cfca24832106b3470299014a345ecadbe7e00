@@ -1,0 +1,23 @@
+examples/src/telephony/README.md
+  s_c9fa01ab24948b::t_3ae464900a6d29 27,32-36
+examples/src/telephony/amd.test.ts
+  s_c9fa01ab24948b::t_ab125b0af5f265 85-87,180-182,210-212,215-225,227-233,235,294-296,300-303,375
+examples/src/telephony/amd.ts
+  s_c9fa01ab24948b::t_405b9ef67928d9 53,127-131
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "338cfca24832106b3470299014a345ecadbe7e00",
+  "prompts": {},
+  "sessions": {
+    "s_c9fa01ab24948b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "16d4b070-3315-410b-8e32-1f2ab17907a1",
+        "model": "unknown"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
