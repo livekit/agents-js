@@ -163,7 +163,9 @@ const validate = (opts: Partial<TTSOptions>): void => {
 export class TTS extends tts.TTS {
   #opts: ResolvedTTSOptions;
   #streams = new Set<SynthesizeStream>();
-  #closed = false;
+  // Aborted by close(): stops one-shot syntheses, which aren't tracked in #streams, and makes a
+  // handshake that completes afterwards discard its socket.
+  #closeController = new AbortController();
   /** Pooled Finesse connections. */
   pool: ConnectionPool<WebSocket>;
   label = 'finesse.TTS';
@@ -244,6 +246,11 @@ export class TTS extends tts.TTS {
     return new ChunkedStream(this, text, connOptions, abortSignal);
   }
 
+  /** @internal Aborted once the TTS is closed. */
+  get _closeSignal(): AbortSignal {
+    return this.#closeController.signal;
+  }
+
   /** @internal The current options, copied so a later updateOptions() doesn't change them. */
   _options(): ResolvedTTSOptions {
     return { ...this.#opts };
@@ -270,8 +277,7 @@ export class TTS extends tts.TTS {
   }
 
   async close(): Promise<void> {
-    // A handshake still in flight checks this once it opens, so its socket never joins the pool.
-    this.#closed = true;
+    this.#closeController.abort();
     for (const stream of this.#streams) {
       stream.close();
     }
@@ -291,7 +297,7 @@ export class TTS extends tts.TTS {
     try {
       // A refused handshake reports only its status code, never the request headers.
       await waitForWebSocketOpen(ws, 'Finesse');
-      if (this.#closed) {
+      if (this.#closeController.signal.aborted) {
         throw new APIConnectionError({
           message: 'Finesse TTS was closed',
           options: { retryable: false },
@@ -349,15 +355,22 @@ export class ChunkedStream extends tts.ChunkedStream {
   // One context, run here directly rather than through a SynthesizeStream: the base class's
   // retries, error reporting and usage metrics then apply once, to this stream.
   protected async run(): Promise<void> {
-    // A signal that was already aborted never fires its listener, so check it here.
-    if (this.abortSignal.aborted || this.#callerSignal?.aborted) return;
+    const closed = this.#tts._closeSignal;
+    // A signal that was already aborted never fires its listener, so check it here. A closed TTS
+    // also starts no new attempt, so shutdown can't trigger a retry.
+    if (this.abortSignal.aborted || this.#callerSignal?.aborted || closed.aborted) return;
+    // Stop on the stream's own abort or when the TTS is closed: either ends the turn quietly.
+    const stop = new AbortController();
+    const onStop = () => stop.abort();
+    this.abortSignal.addEventListener('abort', onStop, { once: true });
+    closed.addEventListener('abort', onStop, { once: true });
     let emittedAudio = false;
     try {
       await runContext({
         tts: this.#tts,
         opts: this.#opts,
         timeoutMs: this.#connOptions.timeoutMs,
-        abortSignal: this.abortSignal,
+        abortSignal: stop.signal,
         pieces: [this.#text],
         inputEnded: () => true,
         waitForInput: async () => {},
@@ -369,9 +382,12 @@ export class ChunkedStream extends tts.ChunkedStream {
         logger: this.#logger,
       });
     } catch (e) {
-      if (this.abortSignal.aborted) return;
+      if (stop.signal.aborted) return;
       const error = toFinesseError(e);
       throw emittedAudio && error.retryable ? notRetryable(error) : error;
+    } finally {
+      this.abortSignal.removeEventListener('abort', onStop);
+      closed.removeEventListener('abort', onStop);
     }
   }
 }

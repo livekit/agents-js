@@ -50,6 +50,8 @@ export class TTS extends tts.TTS {
     constructor(opts: TTSOptions);
     // (undocumented)
     close(): Promise<void>;
+    // @internal
+    get _closeSignal(): AbortSignal;
     // @internal (undocumented)
     closeWs(ws: WebSocket_2): Promise<void>;
     // @internal (undocumented)

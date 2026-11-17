@@ -652,6 +652,24 @@ describe('synthesize', () => {
     expect(server.wss.clients.size).toBe(0);
   });
 
+  it('ends a synthesis quietly when the TTS is closed mid-turn', async () => {
+    const t = await makeTTS();
+    server.answerFinalize = false; // the turn is still running when close() is called
+    server.onTask = () => {};
+    const errors: unknown[] = [];
+    t.on('error', (e) => errors.push(e));
+    const stream = t.synthesize('Hello.', { ...NO_RETRY, maxRetry: 2, retryIntervalMs: 0 });
+    const done = collect(stream);
+    await until(() => server.types().includes('task_start'));
+    await t.close();
+    await done;
+    await sleep(100);
+    expect(stream.error).toBeUndefined();
+    expect(errors).toHaveLength(0);
+    // No retry started after shutdown.
+    expect(server.types().filter((type) => type === 'task_start')).toHaveLength(1);
+  });
+
   it('closes the connection of a stream closed before any text, and the next one works', async () => {
     const t = await makeTTS();
     const idle = t.stream({ connOptions: NO_RETRY });
