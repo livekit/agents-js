@@ -447,6 +447,20 @@ pnpm build && node ./examples/src/telephony/amd.ts dev
 To place an outbound call, also set
 `SIP_PHONE_NUMBER`, `SIP_PARTICIPANT_IDENTITY`, and `LIVEKIT_OUTBOUND_TRUNK_ID`.
 
+### Twilio Connector
+
+`amd_twilio_connector.ts` places the same call through Twilio and the LiveKit Twilio
+Connector. Set `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER`, and
+`TWILIO_TO_NUMBER`. The connector publishes the callee's audio only after the answer,
+and AMD waits only 5 seconds for that track, so the example starts AMD after the call
+is answered. It also sets `aecWarmupDuration: null`: AgentSession skips the warmup on
+its own only for outbound SIP calls. DTMF through the connector is not yet tested with
+an IVR menu.
+
+```sh
+pnpm build && node ./examples/src/telephony/amd_twilio_connector.ts dev
+```
+
 ## Current limits
 
 - Realtime requires session or AMD STT, a separate text classifier, client-side
