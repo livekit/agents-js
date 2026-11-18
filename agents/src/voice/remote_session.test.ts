@@ -19,7 +19,13 @@ import { Future, waitUntilTimeout } from '../utils.js';
 import type { AgentSession } from './agent_session.js';
 import { createAMDCompletedEvent, createAMDPredictionEvent } from './amd/events.js';
 import { AMDCategory, AMDReason } from './amd/index.js';
-import { AgentSessionEventTypes, CloseReason, createCloseEvent } from './events.js';
+import {
+  AgentSessionEventTypes,
+  CloseReason,
+  type UserStateChangedEvent,
+  createCloseEvent,
+  createUserStateChangedEvent,
+} from './events.js';
 import { FinalizeSimulationError } from './index.js';
 import {
   NO_ACTIVE_SESSION_ERROR,
@@ -286,6 +292,31 @@ function sentAmdEvents(transport: FakeTransport): pb.AgentSessionEvent['event'][
 function durationMs(duration: { seconds: bigint; nanos: number } | undefined): number {
   return Number(duration!.seconds) * 1000 + duration!.nanos / 1_000_000;
 }
+
+describe('SessionHost user state events', () => {
+  it.each([
+    [999_250, 999_250],
+    [undefined, 1_000_000],
+    [0, 0],
+  ])('user state change at speech time %s is sent at %s', async (speechTimestamp, expected) => {
+    const transport = new FakeTransport();
+    const host = new SessionHost(transport);
+    await host.start();
+    try {
+      (
+        host as unknown as { onUserStateChanged: (event: UserStateChangedEvent) => void }
+      ).onUserStateChanged(
+        createUserStateChangedEvent('listening', 'speaking', 1_000_000, speechTimestamp),
+      );
+      await vi.waitFor(() => expect(transport.sent.length).toBe(1));
+      const event = transport.sent[0]!.message.value as pb.AgentSessionEvent;
+      expect(event.event.case).toBe('userStateChanged');
+      expect(Number(event.createdAt!.seconds) * 1000 + event.createdAt!.nanos / 1e6).toBe(expected);
+    } finally {
+      await host.close();
+    }
+  });
+});
 
 describe('SessionHost AMD events', () => {
   it.each(Object.entries(AMDCategory))(

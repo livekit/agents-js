@@ -709,9 +709,14 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
       if (this.lifecycle !== AMDLifecycle.FINISHED) {
         startListening();
       }
-    } catch {
+    } catch (error) {
       if (signal.aborted && !timedOut) {
         return;
+      }
+      if (!(error instanceof Error) || error.constructor !== Error) {
+        // The participant waits fail with a plain Error, like Python's RuntimeError. Anything
+        // else is a bug: the failed task ends the run with internal_error.
+        throw error;
       }
       let reason = AMDReason.PARTICIPANT_MISSING;
       if (!room.isConnected) {
@@ -1618,8 +1623,13 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     } finally {
       const result = this.completion();
       this.resources.completion.resolve(result);
-      this.emitEvent('amd_completed', result);
       this.session._onAmdCompleted(result);
+      try {
+        this.emitEvent('amd_completed', result);
+      } catch (error) {
+        // the run is over; a failing listener must not fail cleanup or session close
+        this.logger.error({ error }, 'amd_completed listener failed');
+      }
     }
   }
 

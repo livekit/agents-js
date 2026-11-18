@@ -4,6 +4,7 @@
 
 /** Ported from Python `tests/test_amd_example.py`. */
 import * as agents from '@livekit/agents';
+import { TwirpError } from 'livekit-server-sdk';
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { MyAgent, entry } from './amd.js';
 
@@ -26,7 +27,8 @@ vi.mock('@livekit/noise-cancellation-node', () => ({
 
 const sip = vi.hoisted(() => ({ createSipParticipant: vi.fn() }));
 
-vi.mock('livekit-server-sdk', () => ({
+vi.mock('livekit-server-sdk', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   SipClient: vi.fn(function () {
     return { createSipParticipant: sip.createSipParticipant };
   }),
@@ -183,6 +185,8 @@ describe('AMD telephony example', () => {
     'disconnected',
     'missing',
     'timeout',
+    'busy',
+    'misconfigured',
     'cancelled',
     'console',
   ])('outbound call setup (%s)', async (outcome) => {
@@ -251,7 +255,16 @@ describe('AMD telephony example', () => {
     sip.createSipParticipant.mockImplementation(async () => {
       expect(detector.start).toHaveBeenCalledOnce();
       if (outcome === 'timeout') {
-        throw new Error('timed out');
+        throw new DOMException('The operation timed out', 'TimeoutError');
+      }
+      if (outcome === 'busy') {
+        throw new TwirpError('Bad Request', 'busy', 400, 'unavailable', {
+          sip_status_code: '486',
+          sip_status: 'Busy Here',
+        });
+      }
+      if (outcome === 'misconfigured') {
+        throw new TwirpError('Not Found', 'trunk not found', 404, 'not_found');
       }
       if (outcome === 'cancelled') {
         throw new DOMException('This operation was aborted', 'AbortError');
@@ -277,6 +290,8 @@ describe('AMD telephony example', () => {
     }
     if (outcome === 'cancelled') {
       await expect(entry(ctx)).rejects.toThrow('aborted');
+    } else if (outcome === 'misconfigured') {
+      await expect(entry(ctx)).rejects.toThrow('trunk not found');
     } else {
       await entry(ctx);
     }
@@ -307,11 +322,11 @@ describe('AMD telephony example', () => {
       }
     } else {
       expect(detector.execute).not.toHaveBeenCalled();
-      if (outcome === 'cancelled') {
+      if (outcome === 'cancelled' || outcome === 'misconfigured') {
         expect(ctx.shutdown).not.toHaveBeenCalled();
       } else {
         expect(ctx.shutdown).toHaveBeenCalledExactlyOnceWith(
-          outcome === 'timeout' ? 'call not answered' : 'participant missing',
+          outcome === 'timeout' || outcome === 'busy' ? 'call not answered' : 'participant missing',
         );
       }
     }

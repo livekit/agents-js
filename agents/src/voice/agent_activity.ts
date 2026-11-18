@@ -5623,6 +5623,8 @@ export class AgentActivity implements RecognitionHooks {
       toolOutput,
       speechHandle,
     );
+    // an interrupted handoff never starts
+    functionToolsExecutedEvent._handoffRequired = false;
     this.agentSession.emit(
       AgentSessionEventTypes.FunctionToolsExecuted,
       functionToolsExecutedEvent,

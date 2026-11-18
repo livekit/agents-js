@@ -973,7 +973,7 @@ export class SessionHost {
   ): void {
     this.sendEvent(
       new pb.AgentSessionEvent({
-        createdAt: createdAt ? msToTimestamp(createdAt) : nowTimestamp(),
+        createdAt: createdAt !== undefined ? msToTimestamp(createdAt) : nowTimestamp(),
         event: event,
       }),
     );
@@ -1001,7 +1001,8 @@ export class SessionHost {
           newState: USER_STATE_MAP[event.newState],
         }),
       },
-      event.createdAt,
+      // the speech boundary, often backdated, when known
+      event.speechTimestamp ?? event.createdAt,
     );
   };
 

@@ -10137,7 +10137,7 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 // src/voice/agent_session.ts:1832:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
 // src/voice/agent_session.ts:1832:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts
 // src/voice/agent_session.ts:1832:5 - (ae-forgotten-export) The symbol "LLMError" needs to be exported by the entry point index.d.ts
-// src/voice/events.ts:461:3 - (ae-forgotten-export) The symbol "InterruptionDetectionError" needs to be exported by the entry point index.d.ts
+// src/voice/events.ts:468:3 - (ae-forgotten-export) The symbol "InterruptionDetectionError" needs to be exported by the entry point index.d.ts
 // src/voice/room_io/_output.ts:183:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "segmentTags"
 // src/voice/testing/run_result.ts:94:5 - (ae-forgotten-export) The symbol "OutputSchema" needs to be exported by the entry point index.d.ts
 

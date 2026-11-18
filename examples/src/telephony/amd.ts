@@ -12,7 +12,7 @@ import {
   voice,
 } from '@livekit/agents';
 import { BackgroundVoiceCancellation } from '@livekit/noise-cancellation-node';
-import { SipClient } from 'livekit-server-sdk';
+import { SipClient, TwirpError } from 'livekit-server-sdk';
 import { fileURLToPath } from 'node:url';
 
 /**
@@ -102,8 +102,12 @@ export async function entry(ctx: JobContext): Promise<void> {
           timeout: 45,
         });
       } catch (error) {
-        // a cancelled job propagates; only a failed or timed-out call ends here
-        if (error instanceof Error && error.name === 'AbortError') {
+        // only a call that failed with a SIP status, such as busy, or timed out ends here;
+        // anything else, such as a wrong trunk ID, propagates
+        const callFailed =
+          error instanceof TwirpError && error.metadata?.sip_status_code !== undefined;
+        const timedOut = error instanceof Error && error.name === 'TimeoutError';
+        if (!callFailed && !timedOut) {
           throw error;
         }
         logger.info('sip call was not answered');

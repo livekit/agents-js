@@ -518,6 +518,25 @@ describe('AMD lifecycle', () => {
     }
   });
 
+  it('failing completion listener does not block session close', async () => {
+    const { detector, session } = await running();
+    const host = { _onAmdPrediction: vi.fn(), _onAmdCompleted: vi.fn() };
+    const withHost = session as unknown as { sessionHost?: typeof host };
+    withHost.sessionHost = host;
+    detector.on('amd_completed', () => {
+      throw new TypeError('listener bug');
+    });
+    try {
+      await waitFor(session.close());
+      const result = await detector.execute();
+      expect(result.reason).toBe(AMDReason.CANCELLED);
+      expect(host._onAmdCompleted).toHaveBeenCalledExactlyOnceWith(result);
+      expect(session.amd).toBeNull();
+    } finally {
+      withHost.sessionHost = undefined;
+    }
+  });
+
   it('timeout rearms and late result cannot change a newer turn', async () => {
     const classifier = new TrackingClassifier();
     const { detector, session } = await running({ classifier, inferenceTimeout: 20 });
@@ -769,6 +788,24 @@ describe('AMD lifecycle', () => {
       }
     },
   );
+
+  it('unexpected setup error ends amd with internal_error', async () => {
+    const room = new FakeRoom();
+    const { session } = await sessionWithRoom(room);
+    (session._roomIO as unknown as Record<string, unknown>)._waitForLinkedParticipant = () =>
+      Promise.reject(new TypeError('setup bug'));
+    try {
+      const detector = new AMD(session, { llm: null, stt: null });
+      await detector.start();
+      try {
+        expect((await waitFor(detector.execute())).reason).toBe(AMDReason.INTERNAL_ERROR);
+      } finally {
+        await detector.aclose();
+      }
+    } finally {
+      await closeSessionWithRoom(session);
+    }
+  });
 
   it('tool handoff is cancelled while amd is running', async () => {
     const replacement = new Agent({ instructions: 'Continue the call.' });

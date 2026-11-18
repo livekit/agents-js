@@ -249,23 +249,30 @@ export const createFunctionToolsExecutedEvent = ({
   functionCallOutputs: FunctionCallOutput[];
   createdAt?: number;
 }): FunctionToolsExecutedEvent => {
+  // closure state, so the methods also work when destructured
+  let handoffRequired = false;
   return {
     type: 'function_tools_executed',
     functionCalls,
     functionCallOutputs,
     createdAt,
-    _handoffRequired: false,
+    get _handoffRequired() {
+      return handoffRequired;
+    },
+    set _handoffRequired(value: boolean) {
+      handoffRequired = value;
+    },
     get hasToolReply() {
       return functionCallOutputs.some((output) => output.replyRequired);
     },
     get hasAgentHandoff() {
-      return this._handoffRequired;
+      return handoffRequired;
     },
     cancelToolReply() {
       for (const output of functionCallOutputs) output.replyRequired = false;
     },
     cancelAgentHandoff() {
-      this._handoffRequired = false;
+      handoffRequired = false;
     },
   };
 };
