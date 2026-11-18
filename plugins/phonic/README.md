@@ -117,6 +117,7 @@ Set the `PHONIC_API_KEY` environment variable, or pass `apiKey` directly to `Rea
 | `externalId`                         | `string`                                   | Your own identifier for the conversation, stored on the Phonic conversation                                                                                                                                                                                 |
 | `configsForTools`                    | `PhonicToolConfig[]`                       | Per-tool behavior overrides (see [Per-tool configuration](#per-tool-configuration))                                                                                                                                                                         |
 | `onConversationCreated`              | `(conversationId: string) => void`         | Callback invoked with the Phonic conversation ID when the conversation is created                                                                                                                                                                           |
+| `modalities`                         | `('text' \| 'audio')[]`                    | `['text', 'audio']` (default) for voice, or `['text']` for a text conversation: typed user turns in, text replies out, no audio                                                                                                                             |
 
 ### Per-tool configuration
 
