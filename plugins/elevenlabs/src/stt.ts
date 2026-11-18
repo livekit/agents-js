@@ -31,6 +31,23 @@ import type { STTRealtimeSampleRates } from './models.js';
 const API_BASE_URL_V1 = 'https://api.elevenlabs.io/v1';
 const AUTHORIZATION_HEADER = 'xi-api-key';
 
+/**
+ * How often the realtime socket must answer a ping. Nothing else notices a socket that dies without
+ * closing, and the stream would stay deaf for the rest of the call.
+ */
+const LIVENESS_PING_INTERVAL_MS = 2000;
+
+/**
+ * Most audio held for replay. Audio stays until a committed transcript acknowledges it, since a
+ * dead socket loses everything it had not committed however long ago it was sent and frames can
+ * arrive faster than realtime. Past this the oldest audio is dropped to bound memory, and a
+ * redial can no longer recover it.
+ */
+const REPLAY_MAX_SECONDS = 60;
+
+/** The audio is sent as 16-bit mono PCM. */
+const PCM_BYTES_PER_SAMPLE = 2;
+
 export interface VADOptions {
   vadSilenceThresholdSecs?: number | null;
   vadThreshold?: number | null;
@@ -87,6 +104,8 @@ export interface STTOptions {
   includeLanguageDetection?: boolean;
   noVerbatim?: boolean;
   enableLogging?: boolean;
+  /** How often the realtime socket must answer a ping before it is terminated and redialed, in ms. */
+  livenessPingIntervalMs?: number;
 }
 
 interface ResolvedSTTOptions {
@@ -104,6 +123,7 @@ interface ResolvedSTTOptions {
   includeLanguageDetection?: boolean;
   noVerbatim: boolean;
   enableLogging: boolean;
+  livenessPingIntervalMs: number;
 }
 
 export interface STTRecognizeOptions {
@@ -321,6 +341,7 @@ export class STT extends stt.STT {
       includeLanguageDetection,
       noVerbatim: opts.noVerbatim ?? false,
       enableLogging: opts.enableLogging ?? true,
+      livenessPingIntervalMs: opts.livenessPingIntervalMs ?? LIVENESS_PING_INTERVAL_MS,
     };
     this.#session = opts.httpSession ?? {};
   }
@@ -602,6 +623,23 @@ export class SpeechStream extends stt.SpeechStream {
   #speaking = false;
   #lastPartialText = '';
   #audioDurationCollector: PeriodicCollector<number>;
+  /**
+   * Chunks sent since the last committed transcript, base64 as they were sent, with their duration,
+   * whether they commit and the stream position where they end: what a socket that died silently
+   * swallowed, for the next one.
+   */
+  #replay: { audioBase64: string; commit: boolean; seconds: number; at: number }[] = [];
+  #replaySeconds = 0;
+  /** Audio sent on the current connection, replay included: its provider timeline. */
+  #connectionSeconds = 0;
+  /**
+   * Stream position where the audio sent so far ends. The base class advances `startTimeOffset` by
+   * wall time on every retry, which runs behind this when audio arrives faster than realtime.
+   */
+  #audioEndInS = 0;
+  /** Carries a partial chunk over to the next connection, so a redial drops none of the audio. */
+  #audioByteStream: AudioByteStream;
+  #droppedCommits = 0;
   #logger = log();
 
   label = 'elevenlabs.SpeechStream';
@@ -620,6 +658,11 @@ export class SpeechStream extends stt.SpeechStream {
     this.#audioDurationCollector = new PeriodicCollector(
       (duration) => this.#onAudioDurationReport(duration),
       { duration: 5.0 },
+    );
+    this.#audioByteStream = new AudioByteStream(
+      opts.sampleRate,
+      1,
+      Math.floor((opts.sampleRate * opts.audioChunkDuration) / 1000),
     );
   }
 
@@ -655,6 +698,66 @@ export class SpeechStream extends stt.SpeechStream {
     }
   }
 
+  #remember(audioBase64: string, commit: boolean, seconds: number): void {
+    this.#connectionSeconds += seconds;
+    this.#audioEndInS = this.startTimeOffset + this.#connectionSeconds;
+    this.#replay.push({
+      audioBase64,
+      commit,
+      seconds,
+      at: this.#audioEndInS,
+    });
+    this.#replaySeconds += seconds;
+    while (this.#replay.length > 1 && this.#replaySeconds > REPLAY_MAX_SECONDS) {
+      const dropped = this.#replay.shift()!;
+      this.#replaySeconds -= dropped.seconds;
+      if (dropped.commit) this.#droppedCommits++;
+    }
+  }
+
+  /**
+   * A committed transcript answers the oldest commit still pending, so only the chunks up to it are
+   * done; later ones were sent after it and are still owed. Server VAD commits at a point the
+   * client cannot see, so without a pending commit the chunks that end at or before the transcript's
+   * last word are done, and the chunk that straddles it keeps only the audio after that word, or
+   * everything sent so far is done when the transcript carries no word timestamps.
+   */
+  #forgetCommitted(answeredUntilInS?: number): void {
+    if (this.#droppedCommits > 0) {
+      this.#droppedCommits--;
+      return;
+    }
+    const commitIndex = this.#replay.findIndex((chunk) => chunk.commit);
+    if (commitIndex !== -1) {
+      this.#replay.splice(0, commitIndex + 1);
+    } else if (answeredUntilInS === undefined) {
+      this.#replay.length = 0;
+    } else {
+      while (this.#replay[0] && this.#replay[0].at <= answeredUntilInS) this.#replay.shift();
+      this.#trimAnswered(answeredUntilInS);
+    }
+    this.#replaySeconds = this.#replay.reduce((total, chunk) => total + chunk.seconds, 0);
+  }
+
+  /** Removes the audio before the last answered word from the first replay chunk. */
+  #trimAnswered(answeredUntilInS: number): void {
+    const chunk = this.#replay[0];
+    if (!chunk) return;
+    const answeredSamples = Math.round(
+      (answeredUntilInS - (chunk.at - chunk.seconds)) * this.#opts.sampleRate,
+    );
+    if (answeredSamples <= 0) return;
+    const remaining = Buffer.from(chunk.audioBase64, 'base64').subarray(
+      answeredSamples * PCM_BYTES_PER_SAMPLE,
+    );
+    if (remaining.length === 0) {
+      this.#replay.shift();
+      return;
+    }
+    chunk.audioBase64 = remaining.toString('base64');
+    chunk.seconds = remaining.length / PCM_BYTES_PER_SAMPLE / this.#opts.sampleRate;
+  }
+
   #onAudioDurationReport(duration: number): void {
     this.queue.put({
       type: stt.SpeechEventType.RECOGNITION_USAGE,
@@ -673,14 +776,69 @@ export class SpeechStream extends stt.SpeechStream {
   }
 
   protected async run(): Promise<void> {
+    // The base class adds the wall time of this whole call to the offset when it retries, so the
+    // offset must leave `run` as it came in however many sockets it dialed: reconnects inside it
+    // (options updates, redials) move the offset for their own transcripts only.
+    const entryOffset = this.startTimeOffset;
+    try {
+      await this.#runConnections();
+    } finally {
+      this.startTimeOffset = entryOffset;
+    }
+  }
+
+  /**
+   * Keeps one socket open at a time for as long as the stream runs, and moves the audio it sent
+   * that no committed transcript answered to the next one. A socket that closes, errors or stops
+   * answering pings ends the attempt with an error, so the base class retries within its retry
+   * budget and the unanswered audio is replayed. An options update redials without an error.
+   */
+  async #runConnections(): Promise<void> {
+    let firstConnection = true;
     while (!this.closed && !this.input.closed) {
       let ws: WebSocket | null = null;
       let closingWs = false;
+      let liveness: ReturnType<typeof setInterval> | undefined;
       const sessionController = new AbortController();
 
       try {
         ws = await this.#connectWs();
         this.#lastPartialText = '';
+        this.#droppedCommits = 0;
+        // Provider timestamps count from the first sample this connection receives, which is the
+        // oldest replayed chunk. Without a replay, the first connection of an attempt continues
+        // from the later of the audio already sent and the wall time the base class advanced the
+        // offset by, and a later one from the audio already sent.
+        const oldest = this.#replay[0];
+        this.startTimeOffset = Math.max(
+          0,
+          oldest
+            ? oldest.at - oldest.seconds
+            : firstConnection
+              ? Math.max(this.startTimeOffset, this.#audioEndInS)
+              : this.#audioEndInS,
+        );
+        this.#audioEndInS = Math.max(this.#audioEndInS, this.startTimeOffset);
+        firstConnection = false;
+        this.#connectionSeconds = 0;
+
+        const socket = ws;
+        let awaitingPong = false;
+        socket.on('pong', () => {
+          awaitingPong = false;
+        });
+        liveness = setInterval(() => {
+          if (socket.readyState !== WebSocket.OPEN) return;
+          if (awaitingPong) {
+            this.#logger.warn(
+              'ElevenLabs STT WebSocket stopped answering pings; terminating and redialing',
+            );
+            socket.terminate();
+            return;
+          }
+          awaitingPong = true;
+          socket.ping();
+        }, this.#opts.livenessPingIntervalMs);
 
         const keepaliveTask = Task.from(async (controller) => {
           while (!controller.signal.aborted) {
@@ -698,32 +856,54 @@ export class SpeechStream extends stt.SpeechStream {
         }, sessionController);
 
         const sendTask = Task.from(async (controller) => {
-          const samplesPerChunk = Math.floor(
-            (this.#opts.sampleRate * this.#opts.audioChunkDuration) / 1000,
-          );
-          const audioByteStream = new AudioByteStream(this.#opts.sampleRate, 1, samplesPerChunk);
-          const abortPromise = waitForAbort(controller.signal);
-          const streamAbortPromise = waitForAbort(this.abortSignal);
           // Scribe closes the session on a commit with less than 300ms of audio since the
           // previous commit or the connect
           const minCommitSamples = (this.#opts.sampleRate * 3) / 10;
           let uncommittedSamples = 0;
           let hasEnded = false;
 
+          // Trimming can leave a commit with too little audio before it, and Scribe closes the
+          // session on that, again on every redial: send it as plain audio instead.
+          let replayedSamples = 0;
+          for (const entry of this.#replay) {
+            if (ws?.readyState !== WebSocket.OPEN) break;
+            replayedSamples += Math.round(entry.seconds * this.#opts.sampleRate);
+            this.#connectionSeconds += entry.seconds;
+            if (entry.commit) {
+              if (replayedSamples < minCommitSamples) entry.commit = false;
+              else replayedSamples = 0;
+            }
+            if (!entry.commit && entry.audioBase64 === '') continue;
+            ws.send(
+              JSON.stringify({
+                message_type: 'input_audio_chunk',
+                audio_base_64: entry.audioBase64,
+                commit: entry.commit,
+                sample_rate: this.#opts.sampleRate,
+              }),
+            );
+          }
+
           try {
             while (!this.closed) {
-              const result = await Promise.race([
-                this.input.next(),
-                abortPromise,
-                streamAbortPromise,
-              ]);
-              if (result === undefined) return;
+              // Scoped to this connection: a read left pending by a race would outlive a drop and take
+              // the next frame, which then reaches neither the dead socket nor its replacement.
+              let result: IteratorResult<AudioFrame | typeof SpeechStream.FLUSH_SENTINEL>;
+              try {
+                result = await this.input.next({ signal: controller.signal });
+              } catch (error) {
+                if (controller.signal.aborted || this.abortSignal.aborted) return;
+                if (error instanceof APIError) throw error;
+                throw new APIConnectionError({
+                  message: `ElevenLabs STT input failed: ${error instanceof Error ? error.message : String(error)}`,
+                });
+              }
               if (result.done) break;
 
               const data = result.value;
               let frames: AudioFrame[];
               if (data === SpeechStream.FLUSH_SENTINEL) {
-                frames = audioByteStream.flush();
+                frames = this.#audioByteStream.flush();
                 const missing = minCommitSamples - uncommittedSamples;
                 if (missing > 0) {
                   frames.push(AudioFrame.create(this.#opts.sampleRate, 1, missing));
@@ -731,7 +911,7 @@ export class SpeechStream extends stt.SpeechStream {
                 hasEnded = true;
               } else {
                 uncommittedSamples += data.samplesPerChannel;
-                frames = audioByteStream.write(data.data);
+                frames = this.#audioByteStream.write(data.data);
               }
 
               for (const frame of frames) {
@@ -741,6 +921,7 @@ export class SpeechStream extends stt.SpeechStream {
                   frame.data.byteOffset,
                   frame.data.byteLength,
                 ).toString('base64');
+                this.#remember(audioBase64, false, frame.samplesPerChannel / frame.sampleRate);
                 ws?.send(
                   JSON.stringify({
                     message_type: 'input_audio_chunk',
@@ -753,6 +934,7 @@ export class SpeechStream extends stt.SpeechStream {
 
               if (hasEnded) {
                 this.#audioDurationCollector.flush();
+                this.#remember('', true, 0);
                 ws?.send(
                   JSON.stringify({
                     message_type: 'input_audio_chunk',
@@ -773,6 +955,9 @@ export class SpeechStream extends stt.SpeechStream {
         const recvTask = Task.from(async (controller) => {
           const receiveMessages = new Promise<void>((resolve, reject) => {
             const onMessage = (msg: RawData, isBinary: boolean) => {
+              // An abandoned connection has handed what it had not committed to the replacement, so a
+              // late message from it is about audio another socket now owns.
+              if (sessionController.signal.aborted) return;
               if (isBinary) {
                 this.#logger.warn('unexpected ElevenLabs STT binary message');
                 return;
@@ -827,6 +1012,7 @@ export class SpeechStream extends stt.SpeechStream {
       } finally {
         closingWs = true;
         sessionController.abort();
+        clearInterval(liveness);
         ws?.close();
       }
     }
@@ -949,7 +1135,8 @@ export class SpeechStream extends stt.SpeechStream {
     const text = data.text ?? '';
     const words = data.words ?? [];
     const startTime = words.length > 0 ? words[0]?.start ?? 0 : 0;
-    const endTime = words.length > 0 ? words[words.length - 1]?.end ?? 0 : 0;
+    const lastWordEnd = words[words.length - 1]?.end;
+    const endTime = lastWordEnd ?? 0;
     const languageCode = data.language_code || this.#language;
     const normalizedLanguage = languageCode
       ? normalizeLanguage(languageCode)
@@ -989,6 +1176,9 @@ export class SpeechStream extends stt.SpeechStream {
       }
     } else if (messageType === this.#finalMessageType) {
       this.#lastPartialText = '';
+      this.#forgetCommitted(
+        lastWordEnd === undefined ? undefined : lastWordEnd + this.startTimeOffset,
+      );
 
       if (text) {
         if (!this.#speaking) {

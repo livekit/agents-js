@@ -8,7 +8,7 @@ import { readFileSync } from 'node:fs';
 import { type RequestListener, type Server, createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { describe, expect, it, vi } from 'vitest';
-import { WebSocketServer } from 'ws';
+import { type WebSocket, WebSocketServer } from 'ws';
 import { STT, type STTOptions } from './stt.js';
 
 // Scribe rejects a commit with less audio than this since the previous one
@@ -1156,6 +1156,630 @@ describe('ElevenLabs STT', () => {
       expect(second.searchParams.get('commit_strategy')).toBe('vad');
       expect(third.searchParams.get('commit_strategy')).toBe('manual');
     } finally {
+      await closeWebSocketServer(wss);
+    }
+  });
+});
+
+describe('ElevenLabs STT realtime socket recovery', () => {
+  const connOptions = { maxRetry: 5, retryIntervalMs: 0, timeoutMs: 1000 };
+
+  function toneFrame(value: number): AudioFrame {
+    const data = new Int16Array(800);
+    data.fill(value);
+    return new AudioFrame(data, 16000, 1, 800);
+  }
+
+  function frameBase64(frame: AudioFrame): string {
+    return Buffer.from(frame.data.buffer, frame.data.byteOffset, frame.data.byteLength).toString(
+      'base64',
+    );
+  }
+
+  async function startServer(options: { autoPong?: boolean } = {}) {
+    const wss = new WebSocketServer({
+      host: '127.0.0.1',
+      port: 0,
+      autoPong: options.autoPong ?? true,
+    });
+    await once(wss, 'listening');
+    const baseURL = `http://127.0.0.1:${(wss.address() as AddressInfo).port}`;
+    const connections: {
+      ws: WebSocket;
+      audio: string[];
+      messages: { audio: string; commit: boolean }[];
+      emptyChunks: number;
+    }[] = [];
+    wss.on('connection', (ws) => {
+      const connection = {
+        ws,
+        audio: [] as string[],
+        messages: [] as { audio: string; commit: boolean }[],
+        emptyChunks: 0,
+      };
+      connections.push(connection);
+      ws.on('message', (raw) => {
+        const message = JSON.parse(raw.toString()) as {
+          audio_base_64?: string;
+          commit?: boolean;
+        };
+        if (message.audio_base_64) connection.audio.push(message.audio_base_64);
+        if (!message.audio_base_64 && !message.commit) connection.emptyChunks++;
+        if (message.audio_base_64 || message.commit) {
+          connection.messages.push({
+            audio: message.audio_base_64 ?? '',
+            commit: message.commit === true,
+          });
+        }
+      });
+    });
+    return { wss, baseURL, connections };
+  }
+
+  function finalTexts(events: sttLib.SpeechEvent[]): string[] {
+    return events
+      .filter((event) => event.type === sttLib.SpeechEventType.FINAL_TRANSCRIPT)
+      .map((event) => event.alternatives?.[0]?.text ?? '');
+  }
+
+  async function collect(stream: sttLib.SpeechStream, events: sttLib.SpeechEvent[]) {
+    for await (const event of stream) events.push(event);
+  }
+
+  it('redials a socket that stops answering pings', async () => {
+    const { wss, baseURL, connections } = await startServer({ autoPong: false });
+    const stream = new STT({
+      apiKey: 'test-key',
+      baseURL,
+      model: 'scribe_v2_realtime',
+      livenessPingIntervalMs: 50,
+    }).stream({ connOptions });
+
+    try {
+      await waitUntil(() => connections.length === 2, 3000);
+    } finally {
+      stream.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('keeps a socket that answers pings', async () => {
+    const { wss, baseURL, connections } = await startServer();
+    const stream = new STT({
+      apiKey: 'test-key',
+      baseURL,
+      model: 'scribe_v2_realtime',
+      livenessPingIntervalMs: 50,
+    }).stream({ connOptions });
+
+    try {
+      await waitUntil(() => connections.length === 1);
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      expect(connections).toHaveLength(1);
+    } finally {
+      stream.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('replays the audio sent since the last committed transcript to the new socket', async () => {
+    const { wss, baseURL, connections } = await startServer({ autoPong: false });
+    const first = toneFrame(1);
+    const second = toneFrame(2);
+    const stream = new STT({
+      apiKey: 'test-key',
+      baseURL,
+      model: 'scribe_v2_realtime',
+      livenessPingIntervalMs: 100,
+    }).stream({ connOptions });
+
+    try {
+      await waitUntil(() => connections.length === 1);
+      stream.pushFrame(first);
+      stream.pushFrame(second);
+      await waitUntil(() => connections[0]!.audio.length === 2);
+      await waitUntil(() => connections.length === 2, 3000);
+      await waitUntil(() => connections[1]!.audio.length >= 2);
+
+      expect(connections[1]!.audio.slice(0, 2)).toEqual([frameBase64(first), frameBase64(second)]);
+    } finally {
+      stream.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('does not replay audio that a committed transcript already covered', async () => {
+    const { wss, baseURL, connections } = await startServer({ autoPong: false });
+    const covered = toneFrame(1);
+    const pending = toneFrame(2);
+    const stream = new STT({
+      apiKey: 'test-key',
+      baseURL,
+      model: 'scribe_v2_realtime',
+      livenessPingIntervalMs: 100,
+    }).stream({ connOptions });
+    const events: sttLib.SpeechEvent[] = [];
+    const output = collect(stream, events);
+
+    try {
+      await waitUntil(() => connections.length === 1);
+      stream.pushFrame(covered);
+      await waitUntil(() => connections[0]!.audio.length === 1);
+      connections[0]!.ws.send(
+        JSON.stringify({
+          message_type: 'committed_transcript_with_timestamps',
+          text: 'covered',
+          language_code: 'en',
+        }),
+      );
+      await waitUntil(() => finalTexts(events).length === 1);
+      stream.pushFrame(pending);
+      await waitUntil(() => connections[0]!.audio.length === 2);
+      await waitUntil(() => connections.length === 2, 3000);
+      await waitUntil(() => connections[1]!.audio.length >= 1);
+
+      expect(connections[1]!.audio).toEqual([frameBase64(pending)]);
+    } finally {
+      stream.close();
+      await output;
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('keeps the audio sent after the last word of a committed transcript without a pending commit', async () => {
+    const { wss, baseURL, connections } = await startServer({ autoPong: false });
+    const stream = new STT({
+      apiKey: 'test-key',
+      baseURL,
+      model: 'scribe_v2_realtime',
+      livenessPingIntervalMs: 300,
+    }).stream({ connOptions });
+    const events: sttLib.SpeechEvent[] = [];
+    const output = collect(stream, events);
+    const frames = [toneFrame(1), toneFrame(2), toneFrame(3)];
+
+    try {
+      await waitUntil(() => connections.length === 1);
+      for (const frame of frames) stream.pushFrame(frame);
+      await waitUntil(() => connections[0]!.audio.length === 3);
+      connections[0]!.ws.send(
+        JSON.stringify({
+          message_type: 'committed_transcript_with_timestamps',
+          text: 'first two',
+          language_code: 'en',
+          words: [{ text: 'first two', start: 0, end: 0.1, type: 'word' }],
+        }),
+      );
+      await waitUntil(() => finalTexts(events).length === 1);
+      await waitUntil(() => connections.length === 2, 3000);
+      await waitUntil(() => connections[1]!.audio.length >= 1);
+
+      expect(connections[1]!.audio).toEqual([frameBase64(frames[2]!)]);
+    } finally {
+      stream.close();
+      await output;
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('replays only the audio after the last word when the word ends inside a chunk', async () => {
+    const { wss, baseURL, connections } = await startServer({ autoPong: false });
+    const stream = new STT({
+      apiKey: 'test-key',
+      baseURL,
+      model: 'scribe_v2_realtime',
+      audioChunkDuration: 1000,
+      livenessPingIntervalMs: 300,
+    }).stream({ connOptions });
+    const events: sttLib.SpeechEvent[] = [];
+    const output = collect(stream, events);
+    const samples = Int16Array.from({ length: 16000 }, (_, index) => index + 1);
+    const wordEndSamples = 6400;
+
+    try {
+      await waitUntil(() => connections.length === 1);
+      for (let offset = 0; offset < samples.length; offset += 800) {
+        stream.pushFrame(new AudioFrame(samples.slice(offset, offset + 800), 16000, 1, 800));
+      }
+      await waitUntil(() => connections[0]!.audio.length === 1);
+      connections[0]!.ws.send(
+        JSON.stringify({
+          message_type: 'committed_transcript_with_timestamps',
+          text: 'first words',
+          language_code: 'en',
+          words: [{ text: 'first words', start: 0, end: wordEndSamples / 16000, type: 'word' }],
+        }),
+      );
+      await waitUntil(() => finalTexts(events).length === 1);
+      await waitUntil(() => connections.length === 2, 3000);
+      await waitUntil(() => connections[1]!.audio.length >= 1);
+
+      const after = samples.slice(wordEndSamples);
+      expect(connections[1]!.audio).toEqual([
+        Buffer.from(after.buffer, after.byteOffset, after.byteLength).toString('base64'),
+      ]);
+      expect(finalTexts(events)).toEqual(['first words']);
+    } finally {
+      stream.close();
+      await output;
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('carries a partial chunk over to the next connection', async () => {
+    const { wss, baseURL, connections } = await startServer();
+    const stream = new STT({
+      apiKey: 'test-key',
+      baseURL,
+      model: 'scribe_v2_realtime',
+    }).stream({ connOptions });
+    const samples = (...runs: [value: number, count: number][]) => {
+      const data = new Int16Array(runs.reduce((total, [, count]) => total + count, 0));
+      let at = 0;
+      for (const [value, count] of runs) {
+        data.fill(value, at, at + count);
+        at += count;
+      }
+      return new AudioFrame(data, 16000, 1, data.length);
+    };
+
+    try {
+      await waitUntil(() => connections.length === 1);
+      stream.pushFrame(samples([1, 400]));
+      stream.pushFrame(samples([2, 400], [3, 400]));
+      await waitUntil(() => connections[0]!.audio.length === 1);
+
+      stream.updateOptions({ keyterms: ['nginx'] });
+      await waitUntil(() => connections.length === 2, 3000);
+      await waitUntil(() => connections[1]!.audio.length === 1);
+      stream.pushFrame(samples([4, 400]));
+      await waitUntil(() => connections[1]!.audio.length === 2);
+
+      // The 400 samples of 3 that the first connection held back start the next chunk
+      expect(connections[1]!.audio[1]).toBe(frameBase64(samples([3, 400], [4, 400])));
+    } finally {
+      stream.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('sends a partial chunk carried over to the next connection once on flush', async () => {
+    const { wss, baseURL, connections } = await startServer();
+    const stream = new STT({
+      apiKey: 'test-key',
+      baseURL,
+      model: 'scribe_v2_realtime',
+    }).stream({ connOptions });
+    const quarter = (value: number) => {
+      const data = new Int16Array(400);
+      data.fill(value);
+      return new AudioFrame(data, 16000, 1, 400);
+    };
+
+    try {
+      await waitUntil(() => connections.length === 1);
+      stream.pushFrame(quarter(7));
+      stream.pushFrame(toneFrame(1));
+      await waitUntil(() => connections[0]!.audio.length === 1);
+
+      stream.updateOptions({ keyterms: ['nginx'] });
+      await waitUntil(() => connections.length === 2, 3000);
+      await waitUntil(() => connections[1]!.audio.length === 1);
+      stream.flush();
+      stream.flush();
+      await waitUntil(() => connections[1]!.messages.filter((m) => m.commit).length === 2);
+
+      const carried = connections[1]!.audio.filter((audio) => audio === frameBase64(quarter(1)));
+      expect(carried).toHaveLength(1);
+    } finally {
+      stream.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('replays the commit of a flush the dead socket never answered', async () => {
+    const { wss, baseURL, connections } = await startServer({ autoPong: false });
+    const flushed = toneFrame(1);
+    const stream = new STT({
+      apiKey: 'test-key',
+      baseURL,
+      model: 'scribe_v2_realtime',
+      livenessPingIntervalMs: 300,
+    }).stream({ connOptions });
+
+    try {
+      await waitUntil(() => connections.length === 1);
+      stream.pushFrame(flushed);
+      stream.flush();
+      await waitUntil(() => connections[0]!.messages.some((message) => message.commit));
+      await waitUntil(() => connections.length === 2, 3000);
+      await waitUntil(() => connections[1]!.messages.some((message) => message.commit));
+
+      expect(connections[1]!.messages).toEqual(connections[0]!.messages);
+      expect(connections[1]!.messages[0]!.audio).toBe(frameBase64(flushed));
+    } finally {
+      stream.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('keeps audio sent after a flush when the flush is answered late', async () => {
+    const { wss, baseURL, connections } = await startServer({ autoPong: false });
+    const answered = toneFrame(1);
+    const newer = toneFrame(2);
+    const stream = new STT({
+      apiKey: 'test-key',
+      baseURL,
+      model: 'scribe_v2_realtime',
+      livenessPingIntervalMs: 300,
+    }).stream({ connOptions });
+    const events: sttLib.SpeechEvent[] = [];
+    const output = collect(stream, events);
+
+    try {
+      await waitUntil(() => connections.length === 1);
+      stream.pushFrame(answered);
+      stream.flush();
+      stream.pushFrame(newer);
+      await waitUntil(() => connections[0]!.audio.includes(frameBase64(newer)));
+      connections[0]!.ws.send(
+        JSON.stringify({
+          message_type: 'committed_transcript_with_timestamps',
+          text: 'answered',
+          language_code: 'en',
+        }),
+      );
+      await waitUntil(() => finalTexts(events).length === 1);
+      await waitUntil(() => connections.length === 2, 3000);
+      await waitUntil(() => connections[1]!.audio.length >= 1);
+
+      expect(connections[1]!.audio).toEqual([frameBase64(newer)]);
+    } finally {
+      stream.close();
+      await output;
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('sends a replayed commit without enough audio before it as plain audio', async () => {
+    const { wss, baseURL, connections } = await startServer({ autoPong: false });
+    const frames = Array.from({ length: 1197 }, (_, index) => toneFrame((index % 100) + 1));
+    const stream = new STT({
+      apiKey: 'test-key',
+      baseURL,
+      model: 'scribe_v2_realtime',
+      livenessPingIntervalMs: 1000,
+    }).stream({ connOptions });
+
+    try {
+      await waitUntil(() => connections.length === 1);
+      stream.pushFrame(toneFrame(1));
+      stream.flush();
+      for (const frame of frames) stream.pushFrame(frame);
+      await waitUntil(() => connections[0]!.audio.length >= 1197 + 2, 5000);
+      expect(connections[0]!.messages.some((message) => message.commit)).toBe(true);
+      await waitUntil(() => connections.length === 2, 5000);
+      await waitUntil(() => connections[1]!.audio.length >= 1100);
+
+      expect(connections[1]!.messages.some((message) => message.commit)).toBe(false);
+      expect(connections[1]!.emptyChunks).toBe(0);
+    } finally {
+      stream.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('keeps transcript timestamps on the stream position of replayed audio', async () => {
+    const { wss, baseURL, connections } = await startServer({ autoPong: false });
+    const stream = new STT({
+      apiKey: 'test-key',
+      baseURL,
+      model: 'scribe_v2_realtime',
+      livenessPingIntervalMs: 300,
+    }).stream({ connOptions });
+    const events: sttLib.SpeechEvent[] = [];
+    const output = collect(stream, events);
+
+    try {
+      await waitUntil(() => connections.length === 1);
+      stream.pushFrame(toneFrame(1));
+      await waitUntil(() => connections[0]!.audio.length === 1);
+      await waitUntil(() => connections.length === 2, 3000);
+      await waitUntil(() => connections[1]!.audio.length === 1);
+      connections[1]!.ws.send(
+        JSON.stringify({
+          message_type: 'committed_transcript_with_timestamps',
+          text: 'replayed',
+          language_code: 'en',
+          words: [{ text: 'replayed', start: 0, end: 0.05, type: 'word' }],
+        }),
+      );
+      await waitUntil(() => finalTexts(events).length === 1);
+
+      // The dead socket lived over 0.3s: that wall time must not be added to the timestamps
+      const alternative = events.find(
+        (event) => event.type === sttLib.SpeechEventType.FINAL_TRANSCRIPT,
+      )!.alternatives![0]!;
+      expect(alternative.startTime).toBeLessThan(0.2);
+      expect(alternative.endTime - alternative.startTime).toBeCloseTo(0.05, 5);
+    } finally {
+      stream.close();
+      await output;
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('counts the time before an options reconnect once when the next socket dies without a replay', async () => {
+    const { wss, baseURL, connections } = await startServer();
+    const began = Date.now();
+    const stream = new STT({
+      apiKey: 'test-key',
+      baseURL,
+      model: 'scribe_v2_realtime',
+    }).stream({ connOptions });
+    const events: sttLib.SpeechEvent[] = [];
+    const output = collect(stream, events);
+    const commit = (ws: WebSocket, text: string) =>
+      ws.send(
+        JSON.stringify({
+          message_type: 'committed_transcript_with_timestamps',
+          text,
+          language_code: 'en',
+          words: [{ text, start: 0, end: 0.51, type: 'word' }],
+        }),
+      );
+
+    try {
+      await waitUntil(() => connections.length === 1);
+      for (let i = 0; i < 10; i++) stream.pushFrame(toneFrame(1));
+      await waitUntil(() => connections[0]!.audio.length === 10);
+      commit(connections[0]!.ws, 'first');
+      await waitUntil(() => finalTexts(events).length === 1);
+
+      stream.updateOptions({ keyterms: ['nginx'] });
+      await waitUntil(() => connections.length === 2, 3000);
+      for (let i = 0; i < 10; i++) stream.pushFrame(toneFrame(1));
+      await waitUntil(() => connections[1]!.audio.length === 10);
+      commit(connections[1]!.ws, 'second');
+      await waitUntil(() => finalTexts(events).length === 2);
+
+      connections[1]!.ws.terminate();
+      await waitUntil(() => connections.length === 3, 3000);
+      const lived = (Date.now() - began) / 1000;
+      commit(connections[2]!.ws, 'third');
+      await waitUntil(() => finalTexts(events).length === 3);
+
+      // 1s of audio was sent in `lived` seconds or less: the third socket starts at the end of the
+      // audio, after the second, and not 0.5s (the audio before the options reconnect) later
+      const [, second, third] = events
+        .filter((event) => event.type === sttLib.SpeechEventType.FINAL_TRANSCRIPT)
+        .map((event) => event.alternatives![0]!);
+      expect(third!.startTime).toBeGreaterThanOrEqual(second!.startTime);
+      expect(third!.startTime).toBeLessThan(Math.max(1, lived) + 0.25);
+    } finally {
+      stream.close();
+      await output;
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('replays audio that arrived faster than realtime before the socket was found dead', async () => {
+    const { wss, baseURL, connections } = await startServer({ autoPong: false });
+    const frames = Array.from({ length: 80 }, (_, index) => toneFrame(index + 1));
+    const stream = new STT({
+      apiKey: 'test-key',
+      baseURL,
+      model: 'scribe_v2_realtime',
+      livenessPingIntervalMs: 300,
+    }).stream({ connOptions });
+
+    try {
+      await waitUntil(() => connections.length === 1);
+      for (const frame of frames) stream.pushFrame(frame);
+      await waitUntil(() => connections[0]!.audio.length === frames.length);
+      await waitUntil(() => connections.length === 2, 3000);
+      await waitUntil(() => connections[1]!.audio.length >= frames.length);
+
+      expect(connections[1]!.audio).toEqual(frames.map(frameBase64));
+    } finally {
+      stream.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('bounds the audio held for replay', async () => {
+    const { wss, baseURL, connections } = await startServer({ autoPong: false });
+    const frames = Array.from({ length: 1300 }, (_, index) => toneFrame((index % 100) + 1));
+    const stream = new STT({
+      apiKey: 'test-key',
+      baseURL,
+      model: 'scribe_v2_realtime',
+      livenessPingIntervalMs: 1000,
+    }).stream({ connOptions });
+
+    try {
+      await waitUntil(() => connections.length === 1);
+      for (const frame of frames) stream.pushFrame(frame);
+      await waitUntil(() => connections[0]!.audio.length === frames.length);
+      await waitUntil(() => connections.length === 2, 5000);
+      await waitUntil(() => connections[1]!.audio.length >= 1100);
+
+      expect(connections[1]!.audio.length).toBeLessThanOrEqual(1200);
+      expect(connections[1]!.audio.at(-1)).toBe(frameBase64(frames.at(-1)!));
+    } finally {
+      stream.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('does not lose the next frame to a read left pending by a dropped socket', async () => {
+    const { wss, baseURL, connections } = await startServer();
+    const stream = new STT({
+      apiKey: 'test-key',
+      baseURL,
+      model: 'scribe_v2_realtime',
+    }).stream({ connOptions });
+    const frame = toneFrame(3);
+
+    try {
+      await waitUntil(() => connections.length === 1);
+      connections[0]!.ws.close();
+      await waitUntil(() => connections.length === 2, 3000);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      stream.pushFrame(frame);
+
+      await waitUntil(() => connections[1]!.audio.length === 1);
+      expect(connections[1]!.audio[0]).toBe(frameBase64(frame));
+    } finally {
+      stream.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('ignores a late message from a socket the stream already left', async () => {
+    const { wss, baseURL, connections } = await startServer();
+    const eleven = new STT({ apiKey: 'test-key', baseURL, model: 'scribe_v2_realtime' });
+    const stream = eleven.stream({ connOptions });
+    const events: sttLib.SpeechEvent[] = [];
+    const output = collect(stream, events);
+    const committed = (text: string) =>
+      JSON.stringify({
+        message_type: 'committed_transcript_with_timestamps',
+        text,
+        language_code: 'en',
+      });
+
+    try {
+      await waitUntil(() => connections.length === 1);
+      stream.updateOptions({ keyterms: ['nginx'] });
+      connections[0]!.ws.send(committed('stale'));
+      await waitUntil(() => connections.length === 2, 3000);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      connections[1]!.ws.send(committed('fresh'));
+      await waitUntil(() => finalTexts(events).length > 0);
+
+      expect(finalTexts(events)).toEqual(['fresh']);
+    } finally {
+      stream.close();
+      await output;
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('redials when reading the input fails with an error that is not an APIError', async () => {
+    const { wss, baseURL, connections } = await startServer();
+    const eleven = new STT({ apiKey: 'test-key', baseURL, model: 'scribe_v2_realtime' });
+    const errors: unknown[] = [];
+    eleven.on('error', (event) => errors.push(event.error));
+    const stream = eleven.stream({ connOptions });
+    const input = (stream as unknown as { input: { next: () => Promise<unknown> } }).input;
+    vi.spyOn(input, 'next').mockRejectedValueOnce(new Error('input exploded'));
+
+    try {
+      await waitUntil(() => connections.length === 2, 3000);
+      expect(errors).toEqual([]);
+    } finally {
+      stream.close();
       await closeWebSocketServer(wss);
     }
   });
