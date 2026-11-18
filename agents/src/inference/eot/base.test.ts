@@ -14,8 +14,9 @@
  * commits) lives in `AudioRecognition` and is covered by
  * `voice/audio_recognition_turn_detection.test.ts`.
  */
-import type { AudioFrame } from '@livekit/rtc-node';
+import { AudioFrame } from '@livekit/rtc-node';
 import { describe, expect, it } from 'vitest';
+import { ChatContext } from '../../llm/chat_context.js';
 import type { Future } from '../../utils.js';
 import {
   BaseStreamingTurnDetector,
@@ -28,7 +29,7 @@ import {
 import { ThresholdOptions, type TurnDetectorModel } from './languages.js';
 
 class FakeTransport implements StreamingTurnDetectionTransport {
-  events: Array<[string, string]> = [];
+  events: Array<[string, string | number | undefined]> = [];
   private _stream: BaseStreamingTurnDetectorStream | undefined;
 
   attach(stream: BaseStreamingTurnDetectorStream): void {
@@ -40,14 +41,19 @@ class FakeTransport implements StreamingTurnDetectionTransport {
     }
     await this._stream._drainAudioChannel();
   }
-  runInference(requestId: string): void {
+  runInference(requestId: string, chatCtx?: ChatContext): void {
     this.events.push(['run_inference', requestId]);
+    const last = chatCtx?.items.at(-1);
+    this.events.push(['assistant', last?.type === 'message' ? last.textContent : undefined]);
   }
-  async pushFrame(_frame: AudioFrame): Promise<void> {
-    // no-op
+  async pushFrame(frame: AudioFrame): Promise<void> {
+    this.events.push(['push_frame', frame.samplesPerChannel]);
+  }
+  onStartOfTurn(elapsed: number): void {
+    this.events.push(['on_start_of_turn', elapsed]);
   }
   async flush(_sentinel: FlushSentinel): Promise<void> {
-    // no-op
+    this.events.push(['flush', undefined]);
   }
   detach(): void {
     // no-op
@@ -74,7 +80,7 @@ class FakeBackend extends BaseStreamingTurnDetectorStream {
     this.fakeTransport = transport;
   }
 
-  get events(): Array<[string, string]> {
+  get events(): Array<[string, string | number | undefined]> {
     return this.fakeTransport.events;
   }
 
@@ -105,8 +111,14 @@ function makeStream(thresholds: Record<string, number> = {}): FakeBackend {
   return new FakeBackend(makeOpts(thresholds));
 }
 
-const countRunInference = (events: Array<[string, string]>) =>
+const countRunInference = (events: Array<[string, string | number | undefined]>) =>
   events.filter((e) => e[0] === 'run_inference').length;
+
+const frame = (samples = 160) => new AudioFrame(new Int16Array(samples), 16000, 1, samples);
+
+async function drain(): Promise<void> {
+  for (let i = 0; i < 10; i++) await new Promise<void>((resolve) => setImmediate(resolve));
+}
 
 describe('AudioTurnDetectionRequests', () => {
   it('predict starts inference', async () => {
@@ -115,7 +127,11 @@ describe('AudioTurnDetectionRequests', () => {
       const fut = s.predict();
       expect(s.requestId).toBeDefined();
       expect(fut.done).toBe(false);
-      expect(s.events).toEqual([['run_inference', s.requestId!]]);
+      await drain();
+      expect(s.events).toEqual([
+        ['run_inference', s.requestId!],
+        ['assistant', undefined],
+      ]);
     } finally {
       await s.aclose();
     }
@@ -132,7 +148,8 @@ describe('AudioTurnDetectionRequests', () => {
       expect(s.requestId).not.toBe(oldId);
       expect(oldFut.done).toBe(true);
       expect((await oldFut.await).endOfTurnProbability).toBe(0.0);
-      expect(countRunInference(s.events)).toBe(2);
+      await drain();
+      expect(countRunInference(s.events)).toBe(1);
     } finally {
       await s.aclose();
     }
@@ -177,7 +194,8 @@ describe('AudioTurnDetectionRequests', () => {
       const nextFut = s.predict();
       expect(nextFut).not.toBe(fut);
       expect(nextFut.done).toBe(false);
-      expect(countRunInference(s.events)).toBe(2);
+      await drain();
+      expect(countRunInference(s.events)).toBe(1);
     } finally {
       await s.aclose();
     }
@@ -194,6 +212,32 @@ describe('AudioTurnDetectionRequests', () => {
       expect(fut.done).toBe(true);
       expect((await fut.await).endOfTurnProbability).toBe(0.3);
       expect(s.requestId).toBeUndefined();
+    } finally {
+      await s.aclose();
+    }
+  });
+
+  it('queues turn starts and inference in audio order', async () => {
+    const s = makeStream();
+    try {
+      const now = Date.now();
+      s.pushAudio(frame());
+      s.onStartOfTurn(now - 250);
+      s.pushAudio(frame());
+      const chatCtx = ChatContext.empty();
+      chatCtx.addMessage({ role: 'assistant', content: 'First question' });
+      s.predict(chatCtx);
+      chatCtx.addMessage({ role: 'assistant', content: 'Second question' });
+      await drain();
+
+      expect(s.events[0]).toEqual(['push_frame', 160]);
+      expect(s.events[1]![0]).toBe('on_start_of_turn');
+      expect(s.events[1]![1]).toBeGreaterThanOrEqual(250);
+      expect(s.events.slice(2)).toEqual([
+        ['push_frame', 160],
+        ['run_inference', s.requestId!],
+        ['assistant', 'First question'],
+      ]);
     } finally {
       await s.aclose();
     }

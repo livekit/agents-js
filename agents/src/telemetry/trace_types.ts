@@ -174,6 +174,8 @@ export const ATTR_TTS_LABEL = 'lk.tts.label';
 export const ATTR_RESPONSE_TTFB = 'lk.response.ttfb';
 
 // eou detection
+export const ATTR_EOU_MODEL = 'lk.eou.model';
+export const ATTR_EOU_PROVIDER = 'lk.eou.provider';
 export const ATTR_EOU_PROBABILITY = 'lk.eou.probability';
 export const ATTR_EOU_UNLIKELY_THRESHOLD = 'lk.eou.unlikely_threshold';
 /** The endpointing delay in force for the turn, in seconds. */

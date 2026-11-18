@@ -56,7 +56,8 @@ export type AssemblyaiModels =
   | 'assemblyai/universal-streaming-multilingual'
   | 'assemblyai/u3-rt-pro'
   | 'assemblyai/universal-3-5-pro'
-  | 'assemblyai/universal-3-6-pro';
+  | 'assemblyai/universal-3-6-pro'
+  | 'assemblyai/assemblyai-stt-3-7-realtime-agent';
 
 export type XaiSTTModels = 'xai/stt-1' | 'xai/stt-2';
 
@@ -275,6 +276,7 @@ const ASSEMBLYAI_CARRYOVER_MODELS = new Set([
   'assemblyai/u3-rt-pro',
   'assemblyai/universal-3-5-pro',
   'assemblyai/universal-3-6-pro',
+  'assemblyai/assemblyai-stt-3-7-realtime-agent',
 ]);
 
 const ASSEMBLYAI_MAX_AGENT_CONTEXT_CHARS = 1750;
@@ -346,6 +348,7 @@ const WORD_ALIGNED_MODELS = new Set([
   'assemblyai/u3-rt-pro',
   'assemblyai/universal-3-5-pro',
   'assemblyai/universal-3-6-pro',
+  'assemblyai/assemblyai-stt-3-7-realtime-agent',
   'xai/stt-1',
   'xai/stt-2',
   'speechmatics/enhanced',
