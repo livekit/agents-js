@@ -1,5 +1,25 @@
 # @livekit/agents
 
+## 1.10.1
+
+### Patch Changes
+
+- Add AssemblyAI STT 3.7 Realtime Agent to LiveKit Inference STT models. - [#3005](https://github.com/livekit/agents-js/pull/3005) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Include the turn detector model and provider in EOU detection traces and prediction logs. - [#3002](https://github.com/livekit/agents-js/pull/3002) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Downmix multichannel audio before buffering it for local turn detection. - [#3000](https://github.com/livekit/agents-js/pull/3000) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Expose TTS system-default fallback opt-out and fallback activation events. - [#2468](https://github.com/livekit/agents-js/pull/2468) ([@russellmartin-livekit](https://github.com/russellmartin-livekit))
+
+- Add Gemini 4 Neon to the LiveKit Inference Google models. - [#3024](https://github.com/livekit/agents-js/pull/3024) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Preserve user message extra data when reusing a preemptive voice reply. - [#3022](https://github.com/livekit/agents-js/pull/3022) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Preserve simulation content unless session redaction is explicitly enabled. - [#3021](https://github.com/livekit/agents-js/pull/3021) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Skip building LLM trace payloads that OpenTelemetry would discard. - [#2463](https://github.com/livekit/agents-js/pull/2463) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
 ## 1.10.0
 
 ### Minor Changes
