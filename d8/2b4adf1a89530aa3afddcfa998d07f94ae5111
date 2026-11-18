@@ -1,0 +1,37 @@
+agents/etc/agents.api.md
+  s_c9fa01ab24948b::t_77f059a9785609 10140
+agents/src/voice/agent_activity.test.ts
+  s_c9fa01ab24948b::t_36bf9ce059237c 48-52,1456-1457,1461-1479
+agents/src/voice/agent_activity.ts
+  s_c9fa01ab24948b::t_a7e548f9ba2230 5626-5627
+agents/src/voice/amd/detector.ts
+  s_c9fa01ab24948b::t_df6cabdfb96e50 712,716-720,1627-1632
+agents/src/voice/amd/detector_lifecycle.test.ts
+  s_c9fa01ab24948b::t_0722c60f3ab3d9 521-539,792-809
+agents/src/voice/events.ts
+  s_c9fa01ab24948b::t_cc401a16a07f58 252-253,259-264,269,275
+agents/src/voice/remote_session.test.ts
+  s_c9fa01ab24948b::t_1aa06b0398f38f 22-28,296-320
+agents/src/voice/remote_session.ts
+  s_c9fa01ab24948b::t_a743da7b49ba3a 976,1004-1005
+examples/src/telephony/amd.test.ts
+  s_c9fa01ab24948b::t_17f4592ba58cef 7,30-31,188-189,258-267,293-294,325,329
+examples/src/telephony/amd.ts
+  s_c9fa01ab24948b::t_6a0535c9cc4280 15,105-110
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d82b4adf1a89530aa3afddcfa998d07f94ae5111",
+  "prompts": {},
+  "sessions": {
+    "s_c9fa01ab24948b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "16d4b070-3315-410b-8e32-1f2ab17907a1",
+        "model": "unknown"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
