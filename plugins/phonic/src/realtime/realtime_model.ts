@@ -1352,10 +1352,11 @@ export class RealtimeSession extends llm.RealtimeSession {
       mcp_servers: this.options.mcpServers,
       observability_integrations: this.options.observabilityIntegrations,
       configuration_endpoint: this.options.configurationEndpoint,
-      additional_params: this.phonicModel.capabilities.audioOutput
-        ? this.options.additionalParams
-        : // Sent through additional_params until the SDK's config payload has these fields.
-          { ...this.options.additionalParams, input_modality: 'text', output_modality: 'text' },
+      additional_params: this.options.additionalParams,
+      ...(!this.phonicModel.capabilities.audioOutput && {
+        input_modality: 'text',
+        output_modality: 'text',
+      }),
       external_id: this.options.externalId,
       stream_ahead_of_real_time: true,
     };

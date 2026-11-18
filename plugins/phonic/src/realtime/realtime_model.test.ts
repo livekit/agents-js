@@ -119,7 +119,7 @@ describe('Phonic modalities', () => {
     for (const handler of messageHandlers) handler(message);
   };
 
-  it('sends the text modality in additional_params', async () => {
+  it('sends the text modality as top-level config fields', async () => {
     const model = new RealtimeModel({
       apiKey: 'test-key',
       modalities: ['text'],
@@ -128,21 +128,23 @@ describe('Phonic modalities', () => {
     session = model.session({ instructions: 'be brief' });
 
     await vi.waitFor(() => expect(sentConfigs).toHaveLength(1));
-    expect((sentConfigs[0] as { additional_params?: unknown }).additional_params).toEqual({
-      foo: 1,
-      input_modality: 'text',
-      output_modality: 'text',
-    });
+    const config = sentConfigs[0] as Record<string, unknown>;
+    expect(config.input_modality).toBe('text');
+    expect(config.output_modality).toBe('text');
+    expect(config.additional_params).toEqual({ foo: 1 });
     expect(model.capabilities.audioOutput).toBe(false);
     expect(model.capabilities.userTranscription).toBe(false);
   });
 
-  it('sends no modality params by default', async () => {
+  it('sends no modality fields by default', async () => {
     const model = new RealtimeModel({ apiKey: 'test-key' });
     session = model.session({ instructions: 'be brief' });
 
     await vi.waitFor(() => expect(sentConfigs).toHaveLength(1));
-    expect((sentConfigs[0] as { additional_params?: unknown }).additional_params).toBeUndefined();
+    const config = sentConfigs[0] as Record<string, unknown>;
+    expect(config).not.toHaveProperty('input_modality');
+    expect(config).not.toHaveProperty('output_modality');
+    expect(config.additional_params).toBeUndefined();
     expect(model.capabilities.audioOutput).toBe(true);
     expect(model.capabilities.userTranscription).toBe(true);
   });
