@@ -5,12 +5,13 @@ import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { type WebSocket, WebSocketServer } from 'ws';
+import { APIStatusError } from '../_exceptions.js';
 import * as agents from '../index.js';
 import { normalizeLanguage } from '../language.js';
 import { initializeLogger } from '../log.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import { STT } from './stt.js';
-import { describeLiveKitInference } from './test_utils.js';
+import { createQuotaWebSocketServer, describeLiveKitInference } from './test_utils.js';
 import {
   type FallbackActivatedEvent,
   TTS,
@@ -112,6 +113,26 @@ async function runGatewayEvents(events: Record<string, unknown>[]) {
 }
 
 describe('Inference TTS connection', () => {
+  it('explains exhausted credits when the handshake fails', async () => {
+    const gateway = await createQuotaWebSocketServer();
+    const tts = makeTts({ baseURL: gateway.url });
+    try {
+      const error = await tts.connectWs(1_000).catch((error: unknown) => error);
+
+      expect(error).toBeInstanceOf(APIStatusError);
+      expect(error).toMatchObject({
+        message: 'Credit quota exhausted.',
+        statusCode: 429,
+        retryable: false,
+        requestId: 'quota-test-request',
+        body: { category: 'MaxGatewayCredits' },
+      });
+    } finally {
+      await tts.close();
+      await gateway.close();
+    }
+  });
+
   it('includes the model in the dial URL', async () => {
     const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
     await once(server, 'listening');

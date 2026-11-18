@@ -24,7 +24,7 @@ import {
   normalizeSTTFallback,
   parseSTTModelString,
 } from './stt.js';
-import { describeLiveKitInference } from './test_utils.js';
+import { createQuotaWebSocketServer, describeLiveKitInference } from './test_utils.js';
 import { VAD as InferenceVAD } from './vad.js';
 
 beforeAll(() => {
@@ -2000,6 +2000,25 @@ describe('Inference STT connection lifecycle', () => {
 });
 
 describe('Inference STT errors', () => {
+  it('explains exhausted credits when the handshake fails', async () => {
+    const gateway = await createQuotaWebSocketServer();
+    const stt = makeStt({ baseURL: gateway.url });
+    try {
+      const error = await stt.connectWs(1_000).catch((error: unknown) => error);
+
+      expect(error).toBeInstanceOf(APIStatusError);
+      expect(error).toMatchObject({
+        message: 'Credit quota exhausted.',
+        statusCode: 429,
+        retryable: false,
+        requestId: 'quota-test-request',
+        body: { category: 'MaxGatewayCredits' },
+      });
+    } finally {
+      await gateway.close();
+    }
+  });
+
   async function receiveGatewayError(gatewayError: Record<string, unknown>): Promise<Error> {
     const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
     await once(server, 'listening');

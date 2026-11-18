@@ -16,6 +16,7 @@ import { EventEmitter } from 'events';
 import { EventEmitter as EventEmitter_2 } from 'node:events';
 import type { EventMap } from '@livekit/typed-emitter';
 import { FrameProcessor } from '@livekit/rtc-node';
+import type { IncomingMessage } from 'node:http';
 import { IncomingRpcNext } from '@livekit/rtc-node';
 import { JobType } from '@livekit/protocol';
 import { JsonObject } from '@bufbuild/protobuf';
@@ -3253,6 +3254,8 @@ export abstract class DuplexSession<Events extends EventMap = Record<never, neve
 // @public (undocumented)
 class DuplexSession_2 extends GPTLiveSession {
     constructor(model: DuplexModel_2);
+    // @internal (undocumented)
+    protected createWsResponseError(response: IncomingMessage): APIStatusError;
     // (undocumented)
     protected createWsUrlAndHeaders(): Promise<{
         url: URL;

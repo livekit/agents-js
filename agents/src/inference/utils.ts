@@ -23,6 +23,30 @@ export const STAGING_INFERENCE_URL = 'https://agent-gateway.staging.livekit.clou
 /** LiveKit Agent Gateway routing header names. */
 export const INFERENCE_PROVIDER_HEADER = 'X-LiveKit-Inference-Provider';
 export const INFERENCE_PRIORITY_HEADER = 'X-LiveKit-Inference-Priority';
+export const INFERENCE_REQUEST_ID_HEADER = 'X-LiveKit-Request-Id';
+
+function responseHeader(response: IncomingMessage, name: string): string | undefined {
+  const value = response.headers[name.toLowerCase()];
+  return Array.isArray(value) ? value[0] : value;
+}
+
+export function createApiErrorFromResponse(response: IncomingMessage): APIStatusError {
+  const statusCode = response.statusCode ?? -1;
+  const category = responseHeader(response, 'X-LiveKit-Inference-Quota-Category');
+  const terminalDenial =
+    responseHeader(response, 'X-Should-Retry')?.trim().toLowerCase() === 'false';
+  return new APIStatusError({
+    message:
+      responseHeader(response, 'X-LiveKit-Inference-Quota-Message') ??
+      `Unexpected server response: ${statusCode}`,
+    options: {
+      statusCode,
+      requestId: responseHeader(response, INFERENCE_REQUEST_ID_HEADER),
+      body: category ? { category } : null,
+      ...(terminalDenial ? { retryable: false } : {}),
+    },
+  });
+}
 
 /**
  * Get the default inference URL based on the environment.
@@ -143,14 +167,8 @@ export async function connectWs(
     };
 
     const onUnexpectedResponse = (_request: unknown, response: IncomingMessage) => {
-      const statusCode = response.statusCode ?? -1;
       clearTimeout(timeout);
-      reject(
-        new APIStatusError({
-          message: `Unexpected server response: ${statusCode}`,
-          options: { statusCode },
-        }),
-      );
+      reject(createApiErrorFromResponse(response));
       socket.terminate();
     };
 

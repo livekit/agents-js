@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import type { IncomingMessage } from 'node:http';
 import {
   GPTLiveModel as BaseGPTLiveModel,
   GPTLiveSession as BaseGPTLiveSession,
@@ -17,6 +18,7 @@ import {
   INFERENCE_PROVIDER_HEADER,
   buildMetadataHeaders,
   createAccessToken,
+  createApiErrorFromResponse,
   getDefaultInferenceUrl,
   resolveCredentials,
 } from './utils.js';
@@ -188,6 +190,11 @@ export class DuplexSession extends BaseGPTLiveSession {
       headers[INFERENCE_PROVIDER_HEADER] = options.provider;
     }
     return { url, headers };
+  }
+
+  /** @internal */
+  protected override createWsResponseError(response: IncomingMessage) {
+    return createApiErrorFromResponse(response);
   }
 
   override async _updateTools(tools: ToolContext): Promise<void> {

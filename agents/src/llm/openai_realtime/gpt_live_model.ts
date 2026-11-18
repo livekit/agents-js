@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { AudioFrame, AudioResampler } from '@livekit/rtc-node';
+import type { IncomingMessage } from 'node:http';
 import { ReadableStream, type ReadableStreamDefaultController } from 'node:stream/web';
 import { setTimeout as delay } from 'node:timers/promises';
 import type OpenAI from 'openai';
@@ -526,6 +527,11 @@ export class GPTLiveSession extends llm.DuplexSession<{
     return FATAL_ERROR_CODES.has(error.code || error.type || '');
   }
 
+  /** @internal */
+  protected createWsResponseError(_response: IncomingMessage): APIError {
+    return new APIConnectionError({ message: 'GPT-Live connection failed' });
+  }
+
   private async runConnection(onOpen: () => void, onStarted: () => void): Promise<void> {
     const { url, headers } = await this.createWsUrlAndHeaders();
     if (this.closing) return;
@@ -571,6 +577,9 @@ export class GPTLiveSession extends llm.DuplexSession<{
     });
     ws.on('error', () =>
       done.resolve(new APIConnectionError({ message: 'GPT-Live connection failed' })),
+    );
+    ws.on('unexpected-response', (_request, response) =>
+      done.resolve(this.createWsResponseError(response)),
     );
     ws.on('close', () =>
       done.resolve(

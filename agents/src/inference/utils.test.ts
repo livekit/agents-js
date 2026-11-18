@@ -9,9 +9,12 @@ import { buildMetadataHeaders, connectWs, resolveCredentials } from './utils.js'
 
 const servers: http.Server[] = [];
 
-async function rejectWebSocket(statusCode: number): Promise<string> {
+async function rejectWebSocket(
+  statusCode: number,
+  headers: Record<string, string> = {},
+): Promise<string> {
   const server = http.createServer((_request, response) => {
-    response.writeHead(statusCode);
+    response.writeHead(statusCode, headers);
     response.end();
   });
   servers.push(server);
@@ -73,6 +76,28 @@ describe('connectWs', () => {
       body: null,
     });
   });
+
+  it.each([
+    [429, {}, true, 'Unexpected server response: 429'],
+    [429, { 'X-Should-Retry': 'false' }, false, 'Unexpected server response: 429'],
+    [401, {}, false, 'Unexpected server response: 401'],
+    [
+      429,
+      { 'X-LiveKit-Inference-Quota-Message': 'STT concurrent connection limit reached.' },
+      true,
+      'STT concurrent connection limit reached.',
+    ],
+  ] as const)(
+    'preserves retry policy for a %s handshake response',
+    async (statusCode, headers, retryable, message) => {
+      const url = await rejectWebSocket(statusCode, headers);
+
+      const error = await connectWs(url, {}, 1_000).catch((error: unknown) => error);
+
+      expect(error).toBeInstanceOf(APIStatusError);
+      expect(error).toMatchObject({ message, statusCode, retryable, body: null });
+    },
+  );
 
   it('does not expose the message from a network error', async () => {
     const error = await connectWs('ws://127.0.0.1:1', {}, 1_000).catch((error: unknown) => error);
