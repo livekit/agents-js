@@ -17,7 +17,16 @@ import type * as metrics from '../../metrics/index.js';
 import * as stream from '../../stream/index.js';
 import type { APIConnectOptions } from '../../types.js';
 import { DEFAULT_API_CONNECT_OPTIONS } from '../../types.js';
-import { Future, Queue, Task, cancelAndWait, delay, shortuuid } from '../../utils.js';
+import {
+  Future,
+  Queue,
+  Task,
+  cancelAndWait,
+  combineSignals,
+  delay,
+  shortuuid,
+  waitUntilAborted,
+} from '../../utils.js';
 import { type TimedString, createTimedString } from '../../voice/io.js';
 import * as llm from '../index.js';
 import * as api_proto from './api_proto.js';
@@ -1333,7 +1342,7 @@ export class RealtimeSession extends llm.RealtimeSession {
           // a failed first handshake leaves the startup events queued, with nothing to replay
           reconnecting = true;
 
-          await this.runWs(wsConn);
+          await this.runWs(wsConn, signal);
           if (signal.aborted) break;
         } catch (error) {
           if (!isAPIError(error)) {
@@ -1371,25 +1380,43 @@ export class RealtimeSession extends llm.RealtimeSession {
             `OpenAI Realtime API connection failed, retrying in ${retryInterval / 1000}s`,
           );
 
-          await delay(retryInterval);
+          await delay(retryInterval, { signal });
           numRetries++;
         }
       }
     } finally {
+      wsConn?.close();
       this.closeCurrentGeneration('session close');
       this.rejectResponseCreatedFutures('Realtime session closed');
     }
   }
 
-  private async runWs(wsConn: WebSocket): Promise<void> {
-    const forwardEvents = async (signal: AbortSignal): Promise<void> => {
-      const abortFuture = new Future<void>();
-      signal.addEventListener('abort', () => abortFuture.resolve());
+  /** @internal */
+  protected waitForSocketRecycle?(ws: WebSocket, signal: AbortSignal): Promise<void>;
 
+  /** @internal */
+  protected get socketHandoffState() {
+    const generation = this.currentGeneration;
+    return {
+      canObserveTurns: this._options.turnDetection != null,
+      transcribesInput: this._options.inputAudioTranscription != null,
+      responsePending:
+        (generation !== undefined &&
+          !(generation instanceof DiscardedGeneration) &&
+          !generation._doneFut.done) ||
+        Object.values(this.responseCreatedFutures).some(({ doneFut }) => !doneFut.done),
+      timeoutMs: this._options.connOptions.timeoutMs,
+    };
+  }
+
+  private async runWs(wsConn: WebSocket, sessionSignal: AbortSignal): Promise<void> {
+    const forwardEvents = async (signal: AbortSignal): Promise<void> => {
       while (!this.#closed && wsConn.readyState === WebSocket.OPEN && !signal.aborted) {
         try {
-          const event = await Promise.race([this.messageChannel.get(), abortFuture.await]);
-          if (signal.aborted || abortFuture.done || event === undefined) {
+          const event = await this.messageChannel.get({ signal });
+          if (signal.aborted || wsConn.readyState !== WebSocket.OPEN) {
+            // The next socket needs anything dequeued before teardown that never reached the wire.
+            this.messageChannel.items.unshift(event);
             break;
           }
 
@@ -1537,14 +1564,14 @@ export class RealtimeSession extends llm.RealtimeSession {
     const sendTask = Task.from(({ signal }) => forwardEvents(signal));
 
     const wsTask = Task.from(({ signal }) => {
-      const abortPromise = new Promise<void>((resolve) => {
-        signal.addEventListener('abort', () => {
-          resolve();
-        });
-      });
-
-      return Promise.race([wsCloseFuture.await, abortPromise]);
+      return waitUntilAborted(wsCloseFuture.await, combineSignals(signal, sessionSignal)).then(
+        ({ result }) => result,
+      );
     });
+
+    const recycleTask = this.waitForSocketRecycle
+      ? Task.from(({ signal }) => this.waitForSocketRecycle!(wsConn, signal))
+      : undefined;
 
     const waitReconnectTask =
       this._options.maxSessionDuration === null
@@ -1561,6 +1588,7 @@ export class RealtimeSession extends llm.RealtimeSession {
         wsTask.result,
         sendTask.result,
         ...(waitReconnectTask ? [waitReconnectTask.result] : []),
+        ...(recycleTask ? [recycleTask.result] : []),
       ]);
 
       const currentGeneration = this.currentGeneration;
@@ -1568,7 +1596,7 @@ export class RealtimeSession extends llm.RealtimeSession {
         if (currentGeneration instanceof DiscardedGeneration) {
           this.currentGeneration = undefined;
         } else {
-          await currentGeneration._doneFut.await;
+          await waitUntilAborted(currentGeneration._doneFut.await, sessionSignal);
         }
       }
 
@@ -1576,8 +1604,14 @@ export class RealtimeSession extends llm.RealtimeSession {
         throw result;
       }
     } finally {
+      wsConn.onmessage = null;
       await cancelAndWait(
-        [wsTask, sendTask, ...(waitReconnectTask ? [waitReconnectTask] : [])],
+        [
+          wsTask,
+          sendTask,
+          ...(waitReconnectTask ? [waitReconnectTask] : []),
+          ...(recycleTask ? [recycleTask] : []),
+        ],
         2000,
       );
       wsConn.close();
@@ -1588,7 +1622,8 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.resetInputTurnState();
     super.close();
     this.#closed = true;
-    await this.#task;
+    this.#task.cancel();
+    await this.#task.result.catch(() => {});
     this.inputResampler?.close();
     this.inputResampler = undefined;
 

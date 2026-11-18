@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { type WebSocket } from 'ws';
 import * as llm from '../llm/index.js';
 import type * as apiProto from '../llm/openai_realtime/api_proto.js';
 import {
@@ -13,6 +14,7 @@ import type { ToolChoice, ToolContext } from '../llm/tool_context.js';
 import { log } from '../log.js';
 import type { APIConnectOptions } from '../types.js';
 import { DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
+import { Queue, delay, waitUntilAborted, waitUntilTimeout } from '../utils.js';
 import { isDuplexModel } from './duplex.js';
 import {
   type AnyString,
@@ -65,6 +67,9 @@ const REALTIME_MODEL_IDS: ReadonlySet<string> = new Set<string>([
 export function isRealtimeModel(model: string): boolean {
   return REALTIME_MODEL_IDS.has(model);
 }
+
+const HANDOFF_RESPONSE_GRACE_MS = 1_500;
+const HANDOFF_POLL_INTERVAL_MS = 20;
 
 const XAI_DEFAULT_INPUT_AUDIO_TRANSCRIPTION: apiProto.InputAudioTranscription = {
   model: 'grok-transcribe',
@@ -363,6 +368,101 @@ export class RealtimeSession extends OpenAIRealtimeSession {
     super.handleResponseTextDelta(event);
   }
 
+  /** @internal */
+  protected override async waitForSocketRecycle(ws: WebSocket, signal: AbortSignal): Promise<void> {
+    const request = new Queue<string>();
+    const pendingTranscriptions = new Set<string>();
+    let handoffRequested = false;
+    let userSpeaking = false;
+    let speechStoppedAt: number | undefined;
+
+    const onEvent = (event: {
+      type: string;
+      item_id?: string;
+      handoff_id?: string;
+      status?: string;
+    }) => {
+      switch (event.type) {
+        case 'input_audio_buffer.speech_started':
+          userSpeaking = true;
+          speechStoppedAt = undefined;
+          break;
+        case 'input_audio_buffer.speech_stopped':
+          userSpeaking = false;
+          speechStoppedAt = performance.now();
+          if (event.item_id && this.socketHandoffState.transcribesInput) {
+            pendingTranscriptions.add(event.item_id);
+          }
+          break;
+        case 'input_audio_buffer.committed':
+          if (event.item_id && this.socketHandoffState.transcribesInput) {
+            pendingTranscriptions.add(event.item_id);
+          }
+          break;
+        case 'conversation.item.input_audio_transcription.completed':
+        case 'conversation.item.input_audio_transcription.failed':
+        case 'conversation.item.deleted':
+          if (event.item_id && event.status !== 'in_progress') {
+            pendingTranscriptions.delete(event.item_id);
+          }
+          break;
+        case 'response.created':
+          speechStoppedAt = undefined;
+          break;
+        case 'session.handoff.request':
+          if (
+            typeof event.handoff_id === 'string' &&
+            event.handoff_id &&
+            !handoffRequested &&
+            this.socketHandoffState.canObserveTurns
+          ) {
+            handoffRequested = true;
+            void request.put(event.handoff_id);
+          }
+          break;
+      }
+    };
+
+    const quiet = () => {
+      const state = this.socketHandoffState;
+      return (
+        state.canObserveTurns &&
+        !state.responsePending &&
+        !userSpeaking &&
+        pendingTranscriptions.size === 0 &&
+        (speechStoppedAt === undefined ||
+          performance.now() - speechStoppedAt >= HANDOFF_RESPONSE_GRACE_MS)
+      );
+    };
+
+    this.on('openai_server_event_received', onEvent);
+    try {
+      const handoffId = await request.get({ signal });
+      while (!quiet()) await delay(HANDOFF_POLL_INTERVAL_MS, { signal });
+      signal.throwIfAborted();
+      try {
+        await waitUntilTimeout(
+          waitUntilAborted(
+            new Promise<void>((resolve, reject) => {
+              ws.send(
+                JSON.stringify({ type: 'session.handoff.complete', handoff_id: handoffId }),
+                (error) => (error ? reject(error) : resolve()),
+              );
+            }),
+            signal,
+          ),
+          this.socketHandoffState.timeoutMs,
+        );
+      } catch {
+        // Reconnect at a quiet point even if the draining gateway cannot receive the acknowledgement.
+      }
+      // The old socket can receive a new turn while the acknowledgement drains.
+      while (!quiet()) await delay(HANDOFF_POLL_INTERVAL_MS, { signal });
+    } finally {
+      this.off('openai_server_event_received', onEvent);
+    }
+  }
+
   protected override async createWsConn() {
     const model = this.realtimeModel as RealtimeModel;
     const options = model._inferenceOptions;
@@ -370,6 +470,9 @@ export class RealtimeSession extends OpenAIRealtimeSession {
     headers.Authorization = `Bearer ${await createAccessToken(options.apiKey, options.apiSecret)}`;
     if (options.provider) {
       headers[INFERENCE_PROVIDER_HEADER] = options.provider;
+    }
+    if (this.socketHandoffState.canObserveTurns) {
+      headers['X-LiveKit-Handoff-Protocol'] = '1';
     }
 
     return connectWs(

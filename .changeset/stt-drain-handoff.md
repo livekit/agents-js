@@ -1,4 +1,5 @@
 ---
 '@livekit/agents': patch
 ---
-Prepare STT replacements before gateway drain and preserve partial audio ordering through SDK VAD finalizes.
+
+Coordinate LiveKit Inference STT, TTS, and realtime handoffs when the gateway drains.

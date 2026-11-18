@@ -149,6 +149,7 @@ describe('Inference TTS connection', () => {
 describe('Inference TTS session.create fallback', () => {
   const basePayload = {
     type: 'session.create',
+    handoff_protocol: 1,
     sample_rate: '16000',
     encoding: 'pcm_s16le',
     extra: {},
@@ -804,4 +805,124 @@ describe('Inference TTS releaseIdleConnections', () => {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   });
+});
+
+describe('Inference TTS gateway drain', () => {
+  it.each(['idle', 'synthesizing', 'closed'])(
+    'gets the next turn off the %s pooled socket',
+    async (state) => {
+      const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+      await once(server, 'listening');
+      const { port } = server.address() as AddressInfo;
+      const requests: Array<{ socket: WebSocket; event: Record<string, unknown> }> = [];
+      const tts = makeTts({
+        baseURL: `http://127.0.0.1:${port}`,
+        connOptions: { maxRetry: 0, retryIntervalMs: 0, timeoutMs: 2_000 },
+      });
+      server.on('connection', (socket) => {
+        socket.on('message', (raw) => {
+          const event = JSON.parse(raw.toString()) as Record<string, unknown>;
+          requests.push({ socket, event });
+          if (event.type === 'session.create') {
+            socket.send(JSON.stringify({ type: 'session.created', session_id: 'session-1' }));
+          }
+        });
+      });
+      const synthesize = async () => {
+        const synth = tts.stream();
+        try {
+          synth.updateInputStream(
+            new ReadableStream<string>({
+              start(controller) {
+                controller.enqueue('Hello.');
+                controller.close();
+              },
+            }),
+          );
+          const output = [];
+          for await (const frame of synth) {
+            if (typeof frame !== 'symbol') output.push(frame);
+          }
+          return output;
+        } finally {
+          await synth.close();
+        }
+      };
+      const sendAudio = (socket: WebSocket) => {
+        socket.send(
+          JSON.stringify({
+            type: 'output_audio',
+            session_id: 'session-1',
+            audio: Buffer.alloc(640).toString('base64'),
+          }),
+        );
+        socket.send(JSON.stringify({ type: 'done', session_id: 'session-1' }));
+      };
+      try {
+        tts.prewarm();
+        await vi.waitFor(() => expect(requests[0]?.event.type).toBe('session.create'));
+        const first = requests[0]!.socket;
+        expect(requests[0]!.event.handoff_protocol).toBe(1);
+
+        const firstTurn = state === 'synthesizing' ? synthesize() : undefined;
+        if (firstTurn) {
+          void firstTurn.catch(() => {});
+          await vi.waitFor(() =>
+            expect(requests.some(({ event }) => event.type === 'session.flush')).toBe(true),
+          );
+        }
+
+        if (state === 'closed') {
+          const closed = once(first, 'close');
+          first.close();
+          await closed;
+        } else {
+          first.send(JSON.stringify({ type: 'session.handoff.request', handoff_id: 'tts-drain' }));
+        }
+        if (firstTurn) {
+          await new Promise((resolve) => setTimeout(resolve, 75));
+          expect(requests.filter(({ event }) => event.type === 'session.handoff.complete')).toEqual(
+            [],
+          );
+          sendAudio(first);
+          expect(await firstTurn).toHaveLength(1);
+        }
+
+        const expectedAck =
+          state === 'closed'
+            ? []
+            : [
+                {
+                  socket: first,
+                  event: { type: 'session.handoff.complete', handoff_id: 'tts-drain' },
+                },
+              ];
+        if (state !== 'closed') {
+          await vi.waitFor(() =>
+            expect(requests.filter(({ event }) => event.type === 'session.create')).toHaveLength(2),
+          );
+        }
+        expect(requests.filter(({ event }) => event.type === 'session.handoff.complete')).toEqual(
+          expectedAck,
+        );
+        const secondTurn = synthesize();
+        void secondTurn.catch(() => {});
+        await vi.waitFor(() =>
+          expect(requests.filter(({ event }) => event.type === 'session.create')).toHaveLength(2),
+        );
+        const next = requests.find(({ socket }) => socket !== first)!.socket;
+        await vi.waitFor(() =>
+          expect(
+            requests.some(({ socket, event }) => socket === next && event.type === 'session.flush'),
+          ).toBe(true),
+        );
+        sendAudio(next);
+        expect(await secondTurn).toHaveLength(1);
+      } finally {
+        await tts.close();
+        for (const client of server.clients) client.terminate();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      }
+    },
+  );
 });

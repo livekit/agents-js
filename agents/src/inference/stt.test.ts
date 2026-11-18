@@ -14,6 +14,7 @@ import { initializeLogger, log } from '../log.js';
 import { createStreamChannel } from '../stream/stream_channel.js';
 import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
+import { withResolvers } from '../utils.js';
 import { VAD, type VADEvent, VADEventType, type VADStream } from '../vad.js';
 import { createConversationItemAddedEvent } from '../voice/events.js';
 import {
@@ -2557,6 +2558,97 @@ describe('Inference STT connection lifecycle', () => {
 
       expect(connectionCount).toBe(2);
       expect(transcripts).toEqual(['final words']);
+    } finally {
+      stream.close();
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('sends an update queued while the initial connection opens', async () => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const { port } = server.address() as AddressInfo;
+    const events: Array<{ type: string; settings?: { language?: string } }> = [];
+    server.on('connection', (socket) => {
+      socket.on('message', (raw) => {
+        events.push(JSON.parse(raw.toString()));
+      });
+    });
+    const stt = makeStt({
+      model: 'deepgram/nova-3',
+      language: 'en',
+      baseURL: `http://127.0.0.1:${port}`,
+      connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1_000 },
+    });
+    const connect = stt.connectWs.bind(stt);
+    const pausedDial = withResolvers<void>();
+    const finishDial = withResolvers<void>();
+    const dial = vi.spyOn(stt, 'connectWs').mockImplementationOnce(async (...args) => {
+      pausedDial.resolve();
+      await finishDial.promise;
+      return connect(...args);
+    });
+    const stream = stt.stream();
+    try {
+      await pausedDial.promise;
+      stream.updateOptions({ language: normalizeLanguage('es') });
+      finishDial.resolve();
+      await vi.waitFor(() =>
+        expect(events).toMatchObject([
+          { type: 'session.create', settings: { language: 'en' } },
+          { type: 'session.update', settings: { language: 'es' } },
+        ]),
+      );
+    } finally {
+      finishDial.resolve();
+      dial.mockRestore();
+      stream.close();
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('reconnects with accepted and pending settings after a rejected update', async () => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const { port } = server.address() as AddressInfo;
+    const creates: Array<{ socket: WebSocket; settings: Record<string, unknown> }> = [];
+    const updates: Record<string, unknown>[] = [];
+    server.on('connection', (socket) => {
+      socket.on('message', (raw) => {
+        const event = JSON.parse(raw.toString()) as {
+          type: string;
+          settings: Record<string, unknown>;
+        };
+        if (event.type === 'session.create') {
+          creates.push({ socket, settings: event.settings });
+          socket.send(JSON.stringify({ type: 'session.created' }));
+        } else if (event.type === 'session.update') {
+          updates.push(event.settings);
+          if (updates.length === 1 || updates.length === 2) {
+            socket.send(JSON.stringify({ type: 'session.updated', success: updates.length === 1 }));
+          }
+        }
+      });
+    });
+    const stt = makeStt({
+      model: 'deepgram/nova-3',
+      language: 'en',
+      baseURL: `http://127.0.0.1:${port}`,
+      connOptions: { maxRetry: 1, retryIntervalMs: 1, timeoutMs: 1_000 },
+    });
+    stt.on('error', () => {});
+    const stream = stt.stream();
+    try {
+      await vi.waitFor(() => expect(creates).toHaveLength(1));
+      stream.updateOptions({ language: normalizeLanguage('es') });
+      stream.updateOptions({ language: normalizeLanguage('fr') });
+      stream.updateOptions({ modelOptions: { keyterm: ['Acme'] } });
+      await vi.waitFor(() => expect(updates).toHaveLength(3));
+      creates[0]!.socket.close();
+      await vi.waitFor(() => expect(creates).toHaveLength(2));
+      expect(creates[1]!.settings).toMatchObject({ language: 'es', extra: { keyterm: ['Acme'] } });
     } finally {
       stream.close();
       for (const client of server.clients) client.terminate();

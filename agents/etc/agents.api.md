@@ -10,7 +10,6 @@ import { Attributes } from '@opentelemetry/api';
 import { AudioFrame } from '@livekit/rtc-node';
 import { AudioResampler } from '@livekit/rtc-node';
 import { Context } from '@opentelemetry/api';
-import { default as default_2 } from 'ws';
 import type { E2EEOptions } from '@livekit/rtc-node';
 import { EventEmitter } from 'events';
 import { EventEmitter as EventEmitter_2 } from 'node:events';
@@ -6460,7 +6459,7 @@ class RealtimeSession_3 extends RealtimeSession_2 {
     // (undocumented)
     protected createToolsUpdateEvent(tools: ToolContext): api_proto.SessionUpdateEvent;
     // (undocumented)
-    protected createWsConn(): Promise<default_2>;
+    protected createWsConn(): Promise<WebSocket_2>;
     // (undocumented)
     protected handleConversationItemCreated(event: api_proto.ConversationItemCreatedEvent): void;
     // (undocumented)
@@ -6479,6 +6478,8 @@ class RealtimeSession_3 extends RealtimeSession_2 {
     protected isFatalError(error: unknown): boolean;
     // (undocumented)
     protected resetInputTurnState(): void;
+    // @internal (undocumented)
+    protected waitForSocketRecycle(ws: WebSocket_2, signal: AbortSignal): Promise<void>;
 }
 
 // @public
@@ -7957,7 +7958,7 @@ class STT_2<TModel extends STTModels> extends STT {
         vad?: VAD;
     });
     // (undocumented)
-    connectWs(timeout: number): Promise<WebSocket_2>;
+    connectWs(timeout: number, opts?: InferenceSTTOptions<TModel>, sessionKeyterms?: string[], handoffProbeId?: string): Promise<WebSocket_2>;
     // (undocumented)
     static fromModelString(modelString: string): STT_2<AnyString>;
     // (undocumented)
@@ -9986,7 +9987,7 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 //
 // src/_exceptions.ts:90:5 - (ae-forgotten-export) The symbol "APIStatusErrorOptions" needs to be exported by the entry point index.d.ts
 // src/_exceptions.ts:128:5 - (ae-forgotten-export) The symbol "APIErrorOptions" needs to be exported by the entry point index.d.ts
-// src/inference/tts.ts:322:5 - (ae-forgotten-export) The symbol "TTSEncoding" needs to be exported by the entry point index.d.ts
+// src/inference/tts.ts:348:5 - (ae-forgotten-export) The symbol "TTSEncoding" needs to be exported by the entry point index.d.ts
 // src/llm/chat_context.ts:80:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "audio"
 // src/llm/tool_context.ts:709:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "ToolFlag" has more than one declaration; you need to add a TSDoc member reference selector
 // src/llm/tool_context.ts:756:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "ToolFlag" has more than one declaration; you need to add a TSDoc member reference selector
@@ -9994,11 +9995,11 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 // src/metrics/base.ts:230:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsOutputTokenDetails" needs to be exported by the entry point index.d.ts
 // src/stt/stt.ts:395:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "STT"
 // src/utils.ts:468:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "cancelled"
-// src/voice/agent_session.ts:411:3 - (ae-unresolved-link) The @link reference could not be resolved: This type of declaration is not supported yet by the resolver
-// src/voice/agent_session.ts:1089:5 - (ae-forgotten-export) The symbol "RecordingOptions" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1810:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1810:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1810:5 - (ae-forgotten-export) The symbol "LLMError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:412:3 - (ae-unresolved-link) The @link reference could not be resolved: This type of declaration is not supported yet by the resolver
+// src/voice/agent_session.ts:1090:5 - (ae-forgotten-export) The symbol "RecordingOptions" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1814:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1814:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1814:5 - (ae-forgotten-export) The symbol "LLMError" needs to be exported by the entry point index.d.ts
 // src/voice/amd.ts:318:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "waitForTrackPublication" has more than one declaration; you need to add a TSDoc member reference selector
 // src/voice/amd.ts:318:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "gateListening"
 // src/voice/amd.ts:328:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "aclose"
