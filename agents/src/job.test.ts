@@ -306,26 +306,39 @@ describe('JobContext telemetry metadata', () => {
     ).toEqual({ 'lk.redaction.enabled': true });
   });
 
-  it('includes simulation identity when the job has simulation dispatch metadata', () => {
-    const ctx = createJobContext({
-      job: {
-        id: 'job-id',
-        room: { name: 'assigned-room' },
-        attributes: {
-          'lk.simulator.dispatch': JSON.stringify({
-            simulationRunId: 'run_abc',
-            jobId: 'job_def',
-          }),
+  it.each([false, true])(
+    'includes simulation identity and session redaction when redaction is %s',
+    (redaction) => {
+      const ctx = createJobContext({
+        job: {
+          id: 'job-id',
+          room: { name: 'assigned-room' },
+          attributes: {
+            'lk.simulator.dispatch': JSON.stringify({
+              simulationRunId: 'run_abc',
+              jobId: 'job_def',
+            }),
+          },
         },
-      },
-    } as unknown as Partial<RunningJobInfo>);
+      } as unknown as Partial<RunningJobInfo>);
 
-    expect(ctx._otelMetadata()).toEqual({
-      'lk.simulation.enabled': true,
-      'lk.simulation.run_id': 'run_abc',
-      'lk.simulation.job_id': 'job_def',
-    });
-  });
+      expect(
+        ctx._otelMetadata({
+          audio: false,
+          traces: false,
+          logs: false,
+          transcript: false,
+          redaction,
+          inputDelta: false,
+        }),
+      ).toEqual({
+        'lk.simulation.enabled': true,
+        'lk.simulation.run_id': 'run_abc',
+        'lk.simulation.job_id': 'job_def',
+        ...(redaction ? { 'lk.redaction.enabled': true } : {}),
+      });
+    },
+  );
 
   it('omits blank simulation ids', () => {
     const ctx = createJobContext();
@@ -337,41 +350,72 @@ describe('JobContext telemetry metadata', () => {
 });
 
 describe('JobContext recording redaction', () => {
-  it('tracks project and session redaction in the resolved state', async () => {
-    const { ctx: projectRedacted } = createJobContextWithRoom({}, { enableRedaction: true });
-    const { ctx: sessionRedacted } = createJobContextWithRoom();
+  const cases = [
+    { simulation: false, projectRedaction: false, sessionRedaction: false },
+    { simulation: false, projectRedaction: false, sessionRedaction: true },
+    { simulation: false, projectRedaction: true, sessionRedaction: false },
+    { simulation: false, projectRedaction: true, sessionRedaction: true },
+    { simulation: true, projectRedaction: false, sessionRedaction: false },
+    { simulation: true, projectRedaction: false, sessionRedaction: true },
+    { simulation: true, projectRedaction: true, sessionRedaction: false },
+    { simulation: true, projectRedaction: true, sessionRedaction: true },
+  ];
 
-    expect(projectRedacted._redactionEnabled).toBe(true);
-    expect(sessionRedacted._redactionEnabled).toBe(false);
+  it.each(cases)(
+    'resolves redaction for simulation=$simulation project=$projectRedaction session=$sessionRedaction',
+    async ({ simulation, projectRedaction, sessionRedaction }) => {
+      const attributes = simulation
+        ? {
+            'lk.simulator.dispatch': JSON.stringify({
+              simulationRunId: 'run_abc',
+              jobId: 'job_def',
+            }),
+          }
+        : {};
+      const { ctx } = createJobContextWithRoom(
+        {},
+        { enableRedaction: projectRedaction, attributes },
+      );
 
-    await sessionRedacted.initRecording({
-      audio: false,
-      traces: false,
-      logs: false,
-      transcript: false,
-      redaction: true,
-    });
+      await ctx.initRecording({
+        audio: false,
+        traces: false,
+        logs: false,
+        transcript: false,
+        redaction: sessionRedaction,
+        inputDelta: false,
+      });
 
-    expect(sessionRedacted._redactionEnabled).toBe(true);
-  });
+      expect(ctx._redactionEnabled).toBe(sessionRedaction || (projectRedaction && !simulation));
+    },
+  );
 
-  it.each([
-    { source: 'project', projectRedaction: true, sessionRedaction: false },
-    { source: 'session', projectRedaction: false, sessionRedaction: true },
-  ])(
-    'rejects audio without transcripts under $source redaction',
-    async ({ projectRedaction, sessionRedaction }) => {
-      const { ctx } = createJobContextWithRoom({}, { enableRedaction: projectRedaction });
+  it.each(cases)(
+    'validates audio for simulation=$simulation project=$projectRedaction session=$sessionRedaction',
+    async ({ simulation, projectRedaction, sessionRedaction }) => {
+      const attributes = simulation
+        ? { 'lk.simulator.dispatch': JSON.stringify({ simulationRunId: 'run_abc' }) }
+        : {};
+      const { ctx } = createJobContextWithRoom(
+        {},
+        { enableRedaction: projectRedaction, attributes },
+      );
+      const result = ctx.initRecording({
+        audio: true,
+        traces: false,
+        logs: false,
+        transcript: false,
+        redaction: sessionRedaction,
+        inputDelta: false,
+      });
 
-      await expect(
-        ctx.initRecording({
-          audio: true,
-          traces: false,
-          logs: false,
-          transcript: false,
-          redaction: sessionRedaction,
-        }),
-      ).rejects.toThrow('audio upload requires transcript upload when redaction is enabled');
+      if (sessionRedaction || (projectRedaction && !simulation)) {
+        await expect(result).rejects.toThrow(
+          'audio upload requires transcript upload when redaction is enabled',
+        );
+      } else {
+        await expect(result).resolves.toBeUndefined();
+      }
     },
   );
 });

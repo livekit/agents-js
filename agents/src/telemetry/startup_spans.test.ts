@@ -18,10 +18,17 @@ import {
 import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { InferenceExecutor } from '../ipc/inference_executor.js';
-import { AutoSubscribe, JobContext, JobProcess, type RunningJobInfo } from '../job.js';
+import {
+  AutoSubscribe,
+  JobContext,
+  JobProcess,
+  type RunningJobInfo,
+  runWithJobContext,
+} from '../job.js';
 import { initializeLogger } from '../log.js';
 import { setTracerProvider, traceTypes, tracer } from './index.js';
 import { sessionSpan } from './session_context.js';
+import { redactionEnabled } from './utils.js';
 
 initializeLogger({ pretty: false, level: 'silent' });
 
@@ -52,10 +59,10 @@ function mockRoom(overrides: Record<string, unknown> = {}): Room {
   } as unknown as Room;
 }
 
-function jobContext(room: Room): JobContext {
+function jobContext(room: Room, runningInfo = info()): JobContext {
   return new JobContext(
     new JobProcess(),
-    info(),
+    runningInfo,
     room,
     () => undefined,
     () => undefined,
@@ -85,6 +92,22 @@ describe('startup spans', () => {
     trace.disable();
     otelContext.disable();
   });
+
+  it.each([false, true])(
+    'ignores project redaction at startup when simulation is %s',
+    (simulation) => {
+      const runningInfo = info();
+      runningInfo.job.enableRedaction = true;
+      if (simulation) {
+        runningInfo.job.attributes['lk.simulator.dispatch'] = JSON.stringify({
+          simulationRunId: 'run_abc',
+        });
+      }
+      const ctx = jobContext(mockRoom(), runningInfo);
+
+      expect(runWithJobContext(ctx, () => redactionEnabled())).toBe(!simulation);
+    },
+  );
 
   describe('room_connect', () => {
     it('lands under the job span with the room and participant attributes', async () => {
