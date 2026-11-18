@@ -567,6 +567,8 @@ export class AgentSession<
   private closing = false;
   private closingController = new AbortController();
   private closingTask: Promise<void> | null = null;
+  /** @internal Realtime sessions of past activities still closing after a handoff. */
+  readonly _rtClosing = new Set<Promise<void>>();
   private userAwayTimer: NodeJS.Timeout | null = null;
   private idleHolds = 0;
   private idleReleased = new Event();
@@ -2275,6 +2277,11 @@ export class AgentSession<
       failures.push(e);
     }
     this.activity = undefined;
+
+    // Final usage from every realtime session must arrive before the session closes.
+    if (this._rtClosing.size) {
+      await Promise.allSettled([...this._rtClosing]);
+    }
 
     // the session's own use of its TTS is over; other sessions sharing it keep it alive
     try {

@@ -163,6 +163,12 @@ export abstract class DuplexSession<
     await this.closeConnection();
   }
 
+  /** @internal */
+  async _releaseAndClose(): Promise<{ closed: Promise<void> }> {
+    await this.close();
+    return { closed: Promise.resolve() };
+  }
+
   /** Close provider tasks, streams, and connections after the configuration wait is released. */
   protected abstract closeConnection(): Promise<void>;
 

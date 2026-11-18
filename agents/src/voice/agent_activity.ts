@@ -6437,13 +6437,22 @@ export class AgentActivity implements RecognitionHooks {
     await this.agentSession._keytermDetector.aclose();
 
     this.detachAudioInput();
-    try {
-      await this.realtimeSession?.close();
-    } finally {
-      // Providers can report final usage while closing the connection.
-      this.realtimeSession?.off('metrics_collected', this.onMetricsCollected);
-      this.realtimeSession?.off('error', this.onModelError);
-      this.realtimeSpans?.clear();
+    if (this.realtimeSession) {
+      const realtimeSession = this.realtimeSession;
+      const realtimeSpans = this.realtimeSpans;
+      const { closed } = await realtimeSession._releaseAndClose();
+      const onClosed = (error?: unknown) => {
+        // Providers can report final usage while closing the connection.
+        realtimeSession.off('metrics_collected', this.onMetricsCollected);
+        realtimeSession.off('error', this.onModelError);
+        realtimeSpans?.clear();
+        this.agentSession._rtClosing.delete(closed);
+        if (error !== undefined) {
+          this.logger.error({ error }, 'error closing the realtime session');
+        }
+      };
+      this.agentSession._rtClosing.add(closed);
+      void closed.then(() => onClosed(), onClosed);
     }
     await this.audioRecognition?.close();
     await this.closeToolsets();
