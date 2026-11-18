@@ -281,6 +281,7 @@ export class DuplexRealtimeSession extends RealtimeSession {
   private readonly unsubscribe: Array<() => void> = [];
   private closed = false;
   private closeTask?: Promise<void>;
+  private releaseTask?: Promise<{ closed: Promise<void> }>;
 
   constructor(
     adapter: DuplexRealtimeAdapter,
@@ -565,23 +566,37 @@ export class DuplexRealtimeSession extends RealtimeSession {
   }
 
   close(): Promise<void> {
-    return (this.closeTask ??= this.closeImpl());
+    return (this.closeTask ??= this._releaseAndClose().then(({ closed }) => closed));
   }
 
-  private async closeImpl(): Promise<void> {
+  /** @internal */
+  _releaseAndClose(): Promise<{ closed: Promise<void> }> {
+    return (this.releaseTask ??= this.releaseAndCloseImpl());
+  }
+
+  private async releaseAndCloseImpl(): Promise<{ closed: Promise<void> }> {
     this.closed = true;
     // Release a blocked read before asking the provider to close its stream.
     this.audioReader?.releaseLock();
     await this.segmentTask;
     this.closeBurst();
     this.failPendingReply('the session closed before the model replied');
+    let closed: Promise<void>;
     try {
-      await this.duplexSession.close();
-    } catch {
-      this.logger.debug('duplex session close failed');
-    } finally {
+      ({ closed } = await this.duplexSession._releaseAndClose());
+    } catch (error) {
       for (const unsubscribe of this.unsubscribe) unsubscribe();
       await super.close();
+      throw error;
     }
+    const finishClose = async () => {
+      try {
+        await closed;
+      } finally {
+        for (const unsubscribe of this.unsubscribe) unsubscribe();
+        await super.close();
+      }
+    };
+    return { closed: finishClose() };
   }
 }

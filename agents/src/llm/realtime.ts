@@ -257,6 +257,12 @@ export abstract class RealtimeSession extends EventEmitter {
     await this.inputAudioStream.close();
   }
 
+  /** @internal */
+  async _releaseAndClose(): Promise<{ closed: Promise<void> }> {
+    await this.close();
+    return { closed: Promise.resolve() };
+  }
+
   /**
    * Notifies the model that user activity has started
    */

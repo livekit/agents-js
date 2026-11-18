@@ -1030,13 +1030,26 @@ export class GPTLiveSession extends llm.DuplexSession<{
     return eventId;
   }
 
-  /** Drain final provider usage, then close the transport and output stream. */
-  protected async closeConnection(): Promise<void> {
+  private releaseConnection(): void {
     if (!this.closing) {
       this.closing = true;
       this.shutdown.abort();
       this.requestConnectionClose?.();
     }
+  }
+
+  /** @internal */
+  async _releaseAndClose(): Promise<{ closed: Promise<void> }> {
+    this._closing = true;
+    this._configured.set();
+    this.releaseConnection();
+    // The main task sends session.close, then waits for final usage in session.closed.
+    return { closed: this.mainTask };
+  }
+
+  /** Drain final provider usage, then close the transport and output stream. */
+  protected async closeConnection(): Promise<void> {
+    this.releaseConnection();
     await this.mainTask;
   }
 
