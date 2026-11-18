@@ -21,6 +21,7 @@ async function collect<T>(source: AsyncIterable<T>): Promise<T[]> {
 const cleanup: (() => Promise<void>)[] = [];
 afterEach(async () => {
   for (const close of cleanup.splice(0).reverse()) await close();
+  vi.restoreAllMocks();
 });
 async function setup(timeouts: { requestTimeout?: number; readyTimeout?: number } = {}) {
   const peer = await new PrismPeer().start();
@@ -382,7 +383,10 @@ describe('Prism SDK adapter', () => {
   });
   it('loads acknowledged settings and replaces a closed session', async () => {
     const { peer, model, session } = await setup();
+    // setup() resolves only after Prism acknowledges these settings.
     expect(peer.requests[0]).toMatchObject({ type: 'session.update' });
+    expect(peer.settings).toMatchObject({ instructions: 'Test' });
+    expect(peer.revision).toBeGreaterThan(0);
     expect(() => model.session()).toThrow('previous');
     await Promise.all([session.close(), session.close()]);
     const next = model.session();
