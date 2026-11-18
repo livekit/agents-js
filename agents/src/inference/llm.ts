@@ -53,6 +53,7 @@ export type OpenAIModels =
 export type GoogleModels =
   | 'google/gemini-4-argon'
   | 'google/gemini-4-hydrogen'
+  | 'google/gemini-4-neon'
   | 'google/gemini-3.1-pro'
   | 'google/gemini-3-flash'
   | 'google/gemini-3.1-flash-lite'
@@ -97,7 +98,7 @@ export interface ChatCompletionOptions extends Record<string, unknown> {
   presence_penalty?: number;
   prompt_cache_key?: string;
   prompt_cache_retention?: 'in_memory' | '24h';
-  reasoning_effort?: 'none' | 'minimal' | 'low' | 'medium' | 'high';
+  reasoning_effort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
   safety_identifier?: string;
   seed?: number;
   service_tier?: 'auto' | 'default' | 'flex' | 'scale' | 'priority';
