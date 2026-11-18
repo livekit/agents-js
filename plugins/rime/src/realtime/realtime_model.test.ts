@@ -2,19 +2,14 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { initializeLogger, llm, voice } from '@livekit/agents';
-import { AudioFrame } from '@livekit/rtc-node';
+import { AudioFrame, AudioResampler } from '@livekit/rtc-node';
 import type * as r from '@rimelabs/sdk';
 import { execFile } from 'node:child_process';
 import { ReadableStream } from 'node:stream/web';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import {
-  PrismIdleTimeoutError,
-  type PrismItemTruncatedEvent,
-  type PrismResponseEndedEvent,
-  RealtimeModel,
-} from './realtime_model.js';
+import { PrismIdleTimeoutError, RealtimeModel } from './realtime_model.js';
 import { PrismPeer, type Request, TestAudioOutput } from './test_helpers.js';
 
 initializeLogger({ pretty: false, level: 'silent' });
@@ -45,6 +40,17 @@ async function setup(timeouts: { requestTimeout?: number; readyTimeout?: number 
   await session.updateInstructions('Test');
   return { peer, model, session, errors };
 }
+// Truncation and response completion are available only as raw SDK events.
+function onRawPayload<K extends 'item.truncated' | 'response.ended'>(
+  session: llm.RealtimeSession,
+  kind: K,
+  listener: (payload: Extract<r.SessionEvent['payload'], { kind: K }>) => void,
+): void {
+  session.on('rime_server_event_received', (event: r.SessionEvent) => {
+    if (event.payload.kind === kind)
+      listener(event.payload as Extract<r.SessionEvent['payload'], { kind: K }>);
+  });
+}
 async function request(peer: PrismPeer, count = 1) {
   await vi.waitFor(() =>
     expect(peer.requests.filter((value) => value.type === 'response.create')).toHaveLength(count),
@@ -53,8 +59,8 @@ async function request(peer: PrismPeer, count = 1) {
 }
 
 describe('Prism SDK adapter', () => {
-  it('labels one reply and deletes only its saved instruction', async () => {
-    const { peer, model, session } = await setup();
+  it('labels one requested reply and returns the standard generation event', async () => {
+    const { peer, session } = await setup();
     const labels = { call: 'this-reply', step: '2' };
     const pending = session.generateReply('Check in', { metadata: labels });
     labels.step = 'changed';
@@ -64,35 +70,23 @@ describe('Prism SDK adapter', () => {
       call: 'this-reply',
       step: '2',
     });
-    createdRequest.response!.metadata!.prism_instruction_item_id = 'saved-instruction';
-    peer.history.push({
-      id: 'saved-instruction',
-      type: 'message',
-      role: 'user',
-      text: 'Check in',
-    });
     peer.accepted(createdRequest);
     const generation = await pending;
-    expect(generation.instructionItemId).toBe('saved-instruction');
-    await expect(model.deleteInstructionItem(generation.instructionItemId!)).rejects.toThrow(
-      'before its reply ends',
-    );
+    expect(Object.keys(generation).sort()).toEqual([
+      'functionStream',
+      'messageStream',
+      'responseId',
+      'userInitiated',
+    ]);
+    expect(generation.userInitiated).toBe(true);
     peer.message();
     peer.text();
     peer.audio();
     const ended = vi.fn();
-    session.on('response_ended', ended);
+    onRawPayload(session, 'response.ended', ended);
     peer.ended();
     await vi.waitFor(() => expect(ended).toHaveBeenCalledOnce());
-    await model.deleteInstructionItem(generation.instructionItemId!);
-    expect(peer.requests.at(-1)).toMatchObject({
-      type: 'conversation.item.delete',
-      item_id: 'saved-instruction',
-    });
-    expect(peer.history.some((item) => item.id === 'saved-instruction')).toBe(false);
-    await expect(model.deleteInstructionItem('saved-instruction')).rejects.toThrow(
-      'Unknown saved Prism instruction item',
-    );
+    expect(peer.requests.some((q) => q.type === 'conversation.item.delete')).toBe(false);
   });
 
   it('reports the Prism idle timeout and its duration', async () => {
@@ -129,7 +123,7 @@ describe('Prism SDK adapter', () => {
     ).toBeUndefined();
     await session.updateInstructions('After options');
     expect(errors.some((error) => error.recoverable)).toBe(true);
-    expect(model.sessionInfo?.voice).toBe('accepted-voice');
+    expect(peer.settings.voice).toBe('accepted-voice');
     await session.close();
     const before = peer.requests.length;
     const replacement = model.session();
@@ -146,7 +140,7 @@ describe('Prism SDK adapter', () => {
     model.updateOptions(options);
     options.voice = 'mutated-after-call';
     await session.updateInstructions('After options');
-    expect(model.sessionInfo?.voice).toBe('requested-voice');
+    expect(peer.settings.voice).toBe('requested-voice');
     await session.close();
     const before = peer.requests.length;
     await model.session().updateInstructions('Fresh conversation');
@@ -187,7 +181,11 @@ describe('Prism SDK adapter', () => {
     const { peer, session, errors } = await setup();
     const abort = new AbortController();
     session.updateOptions({ toolChoice: 'none' });
-    session.once('session_updated', () => abort.abort());
+    // Abort once Prism receives the temporary tool removal, before the reply request.
+    peer.onRequest = (q) => {
+      if (q.type === 'session.update' && Array.isArray(q.session?.tools) && !q.session.tools.length)
+        abort.abort();
+    };
     await expect(session.generateReply(undefined, { signal: abort.signal })).rejects.toThrow();
     expect(peer.requests.filter((q) => q.type === 'response.create')).toEqual([]);
     expect(errors).toEqual([]);
@@ -383,8 +381,8 @@ describe('Prism SDK adapter', () => {
     expect(errors).toEqual([]);
   });
   it('loads acknowledged settings and replaces a closed session', async () => {
-    const { model, session } = await setup();
-    expect(model.sessionInfo).toMatchObject({ model: 'prism', voice: 'test' });
+    const { peer, model, session } = await setup();
+    expect(peer.requests[0]).toMatchObject({ type: 'session.update' });
     expect(() => model.session()).toThrow('previous');
     await Promise.all([session.close(), session.close()]);
     const next = model.session();
@@ -492,6 +490,23 @@ describe('Prism SDK adapter', () => {
       expect(Buffer.from(input[0]!.audio!, 'base64').some((value) => value !== 0)).toBe(true);
     },
   );
+  it('closes each replaced input resampler', async () => {
+    const closed = vi.spyOn(AudioResampler.prototype, 'close');
+    const { session } = await setup();
+    const frame = (rate: number) => new AudioFrame(new Int16Array(rate / 100), rate, 1, rate / 100);
+    session.pushAudio(frame(44100));
+    await session.clearAudio();
+    expect(closed).toHaveBeenCalledTimes(1);
+    session.pushAudio(frame(44100));
+    session.pushAudio(frame(22050));
+    expect(closed).toHaveBeenCalledTimes(2);
+    // Supported rates do not create a resampler, so switching to one only releases the old one.
+    session.pushAudio(frame(16000));
+    expect(closed).toHaveBeenCalledTimes(3);
+    session.pushAudio(frame(44100));
+    await session.close();
+    expect(closed).toHaveBeenCalledTimes(4);
+  });
   it('submits each tool result once and continues the owning response', async () => {
     const { peer, session } = await setup();
     const pending = session.generateReply();
@@ -878,7 +893,7 @@ describe('standard AgentSession', () => {
       peer.reply(await request(peer));
       await vi.waitFor(() => expect(output.frames.length).toBeGreaterThan(0));
       const truncated = vi.fn();
-      realtime.on('item_truncated', truncated);
+      onRawPayload(realtime, 'item.truncated', truncated);
       peer.emit('conversation.item.truncated', {
         item_id: 'message-reply-1',
         content_index: 0,
@@ -927,14 +942,13 @@ describe('Prism history', () => {
   }
 
   it('keeps independent acknowledged snapshots', async () => {
-    const { session, ctx } = await setupHistory();
+    const { peer, session, ctx } = await setupHistory();
     (ctx.items[0] as llm.ChatMessage).content[0] = 'Changed externally';
     const copy = session.chatCtx;
     (copy.items[1] as llm.ChatMessage).content[0] = 'Changed snapshot';
     expect((session.chatCtx.items[0] as llm.ChatMessage).textContent).toBe('Context');
     expect((session.chatCtx.items[1] as llm.ChatMessage).textContent).toBe('Hello');
-    const history = await session.getHistory();
-    expect(history).toHaveLength(3);
+    expect(peer.history).toHaveLength(3);
   });
 
   it('preserves deletion-only edits without recreating surviving turns', async () => {
@@ -944,9 +958,10 @@ describe('Prism history', () => {
     await session.updateChatCtx(ctx);
     expect(peer.requests.filter((q) => q.type === 'conversation.item.create')).toHaveLength(3);
     expect(peer.requests.filter((q) => q.type === 'conversation.item.delete')).toHaveLength(1);
-    expect(
-      (await session.getHistory()).map((item) => item.type === 'message' && item.text),
-    ).toEqual(['Context', 'Welcome']);
+    expect(peer.history.map((item) => item.type === 'message' && item.text)).toEqual([
+      'Context',
+      'Welcome',
+    ]);
   });
 
   it('rebuilds completed history when its order or content changes', async () => {
@@ -956,9 +971,11 @@ describe('Prism history', () => {
     (ctx.items[0] as llm.ChatMessage).content = ['Revised'];
     await session.updateChatCtx(ctx);
     expect(peer.requests.filter((q) => q.type === 'conversation.item.delete')).toHaveLength(3);
-    expect(
-      (await session.getHistory()).map((item) => item.type === 'message' && item.text),
-    ).toEqual(['Revised', 'Hello', 'Context']);
+    expect(peer.history.map((item) => item.type === 'message' && item.text)).toEqual([
+      'Revised',
+      'Hello',
+      'Context',
+    ]);
   });
 
   it.each(['media', 'long', 'unicode', 'pending', 'orphan', 'duplicate', 'split-tool'])(
@@ -1116,7 +1133,6 @@ describe('Prism history', () => {
     peer.tool('live');
     await vi.waitFor(() => expect(session.chatCtx.getById('item-call-1')).toBeDefined());
     peer.history = [];
-    expect(await session.getHistory()).toEqual([]);
     expect(session.chatCtx.getById('item-call-1')).toBeDefined();
     const ctx = session.chatCtx;
     ctx.items.reverse();
@@ -1128,10 +1144,10 @@ describe('Prism history', () => {
 describe('Prism truncation', () => {
   async function setupTruncation() {
     const { peer, session } = await setup({ requestTimeout: 1000 });
-    const cuts: PrismItemTruncatedEvent[] = [];
-    const ends: PrismResponseEndedEvent[] = [];
-    session.on('item_truncated', (event) => cuts.push(event));
-    session.on('response_ended', (event) => ends.push(event));
+    const cuts: r.ItemTruncated[] = [];
+    const ends: r.ResponseEnded[] = [];
+    onRawPayload(session, 'item.truncated', (payload) => cuts.push(payload));
+    onRawPayload(session, 'response.ended', (payload) => ends.push(payload));
     return { peer, session, cuts, ends };
   }
   function acknowledge(
@@ -1484,8 +1500,8 @@ describe('Prism packaging', () => {
       if (typeof TTS !== 'function') throw new Error('Missing TTS');
       const model = new realtime.RealtimeModel({ apiKey: 'test', endpoint: process.argv[1] });
       const session = model.session();
+      // Resolves only after Prism acknowledges the connection's settings.
       await session.updateInstructions('Packaging check');
-      if (model.sessionInfo.voice !== 'test') throw new Error('Connection failed');
       await model.close();
       console.log('connected');`;
         const wrapped =
@@ -1498,6 +1514,7 @@ describe('Prism packaging', () => {
           { cwd: fileURLToPath(new URL('../..', import.meta.url)), timeout: 5000 },
         );
         expect(stdout).toContain('connected');
+        expect(peer.settings.instructions).toBe('Packaging check');
       } finally {
         await peer.close();
       }

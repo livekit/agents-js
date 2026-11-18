@@ -80,17 +80,6 @@ class PrismError extends llm.RealtimeError {
     readonly scope: r.RealtimeFault['scope'];
 }
 
-// Warning: (ae-missing-release-tag) "PrismGenerationCreatedEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
-// @public
-interface PrismGenerationCreatedEvent extends llm.GenerationCreatedEvent {
-    inputItemIds: readonly string[];
-    instructionItemId?: string | null;
-    metadata: r.Labels;
-    providerRequestId: string | null;
-    settingsRevision: number | null;
-}
-
 // Warning: (ae-missing-release-tag) "PrismHistoryUpdateError" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
@@ -114,16 +103,6 @@ class PrismIdleTimeoutError extends llm.RealtimeError {
     readonly idleTimeoutInS: number;
 }
 
-// Warning: (ae-missing-release-tag) "PrismItemTruncatedEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
-// @public
-type PrismItemTruncatedEvent = r.ItemTruncated;
-
-// Warning: (ae-missing-release-tag) "PrismResponseEndedEvent" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
-//
-// @public
-type PrismResponseEndedEvent = r.ResponseEnded;
-
 declare namespace realtime {
     export {
         RealtimeModel,
@@ -132,9 +111,6 @@ declare namespace realtime {
         PrismIdleTimeoutError,
         RealtimeModelOptions,
         SessionOptions,
-        PrismGenerationCreatedEvent,
-        PrismItemTruncatedEvent,
-        PrismResponseEndedEvent,
         PrismHistoryUpdateError,
         PlaybackMode
     }
@@ -146,15 +122,12 @@ declare namespace realtime {
 class RealtimeModel extends llm.RealtimeModel {
     constructor(options?: RealtimeModelOptions);
     close(): Promise<void>;
-    deleteInstructionItem(itemId: string): Promise<void>;
-    getHistory(): Promise<readonly r.HistoryItem[]>;
     label(): string;
     get model(): string;
     get provider(): string;
     session(options?: {
         turnDetectionDisabled?: boolean;
     }): RealtimeSession_2;
-    get sessionInfo(): r.SessionInfo | undefined;
     updateOptions(options: SessionOptions): void;
 }
 
@@ -191,16 +164,13 @@ class RealtimeSession_2 extends llm.RealtimeSession {
     clearAudio(): Promise<void>;
     close(): Promise<void>;
     commitAudio(): Promise<void>;
-    deleteInstructionItem(itemId: string): Promise<void>;
     generateReply(instructions?: string, options?: {
         signal?: AbortSignal;
         metadata?: r.Labels;
-    }): Promise<PrismGenerationCreatedEvent>;
-    getHistory(): Promise<readonly r.HistoryItem[]>;
+    }): Promise<llm.GenerationCreatedEvent>;
     interrupt(): Promise<void>;
     get isClosed(): boolean;
     pushAudio(source: AudioFrame): void;
-    get sessionInfo(): r.SessionInfo | undefined;
     get tools(): llm.ToolContext;
     truncate(options: {
         messageId: string;

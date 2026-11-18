@@ -2,7 +2,13 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { afterEach, expect, it, vi } from 'vitest';
-import { endpointIdentity, getSampleRate, resolveOptions, validateEndpoint } from './options.js';
+import {
+  endpointIdentity,
+  fetchPayload,
+  getSampleRate,
+  resolveOptions,
+  validateEndpoint,
+} from './options.js';
 import { TTS } from './tts.js';
 
 afterEach(() => vi.restoreAllMocks());
@@ -204,4 +210,24 @@ it('copies Coda HTTP lexicons and rejects unsupported transports', () => {
   expect(() =>
     resolveOptions({ apiKey: 'test', useWebsocket: true, customLexicon: lexicon }),
   ).toThrow('HTTP or WebSocket v1');
+});
+
+it('clears an empty Coda lexicon so the model can change', () => {
+  const lexicon = [{ spelling: 'Rime', pronunciation: '" r aI m' }];
+  const withLexicon = resolveOptions({ apiKey: 'test', customLexicon: lexicon });
+  // A saved lexicon still pins the model until it is cleared.
+  expect(() => resolveOptions({ modelId: 'arcana' }, withLexicon)).toThrow('coda');
+  const cleared = resolveOptions({ customLexicon: [] }, withLexicon);
+  expect(cleared.customLexicon).toBeUndefined();
+  expect(fetchPayload(cleared, 'hi')).not.toHaveProperty('customLexicon');
+  expect(resolveOptions({ modelId: 'arcana' }, cleared).modelId).toBe('arcana');
+  expect(resolveOptions({ modelId: 'arcana', customLexicon: [] }, withLexicon).modelId).toBe(
+    'arcana',
+  );
+  expect(
+    resolveOptions({ apiKey: 'test', useWebsocket: true, customLexicon: [] }).customLexicon,
+  ).toBeUndefined();
+  expect(() =>
+    resolveOptions({ apiKey: 'test', customLexicon: 'bad' as unknown as typeof lexicon }),
+  ).toThrow('spelling and pronunciation');
 });

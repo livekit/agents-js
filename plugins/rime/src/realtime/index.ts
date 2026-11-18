@@ -7,13 +7,7 @@ export {
   PrismError,
   PrismIdleTimeoutError,
 } from './realtime_model.js';
-export type {
-  RealtimeModelOptions,
-  SessionOptions,
-  PrismGenerationCreatedEvent,
-  PrismItemTruncatedEvent,
-  PrismResponseEndedEvent,
-} from './realtime_model.js';
+export type { RealtimeModelOptions, SessionOptions } from './realtime_model.js';
 
 export { PrismHistoryUpdateError } from './history.js';
 export type { PlaybackMode } from './playback.js';

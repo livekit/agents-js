@@ -50,8 +50,7 @@ For provider settings, call
 This synchronous method copies and queues updates. It also works before opening a session.
 Later requested replies and agent settings wait for queued updates. Recoverable refusals
 emit a standard error event and keep the last accepted values.
-Omitted fields keep their values. `model.sessionInfo` returns confirmed settings;
-`await model.getHistory()` reads provider history without replacing local history.
+Omitted fields keep their values.
 On a direct Prism session, `await session.generateReply('Check in', {
   metadata: { step: '3' },
 })` labels one requested reply. These labels replace matching session labels.
@@ -127,30 +126,26 @@ These limits apply:
 - PCM16 input is downmixed or resampled when needed. Output is 24 kHz mono PCM16.
   Queues are bounded; overflow closes the session.
 
-The realtime session emits SDK payloads as `item_truncated` and `response_ended`.
 `rime_server_event_received` exposes each SDK event before plugin processing.
+Read item truncation and response completion from its `payload`, where `kind` is
+`item.truncated` or `response.ended`.
 `metrics_collected` emits one final usage record per response, including cancelled
 responses. Time to first audio uses the first nonempty provider audio chunk.
-`response_ended.usage` reports token counts when Prism provides them.
-Available `keptText` updates the plugin's history while the server item ID still
-matches. An empty string means no words remain; `null` means unavailable and leaves
-known text unchanged. Early acknowledgments may have no retained text, with no later
-update guaranteed. Retained text can differ from the words heard and does not replace
-LiveKit's playback transcript.
+A `response.ended` payload's `usage` reports token counts when Prism provides them.
+An `item.truncated` payload's available `keptText` updates the plugin's history while
+the server item ID still matches. An empty string means no words remain; `null` means
+unavailable and leaves known text unchanged. Early acknowledgments may have no retained
+text, with no later update guaranteed. Retained text can differ from the words heard and
+does not replace LiveKit's playback transcript.
 
-`response_ended.truncation` reports items excluded from that reply's prompt through
-`itemsLeftOut` and `firstKeptItemId`. It does not delete local history or change the
-truncation policy. A missing or null summary means no exclusions were reported or the
-information was unavailable. Diagnostics include discarded replies and can arrive
-before `generateReply()` returns a requested response.
+A `response.ended` payload's `truncation` reports items excluded from that reply's
+prompt through `itemsLeftOut` and `firstKeptItemId`. It does not delete local history
+or change the truncation policy. A missing or null summary means no exclusions were
+reported or the information was unavailable. Raw events include discarded replies and
+can arrive before `generateReply()` returns a requested response.
 
-`generation.instructionItemId` names a saved instruction from an explicit
-reply. After that reply ends, call `await model.deleteInstructionItem(id)` to
-remove it from later Prism history. The method accepts only IDs observed in
-this session while they remain among the last 128 saved instruction IDs that
-the adapter observed.
-It does not change local LiveKit history. An idle close produces
-`PrismIdleTimeoutError` in the session error event, with `idleTimeoutInS` in seconds.
+An idle close produces `PrismIdleTimeoutError` in the session error event, with
+`idleTimeoutInS` in seconds.
 
 ### Configuration and compatibility
 
@@ -261,7 +256,8 @@ included in returned errors. Safe status codes and provider request IDs remain a
 
 Coda accepts `customLexicon: [{ spelling: 'Rime', pronunciation: '" r aI m' }]`
 on HTTP and WebSocket v1. Pronunciations use space-separated X-SAMPA. The plugin copies entries when it snapshots options.
-Mist and legacy WS3 reject this option. The default speakers are `lyra` for Coda
+Mist and legacy WS3 reject a nonempty lexicon. Pass `customLexicon: []` to clear it,
+for example before switching models. The default speakers are `lyra` for Coda
 and `cove` for Mist; an explicit speaker takes precedence.
 
 ## Existing HTTP and WS3 interfaces

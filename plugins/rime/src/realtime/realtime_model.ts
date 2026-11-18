@@ -66,26 +66,6 @@ export interface SessionOptions {
   toolFillers?: Record<string, r.PrismFiller>;
 }
 
-/** Standard LiveKit generation streams with Prism response diagnostics. */
-export interface PrismGenerationCreatedEvent extends llm.GenerationCreatedEvent {
-  /** Snapshot of labels on this response. */
-  metadata: r.Labels;
-  /** Provider history item IDs used to start this response. */
-  inputItemIds: readonly string[];
-  /** Settings revision used by this response, or null when unavailable. */
-  settingsRevision: number | null;
-  /** Provider request ID for the connection, or null when unavailable. */
-  providerRequestId: string | null;
-  /** Saved nudge instruction; pass this ID to deleteInstructionItem after the reply ends. */
-  instructionItemId?: string | null;
-}
-
-/** SDK payload emitted as item_truncated. Retained text describes server history. */
-export type PrismItemTruncatedEvent = r.ItemTruncated;
-
-/** SDK payload emitted as response_ended. Truncation counts prompt exclusions, not deletions. */
-export type PrismResponseEndedEvent = r.ResponseEnded;
-
 /** Safe provider diagnostics. Provider error text is deliberately excluded. */
 export class PrismError extends llm.RealtimeError {
   /** Validated provider code, or provider_error for an unsafe code. */
@@ -126,7 +106,6 @@ export class PrismIdleTimeoutError extends llm.RealtimeError {
   }
 }
 
-class InstructionItemError extends llm.RealtimeError {}
 const TOOL_RESULT_INSTRUCTION =
   "Continue according to the agent's instructions, using this tool result. Reply or call a tool as appropriate.";
 /** Prism speech-to-speech model. Owns at most one open conversation at a time. */
@@ -212,10 +191,6 @@ export class RealtimeModel extends llm.RealtimeModel {
   override label(): string {
     return 'rime.RealtimeModel';
   }
-  /** Snapshot of confirmed session information. Undefined before connection. */
-  get sessionInfo(): r.SessionInfo | undefined {
-    return this.active?.sessionInfo;
-  }
   /** Open a conversation. Close the previous session first; server turn detection is required. */
   session(options: { turnDetectionDisabled?: boolean } = {}): RealtimeSession {
     if (this.closed) throw new llm.RealtimeError('Rime model is closed');
@@ -225,16 +200,6 @@ export class RealtimeModel extends llm.RealtimeModel {
       throw new llm.RealtimeError('Close the previous Prism session before opening another');
     this.active = new RealtimeSession(this, this.options);
     return this.active;
-  }
-  /** Read completed provider history without replacing the local conversation record. */
-  async getHistory(): Promise<readonly r.HistoryItem[]> {
-    if (!this.active) throw new llm.RealtimeError('Prism session is not open');
-    return this.active.getHistory();
-  }
-  /** Remove a saved nudge instruction after its reply ends. */
-  async deleteInstructionItem(itemId: string): Promise<void> {
-    if (!this.active) throw new llm.RealtimeError('Prism session is not open');
-    await this.active.deleteInstructionItem(itemId);
   }
   /** Close the active session and prevent new sessions. A caller-owned SDK client remains open. */
   async close(): Promise<void> {
@@ -259,7 +224,7 @@ interface Generation {
   started: number;
   firstAudio?: number;
   providerEnded: boolean;
-  event: PrismGenerationCreatedEvent;
+  event: llm.GenerationCreatedEvent;
   messages: OutputQueue<llm.MessageGeneration>;
   functions: OutputQueue<llm.FunctionCall>;
   outputs: Map<string, Message>;
@@ -272,8 +237,8 @@ interface Generation {
 
 /**
  * One Prism conversation managed through LiveKit's realtime session interface.
- * Emits item_truncated and response_ended SDK diagnostics, including for discarded replies.
- * Diagnostics for requested replies can arrive before generateReply returns their streams.
+ * Emits each SDK event as rime_server_event_received, including for discarded replies.
+ * Events for requested replies can arrive before generateReply returns their streams.
  */
 export class RealtimeSession extends llm.RealtimeSession {
   private sdk?: r.RealtimeSession;
@@ -290,9 +255,6 @@ export class RealtimeSession extends llm.RealtimeSession {
   private tasks = new Set<Promise<unknown>>();
   private settings = new SerialQueue();
   private optionsTask: Promise<void> = Promise.resolve();
-  private instructionEdits = new SerialQueue();
-  private instructionItems = new Map<string, { responseId: string; ended: boolean }>();
-  private deletedInstructionIds = new Set<string>();
   private input = new SerialQueue();
   private inputCount = 0;
   private pendingInput?: { data: Uint8Array; length: number; format: r.PCMFormat };
@@ -332,10 +294,6 @@ export class RealtimeSession extends llm.RealtimeSession {
   /** True after connection, stream, and pending operation cleanup has finished. */
   get isClosed(): boolean {
     return this.fullyClosed;
-  }
-  /** Snapshot of confirmed session information. Undefined before connection. */
-  get sessionInfo(): r.SessionInfo | undefined {
-    return this.sdk && structuredClone(this.sdk.info);
   }
   /** Snapshot of local history, including live messages and tool calls. */
   get chatCtx(): llm.ChatContext {
@@ -378,7 +336,6 @@ export class RealtimeSession extends llm.RealtimeSession {
       },
       (work) => this.background(work),
     );
-    this.emit('session_updated', this.sessionInfo);
     this.background(this.readEvents());
   }
   private async openConnection(): Promise<r.RealtimeSession> {
@@ -480,7 +437,6 @@ export class RealtimeSession extends llm.RealtimeSession {
         } catch (error) {
           const safe = this.normalize(error);
           const known =
-            error instanceof InstructionItemError ||
             (error instanceof DOMException && error.name === 'AbortError') ||
             (error instanceof HistoryUpdateError && error.recoverable) ||
             (this.sdkTypes &&
@@ -554,12 +510,10 @@ export class RealtimeSession extends llm.RealtimeSession {
         if (options.truncation !== undefined)
           this.options.truncation = structuredClone(options.truncation);
         this.options.toolFillers = structuredClone(fillers);
-        this.emit('session_updated', this.sessionInfo);
       }
       if (options.responseMetadata !== undefined) {
         await sdk.setResponseMetadata(options.responseMetadata);
         this.options.responseMetadata = { ...options.responseMetadata };
-        this.emit('session_updated', this.sessionInfo);
       }
     });
   }
@@ -602,27 +556,6 @@ export class RealtimeSession extends llm.RealtimeSession {
       }
     })();
     this.background(this.optionsTask);
-  }
-  /** Read completed provider history after pending edits, without changing local history. */
-  getHistory(): Promise<readonly r.HistoryItem[]> {
-    return this.operation(() => this.history!.getHistory());
-  }
-  /** Remove only an instruction observed in this session; local chat history has no copy. */
-  deleteInstructionItem(itemId: string): Promise<void> {
-    return this.operation(() =>
-      this.instructionEdits.run(async () => {
-        const state = this.instructionItems.get(itemId);
-        if (!state) throw new InstructionItemError('Unknown saved Prism instruction item');
-        if (!state.ended)
-          throw new InstructionItemError('Cannot delete a saved instruction before its reply ends');
-        await this.history!.waitForUpdates();
-        await this.requireSdk().deleteItem(itemId);
-        this.instructionItems.delete(itemId);
-        this.deletedInstructionIds.add(itemId);
-        if (this.deletedInstructionIds.size > 128)
-          this.deletedInstructionIds.delete(this.deletedInstructionIds.values().next().value!);
-      }),
-    );
   }
   /**
    * Copy and synchronize text and tool history. Invalid edits fail before mutation;
@@ -689,7 +622,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       const format = `${source.sampleRate}/${source.channels}`;
       if (format !== this.audioFormat) {
         this.audioFormat = format;
-        this.resampler = undefined;
+        this.releaseResampler();
       }
       let frame = source;
       if (source.channels > 2) {
@@ -762,6 +695,11 @@ export class RealtimeSession extends llm.RealtimeSession {
       this.fatal(error);
     }
   }
+  // Native resamplers hold memory until closed; release each one when it is replaced.
+  private releaseResampler(): void {
+    this.resampler?.close();
+    this.resampler = undefined;
+  }
   /** Ignore manual commits because Prism requires server turn detection. */
   async commitAudio(): Promise<void> {
     this.logger.warn('Prism commits speech through server turn detection; manual commit ignored');
@@ -769,7 +707,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   /** Clear provider input after previously queued sends and before subsequent sends. */
   clearAudio(): Promise<void> {
     this.pendingInput = undefined;
-    this.resampler = undefined;
+    this.releaseResampler();
     this.audioFormat = undefined;
     // Insert the clear before accepting any subsequent sends.
     return this.track(
@@ -792,7 +730,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   generateReply(
     instructions?: string,
     options: { signal?: AbortSignal; metadata?: r.Labels } = {},
-  ): Promise<PrismGenerationCreatedEvent> {
+  ): Promise<llm.GenerationCreatedEvent> {
     const pendingOptions = this.optionsTask;
     const metadata = options.metadata && { ...options.metadata };
     // Snapshot before the core resets the session-level option.
@@ -831,7 +769,6 @@ export class RealtimeSession extends llm.RealtimeSession {
               this.policyFloor = oldest + 1;
             }
           }
-          this.emit('session_updated', this.sessionInfo);
           // The SDK prevents unsent requests and cancels late acceptance after abort.
           // Release the settings queue without waiting for that acceptance.
           options.signal?.throwIfAborted();
@@ -851,7 +788,6 @@ export class RealtimeSession extends llm.RealtimeSession {
           try {
             if (!this.closed) {
               await sdk.update({ tools: restore });
-              this.emit('session_updated', this.sessionInfo);
             }
           } catch (error) {
             this.fatal(error);
@@ -877,7 +813,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     report?: r.ToolCallRef,
     metadata?: r.Labels,
     signal?: AbortSignal,
-  ): Promise<PrismGenerationCreatedEvent> {
+  ): Promise<llm.GenerationCreatedEvent> {
     const sdk = this.requireSdk();
     let ref: r.ResponseRef;
     if (instruction) ref = await sdk.requestReply({ instruction, metadata, signal });
@@ -1040,8 +976,6 @@ export class RealtimeSession extends llm.RealtimeSession {
         throw new llm.RealtimeError('Prism pending response exceeds 256 queued events');
       pending.push(event);
     } else this.handleEvent(event);
-    if (payload.kind === 'item.truncated') this.emit('item_truncated', payload);
-    else if (payload.kind === 'response.ended') this.emit('response_ended', payload);
   }
   private handleEvent(event: r.SessionEvent<r.NormalizedRealtimeFault>): void {
     const payload = event.payload;
@@ -1108,16 +1042,11 @@ export class RealtimeSession extends llm.RealtimeSession {
         };
         const messages = new OutputQueue<llm.MessageGeneration>(128, cancel);
         const functions = new OutputQueue<llm.FunctionCall>(128, cancel);
-        const created: PrismGenerationCreatedEvent = {
+        const created: llm.GenerationCreatedEvent = {
           messageStream: messages.stream,
           functionStream: functions.stream,
           responseId: payload.response.responseId,
           userInitiated: event.requestId !== null,
-          metadata: { ...payload.metadata },
-          inputItemIds: [...payload.inputItemIds],
-          settingsRevision: payload.settingsRevision ?? null,
-          providerRequestId: this.sdk!.info.requestId,
-          instructionItemId: payload.instructionItemId ?? null,
         };
         const generation: Generation = {
           ref: payload.response,
@@ -1140,20 +1069,6 @@ export class RealtimeSession extends llm.RealtimeSession {
         };
         this.generations.set(payload.response.responseId, generation);
         this.playback!.start(payload.response);
-        if (
-          payload.instructionItemId &&
-          !this.deletedInstructionIds.has(payload.instructionItemId)
-        ) {
-          if (
-            !this.instructionItems.has(payload.instructionItemId) &&
-            this.instructionItems.size >= 128
-          )
-            this.instructionItems.delete(this.instructionItems.keys().next().value!);
-          this.instructionItems.set(payload.instructionItemId, {
-            responseId: payload.response.responseId,
-            ended: false,
-          });
-        }
         this.generationWaiters.get(payload.response.responseId)?.resolve(generation);
         this.generationWaiters.delete(payload.response.responseId);
         if (event.requestId === null) {
@@ -1252,11 +1167,6 @@ export class RealtimeSession extends llm.RealtimeSession {
         break;
       case 'response.ended': {
         const generation = this.generations.get(payload.response.responseId);
-        const instructionItemId = generation?.event.instructionItemId;
-        if (instructionItemId) {
-          const state = this.instructionItems.get(instructionItemId);
-          if (state?.responseId === payload.response.responseId) state.ended = true;
-        }
         if (generation) this.end(generation, payload.status !== 'completed');
         this.playback!.end(payload.response, payload.status !== 'completed');
         if (this.active?.responseId === payload.response.responseId) this.active = undefined;
@@ -1376,7 +1286,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       this.turnStarted.clear();
       this.transcripts.clear();
       this.pendingInput = undefined;
-      this.resampler = undefined;
+      this.releaseResampler();
       this.fullyClosed = true;
       const failed = cleanup.find((result) => result.status === 'rejected');
       if (failed?.status === 'rejected') throw this.failure ?? this.normalize(failed.reason);

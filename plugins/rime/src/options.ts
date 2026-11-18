@@ -131,18 +131,21 @@ export function resolveOptions(opts: Partial<TTSOptions>, previous?: TTSOptions)
     Boolean(opts.baseURL?.startsWith('ws'));
   if (previous && previous.useWebsocket !== useWebsocket)
     throw new Error('Cannot change Rime transport');
-  const lexicon = opts.customLexicon ?? previous?.customLexicon;
-  if (lexicon !== undefined) {
-    if (model !== 'coda') throw new Error('customLexicon requires the coda model');
-    if (useWebsocket && !v1) throw new Error('customLexicon requires HTTP or WebSocket v1');
-    if (
-      !Array.isArray(lexicon) ||
-      lexicon.some(
+  const requestedLexicon = opts.customLexicon ?? previous?.customLexicon;
+  if (
+    requestedLexicon !== undefined &&
+    (!Array.isArray(requestedLexicon) ||
+      requestedLexicon.some(
         (entry) =>
           !entry || typeof entry.spelling !== 'string' || typeof entry.pronunciation !== 'string',
-      )
-    )
-      throw new Error('customLexicon requires spelling and pronunciation strings');
+      ))
+  )
+    throw new Error('customLexicon requires spelling and pronunciation strings');
+  // An empty lexicon clears it, so it no longer pins the model or transport.
+  const lexicon = requestedLexicon?.length ? requestedLexicon : undefined;
+  if (lexicon) {
+    if (model !== 'coda') throw new Error('customLexicon requires the coda model');
+    if (useWebsocket && !v1) throw new Error('customLexicon requires HTTP or WebSocket v1');
   }
   const resolved: TTSOptions = {
     ...defaultTTSOptions,

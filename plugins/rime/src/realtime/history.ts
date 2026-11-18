@@ -122,9 +122,6 @@ export class PrismHistory {
   get chatCtx(): llm.ChatContext {
     return new llm.ChatContext(items(this.chat).map(clone));
   }
-  getHistory(): Promise<readonly r.HistoryItem[]> {
-    return this.edits.run(() => this.sdk.getHistory());
-  }
   async waitForUpdates(): Promise<void> {
     await this.edits.idle();
     if (this.failure) throw this.failure;

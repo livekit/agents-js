@@ -306,7 +306,7 @@ it('queues option snapshots before subsequent replies and recovers after refusal
   model.updateOptions({ voice: 'refused' });
   model.updateOptions({ voice: 'last' });
   await session.generateReply();
-  expect(model.sessionInfo?.voice).toBe('last');
+  expect(peer.settings.voice).toBe('last');
   expect(errors).toHaveLength(1);
   expect(errors[0]?.recoverable).toBe(true);
   expect(peer.requests.filter((q) => q.session?.voice).map((q) => q.session?.voice)).toEqual([
@@ -490,7 +490,7 @@ it('accepts progress from two concurrent tools without repeating either executio
 it.each(['resource', 'input', 'admission'] as const)(
   'keeps the session usable after a local %s option refusal',
   async (kind) => {
-    const { session, model, errors } = await setup();
+    const { peer, session, errors } = await setup();
     const types = await import('@rimelabs/sdk');
     const sdk = (session as unknown as { sdk: import('@rimelabs/sdk').RealtimeSession }).sdk;
     const error =
@@ -505,7 +505,7 @@ it.each(['resource', 'input', 'admission'] as const)(
     await session.updateInstructions('After options');
     expect(errors).toHaveLength(1);
     expect(errors[0]?.recoverable).toBe(true);
-    expect(model.sessionInfo?.voice).toBe('accepted');
+    expect(peer.settings.voice).toBe('accepted');
     expect(session.isClosed).toBe(false);
   },
 );
