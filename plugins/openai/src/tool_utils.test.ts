@@ -8,7 +8,7 @@ import { toResponsesTools } from './tool_utils.js';
 import { CodeInterpreter, FileSearch, WebSearch } from './tools.js';
 
 describe('toResponsesTools', () => {
-  it('sorts function tools before provider tools without making optional parameters strict', () => {
+  it('emits function tools before provider tools without making optional parameters strict', () => {
     const makeTool = (name: string) =>
       llm.tool({
         name,
@@ -23,7 +23,7 @@ describe('toResponsesTools', () => {
         false,
       ),
     ).toEqual([
-      ...['alpha', 'zulu'].map((name) => ({
+      ...['zulu', 'alpha'].map((name) => ({
         type: 'function',
         name,
         description: 'Look up weather',
