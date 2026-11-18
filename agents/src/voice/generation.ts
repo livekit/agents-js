@@ -708,15 +708,19 @@ export function performLLMInference(
     span: Span,
     inference: genAI.InferenceMarker,
   ) => {
-    const delta = inputDelta.compute(inputDelta.LLM_NODE, chatCtx, span);
-    span.setAttribute(
-      traceTypes.ATTR_CHAT_CTX,
-      // snake_case wire shape, matching Python's `chat_ctx.to_dict()` for this span attribute
-      // (toJSON() emits camelCase). Defaults exclude image/audio/timestamps like the Python side.
-      JSON.stringify(toSnakeCaseDeep(delta.chatCtx.toJSON())),
-    );
-    inputDelta.setAttributes(span, delta);
-    span.setAttribute(traceTypes.ATTR_FUNCTION_TOOLS, JSON.stringify(sortedToolNames(toolCtx)));
+    const delta = span.isRecording()
+      ? inputDelta.compute(inputDelta.LLM_NODE, chatCtx, span)
+      : undefined;
+    if (delta) {
+      span.setAttribute(
+        traceTypes.ATTR_CHAT_CTX,
+        // snake_case wire shape, matching Python's `chat_ctx.to_dict()` for this span attribute
+        // (toJSON() emits camelCase). Defaults exclude image/audio/timestamps like the Python side.
+        JSON.stringify(toSnakeCaseDeep(delta.chatCtx.toJSON())),
+      );
+      inputDelta.setAttributes(span, delta);
+      span.setAttribute(traceTypes.ATTR_FUNCTION_TOOLS, JSON.stringify(sortedToolNames(toolCtx)));
+    }
 
     let nodeError: Error | string | undefined;
 
@@ -821,18 +825,20 @@ export function performLLMInference(
       logger.error({ error }, 'error in llm node');
       throw error;
     } finally {
-      span.setAttribute(traceTypes.ATTR_RESPONSE_TEXT, data.generatedText);
-      span.setAttribute(
-        traceTypes.ATTR_RESPONSE_FUNCTION_CALLS,
-        JSON.stringify(
-          data.generatedToolCalls.map(({ id, callId, name, args }) => ({
-            id,
-            call_id: callId,
-            name,
-            arguments: args,
-          })),
-        ),
-      );
+      if (span.isRecording()) {
+        span.setAttribute(traceTypes.ATTR_RESPONSE_TEXT, data.generatedText);
+        span.setAttribute(
+          traceTypes.ATTR_RESPONSE_FUNCTION_CALLS,
+          JSON.stringify(
+            data.generatedToolCalls.map(({ id, callId, name, args }) => ({
+              id,
+              call_id: callId,
+              name,
+              arguments: args,
+            })),
+          ),
+        );
+      }
       if (data.ttft !== undefined) {
         span.setAttribute(traceTypes.ATTR_RESPONSE_TTFT, data.ttft);
       }
@@ -855,16 +861,18 @@ export function performLLMInference(
           finishReasons: [finishReason],
           timeToFirstChunk: data.ttft,
         });
-        genAI.setContentAttributes(span, {
-          systemInstructions: delta.systemInstructions(),
-          inputMessages: delta.inputMessages(),
-          toolDefinitions: genAI.toToolDefinitions(toolCtx.functionTools),
-          outputMessages: genAI.toOutputMessages({
-            text: data.generatedText,
-            functionCalls: data.generatedToolCalls,
-            finishReason,
-          }),
-        });
+        if (delta && genAI.captureContentEnabled() && span.isRecording()) {
+          genAI.setContentAttributes(span, {
+            systemInstructions: delta.systemInstructions(),
+            inputMessages: delta.inputMessages(),
+            toolDefinitions: genAI.toToolDefinitions(toolCtx.functionTools),
+            outputMessages: genAI.toOutputMessages({
+              text: data.generatedText,
+              functionCalls: data.generatedToolCalls,
+              finishReason,
+            }),
+          });
+        }
       }
       llmStreamReader?.releaseLock();
       await llmStream?.cancel();
