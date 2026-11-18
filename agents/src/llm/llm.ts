@@ -197,6 +197,7 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
   #chatCtx: ChatContext;
   #toolCtx?: ToolContext;
   #llmRequestSpan?: Span;
+  #recordContent = false;
   // Provider-known response ids collected from ChatChunks during the current
   // attempt; reset before each retry and written to the `llm_request_run` span.
   #providerRequestIds: string[] = [];
@@ -284,7 +285,7 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
       outputType: traceTypes.GenAIOutputType.TEXT,
     });
     // no input is recorded, so this span must not become the parent of a later delta either
-    if (!genAI.captureContentEnabled() || !span.isRecording()) return;
+    if (!this.#recordContent) return;
     if (this.genAIOperationName === undefined && inputDelta.active()) {
       genAI.setContentAttributes(span, {
         toolDefinitions: this.#toolCtx ? genAI.toToolDefinitions(this.#toolCtx.functionTools) : [],
@@ -302,6 +303,8 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
 
   private _mainTaskImpl = async (span: Span) => {
     this.#llmRequestSpan = span;
+    // Capture must start with the request to record the entire response.
+    this.#recordContent = span.isRecording() && genAI.captureContentEnabled();
     span.setAttribute(traceTypes.ATTR_GEN_AI_REQUEST_MODEL, this.#llm.model);
     this.recordGenAIRequest(span);
 
@@ -403,7 +406,7 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
         ttft = process.hrtime.bigint() - startTime;
         completionStartTime = new Date().toISOString();
       }
-      if (ev.delta?.content) {
+      if (this.#recordContent && ev.delta?.content) {
         responseContent += ev.delta.content;
       }
       if (ev.delta?.toolCalls?.length) {
@@ -459,13 +462,19 @@ export abstract class LLMStream implements AsyncIterableIterator<ChatChunk> {
         finishReasons: [finishReason],
         timeToFirstChunk: metrics.ttftMs >= 0 ? metrics.ttftMs / 1000 : undefined,
       });
-      genAI.setContentAttributes(this.#llmRequestSpan, {
-        outputMessages: genAI.toOutputMessages({
-          text: responseContent,
-          functionCalls: toolCalls,
-          finishReason,
-        }),
-      });
+      if (
+        this.#recordContent &&
+        genAI.captureContentEnabled() &&
+        this.#llmRequestSpan.isRecording()
+      ) {
+        genAI.setContentAttributes(this.#llmRequestSpan, {
+          outputMessages: genAI.toOutputMessages({
+            text: responseContent,
+            functionCalls: toolCalls,
+            finishReason,
+          }),
+        });
+      }
 
       if (completionStartTime) {
         this.#llmRequestSpan.setAttribute(
