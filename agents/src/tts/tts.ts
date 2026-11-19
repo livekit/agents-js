@@ -161,6 +161,18 @@ export type TTSCallbacks = {
   ['fallback_activated']: (event: FallbackActivatedEvent) => void;
 };
 
+/** Queue that reports each accepted item synchronously, at the point a provider puts it. */
+class ObservedAsyncIterableQueue<T> extends AsyncIterableQueue<T> {
+  constructor(private readonly onPut: (item: T) => void) {
+    super();
+  }
+
+  override put(item: T): void {
+    super.put(item);
+    this.onPut(item);
+  }
+}
+
 /**
  * Time at which text was first sent to the TTS provider, captured on both
  * clocks used for TTFB accounting: `time` on the `performance.now()` scale
@@ -354,13 +366,45 @@ export abstract class SynthesizeStream
   protected static readonly FLUSH_SENTINEL = Symbol('FLUSH_SENTINEL');
   static readonly END_OF_STREAM = Symbol('END_OF_STREAM');
   protected input = new AsyncIterableQueue<string | typeof SynthesizeStream.FLUSH_SENTINEL>();
-  protected queue = new AsyncIterableQueue<
-    SynthesizedAudio | typeof SynthesizeStream.END_OF_STREAM
-  >();
+  // Declared as the plain queue so the public type is unchanged. The observer only matters when
+  // `replayInputOnRetry` is on; `#markAudioPushed` ignores audio otherwise.
+  protected queue: AsyncIterableQueue<SynthesizedAudio | typeof SynthesizeStream.END_OF_STREAM> =
+    new ObservedAsyncIterableQueue<SynthesizedAudio | typeof SynthesizeStream.END_OF_STREAM>(
+      (item) => {
+        if (item !== SynthesizeStream.END_OF_STREAM) {
+          this.#markAudioPushed();
+        }
+      },
+    );
   protected output = new AsyncIterableQueue<
     SynthesizedAudio | typeof SynthesizeStream.END_OF_STREAM
   >();
   protected closed = false;
+  /**
+   * Replay the text pushed by the caller into each retry attempt. Off by default.
+   *
+   * A provider drains `input` while it runs, so a retried attempt would otherwise find the queue
+   * empty and send nothing. With this on, the base class keeps what the caller pushed and gives
+   * each retry a fresh `input` queue holding all of it. It also stops retrying once the provider
+   * has put audio on `queue`, because a retry would play the turn again on top of what was already
+   * heard. The error is then emitted once as unrecoverable, which the Python SDK also does.
+   *
+   * It is off by default because plugins that read `input` once, build a sentence tokenizer once
+   * per stream, or write to `input` directly would break or stay silent with it on. With it off,
+   * nothing is buffered and a retry behaves as it always has.
+   *
+   * A subclass turns it on by overriding this field with `true`. The base class reads it when it
+   * is used, not in its constructor, so the subclass field initialiser has already run. A subclass
+   * that turns it on must:
+   * - read `this.input` afresh at the start of each `run()` attempt, and never hold an iterator
+   *   from an earlier attempt;
+   * - create any per-stream state, such as a sentence tokenizer, inside `run()`;
+   * - write only through `pushText()`, `flush()` and `endInput()`, never to `this.input` directly;
+   * - not resume partway through the text after it has emitted audio;
+   * - not put anything on `queue` after its `run()` has settled. A late frame would count as audio
+   *   from the next attempt and stop the retries.
+   */
+  protected readonly replayInputOnRetry: boolean = false;
   /** Wrappers forward provider metrics instead of emitting their own usage. */
   protected emitMetrics = true;
   protected connOptions: APIConnectOptions;
@@ -388,6 +432,17 @@ export abstract class SynthesizeStream
   #startedTime?: number;
   #startedHrTime?: bigint;
   #error?: Error;
+  // The three fields below are used only when `replayInputOnRetry` is on.
+  // Every item accepted from the caller, in order, so a retry can feed its fresh `input` queue the
+  // same text. Provider tasks drain `input` as they go, so it cannot be replayed from itself.
+  // Memory: it holds only the text pushed before the first audio frame. Once audio has gone out
+  // the stream can no longer retry (see `#markAudioPushed`), the buffer is dropped and no longer
+  // grows.
+  #inputBuffer: Array<string | typeof SynthesizeStream.FLUSH_SENTINEL> = [];
+  #inputEnded = false;
+  // Set the first time a provider puts audio on `queue` and never cleared. `queue` is shared by
+  // all attempts, so a per-attempt flag would let a late frame from a failed attempt be missed.
+  #audioPushed = false;
 
   constructor(tts: TTS, connOptions: APIConnectOptions = DEFAULT_API_CONNECT_OPTIONS) {
     this.#tts = tts;
@@ -486,6 +541,14 @@ export abstract class SynthesizeStream
           if (this.connOptions.maxRetry === 0 || !error.retryable) {
             this.emitError({ error, recoverable: false });
             throw error;
+          } else if (this.#audioPushed) {
+            // Audio already reached the consumer; a retry would play the turn again on top of it.
+            this.emitError({ error, recoverable: false });
+            this.logger.warn(
+              { tts: this.#tts.label, attempt: i + 1, error },
+              'failed to synthesize speech after emitting audio, not retrying',
+            );
+            throw error;
           } else if (i === this.connOptions.maxRetry) {
             this.emitError({ error, recoverable: false });
             throw new APIConnectionError({
@@ -495,6 +558,7 @@ export abstract class SynthesizeStream
           } else {
             // Don't emit error event for recoverable errors during retry loop
             // to avoid ERR_UNHANDLED_ERROR or premature session termination
+            this.#resetInputForRetry();
             this.logger.warn(
               { tts: this.#tts.label, attempt: i + 1, error },
               `failed to synthesize speech, retrying in ${retryInterval}ms`,
@@ -504,6 +568,11 @@ export abstract class SynthesizeStream
           if (retryInterval > 0) {
             await delay(retryInterval);
           }
+          if (this.replayInputOnRetry && this.closed) {
+            // The stream was closed while waiting. The next attempt would send the whole replayed
+            // turn for nobody to hear.
+            return;
+          }
         } else {
           this.emitError({ error: toError(error), recoverable: false });
           throw error;
@@ -511,6 +580,40 @@ export abstract class SynthesizeStream
       }
     }
   };
+
+  /**
+   * Called when a provider puts audio on `queue`. From here the stream cannot retry, so the replay
+   * buffer has no further use.
+   */
+  #markAudioPushed() {
+    if (!this.replayInputOnRetry) {
+      return;
+    }
+    this.#audioPushed = true;
+    this.#inputBuffer = [];
+  }
+
+  /**
+   * Give the next attempt a fresh `input` queue holding everything pushed so far. The failed
+   * attempt's queue is closed first so that any of its provider tasks still waiting on it are
+   * released: they keep the iterator they started with, so replacing `input` alone would strand
+   * them. Text pushed while the retry waits goes into the new queue as usual.
+   */
+  #resetInputForRetry() {
+    if (!this.replayInputOnRetry || this.closed) {
+      return;
+    }
+    if (!this.input.closed) {
+      this.input.close();
+    }
+    this.input = new AsyncIterableQueue<string | typeof SynthesizeStream.FLUSH_SENTINEL>();
+    for (const item of this.#inputBuffer) {
+      this.input.put(item);
+    }
+    if (this.#inputEnded) {
+      this.input.close();
+    }
+  }
 
   private mainTask = async () =>
     tracer.startActiveSpan(async (span) => this._mainTaskImpl(span), {
@@ -745,12 +848,12 @@ export abstract class SynthesizeStream
     }
     this.#metricsText += text;
 
-    if (this.input.closed || this.closed) {
-      // Stream was aborted/closed, silently skip
+    if (this.#inputRejected()) {
+      // Stream was aborted/closed (or its input ended), silently skip
       return;
     }
 
-    this.input.put(text);
+    this.#recordInput(text);
   }
 
   /** Flush the TTS, causing it to process all pending text */
@@ -760,24 +863,52 @@ export abstract class SynthesizeStream
       this.#metricsText = '';
     }
 
-    if (this.input.closed || this.closed) {
-      // Stream was aborted/closed, silently skip
+    if (this.#inputRejected()) {
+      // Stream was aborted/closed (or its input ended), silently skip
       return;
     }
 
-    this.input.put(SynthesizeStream.FLUSH_SENTINEL);
+    this.#recordInput(SynthesizeStream.FLUSH_SENTINEL);
   }
 
-  /** Mark the input as ended and forbid additional pushes */
+  /** Mark the input as ended and forbid additional pushes. */
   endInput() {
     this.flush();
 
-    if (this.input.closed || this.closed) {
-      // Stream was aborted/closed, silently skip
+    if (this.#inputRejected()) {
+      // Stream was aborted/closed (or its input already ended), silently skip
       return;
     }
 
-    this.input.close();
+    this.#inputEnded = true;
+    if (!this.input.closed) {
+      this.input.close();
+    }
+  }
+
+  /**
+   * Whether `pushText` and `flush` drop their input. Off: the queue or the stream is closed, as
+   * before. On: input was ended or the stream is closed; the current queue may be closed
+   * mid-retry while input is still accepted.
+   */
+  #inputRejected(): boolean {
+    return this.replayInputOnRetry
+      ? this.#inputEnded || this.closed
+      : this.input.closed || this.closed;
+  }
+
+  /**
+   * Hand one item of caller input to the current attempt. With `replayInputOnRetry` on, also
+   * remember it for replay. An attempt can have closed its queue while it tears down after a
+   * failure; the item is then kept for the retry's queue only.
+   */
+  #recordInput(item: string | typeof SynthesizeStream.FLUSH_SENTINEL) {
+    if (this.replayInputOnRetry && !this.#audioPushed) {
+      this.#inputBuffer.push(item);
+    }
+    if (!this.input.closed) {
+      this.input.put(item);
+    }
   }
 
   next(): Promise<IteratorResult<SynthesizedAudio | typeof SynthesizeStream.END_OF_STREAM>> {

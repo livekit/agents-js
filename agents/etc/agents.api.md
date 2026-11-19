@@ -8154,6 +8154,7 @@ abstract class SynthesizeStream implements AsyncIterableIterator<SynthesizedAudi
     //
     // (undocumented)
     protected queue: AsyncIterableQueue<SynthesizedAudio | typeof SynthesizeStream.END_OF_STREAM>;
+    protected readonly replayInputOnRetry: boolean;
     protected get responseModel(): string;
     protected get responseProvider(): string;
     // (undocumented)
@@ -8175,6 +8176,7 @@ class SynthesizeStream_2<TModel extends TTSModels> extends SynthesizeStream {
     constructor(tts: TTS_2<TModel>, opts: InferenceTTSOptions<TModel>, connOptions: APIConnectOptions);
     // (undocumented)
     get label(): string;
+    protected readonly replayInputOnRetry = true;
     // (undocumented)
     protected run(): Promise<void>;
     // (undocumented)

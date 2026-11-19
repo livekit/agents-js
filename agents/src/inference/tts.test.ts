@@ -988,3 +988,274 @@ describe('Inference TTS gateway drain', () => {
     },
   );
 });
+
+describe('Inference TTS retry replays the turn', () => {
+  const PCM_100MS = Buffer.alloc(16000 * 2 * 0.1).toString('base64');
+  const RETRY_OPTIONS: APIConnectOptions = { maxRetry: 3, retryIntervalMs: 0, timeoutMs: 2_000 };
+
+  interface Conn {
+    index: number;
+    socket: WebSocket;
+    events: Record<string, unknown>[];
+  }
+
+  async function gateway(onEvent: (conn: Conn, event: Record<string, unknown>) => void) {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const { port } = server.address() as AddressInfo;
+    const conns: Conn[] = [];
+    server.on('connection', (socket) => {
+      const conn: Conn = { index: conns.length, socket, events: [] };
+      conns.push(conn);
+      socket.on('message', (raw) => {
+        const event = JSON.parse(raw.toString()) as Record<string, unknown>;
+        conn.events.push(event);
+        onEvent(conn, event);
+      });
+    });
+    return {
+      conns,
+      url: `http://127.0.0.1:${port}`,
+      close: async () => {
+        for (const client of server.clients) client.terminate();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      },
+    };
+  }
+
+  const send = (conn: Conn, event: Record<string, unknown>) =>
+    conn.socket.send(JSON.stringify({ session_id: `s${conn.index}`, ...event }));
+
+  const transcripts = (conn: Conn) =>
+    conn.events.filter((e) => e.type === 'input_transcript').map((e) => e.transcript as string);
+
+  /** Audio and done for a turn that has text; a bare done for an empty flush. */
+  function serveTurn(conn: Conn) {
+    if (transcripts(conn).length > 0) send(conn, { type: 'output_audio', audio: PCM_100MS });
+    send(conn, { type: 'done' });
+  }
+
+  async function drain(stream: AsyncIterable<unknown>) {
+    let frames = 0;
+    for await (const event of stream) if (typeof event !== 'symbol') frames++;
+    return frames;
+  }
+
+  it('sends the same text on the retry connection and speaks it', async () => {
+    const gw = await gateway((conn, event) => {
+      if (event.type !== 'session.flush') return;
+      if (conn.index === 0) {
+        send(conn, { type: 'error', message: 'boom' });
+      } else {
+        serveTurn(conn);
+      }
+    });
+    const tts = makeTts({ baseURL: gw.url });
+    const errors: unknown[] = [];
+    tts.on('error', (e) => errors.push(e));
+    const stream = tts.stream({ connOptions: RETRY_OPTIONS });
+    try {
+      stream.pushText('Hello there.');
+      stream.endInput();
+      const frames = await drain(stream);
+
+      expect(gw.conns).toHaveLength(2);
+      expect(transcripts(gw.conns[0]!)).toEqual(['Hello there. ']);
+      expect(transcripts(gw.conns[1]!)).toEqual(['Hello there. ']);
+      expect(frames).toBeGreaterThan(0);
+      expect(stream.error).toBeUndefined();
+      expect(errors).toEqual([]);
+    } finally {
+      stream.close();
+      await tts.close();
+      await gw.close();
+    }
+  });
+
+  it('sends text pushed while the retry is running once, in order', async () => {
+    const gw = await gateway((conn, event) => {
+      if (conn.index === 0) {
+        // the gateway drops the connection while the turn is still being written
+        if (event.type === 'input_transcript') conn.socket.close(1011);
+        return;
+      }
+      if (event.type === 'session.flush') serveTurn(conn);
+    });
+    const tts = makeTts({ baseURL: gw.url });
+    const stream = tts.stream({ connOptions: RETRY_OPTIONS });
+    try {
+      stream.pushText('First sentence is lost. ');
+      stream.pushText('Second ');
+      await vi.waitFor(() => expect(gw.conns).toHaveLength(2));
+      stream.pushText('sentence is spoken.');
+      stream.endInput();
+      const frames = await drain(stream);
+
+      expect(transcripts(gw.conns[1]!).join('')).toBe(
+        'First sentence is lost. Second sentence is spoken. ',
+      );
+      expect(frames).toBeGreaterThan(0);
+      expect(stream.error).toBeUndefined();
+    } finally {
+      stream.close();
+      await tts.close();
+      await gw.close();
+    }
+  });
+
+  it('opens no new connection when the stream is closed during the retry delay', async () => {
+    const gw = await gateway((conn, event) => {
+      if (event.type === 'session.flush') send(conn, { type: 'error', message: 'boom' });
+    });
+    const tts = makeTts({ baseURL: gw.url });
+    const stream = tts.stream({ connOptions: RETRY_OPTIONS });
+    try {
+      stream.pushText('Hello there.');
+      stream.endInput();
+      await vi.waitFor(() =>
+        expect(gw.conns[0]?.events.map((e) => e.type)).toContain('session.flush'),
+      );
+      // the first retry waits 100 ms; close well inside it
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      stream.close();
+      await drain(stream);
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      expect(gw.conns).toHaveLength(1);
+    } finally {
+      stream.close();
+      await tts.close();
+      await gw.close();
+    }
+  });
+
+  it('does not open a second connection after audio, and reports the error once', async () => {
+    const gw = await gateway((conn, event) => {
+      if (event.type !== 'session.flush') return;
+      // the stream holds back the newest frame, so send enough for one to reach the consumer
+      send(conn, { type: 'output_audio', audio: PCM_100MS });
+      send(conn, { type: 'output_audio', audio: PCM_100MS });
+      send(conn, { type: 'error', message: 'boom' });
+    });
+    const tts = makeTts({ baseURL: gw.url });
+    const errors: Array<{ recoverable: boolean }> = [];
+    tts.on('error', (e) => errors.push(e));
+    const stream = tts.stream({ connOptions: RETRY_OPTIONS });
+    try {
+      stream.pushText('Hello there.');
+      stream.endInput();
+      const frames = await drain(stream);
+
+      expect(gw.conns).toHaveLength(1);
+      expect(frames).toBeGreaterThan(0);
+      expect(errors.map((e) => e.recoverable)).toEqual([false]);
+      expect(stream.error).toBeDefined();
+    } finally {
+      stream.close();
+      await tts.close();
+      await gw.close();
+    }
+  });
+
+  const handoffRequest = (conn: Conn) =>
+    conn.socket.send(JSON.stringify({ type: 'session.handoff.request', handoff_id: 'drain-1' }));
+
+  it('finishes the turn on the draining socket without a retry', async () => {
+    const gw = await gateway((conn, event) => {
+      if (event.type !== 'session.flush' || conn.index !== 0) return;
+      handoffRequest(conn);
+      // the turn is still in flight when the drain request arrives
+      setTimeout(() => serveTurn(conn), 50);
+    });
+    const tts = makeTts({ baseURL: gw.url });
+    const errors: unknown[] = [];
+    tts.on('error', (e) => errors.push(e));
+    const stream = tts.stream({ connOptions: RETRY_OPTIONS });
+    try {
+      stream.pushText('Hello there.');
+      stream.endInput();
+      const frames = await drain(stream);
+
+      expect(frames).toBeGreaterThan(0);
+      expect(stream.error).toBeUndefined();
+      expect(errors).toEqual([]);
+      // the text went out once, on the draining socket
+      expect(transcripts(gw.conns[0]!)).toEqual(['Hello there. ']);
+      for (const conn of gw.conns.slice(1)) expect(transcripts(conn)).toEqual([]);
+      // the socket is retired after the turn, not during it
+      await vi.waitFor(() =>
+        expect(gw.conns[0]!.events.map((e) => e.type)).toContain('session.handoff.complete'),
+      );
+      const types = gw.conns[0]!.events.map((e) => e.type);
+      expect(types.indexOf('session.handoff.complete')).toBeGreaterThan(
+        types.indexOf('session.flush'),
+      );
+    } finally {
+      stream.close();
+      await tts.close();
+      await gw.close();
+    }
+  });
+
+  it('replays the turn when the draining gateway closes the socket before any audio', async () => {
+    const gw = await gateway((conn, event) => {
+      if (event.type !== 'session.flush') return;
+      if (conn.index === 0) {
+        handoffRequest(conn);
+        conn.socket.close(1001);
+      } else {
+        serveTurn(conn);
+      }
+    });
+    const tts = makeTts({ baseURL: gw.url });
+    const errors: unknown[] = [];
+    tts.on('error', (e) => errors.push(e));
+    const stream = tts.stream({ connOptions: RETRY_OPTIONS });
+    try {
+      stream.pushText('Hello there.');
+      stream.endInput();
+      const frames = await drain(stream);
+
+      expect(frames).toBeGreaterThan(0);
+      expect(stream.error).toBeUndefined();
+      expect(errors).toEqual([]);
+      expect(transcripts(gw.conns[0]!)).toEqual(['Hello there. ']);
+      expect(transcripts(gw.conns[1]!)).toEqual(['Hello there. ']);
+      // no acknowledgement for a socket that was already closed
+      expect(gw.conns[0]!.events.map((e) => e.type)).not.toContain('session.handoff.complete');
+    } finally {
+      stream.close();
+      await tts.close();
+      await gw.close();
+    }
+  });
+
+  it('reports one unrecoverable error when the draining gateway closes the socket after audio', async () => {
+    const gw = await gateway((conn, event) => {
+      if (event.type !== 'session.flush') return;
+      send(conn, { type: 'output_audio', audio: PCM_100MS });
+      send(conn, { type: 'output_audio', audio: PCM_100MS });
+      handoffRequest(conn);
+      // let the consumer see the audio before the socket goes away
+      setTimeout(() => conn.socket.close(1001), 100);
+    });
+    const tts = makeTts({ baseURL: gw.url });
+    const errors: Array<{ recoverable: boolean }> = [];
+    tts.on('error', (e) => errors.push(e));
+    const stream = tts.stream({ connOptions: RETRY_OPTIONS });
+    try {
+      stream.pushText('Hello there.');
+      stream.endInput();
+      const frames = await drain(stream);
+
+      expect(frames).toBeGreaterThan(0);
+      expect(errors.map((e) => e.recoverable)).toEqual([false]);
+      expect(stream.error).toBeDefined();
+      expect(gw.conns).toHaveLength(1);
+    } finally {
+      stream.close();
+      await tts.close();
+      await gw.close();
+    }
+  });
+});

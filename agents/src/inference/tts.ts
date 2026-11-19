@@ -658,6 +658,12 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
    */
   private heldTokens: TimedString[] = [];
 
+  /**
+   * `run()` reads `this.input` and builds its sentence tokenizer afresh on every attempt, and the
+   * stream writes only through the base class, so a retry can replay the turn.
+   */
+  protected override readonly replayInputOnRetry = true;
+
   #logger = log();
 
   constructor(tts: TTS<TModel>, opts: InferenceTTSOptions<TModel>, connOptions: APIConnectOptions) {
@@ -697,6 +703,8 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
     // mirrors the semantics of `output_emitter.push_timed_transcript` on the
     // Python side.
     let pendingTimedTranscripts: TimedString[] = [];
+    // A retry replays the turn from the start, so a cue tail held from a failed attempt is stale.
+    this.heldTokens = [];
 
     // chunking defaults (cap + expressive batch size) live in provider_format
     const provider = (this.opts.model ?? '').split('/')[0] ?? '';
@@ -1036,6 +1044,10 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
               // Mirror python finally: unblock recv and cancel all tasks.
               inputSentEvent.set();
               await resourceCleanup();
+              // The input task waits on `input` and only sees the abort when that yields. Close
+              // the queue so it returns now instead of when the next text arrives; on a retry the
+              // base class replays what this attempt consumed into a fresh queue.
+              if (!this.input.closed) this.input.close();
               await cancelAndWait(tasks, 5000);
               this.abortController.signal.removeEventListener('abort', onStreamAbort);
             }
