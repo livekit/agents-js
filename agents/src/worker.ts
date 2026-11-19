@@ -36,7 +36,7 @@ import { ProcPool } from './ipc/proc_pool.js';
 import type { JobAcceptArguments, JobProcess, RunningJobInfo } from './job.js';
 import { JobRequest } from './job.js';
 import { DEFAULT_SESSION_END_TIMEOUT, validateSessionEndTimeout } from './job_lifecycle.js';
-import { CreateJobTokenRequests, getWorkerToken } from './job_token.js';
+import { CreateJobTokenRequests } from './job_token.js';
 import { log } from './log.js';
 import {
   type EventLoopMonitor,
@@ -466,7 +466,7 @@ export class AgentServer {
       );
 
     if (this.#tokenMode) {
-      // Exported so forked job processes inherit it; read back through getWorkerToken().
+      // Exported so forked job processes inherit it, as the token mode marker.
       process.env.LIVEKIT_TOKEN = opts.token;
     }
 
@@ -580,7 +580,7 @@ export class AgentServer {
         let jwt: string;
         if (this.#tokenMode) {
           // the worker token is the bearer, as is
-          jwt = getWorkerToken()!;
+          jwt = this.#opts.token!;
         } else {
           const token = new AccessToken(this.#opts.apiKey, this.#opts.apiSecret);
           token.addGrant({ agent: true });
@@ -667,7 +667,7 @@ export class AgentServer {
       return;
     }
     this.#opts.token = token;
-    // read here by getWorkerToken(); jobs use it only as the token mode marker
+    // jobs use it only as the token mode marker
     process.env.LIVEKIT_TOKEN = token;
   }
 

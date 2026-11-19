@@ -563,7 +563,10 @@ describe('AgentServer token mode', () => {
     return { wss, authorization, registered, tokenRequests, connections: () => connections };
   };
 
-  const newServer = (wss: WebSocketServer, opts: { apiKey?: string; apiSecret?: string } = {}) =>
+  const newServer = (
+    wss: WebSocketServer,
+    opts: { apiKey?: string; apiSecret?: string; token?: string } = {},
+  ) =>
     new AgentServer(
       new ServerOptions({
         agent: 'test-agent.js',
@@ -748,6 +751,24 @@ describe('AgentServer token mode', () => {
           new ServerOptions({ agent: 'test-agent.js', wsURL: 'ws://localhost', apiKey: 'devkey' }),
         ),
     ).toThrow('API Secret is required');
+  });
+
+  it('registers with its own token, not the one another server exported', async () => {
+    tokenModeEnv();
+    const { wss, authorization } = await fakeServer();
+    const start = vi.spyOn(ProcPool.prototype, 'start').mockImplementation(() => {});
+    const server = newServer(wss, { token: 'first-token' });
+    newServer(wss, { token: 'second-token' }); // exports LIVEKIT_TOKEN=second-token
+
+    const run = server.run().catch(() => undefined);
+    try {
+      expect(await authorization.await).toBe('Bearer first-token');
+    } finally {
+      await server.close();
+      await run;
+      start.mockRestore();
+      wss.close();
+    }
   });
 
   it('takes a refreshed worker token for the next registration', async () => {
