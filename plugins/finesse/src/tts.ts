@@ -366,8 +366,11 @@ export class TTS extends tts.TTS {
     else this.#directInuse.delete(voice);
     for (const [v, pool] of [...this.#directPools]) {
       if (v !== this.#opts.voice && (this.#directInuse.get(v) ?? 0) === 0) {
-        this.#directPools.delete(v);
-        await pool.close();
+        // delete returns true only if we removed it here; a concurrent release may have already
+        // removed and closed this pool while we awaited an earlier close().
+        if (this.#directPools.delete(v)) {
+          await pool.close();
+        }
       }
     }
   }
