@@ -9,7 +9,11 @@ import { ReadableStream } from 'node:stream/web';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { PrismIdleTimeoutError, RealtimeModel } from './realtime_model.js';
+import {
+  PrismIdleTimeoutError,
+  RealtimeModel,
+  type RealtimeModelOptions,
+} from './realtime_model.js';
 import { PrismPeer, type Request, TestAudioOutput } from './test_helpers.js';
 
 initializeLogger({ pretty: false, level: 'silent' });
@@ -20,8 +24,20 @@ async function collect<T>(source: AsyncIterable<T>): Promise<T[]> {
 }
 const cleanup: (() => Promise<void>)[] = [];
 afterEach(async () => {
-  for (const close of cleanup.splice(0).reverse()) await close();
-  vi.restoreAllMocks();
+  const failures: unknown[] = [];
+  try {
+    for (const close of cleanup.splice(0).reverse()) {
+      try {
+        await close();
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+  } finally {
+    vi.restoreAllMocks();
+  }
+  if (failures.length === 1) throw failures[0];
+  if (failures.length > 1) throw new AggregateError(failures, 'Test cleanup failed');
 });
 async function setup(timeouts: { requestTimeout?: number; readyTimeout?: number } = {}) {
   const peer = await new PrismPeer().start();
@@ -33,6 +49,23 @@ async function setup(timeouts: { requestTimeout?: number; readyTimeout?: number 
     requestTimeout: 300,
     readyTimeout: 500,
     ...timeouts,
+  });
+  cleanup.push(() => model.close());
+  const session = model.session();
+  const errors: llm.RealtimeModelError[] = [];
+  session.on('error', (error) => errors.push(error));
+  await session.updateInstructions('Test');
+  return { peer, model, session, errors };
+}
+// Model defaults (shared context unless contextMode is passed) with a 500 ms request timeout.
+async function setupDefaults(options: RealtimeModelOptions = {}) {
+  const peer = await new PrismPeer().start();
+  cleanup.push(() => peer.close());
+  const model = new RealtimeModel({
+    apiKey: 'test',
+    endpoint: peer.endpoint,
+    requestTimeout: 500,
+    ...options,
   });
   cleanup.push(() => model.close());
   const session = model.session();
@@ -1145,6 +1178,224 @@ describe('Prism history', () => {
   });
 });
 
+// Shared-history defaults, playback modes, connection retries, and tool references.
+describe('Prism shared history and recovery', () => {
+  function context(...texts: string[]) {
+    const ctx = llm.ChatContext.empty();
+    for (const content of texts) ctx.addMessage({ role: 'user', content });
+    return ctx;
+  }
+  async function reply(
+    peer: PrismPeer,
+    session: ReturnType<RealtimeModel['session']>,
+    id = 'reply-1',
+  ) {
+    const pending = session.generateReply();
+    await vi.waitFor(() => expect(peer.requests.at(-1)?.type).toBe('response.create'));
+    peer.reply(peer.requests.at(-1)!, id);
+    return pending;
+  }
+  it('defaults to shared history, preserves omissions, and rejects conflicting edits', async () => {
+    const notices: unknown[] = [];
+    const { session, peer } = await setupDefaults();
+    session.on('error', (error) => notices.push(error));
+    const initial = context('first', 'second');
+    await session.updateChatCtx(initial);
+    await session.updateChatCtx(context('third'));
+    expect(peer.history.map((i) => i.text)).toEqual(['first', 'second', 'third']);
+    initial.items[0] = new llm.ChatMessage({
+      id: initial.items[0]!.id,
+      role: 'user',
+      content: 'changed',
+    });
+    await expect(session.updateChatCtx(initial)).rejects.toMatchObject({
+      status: 'rejected',
+      recoverable: true,
+    });
+    expect(notices).toHaveLength(1);
+    expect(session.isClosed).toBe(false);
+    await session.updateChatCtx(context('fourth'));
+    expect(peer.history.map((i) => i.text)).toEqual(['first', 'second', 'third', 'fourth']);
+  });
+  it('replaces and clears active agent context through standard strict updates', async () => {
+    const peer = await new PrismPeer().start();
+    cleanup.push(() => peer.close());
+    const model = new RealtimeModel({
+      apiKey: 'test',
+      endpoint: peer.endpoint,
+      contextMode: 'strict',
+    });
+    cleanup.push(() => model.close());
+    const session = new voice.AgentSession({
+      llm: model,
+      vad: null,
+      aecWarmupDuration: null,
+      turnHandling: { turnDetection: 'realtime_llm' },
+    });
+    const agent = new voice.Agent({ instructions: 'Test' });
+    await session.start({ agent });
+    cleanup.push(() => session.close());
+    await agent.updateChatCtx(context('old'));
+    await agent.updateChatCtx(context('replacement'));
+    expect(peer.history.map((item) => item.text)).toEqual(['replacement']);
+    await agent.updateChatCtx(llm.ChatContext.empty());
+    expect(peer.history).toEqual([]);
+  });
+  it.each(['auto', 'estimated', 'discard'] as const)(
+    'uses %s playback without false receipts',
+    async (playback) => {
+      const { peer, session } = await setupDefaults({ playback });
+      const output = new TestAudioOutput();
+      const generation = await reply(peer, session);
+      const messages = await collect(generation.messageStream);
+      const frames = await collect(messages[0]!.audioStream);
+      expect((await collect(messages[0]!.textStream)).join('')).toBe('Hello');
+      expect(frames.length > 0).toBe(playback !== 'discard');
+      const receipts = () => peer.requests.filter((q) => q.type === 'prism.playback.drained');
+      if (playback !== 'discard') expect(receipts()).toEqual([]);
+      for (const frame of frames) await output.captureFrame(frame);
+      output.flush();
+      if (playback !== 'discard') {
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        expect(receipts()).toEqual([]);
+      } else {
+        await vi.waitFor(() => expect(receipts()).toHaveLength(1));
+        expect(receipts()[0]).toMatchObject({ played_ms: 0 });
+      }
+    },
+  );
+  it('emits raw events and one usage record when completion follows local interruption', async () => {
+    const { peer, session } = await setupDefaults({ playback: 'discard' });
+    const raw = vi.fn(),
+      metrics = vi.fn();
+    session.on('rime_server_event_received', raw);
+    session.on('metrics_collected', metrics);
+    const pending = session.generateReply();
+    await vi.waitFor(() => expect(peer.requests.at(-1)?.type).toBe('response.create'));
+    peer.accepted(peer.requests.at(-1)!);
+    peer.message();
+    peer.audio();
+    await pending;
+    peer.onRequest = (q) => q.type === 'response.cancel';
+    const interrupted = session.interrupt();
+    await vi.waitFor(() =>
+      expect(peer.requests.some((q) => q.type === 'response.cancel')).toBe(true),
+    );
+    peer.emit('response.done', {
+      response: {
+        id: 'reply-1',
+        status: 'cancelled',
+        usage: { input_tokens: 5, output_tokens: 7, total_tokens: 12, context_window: 32768 },
+      },
+    });
+    await interrupted;
+    await vi.waitFor(() => expect(metrics).toHaveBeenCalledOnce());
+    expect(metrics.mock.calls[0]![0]).toMatchObject({
+      cancelled: true,
+      inputTokens: 5,
+      outputTokens: 7,
+      totalTokens: 12,
+    });
+    expect(metrics.mock.calls[0]![0].ttftMs).toBeGreaterThanOrEqual(0);
+    expect(raw).toHaveBeenCalled();
+  });
+  it.each([503, 401])(
+    'retries a refused initial connection only for retryable status %i',
+    async (status) => {
+      const sdk = await import('@rimelabs/sdk');
+      const peer = await new PrismPeer().start();
+      cleanup.push(() => peer.close());
+      const client = new sdk.Rime({ apiKey: 'test' });
+      cleanup.push(() => client.close());
+      const original = client.realtime.connect.bind(client.realtime);
+      const connect = vi
+        .spyOn(client.realtime, 'connect')
+        .mockRejectedValueOnce(
+          status === 503
+            ? new sdk.RimeUnavailableError('test', null, { statusCode: status })
+            : new sdk.RimeAuthenticationError('test', null, { statusCode: status }),
+        )
+        .mockImplementationOnce(original);
+      const model = new RealtimeModel({
+        client,
+        endpoint: peer.endpoint,
+        connOptions: { maxRetry: 1, timeoutMs: 1000 },
+      });
+      cleanup.push(() => model.close());
+      const session = model.session();
+      session.on('error', () => undefined);
+      if (status === 503) {
+        await session.updateInstructions('Test');
+        expect(connect).toHaveBeenCalledTimes(2);
+      } else {
+        await expect(session.updateInstructions('Test')).rejects.toThrow();
+        expect(connect).toHaveBeenCalledOnce();
+      }
+    },
+  );
+
+  it('restores tools at acceptance and permits newer automatic responses before completion', async () => {
+    const { peer, session } = await setupDefaults();
+    const errors: unknown[] = [];
+    session.on('error', (e) => errors.push(e));
+    await session.updateTools(
+      new llm.ToolContext({
+        lookup: llm.tool({ description: 'Lookup', execute: async () => '42' }),
+      }),
+    );
+    session.updateOptions({ toolChoice: 'none' });
+    const pending = session.generateReply();
+    await vi.waitFor(() => expect(peer.requests.at(-1)?.type).toBe('response.create'));
+    expect(peer.settings.tools).toEqual([]);
+    const suppressed = peer.revision;
+    peer.accepted(peer.requests.at(-1)!);
+    await pending;
+    expect(peer.settings.tools).toHaveLength(1);
+    expect(peer.revision).toBeGreaterThan(suppressed);
+    const automatic = new Promise<llm.GenerationCreatedEvent>((resolve) =>
+      session.once('generation_created', resolve),
+    );
+    peer.accepted(undefined, 'automatic', peer.revision);
+    peer.tool('automatic', 'new-policy-call');
+    peer.ended('automatic');
+    const event = await automatic;
+    expect((await collect(event.functionStream)).map((call) => call.callId)).toEqual([
+      'new-policy-call',
+    ]);
+    expect(errors).toEqual([]);
+  });
+
+  it('retains a slow tool reference across more than 128 later responses', async () => {
+    const { peer, session } = await setupDefaults();
+    peer.onRequest = (q) => {
+      if (q.type !== 'response.create') return;
+      const count = peer.requests.filter((r) => r.type === 'response.create').length;
+      peer.accepted(q, `response-${count}`);
+      if (count === 1) peer.tool('response-1', 'slow-call');
+      peer.ended(`response-${count}`);
+      return true;
+    };
+    const first = await session.generateReply();
+    await collect(first.functionStream);
+    for (let i = 0; i < 130; i++) {
+      const generation = await session.generateReply();
+      await collect(generation.messageStream);
+    }
+    const ctx = session.chatCtx;
+    ctx.items.push(
+      new llm.FunctionCallOutput({ callId: 'slow-call', output: 'done', isError: false }),
+    );
+    await session.updateChatCtx(ctx);
+    await session.generateReply();
+    expect(
+      peer.requests.filter((q) => q.type === 'response.create').at(-1)?.response,
+    ).toMatchObject({
+      prism_call_id: 'slow-call',
+    });
+    expect(session.isClosed).toBe(false);
+  }, 10000);
+});
+
 describe('Prism truncation', () => {
   async function setupTruncation() {
     const { peer, session } = await setup({ requestTimeout: 1000 });
@@ -1522,6 +1773,502 @@ describe('Prism packaging', () => {
       } finally {
         await peer.close();
       }
+    },
+  );
+});
+
+// Asynchronous tool progress, filler order, and option snapshots.
+describe('Prism tool progress', () => {
+  const setupProgress = (strict = false) =>
+    setupDefaults({ contextMode: strict ? 'strict' : 'shared' });
+  function pair(id: string, createdAt = Date.now()): [llm.FunctionCall, llm.FunctionCallOutput] {
+    return [
+      new llm.FunctionCall({
+        id,
+        callId: id,
+        name: 'lookup',
+        args: '{}',
+        createdAt,
+        extra: { __livekit_agents_tool_non_blocking: true },
+      }),
+      new llm.FunctionCallOutput({
+        id: `result-${id}`,
+        callId: id,
+        name: 'lookup',
+        output: id,
+        isError: false,
+        createdAt,
+      }),
+    ];
+  }
+  async function generated(
+    peer: PrismPeer,
+    session: ReturnType<RealtimeModel['session']>,
+    id: string,
+  ) {
+    peer.accepted(undefined, id);
+    peer.message(id);
+    peer.text('Working', id, true);
+    peer.ended(id);
+    peer.history.push({ id: `message-${id}`, type: 'message', role: 'assistant', text: 'Working' });
+    await vi.waitFor(() =>
+      expect(session.chatCtx.items.some((i) => i.id === `message-${id}`)).toBe(true),
+    );
+  }
+  async function liveCall(peer: PrismPeer, session: ReturnType<RealtimeModel['session']>) {
+    peer.accepted(undefined, 'tool-reply');
+    peer.tool('tool-reply', 'progress');
+    peer.ended('tool-reply');
+    await vi.waitFor(() =>
+      expect(session.chatCtx.items.some((item) => item.type === 'function_call')).toBe(true),
+    );
+    const call = session.chatCtx.items.find(
+      (item) => item.type === 'function_call',
+    )! as llm.FunctionCall;
+    call.extra.__livekit_agents_tool_non_blocking = true;
+    return [call, pair('progress')[1]] as const;
+  }
+  // A filler ends while the first progress write awaits acknowledgment. The repair
+  // read restores Prism's message-before-call order, unlike core's playout order.
+  async function repairedFillerProgress(strict = false) {
+    const context = await setupProgress(strict);
+    const { peer, session } = context;
+    peer.accepted(undefined, 'tool-reply');
+    peer.message('tool-reply');
+    peer.text('Working', 'tool-reply', true);
+    peer.history.push({
+      id: 'message-tool-reply',
+      type: 'message',
+      role: 'assistant',
+      text: 'Working',
+    });
+    peer.tool('tool-reply', 'progress');
+    await vi.waitFor(() => expect(session.chatCtx.items).toHaveLength(1));
+    const call = session.chatCtx.items[0]! as llm.FunctionCall;
+    call.extra.__livekit_agents_tool_non_blocking = true;
+    const output = pair('progress')[1];
+    let acknowledge: (() => void) | undefined;
+    peer.onRequest = (request) => {
+      if (request.type !== 'conversation.item.create') return;
+      acknowledge = () => {
+        const item = { ...request.item!, id: 'saved-progress' };
+        peer.history.push(item);
+        peer.emit('conversation.item.created', {
+          prism_request_event_id: request.event_id,
+          item,
+        });
+      };
+      return true;
+    };
+    const pending = session.updateChatCtx(new llm.ChatContext([call, output]));
+    await vi.waitFor(() => expect(acknowledge).toBeDefined());
+    peer.ended('tool-reply');
+    await vi.waitFor(() => expect(session.chatCtx.items).toHaveLength(2));
+    acknowledge!();
+    await pending;
+    peer.onRequest = undefined;
+    expect(session.chatCtx.items.map((item) => item.id)).toEqual([
+      'message-tool-reply',
+      call.id,
+      output.id,
+    ]);
+    const message = session.chatCtx.items[0]! as llm.ChatMessage;
+    return { ...context, call, output, message };
+  }
+  it('accepts a shared handoff with the same response filler after its tool call', async () => {
+    const { peer, session, call, output, message, errors } = await repairedFillerProgress();
+    const before = session.chatCtx.toJSON();
+    const requests = peer.requests.length;
+    await session.updateChatCtx(new llm.ChatContext([call, output, message]));
+    await session.updateChatCtx(new llm.ChatContext([call, output, message]));
+    expect(session.chatCtx.toJSON()).toEqual(before);
+    expect(peer.requests).toHaveLength(requests);
+    expect(errors).toEqual([]);
+  });
+  it.each(['message', 'call', 'output'])(
+    'rejects changed %s in a reordered handoff',
+    async (kind) => {
+      const { peer, session, call, output, message } = await repairedFillerProgress();
+      if (kind === 'message') message.content = ['Changed'];
+      if (kind === 'call') call.args = '{"changed":true}';
+      if (kind === 'output') output.output = 'Changed';
+      const requests = peer.requests.length;
+      await expect(
+        session.updateChatCtx(new llm.ChatContext([call, output, message])),
+      ).rejects.toThrow();
+      expect(peer.requests).toHaveLength(requests);
+    },
+  );
+  it('does not normalize a call across a message from another response', async () => {
+    const { peer, session } = await setupProgress();
+    const [call, output] = await liveCall(peer, session);
+    await generated(peer, session, 'unrelated');
+    const ctx = session.chatCtx;
+    ctx.items.push(output);
+    await session.updateChatCtx(ctx);
+    const message = session.chatCtx.items.find((item) => item.type === 'message')!;
+    const requests = peer.requests.length;
+    await expect(
+      session.updateChatCtx(new llm.ChatContext([message, call, output])),
+    ).rejects.toThrow('append order');
+    expect(peer.requests).toHaveLength(requests);
+  });
+  it('does not reorder tool calls within the same response', async () => {
+    const { peer, session } = await setupProgress();
+    peer.accepted(undefined, 'multiple');
+    peer.tool('multiple', 'first');
+    peer.tool('multiple', 'second');
+    peer.ended('multiple');
+    await vi.waitFor(() => expect(session.chatCtx.items).toHaveLength(2));
+    const calls = session.chatCtx.items as llm.FunctionCall[];
+    for (const call of calls) call.extra.__livekit_agents_tool_non_blocking = true;
+    const requests = peer.requests.length;
+    await expect(session.updateChatCtx(new llm.ChatContext(calls.reverse()))).rejects.toThrow(
+      'append order',
+    );
+    expect(peer.requests).toHaveLength(requests);
+  });
+  it('does not reorder messages within the same response', async () => {
+    const { peer, session } = await setupProgress();
+    peer.accepted(undefined, 'multiple');
+    for (const id of ['first', 'second']) {
+      peer.message('multiple', id);
+      peer.emit('response.text.done', {
+        response_id: 'multiple',
+        item_id: id,
+        output_index: 0,
+        content_index: 0,
+        text: id,
+      });
+    }
+    peer.ended('multiple');
+    await vi.waitFor(() => expect(session.chatCtx.items).toHaveLength(2));
+    const requests = peer.requests.length;
+    await expect(
+      session.updateChatCtx(new llm.ChatContext(session.chatCtx.items.reverse())),
+    ).rejects.toThrow('append order');
+    expect(peer.requests).toHaveLength(requests);
+  });
+  it('keeps strict edits of same-response filler order explicit', async () => {
+    const { peer, session, call, output, message } = await repairedFillerProgress(true);
+    await session.updateChatCtx(new llm.ChatContext([call, output, message]));
+    expect(session.chatCtx.items.map((item) => item.id)).toEqual([call.id, output.id, message.id]);
+    expect(peer.requests.some((request) => request.type === 'conversation.item.delete')).toBe(true);
+  });
+  it.each([false, true])(
+    'normalizes unchanged interleaved progress in strict=%s',
+    async (strict) => {
+      const { peer, session } = await setupProgress(strict);
+      const [call, output] = await liveCall(peer, session);
+      await generated(peer, session, 'filler');
+      const before = session.chatCtx;
+      before.items.push(output);
+      await session.updateChatCtx(before);
+      const writes = peer.requests.filter((q) => q.type === 'conversation.item.create').length;
+      const current = session.chatCtx;
+      const message = current.items.find((i) => i.type === 'message')!;
+      await session.updateChatCtx(new llm.ChatContext([call, output, message, ...pair('next')]));
+      expect(session.chatCtx.items.map((i) => i.id)).toEqual([
+        call.id,
+        message.id,
+        output.id,
+        'next',
+        'result-next',
+      ]);
+      expect(peer.requests.filter((q) => q.type === 'conversation.item.create')).toHaveLength(
+        writes + 2,
+      );
+    },
+  );
+  it('preserves late generated messages omitted by a stale strict progress append', async () => {
+    const { peer, session } = await setupProgress(true);
+    const initial = pair('initial');
+    await session.updateChatCtx(new llm.ChatContext(initial));
+    const next = pair('next', Date.now() - 1000);
+    await generated(peer, session, 'late');
+    await session.updateChatCtx(new llm.ChatContext([...initial, ...next]));
+    expect(session.chatCtx.items.map((i) => i.id)).toEqual([
+      'initial',
+      'result-initial',
+      'message-late',
+      'next',
+      'result-next',
+    ]);
+    expect(peer.requests.some((q) => q.type === 'conversation.item.delete')).toBe(false);
+  });
+  it('does not move progress results across omitted user messages', async () => {
+    const { peer, session } = await setupProgress();
+    const [call, output] = await liveCall(peer, session);
+    const user = llm.ChatMessage.create({ role: 'user', content: 'barrier' });
+    await generated(peer, session, 'filler');
+    const withUser = session.chatCtx;
+    withUser.items.push(user);
+    await session.updateChatCtx(withUser);
+    const before = session.chatCtx;
+    before.items.push(output);
+    await session.updateChatCtx(before);
+    const message = session.chatCtx.items.find((i) => i.id === 'message-filler')!;
+    await expect(
+      session.updateChatCtx(new llm.ChatContext([call, output, message])),
+    ).rejects.toThrow('append order');
+  });
+  it('rejects changed progress content before writing', async () => {
+    const { peer, session } = await setupProgress();
+    const initial = pair('initial');
+    await session.updateChatCtx(new llm.ChatContext(initial));
+    const writes = peer.requests.length;
+    initial[1].output = 'changed';
+    await expect(session.updateChatCtx(new llm.ChatContext(initial))).rejects.toThrow('conflicts');
+    expect(peer.requests).toHaveLength(writes);
+  });
+  it('preserves inactive filler configuration across tool removal and clears explicitly', async () => {
+    const { peer, model, session } = await setupProgress();
+    const fillers = {
+      lookup: { type: 'text' as const, text: 'Checking' },
+      future: { type: 'text' as const, text: 'Later' },
+    };
+    model.updateOptions({ toolFillers: fillers });
+    fillers.lookup.text = 'mutated';
+    const tools = new llm.ToolContext({
+      lookup: llm.tool({ description: 'Lookup', execute: async () => 'done' }),
+    });
+    await session.updateTools(tools);
+    expect(peer.settings.tools).toMatchObject([
+      { function: { name: 'lookup' }, prism_filler: { text: 'Checking' } },
+    ]);
+    await session.updateTools(llm.ToolContext.empty());
+    await session.updateTools(tools);
+    expect(peer.settings.tools).toMatchObject([
+      { function: { name: 'lookup' }, prism_filler: { text: 'Checking' } },
+    ]);
+    session.updateOptions({ toolFillers: {} });
+    await session.updateTools(tools);
+    expect(peer.settings.tools).toEqual(
+      expect.arrayContaining([expect.not.objectContaining({ prism_filler: expect.anything() })]),
+    );
+  });
+  it('queues option snapshots before subsequent replies and recovers after refusal', async () => {
+    const { peer, model, session, errors } = await setupProgress();
+    peer.onRequest = (q) => {
+      if (q.session?.voice === 'refused') {
+        peer.fault(q, 'invalid_voice');
+        return true;
+      }
+      if (q.type === 'response.create') {
+        peer.reply(q);
+        return true;
+      }
+    };
+    expect(model.updateOptions({ voice: 'first' })).toBeUndefined();
+    model.updateOptions({ voice: 'refused' });
+    model.updateOptions({ voice: 'last' });
+    await session.generateReply();
+    expect(peer.settings.voice).toBe('last');
+    expect(errors).toHaveLength(1);
+    expect(errors[0]?.recoverable).toBe(true);
+    expect(peer.requests.filter((q) => q.session?.voice).map((q) => q.session?.voice)).toEqual([
+      'first',
+      'refused',
+      'last',
+    ]);
+    expect(peer.requests.at(-1)?.type).toBe('response.create');
+    await session.commitAudio();
+    expect(session.isClosed).toBe(false);
+    await session.close();
+    expect(() => session.updateOptions({ voice: 'after-close' })).toThrow('closed');
+  });
+  it('configures copied options before the first session opens', async () => {
+    const peer = await new PrismPeer().start();
+    cleanup.push(() => peer.close());
+    const model = new RealtimeModel({ apiKey: 'test', endpoint: peer.endpoint });
+    cleanup.push(() => model.close());
+    const options = { voice: 'before-open', responseMetadata: { stage: 'initial' } };
+    model.updateOptions(options);
+    options.responseMetadata.stage = 'mutated';
+    await model.session().updateInstructions('Test');
+    expect(peer.settings).toMatchObject({
+      voice: 'before-open',
+      prism_response_metadata: { stage: 'initial' },
+    });
+  });
+  it.each([false, true])(
+    'supports repeated standard RunContext updates with final error=%s',
+    async (fail) => {
+      const peer = await new PrismPeer().start();
+      cleanup.push(() => peer.close());
+      const model = new RealtimeModel({
+        apiKey: 'test',
+        endpoint: peer.endpoint,
+        contextMode: 'strict',
+      });
+      cleanup.push(() => model.close());
+      const session = new voice.AgentSession({
+        llm: model,
+        vad: null,
+        aecWarmupDuration: null,
+        turnHandling: { turnDetection: 'realtime_llm' },
+      });
+      session.output.audio = new TestAudioOutput();
+      let finish!: () => void;
+      const completed = new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      const execute = vi.fn(async (_: unknown, { ctx }: { ctx: voice.RunContext }) => {
+        await ctx.update('first progress');
+        await ctx.update('silent progress', { silent: true });
+        await ctx.update('second progress');
+        finish();
+        if (fail) throw new llm.ToolError('lookup failed');
+        return 'final result';
+      });
+      await session.start({
+        agent: new voice.Agent({
+          instructions: 'Test',
+          tools: {
+            lookup: llm.tool({ description: 'Lookup', execute }),
+          },
+        }),
+      });
+      cleanup.push(() => session.close());
+      let count = 0;
+      peer.onRequest = (q) => {
+        if (q.type !== 'response.create') return;
+        const id = `reply-${++count}`;
+        if (count === 1) {
+          peer.accepted(q, id);
+          peer.tool(id);
+          peer.ended(id);
+        } else {
+          peer.reply(q, id);
+          peer.history.push({
+            id: `message-${id}`,
+            type: 'message',
+            role: 'assistant',
+            text: 'Hello',
+          });
+        }
+        return true;
+      };
+      const speech = session.generateReply({ userInput: 'Check' });
+      await completed;
+      await speech.waitForPlayout();
+      await vi.waitFor(() =>
+        expect(peer.history.filter((item) => item.type === 'function_call_output')).toHaveLength(4),
+      );
+      expect(execute).toHaveBeenCalledOnce();
+      const outputs = peer.history
+        .filter((item) => item.type === 'function_call_output')
+        .map((item) => item.output);
+      for (const text of [
+        'first progress',
+        'silent progress',
+        'second progress',
+        fail ? 'lookup failed' : 'final result',
+      ])
+        expect(outputs.filter((output) => output?.includes(text))).toHaveLength(1);
+    },
+  );
+
+  it('accepts progress from two concurrent tools without repeating either execution', async () => {
+    const peer = await new PrismPeer().start();
+    cleanup.push(() => peer.close());
+    const model = new RealtimeModel({
+      apiKey: 'test',
+      endpoint: peer.endpoint,
+      contextMode: 'strict',
+    });
+    cleanup.push(() => model.close());
+    const session = new voice.AgentSession({
+      llm: model,
+      vad: null,
+      aecWarmupDuration: null,
+      turnHandling: { turnDetection: 'realtime_llm' },
+    });
+    session.output.audio = new TestAudioOutput();
+    const errors: llm.RealtimeModelError[] = [];
+    const open = model.session.bind(model);
+    vi.spyOn(model, 'session').mockImplementation((...args) => {
+      const provider = open(...args);
+      provider.on('error', (error) => errors.push(error));
+      return provider;
+    });
+    let started = 0;
+    let release!: () => void;
+    const bothStarted = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const executions = new Map<string, number>();
+    const tools = Object.fromEntries(
+      ['one', 'two'].map((name) => [
+        name,
+        llm.tool({
+          description: name,
+          execute: async (_: unknown, { ctx }: { ctx: voice.RunContext }) => {
+            executions.set(name, (executions.get(name) ?? 0) + 1);
+            await ctx.update(`${name} started`);
+            if (++started === 2) release();
+            await bothStarted;
+            await ctx.update(`${name} silent`, { silent: true });
+            return `${name} completed`;
+          },
+        }),
+      ]),
+    );
+    await session.start({ agent: new voice.Agent({ instructions: 'Test', tools }) });
+    cleanup.push(() => session.close());
+    let count = 0;
+    peer.onRequest = (q) => {
+      if (q.type !== 'response.create') return;
+      const id = `concurrent-${++count}`;
+      if (count === 1) {
+        peer.accepted(q, id);
+        peer.tool(id, 'call-one', 'one');
+        peer.tool(id, 'call-two', 'two');
+        peer.ended(id);
+      } else {
+        peer.reply(q, id);
+        peer.history.push({
+          id: `message-${id}`,
+          type: 'message',
+          role: 'assistant',
+          text: 'Hello',
+        });
+      }
+      return true;
+    };
+    await session.generateReply({ userInput: 'Run both tools' }).waitForPlayout();
+    await vi.waitFor(() =>
+      expect(peer.history.filter((item) => item.type === 'function_call_output')).toHaveLength(6),
+    );
+    expect([...executions.values()]).toEqual([1, 1]);
+    for (const name of ['one', 'two'])
+      for (const stage of ['started', 'silent', 'completed'])
+        expect(
+          peer.history.filter((item) => item.output?.includes(`${name} ${stage}`)),
+        ).toHaveLength(1);
+    expect(errors).toEqual([]);
+  });
+
+  it.each(['resource', 'input', 'admission'] as const)(
+    'keeps the session usable after a local %s option refusal',
+    async (kind) => {
+      const { peer, session, errors } = await setupProgress();
+      const types = await import('@rimelabs/sdk');
+      const sdk = (session as unknown as { sdk: r.RealtimeSession }).sdk;
+      const error =
+        kind === 'resource'
+          ? new types.RimeResourceLimitError('local limit')
+          : kind === 'input'
+            ? new types.RimeInputError('bad input')
+            : new types.RealtimeAdmissionTimeout('not ready');
+      vi.spyOn(sdk, 'update').mockRejectedValueOnce(error);
+      session.updateOptions({ voice: 'refused' });
+      session.updateOptions({ voice: 'accepted' });
+      await session.updateInstructions('After options');
+      expect(errors).toHaveLength(1);
+      expect(errors[0]?.recoverable).toBe(true);
+      expect(peer.settings.voice).toBe('accepted');
+      expect(session.isClosed).toBe(false);
     },
   );
 });
