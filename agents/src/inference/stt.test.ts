@@ -10,6 +10,7 @@ import * as agents from '../index.js';
 import { asLanguageCode, normalizeLanguage } from '../language.js';
 import { AgentHandoffItem, ChatMessage } from '../llm/index.js';
 import { initializeLogger, log } from '../log.js';
+import { FallbackAdapter } from '../stt/index.js';
 import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import { VAD, type VADStream } from '../vad.js';
@@ -524,6 +525,31 @@ describe('STT agent_context forwarding', () => {
     stt._pushConversationItem(
       createConversationItemAddedEvent(AgentHandoffItem.create({ newAgentId: 'agent-2' })),
     );
+    expect(stt['opts'].modelOptions).not.toHaveProperty('agent_context');
+  });
+
+  it('skips carryover for models without native support', () => {
+    const stt = makeStt({ model: 'openai/gpt-live-transcribe' });
+    stt._pushConversationItem(assistantItemEvent('What is your date of birth?'));
+    expect(stt['opts'].modelOptions).not.toHaveProperty('agent_context');
+  });
+
+  it('sends carryover only to fallback instances with native support', () => {
+    const u3 = makeStt({ model: 'assemblyai/universal-3-6-pro' });
+    const openai = makeStt({ model: 'openai/gpt-live-transcribe' });
+    const adapter = new FallbackAdapter({ sttInstances: [openai, u3] });
+    expect(adapter.capabilities.chatContext).toBe(true);
+
+    adapter._pushConversationItem(assistantItemEvent('What is your date of birth?'));
+
+    expect(u3['opts'].modelOptions).toHaveProperty('agent_context', 'What is your date of birth?');
+    expect(openai['opts'].modelOptions).not.toHaveProperty('agent_context');
+  });
+
+  it('stops carryover after switching to a model without native support', () => {
+    const stt = makeStt({ model: 'assemblyai/universal-3-6-pro' });
+    stt.updateOptions({ model: 'openai/gpt-live-transcribe' });
+    stt._pushConversationItem(assistantItemEvent('What is your date of birth?'));
     expect(stt['opts'].modelOptions).not.toHaveProperty('agent_context');
   });
 
