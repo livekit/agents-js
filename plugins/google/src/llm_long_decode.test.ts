@@ -150,6 +150,7 @@ describe('Google Gemini 4 model behavior', () => {
     ['gemini-4-argon-eap', true],
     ['gemini-4-carbon', true],
     ['gemini-4-hydrogen', true],
+    ['gemini-4-neon', true],
     ['gemini-3-pro-preview', false],
     ['gemini-2.5-flash', false],
     ['gemma-4-27b-it', false],
@@ -251,21 +252,29 @@ describe('Google Gemini 4 request shaping', () => {
     expect(config.thinkingConfig?.thinkingLevel).toBe(ThinkingLevel.HIGH);
   });
 
-  it.each(['xhigh', 'XHIGH'] as const)('sends %s upper case on Hydrogen', async (thinkingLevel) => {
+  it.each([
+    ['gemini-4-hydrogen', 'xhigh'],
+    ['gemini-4-hydrogen', 'XHIGH'],
+    ['gemini-4-neon', 'xhigh'],
+    ['gemini-4-neon', 'XHIGH'],
+  ] as const)('sends %s %s upper case where supported', async (model, thinkingLevel) => {
     const config = await requestConfig(
-      google('gemini-4-hydrogen', {
+      google(model, {
         thinkingConfig: { thinkingLevel },
       }),
     );
     expect(config.thinkingConfig?.thinkingLevel).toBe('XHIGH');
   });
 
-  it('sends a per-call xhigh upper case on Hydrogen', async () => {
-    const config = await requestConfig(google('gemini-4-hydrogen'), {
-      extraKwargs: { thinkingConfig: { thinkingLevel: 'xhigh' } },
-    });
-    expect(config.thinkingConfig?.thinkingLevel).toBe('XHIGH');
-  });
+  it.each(['gemini-4-hydrogen', 'gemini-4-neon'])(
+    'sends a per-call xhigh upper case for %s',
+    async (model) => {
+      const config = await requestConfig(google(model), {
+        extraKwargs: { thinkingConfig: { thinkingLevel: 'xhigh' } },
+      });
+      expect(config.thinkingConfig?.thinkingLevel).toBe('XHIGH');
+    },
+  );
 
   it('rejects a per-call xhigh where unsupported', () => {
     expect(() =>

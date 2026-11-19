@@ -316,7 +316,7 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
       roomName: this.#info.job.room?.name,
     });
     this.#inferenceExecutor = inferenceExecutor;
-    this._redactionEnabled = Boolean(info.job.enableRedaction);
+    this._redactionEnabled = Boolean(info.job.enableRedaction && !this.simulationContext());
     // In console mode, recordings land in a local user-visible directory
     // (mirrors python's AgentsConsole); real jobs use a temp dir.
     const agentsConsole = AgentsConsole.getInstance();
@@ -824,7 +824,9 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
       return;
     }
 
-    const redactionEnabled = Boolean(this.job.enableRedaction || options.redaction);
+    const redactionEnabled = Boolean(
+      options.redaction || (this.job.enableRedaction && !this.simulationContext()),
+    );
     if (redactionEnabled && options.audio && !options.transcript) {
       throw new Error('audio upload requires transcript upload when redaction is enabled');
     }

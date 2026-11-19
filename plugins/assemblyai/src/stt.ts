@@ -30,6 +30,7 @@ const U3_PRO_MODELS = [
   'u3-rt-pro-beta-1',
   'universal-3-5-pro',
   'universal-3-6-pro',
+  'assemblyai-stt-3-7-realtime-agent',
 ] as const;
 
 const U3_PRO_ONLY_PARAMS = [

@@ -1,5 +1,12 @@
 # @livekit/agents-plugin-protoface
 
+## 1.10.1
+
+### Patch Changes
+
+- Updated dependencies [[`393a962`](https://github.com/livekit/agents-js/commit/393a9622d30dfa292237929383cb85291ab237df), [`3629c58`](https://github.com/livekit/agents-js/commit/3629c58eaaac5231c456ed8e5654abc2669b7ac7), [`5045892`](https://github.com/livekit/agents-js/commit/5045892ba334769f2639966353939f9916251844), [`6efe6e3`](https://github.com/livekit/agents-js/commit/6efe6e31f69e88ec1fe5ed8acfbbf33d7ea4dbbc), [`5dcb15f`](https://github.com/livekit/agents-js/commit/5dcb15f3d52abdaabf7cc0d1b1df5e604cf266a8), [`ba51ee9`](https://github.com/livekit/agents-js/commit/ba51ee9e220a14fa9e333062b5a1c7e180410670), [`469c317`](https://github.com/livekit/agents-js/commit/469c317645b971fc53178fe06b68195847d94d2a), [`03a8821`](https://github.com/livekit/agents-js/commit/03a88211113dbec0f431d9cd5148115e942396f1)]:
+  - @livekit/agents@1.10.1
+
 ## 1.10.0
 
 ### Patch Changes

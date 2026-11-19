@@ -181,7 +181,7 @@ export type VideoQuality = 'very_high' | 'high' | 'medium' | 'low';
 
 // Warnings were encountered during analysis:
 //
-// src/avatar.ts:329:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents-plugin-liveavatar" does not have an export "SAMPLE_RATE"
+// src/avatar.ts:351:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents-plugin-liveavatar" does not have an export "SAMPLE_RATE"
 
 // (No @packageDocumentation comment for this package)
 

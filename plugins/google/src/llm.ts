@@ -59,7 +59,8 @@ function supportsThinkingLevel(model: string): boolean {
 }
 
 function supportsXHighThinking(model: string): boolean {
-  return model.toLowerCase().includes('gemini-4-hydrogen');
+  const modelLower = model.toLowerCase();
+  return modelLower.includes('gemini-4-hydrogen') || modelLower.includes('gemini-4-neon');
 }
 
 function validateThinkingLevel(
