@@ -564,6 +564,7 @@ export class AgentSession<UserData = UnknownUserData> extends AgentSession_base 
     _recordLoopStall(durationInS: number, timestampMs: number, cause: string): void;
     // @internal
     _redactionEnabled: boolean;
+    resetAwayTimer(): void;
     resumeReplyAuthorization(): Throws<void, Error>;
     // @internal (undocumented)
     _roomIO?: RoomIO;
@@ -9996,9 +9997,9 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 // src/utils.ts:468:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "cancelled"
 // src/voice/agent_session.ts:412:3 - (ae-unresolved-link) The @link reference could not be resolved: This type of declaration is not supported yet by the resolver
 // src/voice/agent_session.ts:1090:5 - (ae-forgotten-export) The symbol "RecordingOptions" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1814:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1814:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1814:5 - (ae-forgotten-export) The symbol "LLMError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1838:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1838:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1838:5 - (ae-forgotten-export) The symbol "LLMError" needs to be exported by the entry point index.d.ts
 // src/voice/amd.ts:318:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "waitForTrackPublication" has more than one declaration; you need to add a TSDoc member reference selector
 // src/voice/amd.ts:318:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "gateListening"
 // src/voice/amd.ts:328:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "aclose"

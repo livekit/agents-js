@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { llm, log, voice } from '@livekit/agents';
-import type { Room } from '@livekit/rtc-node';
+import type { Room, RpcInvocationData } from '@livekit/rtc-node';
 
 const logger = log().child({ example: 'card-auth-suggested-replies' });
 
@@ -73,7 +73,15 @@ export class SuggestedReplies {
       this.abortController = new AbortController();
       void this.run(item.textContent ?? '', this.abortController.signal);
     });
+    this.room.localParticipant!.registerRpcMethod('say', (data) => this.say(data));
     return this;
+  }
+
+  private async say(data: RpcInvocationData): Promise<string> {
+    this.session.resetAwayTimer();
+    await this.session.interrupt().await;
+    this.session.generateReply({ userInput: data.payload });
+    return 'ok';
   }
 
   private async run(line: string, signal: AbortSignal): Promise<void> {

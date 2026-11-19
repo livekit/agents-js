@@ -7,7 +7,7 @@
  * This sidecar does not affect the voice agent itself.
  */
 import { llm, log, voice } from '@livekit/agents';
-import type { Room } from '@livekit/rtc-node';
+import type { Room, RpcInvocationData } from '@livekit/rtc-node';
 
 const logger = log().child({ example: 'homepage-frontdesk-suggestions' });
 
@@ -81,7 +81,15 @@ export class SuggestedReplies {
       this.stream?.close();
       void this.run(item.textContent ?? '', this.generation);
     });
+    this.room.localParticipant!.registerRpcMethod('say', (data) => this.say(data));
     return this;
+  }
+
+  private async say(data: RpcInvocationData): Promise<string> {
+    this.session.resetAwayTimer();
+    await this.session.interrupt().await;
+    this.session.generateReply({ userInput: data.payload });
+    return 'ok';
   }
 
   private async run(line: string, generation: number): Promise<void> {
