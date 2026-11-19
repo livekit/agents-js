@@ -40,7 +40,6 @@
     "@livekit/rtc-node": "catalog:",
     "@microsoft/api-extractor": "^7.58.12",
     "@types/ws": "catalog:",
-    "fast-check": "^4.10.2",
     "tsup": "^8.3.5",
     "typescript": "^5.0.0"
   },
