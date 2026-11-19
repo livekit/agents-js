@@ -366,10 +366,13 @@ export class TTS extends tts.TTS {
     else this.#directInuse.delete(voice);
     for (const [v, pool] of [...this.#directPools]) {
       if (v !== this.#opts.voice && (this.#directInuse.get(v) ?? 0) === 0) {
-        // delete returns true only if we removed it here; a concurrent release may have already
-        // removed and closed this pool while we awaited an earlier close().
-        if (this.#directPools.delete(v)) {
-          await pool.close();
+        // releaseIdle() serializes with any in-flight prewarm through the pool's connection lock,
+        // so a prewarm connection that finishes during eviction is closed rather than leaked into
+        // a pool we have already dropped. Only drop the pool if nothing re-created or started
+        // using this voice while we awaited.
+        await pool.releaseIdle();
+        if (this.#directPools.get(v) === pool && (this.#directInuse.get(v) ?? 0) === 0) {
+          this.#directPools.delete(v);
         }
       }
     }
