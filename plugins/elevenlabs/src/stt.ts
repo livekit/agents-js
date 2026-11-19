@@ -264,28 +264,6 @@ function parseStreamEvent(value: unknown): ElevenLabsStreamEvent {
   };
 }
 
-/**
- * Combines the final segments of one turn into a single end-of-speech alternative. The text
- * includes every segment. Timing stays unknown when the latest segment has no provider timing.
- */
-function combineFinalSegments(
-  segments: stt.SpeechData[],
-  startTimeOffset: number,
-): stt.SpeechData | undefined {
-  const isTimed = (segment: stt.SpeechData) => segment.endTime > startTimeOffset;
-  const last = segments.at(-1);
-  if (!last) return undefined;
-  const first = segments.find(isTimed) ?? last;
-  const words = segments.flatMap((segment) => segment.words ?? []);
-  return {
-    ...last,
-    text: segments.map((segment) => segment.text).join(' '),
-    startTime: isTimed(last) ? first.startTime : 0,
-    endTime: isTimed(last) ? last.endTime : 0,
-    ...(words.length > 0 && { words }),
-  };
-}
-
 function validateCommitStrategy(model: string, strategy?: CommitStrategy): void {
   if (strategy === 'turn_prediction' && model !== 'scribe_v3_live') {
     throw new Error('turn_prediction is only supported for scribe_v3_live');
@@ -697,7 +675,7 @@ export class SpeechStream extends stt.SpeechStream {
   #sttInstance: STT;
   #reconnectEvent = new Future<void>();
   #speaking = false;
-  #finalSegments: stt.SpeechData[] = [];
+  #finalAlternatives: stt.SpeechData[] = [];
   #turnDetection: TurnDetection;
   #audioDurationCollector: PeriodicCollector<number>;
   #logger = log();
@@ -795,7 +773,7 @@ export class SpeechStream extends stt.SpeechStream {
       try {
         ws = await this.#connectWs();
         await this.#turnDetection.start();
-        this.#finalSegments = [];
+        this.#finalAlternatives = [];
 
         const keepaliveTask = Task.from(async (controller) => {
           while (!controller.signal.aborted) {
@@ -1156,7 +1134,7 @@ export class SpeechStream extends stt.SpeechStream {
           type: stt.SpeechEventType.FINAL_TRANSCRIPT,
           alternatives: [speechData],
         });
-        this.#finalSegments.push(speechData);
+        this.#finalAlternatives = endTime > 0 ? [speechData] : [];
       }
       if (!isForcedCommit && (!text || resolveCommitStrategy(this.#opts) !== 'manual')) {
         this.#turnDetection.endSpeech();
@@ -1194,16 +1172,15 @@ export class SpeechStream extends stt.SpeechStream {
   }
 
   #emitEndOfSpeech(): void {
-    const segments = this.#finalSegments;
+    const alternatives = this.#finalAlternatives as [stt.SpeechData, ...stt.SpeechData[]];
     const speaking = this.#speaking;
-    this.#finalSegments = [];
+    this.#finalAlternatives = [];
     this.#speaking = false;
     // A deferred end of speech can fire during teardown after the event queue closes.
     if (!speaking || this.queue.closed) return;
-    const alternative = combineFinalSegments(segments, this.startTimeOffset);
     this.queue.put({
       type: stt.SpeechEventType.END_OF_SPEECH,
-      ...(alternative && { alternatives: [alternative] }),
+      ...(alternatives.length > 0 && { alternatives }),
     });
   }
 }

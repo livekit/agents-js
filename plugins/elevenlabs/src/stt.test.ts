@@ -431,7 +431,6 @@ describe('ElevenLabs STT integration', () => {
         const endpoints = events.filter(isEndOfSpeech);
         expect(endpoints).toHaveLength(1);
         expect(turnEvents(events).at(-1)).toBe(endpoints[0]);
-        expect(endpoints[0]?.alternatives?.[0]?.text).toBe(finalTexts(events).join(' '));
       } finally {
         decisions.mockRestore();
         stream.close();
@@ -1234,71 +1233,6 @@ describe('ElevenLabs STT', () => {
     }
   });
 
-  it.each([
-    [true, true, 0.1, 36],
-    [false, true, 35.5, 36],
-    [true, false, 0, 0],
-    [false, false, 0, 0],
-  ] as const)(
-    'combines a deferred turn when forced segment timed=%s and last segment timed=%s',
-    async (forcedSegmentTimed, lastSegmentTimed, expectedStartTime, expectedEndTime) => {
-      const { wss, baseURL } = await startWebSocketServer();
-      wss.on('connection', (ws) => {
-        ws.once('message', () => {
-          const send = (message: Record<string, unknown>) => ws.send(JSON.stringify(message));
-          send({ ...partialTranscript('hello'), turn_probability: 0 });
-          send(committedTranscript('hello'));
-          send(
-            committedTranscript('hello', {
-              withTimestamps: true,
-              words: forcedSegmentTimed ? [{ text: 'hello', start: 0.1, end: 35 }] : [],
-            }),
-          );
-          send({ ...partialTranscript('world'), turn_probability: 1 });
-          send(committedTranscript('world'));
-          send(
-            committedTranscript('world', {
-              withTimestamps: true,
-              words: lastSegmentTimed ? [{ text: 'world', start: 35.5, end: 36 }] : [],
-            }),
-          );
-        });
-      });
-      const stream = new STT({
-        apiKey: 'test-key',
-        baseURL,
-        model: 'scribe_v3_live',
-        commitStrategy: 'turn_prediction',
-        vad: new StuckSpeakingVAD(),
-        languageCode: 'en',
-        includeTimestamps: true,
-        includeLanguageDetection: false,
-        audioChunkDuration: 35300,
-      }).stream({ connOptions: { maxRetry: 0, retryIntervalMs: 0, timeoutMs: 1000 } });
-      try {
-        stream.pushFrame(makeFrame(564800));
-        const events = await collectUntilEnd(stream);
-        const finals = events.filter(
-          (event) => event.type === sttLib.SpeechEventType.FINAL_TRANSCRIPT,
-        );
-        expect(finals.map((event) => event.alternatives?.[0]?.text)).toEqual(['hello', 'world']);
-        const endpoints = events.filter(
-          (event) => event.type === sttLib.SpeechEventType.END_OF_SPEECH,
-        );
-        expect(endpoints).toHaveLength(1);
-        expect(endpoints[0]?.alternatives).toHaveLength(1);
-        expect(endpoints[0]?.alternatives?.[0]).toMatchObject({
-          text: 'hello world',
-          startTime: expectedStartTime,
-          endTime: expectedEndTime,
-        });
-      } finally {
-        stream.close();
-        await closeWebSocketServer(wss);
-      }
-    },
-  );
-
   describe('turn prediction forced-commit guard', () => {
     it('defers a suspected forced commit and falls back once', async () => {
       vi.useFakeTimers();
@@ -1917,40 +1851,32 @@ describe('ElevenLabs STT', () => {
   });
 
   it.each([
-    [{ text: 'again', start: 0.5, end: 0.8 }, 0.1, 0.8],
-    [{ text: 'again', start: 0, end: 0 }, 0, 0],
-    [undefined, 0, 0],
-  ] as const)(
-    'anchors EOS timing on the latest final (%j)',
-    async (lastWord, startTime, endTime) => {
-      const events = await processStreamEvents(
-        [
-          committedTranscript('hello', {
-            withTimestamps: true,
-            words: [{ text: 'hello', start: 0.1, end: 0.4 }],
-          }),
-          committedTranscript('again', {
-            withTimestamps: true,
-            words: lastWord ? [lastWord] : [],
-          }),
-          committedTranscript('', { withTimestamps: true }),
-        ],
-        4,
-        null,
-        { languageCode: 'en', includeTimestamps: true, includeLanguageDetection: false },
-      );
-      const endpoint = events.at(-1);
-      expect(endpoint?.type).toBe(sttLib.SpeechEventType.END_OF_SPEECH);
-      expect(endpoint?.alternatives?.map((item) => item.text)).toEqual(['hello again']);
-      expect(endpoint?.alternatives?.[0]).toMatchObject({ startTime, endTime });
-      if (lastWord?.end) {
-        expect(endpoint?.alternatives?.[0]?.words?.map((word) => word.text)).toEqual([
-          'hello',
-          'again',
-        ]);
-      }
-    },
-  );
+    [{ text: 'again', start: 0.5, end: 0.8 }, 'again'],
+    [{ text: 'again', start: 0, end: 0 }, undefined],
+    [undefined, undefined],
+  ] as const)('keeps only the latest timed final for EOS (%j)', async (lastWord, expectedText) => {
+    const events = await processStreamEvents(
+      [
+        committedTranscript('hello', {
+          withTimestamps: true,
+          words: [{ text: 'hello', start: 0.1, end: 0.4 }],
+        }),
+        committedTranscript('again', {
+          withTimestamps: true,
+          words: lastWord ? [lastWord] : [],
+        }),
+        committedTranscript('', { withTimestamps: true }),
+      ],
+      4,
+      null,
+      { languageCode: 'en', includeTimestamps: true, includeLanguageDetection: false },
+    );
+    const endpoint = events.at(-1);
+    expect(endpoint?.type).toBe(sttLib.SpeechEventType.END_OF_SPEECH);
+    if (expectedText)
+      expect(endpoint?.alternatives?.map((item) => item.text)).toEqual([expectedText]);
+    else expect(endpoint?.alternatives).toBeUndefined();
+  });
 
   describe.each([
     'partial_transcript',
