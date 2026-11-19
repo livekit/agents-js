@@ -502,7 +502,7 @@ describe('Prism SDK adapter', () => {
     await session.clearAudio();
     expect(closed).toHaveBeenCalledTimes(1);
     session.pushAudio(frame(44100));
-    session.pushAudio(frame(22050));
+    session.pushAudio(frame(32000));
     expect(closed).toHaveBeenCalledTimes(2);
     // Supported rates do not create a resampler, so switching to one only releases the old one.
     session.pushAudio(frame(16000));

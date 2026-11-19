@@ -200,10 +200,13 @@ it.each(['status', 'fetch', 'body'])('sanitizes HTTP %s failures', async (mode) 
 });
 
 it('copies Coda HTTP lexicons and rejects unsupported transports', () => {
-  const lexicon = [{ spelling: 'Rime', pronunciation: '" r aI m' }];
+  const lexicon = [{ spelling: 'Rime', pronunciation: '" r\\ aI m' }];
   const options = resolveOptions({ apiKey: 'test', customLexicon: lexicon });
   lexicon[0]!.pronunciation = 'changed';
-  expect(options.customLexicon).toEqual([{ spelling: 'Rime', pronunciation: '" r aI m' }]);
+  expect(options.customLexicon).toEqual([{ spelling: 'Rime', pronunciation: '" r\\ aI m' }]);
+  expect(fetchPayload(options, 'hi').customLexicon).toEqual([
+    { spelling: 'Rime', pronunciation: '" r\\ aI m' },
+  ]);
   expect(() =>
     resolveOptions({ apiKey: 'test', modelId: 'mistv3', customLexicon: lexicon }),
   ).toThrow('coda');
@@ -213,7 +216,7 @@ it('copies Coda HTTP lexicons and rejects unsupported transports', () => {
 });
 
 it('clears an empty Coda lexicon so the model can change', () => {
-  const lexicon = [{ spelling: 'Rime', pronunciation: '" r aI m' }];
+  const lexicon = [{ spelling: 'Rime', pronunciation: '" r\\ aI m' }];
   const withLexicon = resolveOptions({ apiKey: 'test', customLexicon: lexicon });
   // A saved lexicon still pins the model until it is cleared.
   expect(() => resolveOptions({ modelId: 'arcana' }, withLexicon)).toThrow('coda');

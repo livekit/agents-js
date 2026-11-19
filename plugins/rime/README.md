@@ -126,9 +126,11 @@ These limits apply:
 - PCM16 input is downmixed or resampled when needed. Output is 24 kHz mono PCM16.
   Queues are bounded; overflow closes the session.
 
-`rime_server_event_received` exposes each SDK event before plugin processing.
+`rime_server_event_received` exposes each SDK event before plugin processing, so
+`chatCtx` may not reflect the event yet when a listener runs, or ever for a discarded reply.
 Read item truncation and response completion from its `payload`, where `kind` is
-`item.truncated` or `response.ended`.
+`item.truncated` or `response.ended`. Prism sends `item.truncated` only after it records
+an interrupted playback report, and it can arrive after that reply's `response.ended`.
 `metrics_collected` emits one final usage record per response, including cancelled
 responses. Time to first audio uses the first nonempty provider audio chunk.
 A `response.ended` payload's `usage` reports token counts when Prism provides them.
@@ -254,8 +256,9 @@ Remote endpoints must use HTTPS or WSS. Loopback IP addresses can use HTTP or WS
 Provider messages, response bodies, close reasons, and transport errors are not
 included in returned errors. Safe status codes and provider request IDs remain available.
 
-Coda accepts `customLexicon: [{ spelling: 'Rime', pronunciation: '" r aI m' }]`
-on HTTP and WebSocket v1. Pronunciations use space-separated X-SAMPA. The plugin copies entries when it snapshots options.
+Coda accepts `customLexicon: [{ spelling: 'Rime', pronunciation: '" r\\ aI m' }]`
+on HTTP and WebSocket v1. Pronunciations use space-separated X-SAMPA; the JavaScript string
+above is the value `" r\ aI m`. The plugin copies entries when it snapshots options.
 Mist and legacy WS3 reject a nonempty lexicon. Pass `customLexicon: []` to clear it,
 for example before switching models. The default speakers are `lyra` for Coda
 and `cove` for Mist; an explicit speaker takes precedence.
