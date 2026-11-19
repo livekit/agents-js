@@ -135,6 +135,7 @@ export class RealtimeModel extends OpenAIRealtimeModel {
 
     const credentials = resolveCredentials(options.apiKey, options.apiSecret);
     const isXAI = options.model.startsWith('xai/');
+    const isGoogle = options.model.startsWith('google/');
     const turnDetectionWasDefaulted = options.turnDetection === undefined;
 
     super({
@@ -168,6 +169,11 @@ export class RealtimeModel extends OpenAIRealtimeModel {
 
     if (isXAI) {
       this.capabilities.canDisableTurnDetection = turnDetectionWasDefaulted;
+    }
+    if (isGoogle) {
+      // Gemini Live takes manual turns as activity markers, not commits, so it
+      // keeps its own turn detection, as the Google plugin does.
+      this.capabilities.canDisableTurnDetection = false;
     }
     this._inferenceOptions = {
       provider: options.provider,
