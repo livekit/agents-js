@@ -31,7 +31,10 @@ import { voice } from '@livekit/agents';
 import * as assemblyai from '@livekit/agents-plugin-assemblyai';
 
 const session = new voice.AgentSession({
-  stt: new assemblyai.STT({ speechModel: 'universal-3-6-pro', mode: 'balanced' }),
+  stt: new assemblyai.STT({
+    speechModel: 'assemblyai-stt-3-7-realtime-agent',
+    mode: 'balanced',
+  }),
   tts: new assemblyai.TTS({
     model: 'assemblyai-tts-1',
     voice: '49c443a4-8a1d-5f7e-b70b-98bdbd9823c3', // Audrey
@@ -46,7 +49,7 @@ const session = new voice.AgentSession({
 
 ### Speech-to-text
 
-`assemblyai.STT` streams Universal-3.6 Pro by default (`speechModel`). Useful options:
+`assemblyai.STT` streams AssemblyAI-STT-3.7-Realtime-Agent by default (`speechModel`). Useful options:
 
 - `mode`: `"min_latency"`, `"balanced"` or `"max_accuracy"`.
 - `languageCodes`: steer transcription toward one or more expected languages (`"es"` or
