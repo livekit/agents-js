@@ -6,7 +6,7 @@ import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { type WebSocket, WebSocketServer } from 'ws';
-import { APIError, Future, Task, llm, stream } from '../../index.js';
+import { APIConnectionError, APIError, Future, Task, llm, stream } from '../../index.js';
 import type * as api_proto from './api_proto.js';
 import {
   RealtimeModel,
@@ -77,6 +77,38 @@ function stubTaskRuntime(): void {
     result: Promise.resolve(undefined),
   } as unknown as Task<void>);
 }
+
+class HookTestSession extends RealtimeSession {
+  socketCloseResult(code: number, reason = ''): Error | undefined {
+    return this.websocketCloseError(code, reason);
+  }
+
+  durationResult(): Error | undefined {
+    return this.maxSessionDurationResult();
+  }
+}
+
+describe('RealtimeSession provider hooks', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('preserves OpenAI clean socket-close recycling', async () => {
+    stubTaskRuntime();
+    const model = new RealtimeModel({ apiKey: 'test-key' });
+    const session = new HookTestSession(model);
+    expect(session.socketCloseResult(1006)).toBeUndefined();
+    await session.close();
+  });
+
+  it('preserves OpenAI max-duration timeout classification', async () => {
+    stubTaskRuntime();
+    const model = new RealtimeModel({ apiKey: 'test-key' });
+    const session = new HookTestSession(model);
+    const result = session.durationResult();
+    expect(result).toBeInstanceOf(APIConnectionError);
+    expect((result as APIConnectionError).retryable).toBe(true);
+    await session.close();
+  });
+});
 
 describe('RealtimeSession.updateTools', () => {
   afterEach(() => vi.restoreAllMocks());
