@@ -369,6 +369,11 @@ export class RealtimeSession extends OpenAIRealtimeSession {
   }
 
   /** @internal */
+  protected override get acceptsEmptyDeleteAcknowledgement(): boolean {
+    return this.isXAI;
+  }
+
+  /** @internal */
   protected override async waitForSocketRecycle(ws: WebSocket, signal: AbortSignal): Promise<void> {
     const request = new Queue<string>();
     const pendingTranscriptions = new Set<string>();
@@ -401,9 +406,13 @@ export class RealtimeSession extends OpenAIRealtimeSession {
           break;
         case 'conversation.item.input_audio_transcription.completed':
         case 'conversation.item.input_audio_transcription.failed':
-        case 'conversation.item.deleted':
           if (event.item_id && event.status !== 'in_progress') {
             pendingTranscriptions.delete(event.item_id);
+          }
+          break;
+        case 'conversation.item.deleted':
+          if (event.item_id !== undefined) {
+            pendingTranscriptions.delete(this.resolveDeletedItemId(event.item_id));
           }
           break;
         case 'response.created':

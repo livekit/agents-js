@@ -570,6 +570,60 @@ describe('inference realtime gateway drain', () => {
     },
   );
 
+  it('recycles after xAI confirms deletion of a pending transcript with an empty item ID', async () => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const address = server.address();
+    if (typeof address === 'string' || address === null) throw new Error('expected TCP address');
+    const wire: { socket: WebSocket; event: Record<string, unknown> }[] = [];
+    server.on('connection', (socket) => {
+      socket.on('message', (raw) => wire.push({ socket, event: JSON.parse(raw.toString()) }));
+    });
+    const session = new RealtimeModel({
+      model: 'xai/grok-voice-3.0',
+      baseURL: `http://127.0.0.1:${address.port}/v1`,
+      apiKey: 'key',
+      apiSecret: 'secret',
+      connOptions: { timeoutMs: 1_000, maxRetry: 0, retryIntervalMs: 0 },
+    }).session();
+
+    try {
+      await vi.waitFor(() => expect(wire[0]?.event.type).toBe('session.update'));
+      const old = wire[0]!.socket;
+      for (const event of [
+        { type: 'input_audio_buffer.committed', item_id: 'user_1' },
+        {
+          type: 'conversation.item.added',
+          item: { id: 'user_1', type: 'message', role: 'user', content: [{ type: 'input_audio' }] },
+        },
+        { type: 'session.handoff.request', handoff_id: 'xai-drain' },
+      ]) {
+        old.send(JSON.stringify(event));
+      }
+
+      await vi.waitFor(() => expect(session.chatCtx.getById('user_1')).toBeDefined());
+      const deletion = session.updateChatCtx(new llm.ChatContext());
+      void deletion.catch(() => {});
+      await vi.waitFor(() =>
+        expect(wire.some(({ event }) => event.type === 'conversation.item.delete')).toBe(true),
+      );
+      old.send(JSON.stringify({ type: 'conversation.item.deleted', item_id: '' }));
+      await vi.waitFor(() =>
+        expect(wire.find(({ socket }) => socket !== old)?.event.type).toBe('session.update'),
+      );
+      await deletion;
+      expect(session.chatCtx.getById('user_1')).toBeUndefined();
+      expect(wire).toContainEqual({
+        socket: old,
+        event: { type: 'session.handoff.complete', handoff_id: 'xai-drain' },
+      });
+    } finally {
+      await session.close();
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
   it.each([
     'pending transcription',
     'in-flight reply',

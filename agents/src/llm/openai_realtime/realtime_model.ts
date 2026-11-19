@@ -1392,6 +1392,11 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   /** @internal */
+  protected get acceptsEmptyDeleteAcknowledgement(): boolean {
+    return false;
+  }
+
+  /** @internal */
   protected waitForSocketRecycle?(ws: WebSocket, signal: AbortSignal): Promise<void>;
 
   /** @internal */
@@ -1814,25 +1819,34 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
   }
 
+  /** @internal */
+  protected resolveDeletedItemId(itemId: string): string {
+    if (itemId === '' && this.acceptsEmptyDeleteAcknowledgement) {
+      return Object.keys(this.itemDeleteFutures)[0] ?? '';
+    }
+    return itemId;
+  }
+
   private handleConversationItemDeleted(event: api_proto.ConversationItemDeletedEvent): void {
-    if (!event.item_id) {
+    const itemId = this.resolveDeletedItemId(event.item_id);
+    if (!itemId) {
       throw new Error('item_id is not set');
     }
 
     // Clean up audio-capable tracking for deleted items
-    this.audioCapableItemIds.delete(event.item_id);
-    this.inputTranscriptAccumulators.delete(event.item_id);
+    this.audioCapableItemIds.delete(itemId);
+    this.inputTranscriptAccumulators.delete(itemId);
 
     try {
-      this.remoteChatCtx.delete(event.item_id);
+      this.remoteChatCtx.delete(itemId);
     } catch (error) {
-      this.#logger.error({ error, itemId: event.item_id }, 'failed to delete conversation item');
+      this.#logger.error({ error, itemId }, 'failed to delete conversation item');
     }
 
-    const fut = this.itemDeleteFutures[event.item_id];
+    const fut = this.itemDeleteFutures[itemId];
     if (fut) {
       if (!fut.done) fut.resolve();
-      delete this.itemDeleteFutures[event.item_id];
+      delete this.itemDeleteFutures[itemId];
     }
   }
 

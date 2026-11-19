@@ -6448,6 +6448,8 @@ export abstract class RealtimeSession extends EventEmitter {
 // @public (undocumented)
 class RealtimeSession_3 extends RealtimeSession_2 {
     constructor(realtimeModel: RealtimeModel_2, options?: llm_2.RealtimeSessionOptions);
+    // @internal (undocumented)
+    protected get acceptsEmptyDeleteAcknowledgement(): boolean;
     // (undocumented)
     close(): Promise<void>;
     // (undocumented)

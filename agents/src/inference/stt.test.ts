@@ -475,31 +475,34 @@ describe('STT agent_context forwarding', () => {
     expect(stt.capabilities.chatContext).toBe(true);
   });
 
-  it('emits active carryover shaping in the session.update wire payload', () => {
-    const stt = makeAssemblyStt();
+  it('emits active carryover shaping in the session.update wire payload', async () => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const { port } = server.address() as AddressInfo;
+    const messages: Array<{ type: string }> = [];
+    server.on('connection', (socket) => {
+      socket.on('message', (raw) => messages.push(JSON.parse(raw.toString())));
+    });
+    const stt = makeAssemblyStt({ baseURL: `http://127.0.0.1:${port}` });
     const stream = stt.stream();
-    const sent: string[] = [];
-    Reflect.set(stream, 'activeWs', {
-      readyState: 1,
-      send: (payload: string) => sent.push(payload),
-    });
-
-    stt._pushConversationItem(assistantItemEvent('Your room is booked for Tuesday.'));
-
-    expect(stt['opts'].modelOptions).toHaveProperty(
-      'agent_context',
-      'Your room is booked for Tuesday.',
-    );
-    expect(sent).toHaveLength(1);
-    expect(JSON.parse(sent[0]!)).toMatchObject({
-      type: 'session.update',
-      settings: {
-        extra: {
-          agent_context: 'Your room is booked for Tuesday.',
-        },
-      },
-    });
-    stream.close();
+    try {
+      await vi.waitFor(() => expect(messages[0]?.type).toBe('session.create'));
+      stt._pushConversationItem(assistantItemEvent('Your room is booked for Tuesday.'));
+      await vi.waitFor(() =>
+        expect(messages[1]).toMatchObject({
+          type: 'session.update',
+          settings: { extra: { agent_context: 'Your room is booked for Tuesday.' } },
+        }),
+      );
+      expect(stt['opts'].modelOptions).toHaveProperty(
+        'agent_context',
+        'Your room is booked for Tuesday.',
+      );
+    } finally {
+      stream.close();
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   });
 
   it('truncates oversize replies keeping the tail', () => {
@@ -1467,6 +1470,89 @@ describe('Inference STT connection lifecycle', () => {
     }
   });
 
+  it('flushes partial audio before an update queued before the first dial', async () => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const { port } = server.address() as AddressInfo;
+    const wire: { type: string; settings?: { language?: string } }[] = [];
+    server.on('connection', (socket) => {
+      socket.on('message', (raw) => wire.push(JSON.parse(raw.toString())));
+    });
+    const stt = makeStt({
+      model: 'soniox/stt-rt',
+      language: 'en',
+      baseURL: `http://127.0.0.1:${port}`,
+      connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1_000 },
+    });
+    const stream = stt.stream();
+    try {
+      stream.pushFrame(new AudioFrame(new Int16Array(320), 16000, 1, 320));
+      stream.updateOptions({ language: 'fr' });
+      stream.flush();
+      await vi.waitFor(() =>
+        expect(wire).toMatchObject([
+          { type: 'session.create', settings: { language: 'en' } },
+          { type: 'input_audio' },
+          { type: 'session.update', settings: { language: 'fr' } },
+        ]),
+      );
+    } finally {
+      stream.close();
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('waits for a preceding update acknowledgement before pausing the old socket', async () => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const { port } = server.address() as AddressInfo;
+    const wire: { socket: WebSocket; event: { type: string; settings?: { language?: string } } }[] =
+      [];
+    server.on('connection', (socket) => {
+      socket.on('message', (raw) => wire.push({ socket, event: JSON.parse(raw.toString()) }));
+    });
+    const stt = makeStt({
+      model: 'soniox/stt-rt',
+      language: 'en',
+      baseURL: `http://127.0.0.1:${port}`,
+      connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1_000 },
+    });
+    const stream = stt.stream();
+    try {
+      await vi.waitFor(() => expect(wire[0]?.event.type).toBe('session.create'));
+      const old = wire[0]!.socket;
+      stream.updateOptions({
+        model: 'cartesia/ink-whisper',
+        language: 'fr',
+        modelOptions: { prompt: 'Only for Cartesia' },
+      });
+      await vi.waitFor(() =>
+        expect(wire[1]?.event).toMatchObject({
+          type: 'session.update',
+          settings: { model: 'cartesia/ink-whisper', language: 'fr' },
+        }),
+      );
+      expect(wire[1]?.event.settings).not.toHaveProperty('extra');
+      old.send(JSON.stringify({ type: 'session.handoff.request', handoff_id: 'h1' }));
+      await new Promise((resolve) => setTimeout(resolve, 75));
+      expect(wire.map(({ event }) => event.type)).toEqual(['session.create', 'session.update']);
+      old.send(JSON.stringify({ type: 'session.updated', success: true }));
+      await vi.waitFor(() => expect(wire[2]?.event.type).toBe('session.handoff.pause'));
+      await vi.waitFor(() =>
+        expect(wire.find(({ socket }) => socket !== old)?.event).toMatchObject({
+          type: 'session.create',
+          model: 'soniox/stt-rt',
+          settings: { language: 'fr' },
+        }),
+      );
+    } finally {
+      stream.close();
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
   it('keeps audio and later updates ordered across a handoff', async () => {
     const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
     await once(server, 'listening');
@@ -1485,7 +1571,9 @@ describe('Inference STT connection lifecycle', () => {
       const connection = ++count;
       socket.on('message', (raw) => {
         const e = JSON.parse(raw.toString()) as { type: string; settings?: { language?: string } };
-        if (['session.create', 'input_audio', 'session.update'].includes(e.type))
+        if (
+          ['session.create', 'input_audio', 'session.update', 'session.finalize'].includes(e.type)
+        )
           events.push({ connection, type: e.type, language: e.settings?.language });
         if (e.type === 'session.create') {
           socket.send(JSON.stringify({ type: 'session.created' }));
@@ -1493,13 +1581,11 @@ describe('Inference STT connection lifecycle', () => {
             socket.send(JSON.stringify({ type: 'session.handoff.ready', handoff_id: 'h1' }));
         } else if (e.type === 'input_audio' && connection === 1) {
           socket.send(JSON.stringify({ type: 'session.handoff.request', handoff_id: 'h1' }));
-        } else if (
-          e.type === 'input_audio' &&
-          connection === 2 &&
-          events.filter((item) => item.connection === 2 && item.type === 'input_audio').length === 2
-        )
+        } else if (e.type === 'session.finalize' && connection === 2) {
+          socket.send(JSON.stringify(transcript('done', true)));
+          socket.send(JSON.stringify({ type: 'session.closed' }));
           done();
-        else if (e.type === 'session.handoff.pause') pause();
+        } else if (e.type === 'session.handoff.pause') pause();
         else if (e.type === 'session.handoff.prepared')
           socket.send(JSON.stringify({ type: 'session.handoff.drained', handoff_id: 'h1' }));
         else if (e.type === 'session.update')
@@ -1525,9 +1611,10 @@ describe('Inference STT connection lifecycle', () => {
           setTimeout(() => reject(new Error('pause timeout')), 2000),
         ),
       ]);
-      stream.pushFrame(frame);
+      stream.pushFrame(new AudioFrame(new Int16Array(320), 16000, 1, 320));
       stream.updateOptions({ language: 'fr' });
       stream.pushFrame(frame);
+      stream.endInput();
       await Promise.race([
         delivered,
         new Promise<never>((_, reject) =>
@@ -1543,7 +1630,9 @@ describe('Inference STT connection lifecycle', () => {
         ['input_audio', undefined],
         ['session.update', 'fr'],
         ['input_audio', undefined],
+        ['session.finalize', undefined],
       ]);
+      expect(events.filter(({ type }) => type === 'session.finalize')).toHaveLength(1);
     } finally {
       stream.close();
       for (const client of server.clients) client.terminate();

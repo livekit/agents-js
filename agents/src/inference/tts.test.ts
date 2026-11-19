@@ -4,7 +4,8 @@
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
-import { type WebSocket, WebSocketServer } from 'ws';
+import { WebSocket, WebSocketServer } from 'ws';
+import { APIConnectionError, APIStatusError } from '../_exceptions.js';
 import * as agents from '../index.js';
 import { normalizeLanguage } from '../language.js';
 import { initializeLogger } from '../log.js';
@@ -808,6 +809,67 @@ describe('Inference TTS releaseIdleConnections', () => {
 });
 
 describe('Inference TTS gateway drain', () => {
+  it.each(['close', 'socket error'])('reports %s during synthesis promptly', async (failure) => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const { port } = server.address() as AddressInfo;
+    server.on('connection', (socket) => {
+      socket.on('message', (raw) => {
+        const event = JSON.parse(raw.toString()) as { type: string };
+        if (event.type === 'session.create') {
+          socket.send(JSON.stringify({ type: 'session.created', session_id: 'session-1' }));
+        } else if (event.type === 'session.flush' && failure === 'close') {
+          socket.close(1001);
+        }
+      });
+    });
+    const original = WebSocket.prototype.send;
+    const send = vi.spyOn(WebSocket.prototype, 'send').mockImplementation(function (
+      this: WebSocket,
+      ...args: Parameters<WebSocket['send']>
+    ) {
+      const data = args[0];
+      if (
+        failure === 'socket error' &&
+        typeof data === 'string' &&
+        JSON.parse(data).type === 'session.flush'
+      ) {
+        queueMicrotask(() => this.emit('error', new Error('test transport error')));
+      }
+      return original.apply(this, args);
+    });
+    const tts = makeTts({
+      baseURL: `http://127.0.0.1:${port}`,
+      connOptions: { maxRetry: 0, retryIntervalMs: 0, timeoutMs: 10_000 },
+    });
+    const errors: unknown[] = [];
+    tts.on('error', ({ error }) => errors.push(error));
+    const synth = tts.stream();
+    try {
+      synth.updateInputStream(
+        new ReadableStream<string>({
+          start(controller) {
+            controller.enqueue('Hello.');
+            controller.close();
+          },
+        }),
+      );
+      await vi.waitFor(
+        () =>
+          expect(errors[0]).toBeInstanceOf(
+            failure === 'close' ? APIStatusError : APIConnectionError,
+          ),
+        { timeout: 1_000 },
+      );
+    } finally {
+      send.mockRestore();
+      await synth.close();
+      await tts.close();
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
   it.each(['idle', 'synthesizing', 'closed'])(
     'gets the next turn off the %s pooled socket',
     async (state) => {

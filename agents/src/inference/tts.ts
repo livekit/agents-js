@@ -4,7 +4,7 @@
 import type { AudioFrame } from '@livekit/rtc-node';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import { WebSocket } from 'ws';
-import { APIConnectionError, APIError, APITimeoutError } from '../_exceptions.js';
+import { APIConnectionError, APIError, APIStatusError, APITimeoutError } from '../_exceptions.js';
 import { AudioByteStream } from '../audio.js';
 import { ConnectionPool } from '../connection_pool.js';
 import { type LanguageCode, normalizeLanguage } from '../language.js';
@@ -815,10 +815,15 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
         if (closing) return;
         void resourceCleanup();
         completionFuture.reject(
-          new APIConnectionError({
-            message: 'LiveKit TTS connection lost',
-            options: { body: error },
-          }),
+          error
+            ? new APIConnectionError({
+                message: 'LiveKit TTS connection lost',
+                options: { body: error },
+              })
+            : new APIStatusError({
+                message: 'Gateway connection closed unexpectedly',
+                options: { requestId },
+              }),
         );
       };
 
