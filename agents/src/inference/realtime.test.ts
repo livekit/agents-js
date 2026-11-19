@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { once } from 'node:events';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { type WebSocket, WebSocketServer } from 'ws';
+import { WebSocket, WebSocketServer } from 'ws';
 import * as llm from '../llm/index.js';
 import type * as apiProto from '../llm/openai_realtime/api_proto.js';
 import {
@@ -559,5 +559,229 @@ describe('inference RealtimeModel', () => {
       'item_1',
       'item_2',
     ]);
+  });
+});
+
+describe('inference realtime gateway drain', () => {
+  it.each([false, true])(
+    'advertises support when server turn detection is enabled (disabled=%s)',
+    async (turnDetectionDisabled) => {
+      const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+      await once(server, 'listening');
+      const address = server.address();
+      if (typeof address === 'string' || address === null) throw new Error('expected TCP address');
+      const model = new RealtimeModel({
+        model: 'openai/gpt-realtime',
+        baseURL: `http://127.0.0.1:${address.port}/v1`,
+        apiKey: 'key',
+        apiSecret: 'secret',
+      });
+      const headers: Array<string | string[] | undefined> = [];
+      server.on('connection', (_socket, request) => {
+        headers.push(request.headers['x-livekit-handoff-protocol']);
+      });
+      const session = model.session({ turnDetectionDisabled });
+      try {
+        await vi.waitFor(() => expect(headers).toEqual([turnDetectionDisabled ? undefined : '1']));
+      } finally {
+        await session.close();
+        for (const client of server.clients) client.terminate();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      }
+    },
+  );
+
+  it('recycles after xAI confirms deletion of a pending transcript with an empty item ID', async () => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const address = server.address();
+    if (typeof address === 'string' || address === null) throw new Error('expected TCP address');
+    const wire: { socket: WebSocket; event: Record<string, unknown> }[] = [];
+    server.on('connection', (socket) => {
+      socket.on('message', (raw) => wire.push({ socket, event: JSON.parse(raw.toString()) }));
+    });
+    const session = new RealtimeModel({
+      model: 'xai/grok-voice-3.0',
+      baseURL: `http://127.0.0.1:${address.port}/v1`,
+      apiKey: 'key',
+      apiSecret: 'secret',
+      connOptions: { timeoutMs: 1_000, maxRetry: 0, retryIntervalMs: 0 },
+    }).session();
+
+    try {
+      await vi.waitFor(() => expect(wire[0]?.event.type).toBe('session.update'));
+      const old = wire[0]!.socket;
+      for (const event of [
+        { type: 'input_audio_buffer.committed', item_id: 'user_1' },
+        {
+          type: 'conversation.item.added',
+          item: { id: 'user_1', type: 'message', role: 'user', content: [{ type: 'input_audio' }] },
+        },
+        { type: 'session.handoff.request', handoff_id: 'xai-drain' },
+      ]) {
+        old.send(JSON.stringify(event));
+      }
+
+      await vi.waitFor(() => expect(session.chatCtx.getById('user_1')).toBeDefined());
+      const deletion = session.updateChatCtx(new llm.ChatContext());
+      void deletion.catch(() => {});
+      await vi.waitFor(() =>
+        expect(wire.some(({ event }) => event.type === 'conversation.item.delete')).toBe(true),
+      );
+      old.send(JSON.stringify({ type: 'conversation.item.deleted', item_id: '' }));
+      await vi.waitFor(() =>
+        expect(wire.find(({ socket }) => socket !== old)?.event.type).toBe('session.update'),
+      );
+      await deletion;
+      expect(session.chatCtx.getById('user_1')).toBeUndefined();
+      expect(wire).toContainEqual({
+        socket: old,
+        event: { type: 'session.handoff.complete', handoff_id: 'xai-drain' },
+      });
+    } finally {
+      await session.close();
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it.each([
+    'pending transcription',
+    'in-flight reply',
+    'speech during acknowledgement',
+    'failed acknowledgement',
+  ])('recycles safely with %s', async (blocker) => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const address = server.address();
+    if (typeof address === 'string' || address === null) throw new Error('expected TCP address');
+    const requests: Array<{ socket: WebSocket; event: Record<string, unknown> }> = [];
+    server.on('connection', (socket) => {
+      socket.on('message', (raw) => {
+        requests.push({ socket, event: JSON.parse(raw.toString()) as Record<string, unknown> });
+      });
+    });
+    const model = new RealtimeModel({
+      model: 'openai/gpt-realtime',
+      baseURL: `http://127.0.0.1:${address.port}/v1`,
+      apiKey: 'key',
+      apiSecret: 'secret',
+      inputAudioTranscription: blocker === 'pending transcription' ? { model: 'whisper-1' } : null,
+      connOptions: { timeoutMs: 2_000, maxRetry: 0, retryIntervalMs: 0 },
+    });
+    const send = WebSocket.prototype.send;
+    let finishAcknowledgement: (() => void) | undefined;
+    const sendSpy = vi.spyOn(WebSocket.prototype, 'send').mockImplementation(function (
+      this: WebSocket,
+      data,
+      options,
+      callback?,
+    ) {
+      if (typeof data === 'string' && JSON.parse(data).type === 'session.handoff.complete') {
+        const onSent = typeof options === 'function' ? options : callback;
+        return send.call(this, data, {}, (error) => {
+          finishAcknowledgement = () =>
+            onSent?.(blocker === 'failed acknowledgement' ? new Error('write failed') : error);
+        });
+      }
+      return send.call(this, data, options, callback);
+    });
+    const session = model.session({ instructions: 'Keep the instructions on the new socket.' });
+    const received = vi.fn();
+    session.on('openai_server_event_received', received);
+    const acknowledgements = () =>
+      requests.filter(({ event }) => event.type === 'session.handoff.complete');
+    try {
+      await vi.waitFor(() => expect(requests[0]?.event.type).toBe('session.update'));
+      const first = requests[0]!.socket;
+      const sendEvent = (event: Record<string, unknown>) => first.send(JSON.stringify(event));
+      if (blocker === 'pending transcription') {
+        sendEvent({ type: 'input_audio_buffer.committed', item_id: 'turn' });
+      }
+      if (blocker === 'in-flight reply') {
+        sendEvent({
+          type: 'response.created',
+          response: { id: 'reply', status: 'in_progress', output: [] },
+        });
+      }
+      sendEvent({ type: 'session.handoff.request', handoff_id: 'realtime-drain' });
+
+      const speechStart = {
+        type: 'input_audio_buffer.speech_started',
+        item_id: 'turn',
+        audio_start_ms: 0,
+      };
+      if (blocker === 'speech during acknowledgement') {
+        await vi.waitFor(() => expect(finishAcknowledgement).toBeDefined());
+        sendEvent(speechStart);
+        await vi.waitFor(() => expect(received).toHaveBeenCalledWith(speechStart));
+        finishAcknowledgement!();
+      }
+      await vi.waitFor(() =>
+        expect(received).toHaveBeenCalledWith({
+          type: 'session.handoff.request',
+          handoff_id: 'realtime-drain',
+        }),
+      );
+      if (blocker === 'pending transcription') {
+        // Allow the client to act on the drain request while transcription is still pending.
+        await new Promise((resolve) => setTimeout(resolve, 75));
+        expect(acknowledgements()).toHaveLength(0);
+        sendEvent({
+          type: 'conversation.item.input_audio_transcription.completed',
+          item_id: 'turn',
+          content_index: 0,
+          transcript: 'hello',
+        });
+        await vi.waitFor(() => expect(finishAcknowledgement).toBeDefined());
+        finishAcknowledgement!();
+      } else if (blocker === 'in-flight reply') {
+        await new Promise((resolve) => setTimeout(resolve, 75));
+        expect(acknowledgements()).toHaveLength(0);
+        sendEvent({
+          type: 'response.done',
+          response: { id: 'reply', status: 'completed', output: [] },
+        });
+        await vi.waitFor(() => expect(finishAcknowledgement).toBeDefined());
+        finishAcknowledgement!();
+      } else if (blocker === 'speech during acknowledgement') {
+        sendEvent({
+          type: 'input_audio_buffer.speech_stopped',
+          item_id: 'turn',
+          audio_end_ms: 100,
+        });
+        await vi.waitFor(() =>
+          expect(received).toHaveBeenCalledWith({
+            type: 'input_audio_buffer.speech_stopped',
+            item_id: 'turn',
+            audio_end_ms: 100,
+          }),
+        );
+        expect(requests.every(({ socket }) => socket === first)).toBe(true);
+      } else {
+        await vi.waitFor(() => expect(finishAcknowledgement).toBeDefined());
+        finishAcknowledgement!();
+      }
+
+      await vi.waitFor(
+        () =>
+          expect(requests.find(({ socket }) => socket !== first)?.event).toMatchObject({
+            type: 'session.update',
+            session: { instructions: 'Keep the instructions on the new socket.' },
+          }),
+        { timeout: 2_500 },
+      );
+      expect(acknowledgements()).toEqual([
+        {
+          socket: first,
+          event: { type: 'session.handoff.complete', handoff_id: 'realtime-drain' },
+        },
+      ]);
+    } finally {
+      sendSpy.mockRestore();
+      await session.close();
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   });
 });
