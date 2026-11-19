@@ -1040,8 +1040,8 @@ export class RealtimeSession extends llm.RealtimeSession {
           const generation = this.generations.get(payload.response.responseId);
           if (generation && !generation.ended) this.background(this.abandon(generation));
         };
-        const messages = new OutputQueue<llm.MessageGeneration>(128, cancel);
-        const functions = new OutputQueue<llm.FunctionCall>(128, cancel);
+        const messages = new OutputQueue<llm.MessageGeneration>(cancel, 128);
+        const functions = new OutputQueue<llm.FunctionCall>(cancel, 128);
         const created: llm.GenerationCreatedEvent = {
           messageStream: messages.stream,
           functionStream: functions.stream,
@@ -1093,8 +1093,11 @@ export class RealtimeSession extends llm.RealtimeSession {
         };
         const message: Message = {
           output: payload.output,
-          text: new OutputQueue(256, cancel),
-          audio: new OutputQueue(256, cancel),
+          // Prism sends reply audio faster than real time, and playback reads it at
+          // real time. Like other realtime plugins, keep unread output until it is read
+          // or the reply is discarded.
+          text: new OutputQueue(cancel),
+          audio: new OutputQueue(cancel),
           transcript: '',
           discarded: false,
         };

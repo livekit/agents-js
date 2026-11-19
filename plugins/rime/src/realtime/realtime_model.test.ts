@@ -14,6 +14,7 @@ import {
   RealtimeModel,
   type RealtimeModelOptions,
 } from './realtime_model.js';
+import { OutputQueue } from './streams.js';
 import { PrismPeer, type Request, TestAudioOutput } from './test_helpers.js';
 
 initializeLogger({ pretty: false, level: 'silent' });
@@ -480,16 +481,43 @@ describe('Prism SDK adapter', () => {
     await session.interrupt();
     expect(peer.requests.some((value) => value.type === 'response.cancel')).toBe(true);
   });
-  it('fails once on output overflow and releases the session', async () => {
+  it('keeps a long reply that arrives faster than playback reads it', async () => {
     const { peer, session, errors } = await setup();
     const pending = session.generateReply();
     peer.accepted(await request(peer));
     peer.message();
-    await pending;
-    for (let i = 0; i < 260; i++) peer.audio();
-    await vi.waitFor(() => expect(errors.filter((value) => !value.recoverable)).toHaveLength(1));
-    await session.close();
-    expect(session.isClosed).toBe(true);
+    const generation = await pending;
+    // 600 deltas of 100 ms: one minute of audio, unread until the reply ends.
+    for (let i = 0; i < 600; i++) {
+      peer.text(`${i} `);
+      peer.audio();
+    }
+    peer.ended();
+    const [message] = await collect(generation.messageStream);
+    const [text, audio] = await Promise.all([
+      collect(message!.textStream),
+      collect(message!.audioStream),
+    ]);
+    expect(text).toHaveLength(600);
+    expect(audio).toHaveLength(600);
+    expect(errors).toEqual([]);
+    expect(session.isClosed).toBe(false);
+  });
+  it('drops unread output of a long reply when it is truncated', async () => {
+    const { peer, session, errors } = await setup();
+    const pending = session.generateReply();
+    peer.accepted(await request(peer));
+    peer.message();
+    const generation = await pending;
+    for (let i = 0; i < 300; i++) peer.audio();
+    peer.text('done');
+    const { value: message } = await generation.messageStream.getReader().read();
+    // The text delta follows every audio delta, so all 300 frames are queued unread.
+    await message!.textStream.getReader().read();
+    await session.truncate({ messageId: message!.messageId, audioEndMs: 500 });
+    await expect(collect(message!.audioStream)).rejects.toThrow('Prism output was interrupted');
+    expect(errors.filter((value) => !value.recoverable)).toEqual([]);
+    expect(session.isClosed).toBe(false);
   });
   it('bounds input before connection and closes without unhandled work', async () => {
     const peer = await new PrismPeer().start();
@@ -2271,4 +2299,19 @@ describe('Prism tool progress', () => {
       expect(session.isClosed).toBe(false);
     },
   );
+});
+
+describe('OutputQueue', () => {
+  it('throws when a push exceeds its limit', () => {
+    const queue = new OutputQueue<number>(() => undefined, 2);
+    queue.push(1);
+    queue.push(2);
+    expect(() => queue.push(3)).toThrow('Prism output exceeds 2 queued chunks');
+  });
+  it('keeps every unread chunk without a limit', async () => {
+    const queue = new OutputQueue<number>(() => undefined);
+    for (let i = 0; i < 1000; i++) queue.push(i);
+    queue.close();
+    expect(await collect(queue.stream)).toHaveLength(1000);
+  });
 });

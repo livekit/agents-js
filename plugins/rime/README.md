@@ -124,7 +124,10 @@ These limits apply:
 - History accepts text and completed tool calls/results. Pending calls cannot resume
   in a fresh session. Typed input enters history before the reply request.
 - PCM16 input is downmixed or resampled when needed. Output is 24 kHz mono PCM16.
-  Queues are bounded; overflow closes the session.
+  Reply text and audio queue until playback reads them, since Prism sends reply audio
+  faster than real time. Without an audio output, use `playback: 'discard'`; otherwise
+  unread reply audio stays queued until its reply is evicted or the session closes.
+  Other queues are bounded; overflow closes the session.
 
 `rime_server_event_received` exposes each SDK event before plugin processing, so
 `chatCtx` may not reflect the event yet when a listener runs, or ever for a discarded reply.

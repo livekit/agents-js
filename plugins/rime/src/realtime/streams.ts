@@ -4,15 +4,18 @@
 import { llm } from '@livekit/agents';
 import { ReadableStream } from 'node:stream/web';
 
-/** A bounded Web Stream. Enqueue never waits on the protocol reader. */
+/**
+ * A Web Stream that never makes the protocol reader wait. With a limit, a push past
+ * `limit` unread chunks throws.
+ */
 export class OutputQueue<T> {
   readonly stream: ReadableStream<T>;
   private controller!: ReadableStreamDefaultController<T>;
   private ended = false;
 
   constructor(
-    private readonly limit: number,
     onCancel: () => void,
+    private readonly limit?: number,
   ) {
     this.stream = new ReadableStream<T>(
       {
@@ -24,13 +27,13 @@ export class OutputQueue<T> {
           onCancel();
         },
       },
-      { highWaterMark: limit },
+      limit === undefined ? undefined : { highWaterMark: limit },
     );
   }
 
   push(value: T): void {
     if (this.ended) return;
-    if ((this.controller.desiredSize ?? 0) <= 0) {
+    if (this.limit !== undefined && (this.controller.desiredSize ?? 0) <= 0) {
       throw new llm.RealtimeError(`Prism output exceeds ${this.limit} queued chunks`);
     }
     this.controller.enqueue(value);
