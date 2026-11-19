@@ -552,6 +552,22 @@ describe('direct session', () => {
     ]);
   });
 
+  it('closes the pool for a voice no longer in use', async () => {
+    const OTHER = '221100ffeeddccbbaa998877';
+    const t = await makeDirectTTS();
+    await collect(t.synthesize('One.', NO_RETRY)); // mints VOICE
+    t.updateOptions({ voice: OTHER });
+    await collect(t.synthesize('Two.', NO_RETRY)); // mints OTHER, closes the idle VOICE pool
+    t.updateOptions({ voice: VOICE });
+    await collect(t.synthesize('Three.', NO_RETRY)); // VOICE pool was closed, so it mints again
+    expect(server.mintRequests.map((m) => (m as { voice_ids: string[] }).voice_ids[0])).toEqual([
+      VOICE,
+      OTHER,
+      VOICE,
+    ]);
+    await t.close();
+  });
+
   it("mints for the stream's snapshot voice, not the live one", async () => {
     const t = await makeDirectTTS();
     // The stream snapshots the current voice when it is created...

@@ -62,6 +62,8 @@ export class TTS extends tts.TTS {
     connectWs(timeout: number): Promise<WebSocket_2>;
     // @internal
     _forgetStream(stream: SynthesizeStream): void;
+    // @internal
+    holdDirect(voice: string): void;
     // (undocumented)
     label: string;
     // @internal
@@ -81,6 +83,8 @@ export class TTS extends tts.TTS {
     prewarm(): void;
     // (undocumented)
     get provider(): string;
+    // @internal
+    releaseDirect(voice: string): Promise<void>;
     releaseIdleConnections(): Promise<void>;
     // (undocumented)
     stream(options?: {
