@@ -162,9 +162,10 @@ export interface AgentSessionUsage {
  * Granular control over which recording features are active.
  *
  * Content recording keys default to `true` when omitted, so `{ logs: false }` means "record
- * everything except logs". Input deltas are opt-in. Redaction defaults to the project setting;
- * `false` is ignored when redaction is enabled globally for the project. Pass to
- * {@link AgentSession.start} as `record`:
+ * everything except logs". Input deltas are opt-in. Outside simulations, redaction defaults to
+ * the project setting; `false` is ignored when redaction is enabled globally for the project.
+ * Simulations ignore the project setting and enable redaction only with
+ * `record: { redaction: true }`. Pass to {@link AgentSession.start} as `record`:
  *
  * - `record: true` — all on (backward compatible)
  * - `record: false` — all off (backward compatible)
@@ -1130,13 +1131,16 @@ export class AgentSession<
         this.sessionOptions.recordingOptions = resolveRecordingOptions(false);
       }
 
+      ctx._redactionEnabled = Boolean(
+        ctx._redactionEnabled || this.sessionOptions.recordingOptions.redaction,
+      );
       if (this._enableRecording) {
         await ctx.initRecording(this.sessionOptions.recordingOptions);
       }
     }
 
     this._redactionEnabled = Boolean(
-      ctx?.job.enableRedaction || this.sessionOptions.recordingOptions.redaction,
+      ctx?._redactionEnabled || this.sessionOptions.recordingOptions.redaction,
     );
 
     this.sessionSpan = tracer.startSpan({

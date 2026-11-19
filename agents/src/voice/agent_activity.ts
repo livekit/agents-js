@@ -3692,6 +3692,7 @@ export class AgentActivity implements RecognitionHooks {
         // history keeps the final transcript and onUserTurnCompleted edits.
         if (userMessage) {
           preemptive.userMessage.content = [...userMessage.content];
+          Object.assign(preemptive.userMessage.extra, userMessage.extra);
           preemptive.userMessage.metrics = userMetricsReport;
           preemptive.userMessage.transcriptConfidence = userMessage.transcriptConfidence;
         }

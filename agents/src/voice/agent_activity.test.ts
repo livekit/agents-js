@@ -1048,6 +1048,72 @@ describe('AgentActivity - onPreemptiveGeneration guards', () => {
   });
 });
 
+describe('AgentActivity - reused preemptive generation', () => {
+  it('keeps extra set in onUserTurnCompleted', async () => {
+    const chatCtx = ChatContext.empty();
+    const tools = ToolContext.empty();
+    const userMessage = ChatMessage.create({ role: 'user', content: 'hello world' });
+    const speechHandle = SpeechHandle.create();
+    const scheduleSpeech = vi.fn();
+    const generateReply = vi.fn();
+    const fakeActivity = {
+      _preemptiveGenerationCount: 1,
+      _preemptiveGeneration: {
+        speechHandle,
+        userMessage,
+        info: {
+          newTranscript: 'hello world',
+          transcriptConfidence: 0.95,
+          startedSpeakingAt: undefined,
+        },
+        chatCtx: chatCtx.copy(),
+        tools,
+        toolChoice: null,
+        createdAt: Date.now(),
+      },
+      _currentSpeech: undefined,
+      schedulingPaused: false,
+      newTurnsBlocked: false,
+      llm: new FakePreemptiveLLM(),
+      tools,
+      toolChoice: null,
+      agent: {
+        id: 'test-agent',
+        chatCtx,
+        onUserTurnCompleted: async (_ctx: ChatContext, newMessage: ChatMessage) => {
+          newMessage.extra.source = 'voice';
+        },
+      },
+      agentSession: {
+        _closing: false,
+        _redactionEnabled: false,
+        rootSpanContext: undefined,
+        emit: vi.fn(),
+      },
+      interruptQueuedSpeeches: vi.fn(),
+      scheduleSpeech,
+      generateReply,
+      logger: { info() {}, debug() {}, warn() {}, error() {} },
+    };
+    Object.setPrototypeOf(fakeActivity, AgentActivity.prototype);
+
+    const userTurnCompleted = (AgentActivity.prototype as unknown as Record<string, unknown>)
+      .userTurnCompleted as (this: unknown, info: EndOfTurnInfo) => Promise<void>;
+    await userTurnCompleted.call(fakeActivity, {
+      newTranscript: 'hello world',
+      transcriptConfidence: 0.95,
+      transcriptionDelay: undefined,
+      endOfUtteranceDelay: undefined,
+      startedSpeakingAt: undefined,
+      stoppedSpeakingAt: undefined,
+    });
+
+    expect(scheduleSpeech).toHaveBeenCalledWith(speechHandle, SpeechHandle.SPEECH_PRIORITY_NORMAL);
+    expect(generateReply).not.toHaveBeenCalled();
+    expect(userMessage.extra.source).toBe('voice');
+  });
+});
+
 describe('AgentActivity - onEnter ignored tools', () => {
   const makeFn = (name: string, flags = ToolFlag.NONE) =>
     tool({ name, description: `${name} tool`, flags, execute: async () => name });
