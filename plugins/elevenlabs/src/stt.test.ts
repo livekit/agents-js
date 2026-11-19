@@ -1,14 +1,24 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { APIStatusError, log, mergeFrames, stt as sttLib } from '@livekit/agents';
+import {
+  APIStatusError,
+  VAD,
+  type VADEvent,
+  VADEventType,
+  VADStream,
+  log,
+  mergeFrames,
+  stt as sttLib,
+} from '@livekit/agents';
 import { AudioFrame, AudioResampler } from '@livekit/rtc-node';
 import { once } from 'node:events';
 import { readFileSync } from 'node:fs';
 import { type RequestListener, type Server, createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { describe, expect, it, vi } from 'vitest';
-import { WebSocketServer } from 'ws';
+import { type WebSocket, WebSocketServer } from 'ws';
+import { TurnDetection } from './_turn_detection.js';
 import { STT, type STTOptions } from './stt.js';
 
 // Scribe rejects a commit with less audio than this since the previous one
@@ -221,6 +231,69 @@ function makeIntegrationSpeech(): AudioFrame {
 
 const hasElevenLabsApiKey = Boolean(process.env.ELEVEN_API_KEY);
 
+class TestVADStream extends VADStream {
+  closeCalls = 0;
+
+  emit(type: VADEventType): void {
+    this.sendVADEvent({
+      type,
+      samplesIndex: 0,
+      timestamp: Date.now(),
+      speechDuration: 0,
+      silenceDuration: 0,
+      frames: [],
+      probability: type === VADEventType.START_OF_SPEECH ? 1 : 0,
+      inferenceDuration: 0,
+      speaking: type === VADEventType.START_OF_SPEECH,
+      rawAccumulatedSilence: 0,
+      rawAccumulatedSpeech: 0,
+    });
+  }
+
+  override close(): void {
+    this.closeCalls += 1;
+    super.close();
+  }
+}
+
+class TestVAD extends VAD {
+  label = 'test.VAD';
+  streams: TestVADStream[] = [];
+
+  constructor(private readonly failStart = false) {
+    super({ updateInterval: 100 });
+  }
+
+  stream(): TestVADStream {
+    if (this.failStart) throw new Error('VAD start failed');
+    const stream = new TestVADStream(this);
+    this.streams.push(stream);
+    return stream;
+  }
+}
+
+class StuckSpeakingVAD extends VAD {
+  label = 'test.StuckSpeakingVAD';
+
+  constructor() {
+    super({ updateInterval: 100 });
+  }
+
+  stream(): VADStream {
+    return new (class extends TestVADStream {
+      #started = false;
+
+      override pushFrame(frame: AudioFrame): void {
+        super.pushFrame(frame);
+        if (!this.#started) {
+          this.#started = true;
+          this.emit(VADEventType.START_OF_SPEECH);
+        }
+      }
+    })(this);
+  }
+}
+
 describe('ElevenLabs STT integration', () => {
   it.skipIf(!hasElevenLabsApiKey)(
     'recognizes speech with the real ElevenLabs API',
@@ -237,9 +310,1238 @@ describe('ElevenLabs STT integration', () => {
     },
     60_000,
   );
+
+  it.skipIf(!hasElevenLabsApiKey)(
+    'preserves a live Scribe v3 turn with server turn prediction',
+    async () => {
+      const stream = new STT({
+        model: 'scribe_v3_live',
+        commitStrategy: 'turn_prediction',
+        serverVad: { vadSilenceThresholdSecs: 1 },
+        languageCode: 'en',
+        includeLanguageDetection: false,
+      }).stream({ connOptions: { maxRetry: 2, retryIntervalMs: 2000, timeoutMs: 10000 } });
+      const speech = makeIntegrationSpeech();
+      try {
+        stream.pushFrame(speech);
+        stream.pushFrame(
+          AudioFrame.create(speech.sampleRate, speech.channels, speech.sampleRate * 3),
+        );
+        const events = await collectUntilEnd(stream);
+        const transcript = events
+          .filter((event) => event.type === sttLib.SpeechEventType.FINAL_TRANSCRIPT)
+          .map((event) => event.alternatives?.[0]?.text ?? '')
+          .join(' ');
+        expect(wordErrorRate(transcript, TRANSCRIPT)).toBeLessThanOrEqual(0.25);
+        expect(events.at(-1)?.type).toBe(sttLib.SpeechEventType.END_OF_SPEECH);
+      } finally {
+        stream.close();
+      }
+    },
+    60_000,
+  );
+
+  it.skipIf(!hasElevenLabsApiKey)(
+    'keeps a forced Scribe v3 segment open and eventually ends with stuck local VAD',
+    async () => {
+      const stream = new STT({
+        model: 'scribe_v3_live',
+        commitStrategy: 'turn_prediction',
+        serverVad: { vadSilenceThresholdSecs: 2 },
+        vad: new StuckSpeakingVAD(),
+        languageCode: 'en',
+        includeLanguageDetection: false,
+      }).stream({ connOptions: { maxRetry: 2, retryIntervalMs: 2000, timeoutMs: 10000 } });
+      const source = makeIntegrationSpeech();
+      const chunkSamples = Math.round(source.sampleRate / 50);
+      let sourceOffset = 0;
+      let ended = false;
+      const eventsPromise = collectUntilEnd(stream).then((events) => {
+        ended = true;
+        return events;
+      });
+
+      const feed = async (durationInS: number, silence = false) => {
+        const deadline = Date.now();
+        for (let index = 0; index < durationInS * 50; index++) {
+          const data = new Int16Array(chunkSamples * source.channels);
+          if (!silence) {
+            for (let sample = 0; sample < data.length; sample++) {
+              data[sample] = source.data[sourceOffset++ % source.data.length] ?? 0;
+            }
+          }
+          stream.pushFrame(new AudioFrame(data, source.sampleRate, source.channels, chunkSamples));
+          await new Promise((resolve) =>
+            setTimeout(resolve, Math.max(0, deadline + (index + 1) * 20 - Date.now())),
+          );
+        }
+      };
+
+      try {
+        await feed(40);
+        expect(ended).toBe(false);
+        await feed(5, true);
+        const events = await eventsPromise;
+        expect(events.at(-1)?.type).toBe(sttLib.SpeechEventType.END_OF_SPEECH);
+        expect(
+          events.filter((event) => event.type === sttLib.SpeechEventType.END_OF_SPEECH),
+        ).toHaveLength(1);
+      } finally {
+        stream.close();
+      }
+    },
+    90_000,
+  );
 });
 
 describe('ElevenLabs STT', () => {
+  it.each([
+    [undefined, undefined, 'manual'],
+    [undefined, null, 'manual'],
+    [undefined, {}, 'vad'],
+    ['manual', {}, 'manual'],
+    ['vad', null, 'vad'],
+    ['turn_prediction', undefined, 'turn_prediction'],
+    ['turn_prediction', null, 'turn_prediction'],
+    ['turn_prediction', {}, 'turn_prediction'],
+  ] as const)(
+    'resolves commit strategy %s with server VAD %j to %s',
+    async (commitStrategy, serverVad, expected) => {
+      const options: STTOptions = {
+        model: 'scribe_v3_live',
+        ...(commitStrategy !== undefined && { commitStrategy }),
+        ...(serverVad !== undefined && { serverVad }),
+      };
+      const instance = new STT({ apiKey: 'test-key', ...options });
+      const url = await realtimeConnectionUrl(options);
+      expect(url.searchParams.get('commit_strategy')).toBe(expected);
+      expect(instance.capabilities.manualFlush).toBe(expected === 'manual');
+    },
+  );
+
+  it.each([
+    ['scribe_v2_realtime', undefined, true],
+    ['scribe_v2_realtime', null, true],
+    ['scribe_v2_realtime', {}, false],
+    ['scribe_v2', undefined, false],
+  ] as const)('sets manualFlush for model=%s serverVad=%j', (model, serverVad, expected) => {
+    const instance = new STT({
+      apiKey: 'test-key',
+      model,
+      ...(serverVad !== undefined && { serverVad }),
+    });
+    expect(instance.capabilities.manualFlush).toBe(expected);
+  });
+
+  it('tracks server VAD updates when no explicit strategy is set', () => {
+    const instance = new STT({ apiKey: 'test-key', model: 'scribe_v2_realtime' });
+    instance.updateOptions({ serverVad: {} });
+    expect(instance.capabilities.manualFlush).toBe(false);
+    instance.updateOptions({ serverVad: null });
+    expect(instance.capabilities.manualFlush).toBe(true);
+  });
+
+  it('passes server VAD fallback options with turn prediction', async () => {
+    const url = await realtimeConnectionUrl({
+      model: 'scribe_v3_live',
+      commitStrategy: 'turn_prediction',
+      serverVad: {
+        vadSilenceThresholdSecs: 2,
+        vadThreshold: 0.3,
+        minSpeechDurationMs: 100,
+        minSilenceDurationMs: 200,
+      },
+    });
+    expect(Object.fromEntries(url.searchParams)).toMatchObject({
+      commit_strategy: 'turn_prediction',
+      vad_silence_threshold_secs: '2',
+      vad_threshold: '0.3',
+      min_speech_duration_ms: '100',
+      min_silence_duration_ms: '200',
+    });
+  });
+
+  it.each([
+    [false, false],
+    [false, true],
+    [true, false],
+    [true, true],
+  ])(
+    'selects one plain/timestamped final and emits exactly one EOS (timestamps=%s, detection=%s)',
+    async (includeTimestamps, includeLanguageDetection) => {
+      const words = [{ text: 'hello', start: 0.1, end: 0.4 }];
+      const events = await processStreamEvents(
+        [
+          { ...partialTranscript('hello'), turn_probability: 0.08 },
+          { ...partialTranscript('hello'), turn_probability: 0.95 },
+          committedTranscript('hello', { words }),
+          committedTranscript('hello', { withTimestamps: true, words }),
+        ],
+        4,
+        null,
+        {
+          model: 'scribe_v3_live',
+          commitStrategy: 'turn_prediction',
+          languageCode: 'en',
+          includeTimestamps,
+          includeLanguageDetection,
+        },
+      );
+      expect(events.map((event) => event.type)).toEqual([
+        sttLib.SpeechEventType.START_OF_SPEECH,
+        sttLib.SpeechEventType.INTERIM_TRANSCRIPT,
+        sttLib.SpeechEventType.FINAL_TRANSCRIPT,
+        sttLib.SpeechEventType.END_OF_SPEECH,
+      ]);
+      expect(
+        events.filter((event) => event.type === sttLib.SpeechEventType.FINAL_TRANSCRIPT),
+      ).toHaveLength(1);
+      expect(
+        events.filter((event) => event.type === sttLib.SpeechEventType.END_OF_SPEECH),
+      ).toHaveLength(1);
+      expect(events.at(-1)?.alternatives?.[0]?.text).toBe('hello');
+    },
+  );
+
+  it.each(['scribe_v1', 'scribe_v2', 'scribe_v2_realtime', 'scribe_v3'])(
+    'rejects turn prediction for %s without changing existing options',
+    (model) => {
+      expect(
+        () => new STT({ apiKey: 'test-key', model, commitStrategy: 'turn_prediction' }),
+      ).toThrow('turn_prediction is only supported for scribe_v3_live');
+      const instance = new STT({ apiKey: 'test-key', model });
+      expect(() =>
+        instance.updateOptions({ commitStrategy: 'turn_prediction', serverVad: {} }),
+      ).toThrow('turn_prediction is only supported for scribe_v3_live');
+      expect(instance.capabilities.manualFlush).toBe(model === 'scribe_v2_realtime');
+    },
+  );
+
+  it.each([
+    ['scribe_v3_live', 'turn_prediction', false, undefined, true],
+    ['scribe_v3_live', 'turn_prediction', false, {}, true],
+    ['scribe_v3_live', 'turn_prediction', true, undefined, false],
+    ['scribe_v3_live', 'manual', false, undefined, false],
+    ['scribe_v2_realtime', 'vad', false, undefined, false],
+  ] as const)(
+    'warns for missing local VAD only when required (%s, %s, %s, %j)',
+    (model, commitStrategy, localVad, serverVad, warns) => {
+      const warn = vi.spyOn(log(), 'warn').mockImplementation(() => undefined);
+      new STT({
+        apiKey: 'test-key',
+        model,
+        commitStrategy,
+        ...(serverVad !== undefined && { serverVad }),
+        ...(localVad && { vad: new TestVAD() }),
+      });
+      expect(
+        warn.mock.calls.some((call) => String(call.at(-1)).includes('approximately 36 seconds')),
+      ).toBe(warns);
+      warn.mockRestore();
+    },
+  );
+
+  it.each(['start', 'pushFrame', 'inference', 'endInput'] as const)(
+    'continues transcription after local VAD %s failure',
+    async (failurePoint) => {
+      class FailingStream extends TestVADStream {
+        override pushFrame(frame: AudioFrame): void {
+          if (failurePoint === 'pushFrame') throw new Error('VAD push failed');
+          super.pushFrame(frame);
+        }
+
+        override endInput(): void {
+          if (failurePoint === 'endInput') throw new Error('VAD end input failed');
+          super.endInput();
+        }
+
+        override next(): Promise<IteratorResult<VADEvent>> {
+          if (failurePoint === 'inference')
+            return Promise.reject(new Error('VAD inference failed'));
+          return super.next();
+        }
+      }
+
+      class FailingVAD extends VAD {
+        label = 'test.FailingVAD';
+
+        constructor() {
+          super({ updateInterval: 100 });
+        }
+
+        stream(): VADStream {
+          if (failurePoint === 'start') throw new Error('VAD start failed');
+          return new FailingStream(this);
+        }
+      }
+
+      const { wss, baseURL } = await startWebSocketServer();
+      const warn = vi.spyOn(log(), 'warn').mockImplementation(() => undefined);
+      let receivedAudio = false;
+      wss.on('connection', (ws) => {
+        ws.once('message', () => {
+          receivedAudio = true;
+          ws.send(JSON.stringify({ ...partialTranscript('hello'), turn_probability: 0 }));
+          ws.send(JSON.stringify(committedTranscript('hello')));
+          ws.send(
+            JSON.stringify(
+              committedTranscript('hello', {
+                withTimestamps: true,
+                words: [{ text: 'hello', start: 0.1, end: 0.4 }],
+              }),
+            ),
+          );
+        });
+      });
+      const stream = new STT({
+        apiKey: 'test-key',
+        baseURL,
+        model: 'scribe_v3_live',
+        commitStrategy: 'turn_prediction',
+        vad: new FailingVAD(),
+        languageCode: 'en',
+        includeTimestamps: true,
+        includeLanguageDetection: false,
+      }).stream();
+      try {
+        stream.pushFrame(makeFrame());
+        if (failurePoint === 'endInput') {
+          await waitUntil(() => receivedAudio);
+          stream.endInput();
+        }
+        const events = await collectUntilEnd(stream);
+        expect(events.at(-1)?.type).toBe(sttLib.SpeechEventType.END_OF_SPEECH);
+        expect(events.at(-2)?.alternatives?.[0]?.text).toBe('hello');
+        expect(stream._failed).toBe(false);
+        expect(
+          warn.mock.calls.filter((call) =>
+            String(call.at(-1)).includes('disabling forced-commit guard'),
+          ),
+        ).toHaveLength(1);
+      } finally {
+        stream.close();
+        warn.mockRestore();
+        await closeWebSocketServer(wss);
+      }
+    },
+  );
+
+  it('warns once when enabling turn prediction and not for unrelated updates', async () => {
+    const { wss, baseURL } = await startWebSocketServer();
+    const warn = vi.spyOn(log(), 'warn').mockImplementation(() => undefined);
+    const instance = new STT({ apiKey: 'test-key', baseURL, model: 'scribe_v3_live' });
+    const stream = instance.stream();
+    try {
+      instance.updateOptions({ commitStrategy: 'turn_prediction' });
+      expect(
+        warn.mock.calls.filter((call) => String(call.at(-1)).includes('approximately 36 seconds')),
+      ).toHaveLength(1);
+      warn.mockClear();
+      instance.updateOptions({ keyterms: ['LiveKit'] });
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      stream.close();
+      warn.mockRestore();
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it.each([{}, { tagAudioEvents: false }, { keyterms: ['LiveKit'] }])(
+    'preserves a manualFlush override across unrelated update %j',
+    (options) => {
+      const instance = new STT({ apiKey: 'test-key', model: 'scribe_v2_realtime' });
+      instance.capabilities.manualFlush = false;
+      instance.updateOptions(options);
+      expect(instance.capabilities.manualFlush).toBe(false);
+    },
+  );
+
+  it('updates commit strategy across sibling streams and capabilities', async () => {
+    const { wss, baseURL } = await startWebSocketServer();
+    const warn = vi.spyOn(log(), 'warn').mockImplementation(() => undefined);
+    const urls: string[] = [];
+    wss.on('connection', (_ws, req) => urls.push(req.url ?? ''));
+    const instance = new STT({ apiKey: 'test-key', baseURL, model: 'scribe_v3_live' });
+    const streams = [instance.stream(), instance.stream()];
+    try {
+      await waitUntil(() => urls.length === 2);
+      streams[0]!.updateOptions({ commitStrategy: 'turn_prediction' });
+      await waitUntil(() => urls.length === 4, 2000);
+      expect(instance.capabilities.manualFlush).toBe(false);
+      expect(
+        urls
+          .slice(2)
+          .every(
+            (url) =>
+              new URL(`ws://localhost${url}`).searchParams.get('commit_strategy') ===
+              'turn_prediction',
+          ),
+      ).toBe(true);
+      expect(
+        warn.mock.calls.some((call) => String(call.at(-1)).includes('approximately 36 seconds')),
+      ).toBe(true);
+    } finally {
+      streams.forEach((stream) => stream.close());
+      warn.mockRestore();
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('reconnects for every STT-level strategy update and preserves explicit strategy precedence', async () => {
+    const { wss, baseURL } = await startWebSocketServer();
+    const urls: string[] = [];
+    wss.on('connection', (_ws, req) => urls.push(req.url ?? ''));
+    const instance = new STT({ apiKey: 'test-key', baseURL, model: 'scribe_v3_live' });
+    const stream = instance.stream();
+    try {
+      await waitUntil(() => urls.length === 1);
+      for (const strategy of ['turn_prediction', 'manual', 'vad'] as const) {
+        instance.updateOptions({ commitStrategy: strategy });
+        await waitUntil(
+          () => urls.length === 2 + ['turn_prediction', 'manual', 'vad'].indexOf(strategy),
+        );
+        expect(instance.capabilities.manualFlush).toBe(strategy === 'manual');
+        expect(new URL(`ws://localhost${urls.at(-1)}`).searchParams.get('commit_strategy')).toBe(
+          strategy,
+        );
+      }
+      instance.updateOptions({ serverVad: null });
+      await waitUntil(() => urls.length === 5);
+      expect(instance.capabilities.manualFlush).toBe(false);
+      expect(new URL(`ws://localhost${urls.at(-1)}`).searchParams.get('commit_strategy')).toBe(
+        'vad',
+      );
+    } finally {
+      stream.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('validates a stream strategy update before changing server VAD options', async () => {
+    const { wss, baseURL } = await startWebSocketServer();
+    let requestUrl = '';
+    wss.on('connection', (_ws, req) => {
+      requestUrl = req.url ?? '';
+    });
+    const stream = new STT({
+      apiKey: 'test-key',
+      baseURL,
+      model: 'scribe_v2_realtime',
+    }).stream();
+    try {
+      expect(() =>
+        stream.updateOptions({ commitStrategy: 'turn_prediction', serverVad: {} }),
+      ).toThrow('turn_prediction is only supported for scribe_v3_live');
+      await waitUntil(() => requestUrl !== '');
+      const url = new URL(`ws://localhost${requestUrl}`);
+      expect(url.searchParams.get('commit_strategy')).toBe('manual');
+      expect(url.searchParams.has('vad_threshold')).toBe(false);
+    } finally {
+      stream.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('finishes local VAD cleanup before reconnecting', async () => {
+    const { wss, baseURL } = await startWebSocketServer();
+    const vad = new TestVAD();
+    let connections = 0;
+    wss.on('connection', () => {
+      connections += 1;
+    });
+    const instance = new STT({
+      apiKey: 'test-key',
+      baseURL,
+      model: 'scribe_v3_live',
+      commitStrategy: 'turn_prediction',
+      vad,
+    });
+    const stream = instance.stream();
+    try {
+      await waitUntil(() => vad.streams.length === 1);
+      const vadStream = vad.streams[0]!;
+      const originalClose = vadStream.close.bind(vadStream);
+      let cleanupStarted = false;
+      let cleanupDone = false;
+      let allowCleanup: (() => void) | undefined;
+      vadStream.close = (() => {
+        cleanupStarted = true;
+        return new Promise<void>((resolve) => {
+          allowCleanup = () => {
+            originalClose();
+            cleanupDone = true;
+            resolve();
+          };
+        });
+      }) as unknown as () => void;
+      instance.updateOptions({ keyterms: ['LiveKit'] });
+      await waitUntil(() => cleanupStarted);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(connections).toBe(1);
+      allowCleanup?.();
+      await waitUntil(() => connections === 2);
+      expect(cleanupDone).toBe(true);
+      expect(vadStream.closeCalls).toBe(1);
+    } finally {
+      stream.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('does not let an open local VAD output hold clean stream termination open', async () => {
+    const { wss, baseURL } = await startWebSocketServer();
+    class OpenOutputVAD extends TestVAD {
+      override stream(): TestVADStream {
+        const stream = new (class extends TestVADStream {
+          override endInput(): void {
+            // Silero finishes inference without closing the VAD output iterator.
+          }
+        })(this);
+        this.streams.push(stream);
+        return stream;
+      }
+    }
+    const vad = new OpenOutputVAD();
+    wss.on('connection', (ws) => {
+      ws.once('message', () => setTimeout(() => ws.close(), 20));
+    });
+    const stream = new STT({
+      apiKey: 'test-key',
+      baseURL,
+      model: 'scribe_v3_live',
+      commitStrategy: 'turn_prediction',
+      vad,
+    }).stream();
+    try {
+      stream.pushFrame(makeFrame());
+      await waitUntil(() => vad.streams.length === 1);
+      stream.endInput();
+      const completed = (async () => {
+        for await (const _event of stream) {
+          // No transcript is expected; completion is the behavior under test.
+        }
+      })();
+      const terminated = await Promise.race([
+        completed.then(() => true),
+        new Promise<false>((resolve) => setTimeout(() => resolve(false), 1000)),
+      ]);
+      expect(terminated).toBe(true);
+      expect(vad.streams[0]?.closeCalls).toBe(1);
+    } finally {
+      stream.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('detaches the old socket before delayed VAD cleanup on reconnect', async () => {
+    const { wss, baseURL } = await startWebSocketServer();
+    const vad = new TestVAD();
+    const sockets: WebSocket[] = [];
+    wss.on('connection', (ws) => {
+      sockets.push(ws);
+    });
+    const instance = new STT({
+      apiKey: 'test-key',
+      baseURL,
+      model: 'scribe_v3_live',
+      commitStrategy: 'turn_prediction',
+      vad,
+      languageCode: 'en',
+      includeLanguageDetection: false,
+    });
+    const stream = instance.stream();
+    let allowCleanup: (() => void) | undefined;
+    try {
+      await waitUntil(() => vad.streams.length === 1 && sockets.length === 1);
+      const vadStream = vad.streams[0]!;
+      const originalClose = vadStream.close.bind(vadStream);
+      let cleanupStarted = false;
+      vadStream.close = (() => {
+        cleanupStarted = true;
+        return new Promise<void>((resolve) => {
+          allowCleanup = () => {
+            originalClose();
+            resolve();
+          };
+        });
+      }) as unknown as () => void;
+      const eventsPromise = collectUntilEnd(stream);
+      instance.updateOptions({ keyterms: ['LiveKit'] });
+      await waitUntil(() => cleanupStarted);
+
+      sockets[0]!.send(JSON.stringify(partialTranscript('late old connection')));
+      sockets[0]!.send(JSON.stringify(committedTranscript('late old connection')));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      const releaseCleanup = allowCleanup;
+      allowCleanup = undefined;
+      expect(releaseCleanup).toBeDefined();
+      releaseCleanup!();
+      await waitUntil(() => sockets.length === 2);
+      sockets[1]!.send(JSON.stringify(partialTranscript('new connection')));
+      sockets[1]!.send(JSON.stringify(committedTranscript('new connection')));
+
+      const events = await eventsPromise;
+      expect(events.map((event) => event.type)).toEqual([
+        sttLib.SpeechEventType.START_OF_SPEECH,
+        sttLib.SpeechEventType.INTERIM_TRANSCRIPT,
+        sttLib.SpeechEventType.FINAL_TRANSCRIPT,
+        sttLib.SpeechEventType.END_OF_SPEECH,
+      ]);
+      expect(interimTexts(events)).toEqual(['new connection']);
+      expect(events.at(-2)?.alternatives?.[0]?.text).toBe('new connection');
+    } finally {
+      allowCleanup?.();
+      stream.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('reconnects after a provider error frame', async () => {
+    const { wss, baseURL } = await startWebSocketServer();
+    let connections = 0;
+    wss.on('connection', (ws) => {
+      connections += 1;
+      if (connections === 1) {
+        ws.once('message', () =>
+          ws.send(JSON.stringify({ message_type: 'transcriber_error', message: 'retry' })),
+        );
+      }
+    });
+    const stream = new STT({ apiKey: 'test-key', baseURL, model: 'scribe_v3_live' }).stream({
+      connOptions: { maxRetry: 2, retryIntervalMs: 0, timeoutMs: 1000 },
+    });
+    try {
+      stream.pushFrame(makeFrame());
+      await waitUntil(() => connections === 2, 2000);
+      expect(stream._failed).toBe(false);
+    } finally {
+      stream.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('logs malformed messages and continues receiving transcripts', async () => {
+    const { wss, baseURL } = await startWebSocketServer();
+    const error = vi.spyOn(log(), 'error').mockImplementation(() => undefined);
+    wss.on('connection', (ws) => {
+      ws.once('message', () => {
+        ws.send('{not json');
+        ws.send(JSON.stringify(partialTranscript('hello')));
+        ws.send(JSON.stringify(committedTranscript('hello')));
+      });
+    });
+    const stream = new STT({
+      apiKey: 'test-key',
+      baseURL,
+      model: 'scribe_v2_realtime',
+      serverVad: {},
+      includeLanguageDetection: false,
+    }).stream();
+    try {
+      stream.pushFrame(makeFrame());
+      const events = await collectUntilEnd(stream);
+      expect(events.at(-1)?.type).toBe(sttLib.SpeechEventType.END_OF_SPEECH);
+      expect(events.at(-2)?.alternatives?.[0]?.text).toBe('hello');
+      expect(error).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.any(Error) }),
+        'failed to process ElevenLabs STT message',
+      );
+      expect(stream._failed).toBe(false);
+    } finally {
+      stream.close();
+      error.mockRestore();
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it.each([
+    ['auth_error', false],
+    ['quota_exceeded', false],
+    ['input_error', false],
+    ['transcriber_error', true],
+    ['error', true],
+  ] as const)(
+    'keeps %s provider content in PII fields and sets retryable=%s',
+    async (messageType, retryable) => {
+      const { wss, baseURL } = await startWebSocketServer();
+      const logged = vi.spyOn(log(), 'error').mockImplementation(() => undefined);
+      wss.on('connection', (ws) => {
+        ws.once('message', () =>
+          ws.send(
+            JSON.stringify({
+              message_type: messageType,
+              message: 'customer transcript',
+              details: 'provider credential',
+            }),
+          ),
+        );
+      });
+      const instance = new STT({ apiKey: 'test-key', baseURL, model: 'scribe_v2_realtime' });
+      const emitted = new Promise<Error>((resolve) =>
+        instance.once('error', (event) => resolve(event.error)),
+      );
+      const stream = instance.stream({
+        connOptions: { maxRetry: 0, retryIntervalMs: 0, timeoutMs: 1000 },
+      });
+      try {
+        stream.pushFrame(makeFrame());
+        const providerError = await emitted;
+        expect(providerError).toMatchObject({
+          message: `ElevenLabs STT error [${messageType}]`,
+          retryable,
+        });
+        const providerLog = logged.mock.calls.find(
+          (call) => call[1] === `ElevenLabs STT error [${messageType}]`,
+        );
+        expect(providerLog?.[0]).toEqual({
+          'lk.pii.data': expect.objectContaining({
+            message: 'customer transcript',
+            details: 'provider credential',
+          }),
+        });
+        expect(providerLog?.[1]).not.toContain('customer transcript');
+        expect(providerLog?.[1]).not.toContain('provider credential');
+      } finally {
+        stream.close();
+        logged.mockRestore();
+        await closeWebSocketServer(wss);
+      }
+    },
+  );
+
+  it.each([
+    ['options', undefined],
+    ['options', 'beforeFinal'],
+    ['options', 'afterFinal'],
+    ['providerError', undefined],
+    ['providerError', 'beforeFinal'],
+    ['providerError', 'afterFinal'],
+  ] as const)(
+    'finishes a deferred turn before %s reconnect with continuation=%s',
+    async (reconnectCause, continuation) => {
+      const { wss, baseURL } = await startWebSocketServer();
+      const sockets: WebSocket[] = [];
+      wss.on('connection', (ws) => {
+        sockets.push(ws);
+        if (sockets.length !== 1) return;
+        ws.once('message', () => {
+          ws.send(JSON.stringify({ ...partialTranscript('hello'), turn_probability: 0 }));
+          ws.send(JSON.stringify(committedTranscript('hello')));
+          if (continuation === 'beforeFinal') {
+            ws.send(JSON.stringify(partialTranscript('continuing')));
+          }
+          ws.send(
+            JSON.stringify(
+              committedTranscript('hello', {
+                withTimestamps: true,
+                words: [{ text: 'hello', start: 0.1, end: 0.4 }],
+              }),
+            ),
+          );
+        });
+      });
+      const instance = new STT({
+        apiKey: 'test-key',
+        baseURL,
+        model: 'scribe_v3_live',
+        commitStrategy: 'turn_prediction',
+        vad: new StuckSpeakingVAD(),
+        languageCode: 'en',
+        includeTimestamps: true,
+        includeLanguageDetection: false,
+        audioChunkDuration: 35300,
+      });
+      const stream = instance.stream({
+        connOptions: { maxRetry: 2, retryIntervalMs: 0, timeoutMs: 1000 },
+      });
+      try {
+        stream.pushFrame(makeFrame(564800));
+        const initialEvents: sttLib.SpeechEvent[] = [];
+        const expected = continuation === 'beforeFinal' ? 4 : 3;
+        while (initialEvents.length < expected) initialEvents.push((await stream.next()).value!);
+        expect(initialEvents.at(-1)?.type).toBe(sttLib.SpeechEventType.FINAL_TRANSCRIPT);
+        if (continuation === 'afterFinal') {
+          sockets[0]!.send(JSON.stringify(partialTranscript('continuing')));
+          expect((await stream.next()).value?.type).toBe(sttLib.SpeechEventType.INTERIM_TRANSCRIPT);
+        }
+
+        if (reconnectCause === 'options') instance.updateOptions({ keyterms: ['LiveKit'] });
+        else {
+          sockets[0]!.send(
+            JSON.stringify({ message_type: 'transcriber_error', message: 'provider content' }),
+          );
+        }
+
+        const endpoint = (await stream.next()).value;
+        expect(endpoint?.type).toBe(sttLib.SpeechEventType.END_OF_SPEECH);
+        expect(endpoint?.alternatives?.[0]?.text).toBe('hello');
+        await waitUntil(() => sockets.length === 2, 2000);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        expect(stream._failed).toBe(false);
+      } finally {
+        stream.close();
+        await closeWebSocketServer(wss);
+      }
+    },
+  );
+
+  describe('turn prediction forced-commit guard', () => {
+    it('defers a suspected forced commit and falls back once', async () => {
+      vi.useFakeTimers();
+      const ended = vi.fn();
+      const detector = new TurnDetection({
+        options: {
+          modelId: 'scribe_v3_live',
+          commitStrategy: 'turn_prediction',
+          serverVad: { vadSilenceThresholdSecs: 0.5 },
+        },
+        onEndOfSpeech: ended,
+      });
+      detector._setClassifierState({ vadSpeaking: true, audioDurationSinceCommitInS: 35.3 });
+      detector.onPartialTranscript(0, 'still speaking');
+      expect(
+        detector.onCommittedTranscript(
+          { message_type: 'committed_transcript', text: 'still speaking' },
+          'committed_transcript',
+        ),
+      ).toBe(true);
+      await vi.advanceTimersByTimeAsync(999);
+      expect(ended).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(ended).toHaveBeenCalledTimes(1);
+      await detector.close();
+      expect(ended).toHaveBeenCalledTimes(1);
+      vi.useRealTimers();
+    });
+
+    it('cancels the fallback when a continuation segment arrives', async () => {
+      vi.useFakeTimers();
+      const ended = vi.fn();
+      const detector = new TurnDetection({
+        options: { modelId: 'scribe_v3_live', commitStrategy: 'turn_prediction' },
+        onEndOfSpeech: ended,
+      });
+      detector._setClassifierState({ vadSpeaking: true, audioDurationSinceCommitInS: 35.3 });
+      detector.onPartialTranscript(0, 'still speaking');
+      detector.onCommittedTranscript(
+        { message_type: 'committed_transcript', text: 'still speaking' },
+        'committed_transcript',
+      );
+      detector.onPartialTranscript(0.1, 'and continuing');
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(ended).not.toHaveBeenCalled();
+      detector.endSpeech();
+      expect(ended).toHaveBeenCalledTimes(1);
+      await detector.close();
+      vi.useRealTimers();
+    });
+
+    it.each([0.9, 1])(
+      'updates turn probability to %s when duplicate partial text is suppressed',
+      async (probability) => {
+        const ended = vi.fn();
+        const detector = new TurnDetection({
+          options: { modelId: 'scribe_v3_live', commitStrategy: 'turn_prediction' },
+          onEndOfSpeech: ended,
+        });
+        detector._setClassifierState({ vadSpeaking: true, audioDurationSinceCommitInS: 35.3 });
+        expect(detector.onPartialTranscript(0, 'still speaking')).toBe(true);
+        expect(detector.onPartialTranscript(probability, 'still speaking')).toBe(false);
+        expect(
+          detector.onCommittedTranscript(
+            { message_type: 'committed_transcript', text: 'still speaking' },
+            'committed_transcript',
+          ),
+        ).toBe(false);
+        await detector.close();
+      },
+    );
+
+    it.each([
+      [10, 0, true, 0],
+      [40, 0, true, 0],
+      [35.3, 0.9, true, 0],
+      [35.3, undefined, true, 0],
+      [35.3, 0, false, 0],
+      [35.3, 0, true, 1],
+    ] as const)(
+      'does not classify duration=%s probability=%s speaking=%s commits=%s as forced',
+      async (duration, probability, speaking, clientCommits) => {
+        const ended = vi.fn();
+        const detector = new TurnDetection({
+          options: { modelId: 'scribe_v3_live', commitStrategy: 'turn_prediction' },
+          onEndOfSpeech: ended,
+        });
+        detector._setClassifierState({
+          vadSpeaking: speaking,
+          audioDurationSinceCommitInS: duration,
+        });
+        detector.onPartialTranscript(probability, 'still speaking');
+        for (let index = 0; index < clientCommits; index++) detector.onCommitRequested();
+        const forced = detector.onCommittedTranscript(
+          { message_type: 'committed_transcript', text: 'hello' },
+          'committed_transcript',
+        );
+        expect(forced).toBe(false);
+        if (!forced) detector.endSpeech();
+        expect(ended).toHaveBeenCalledTimes(1);
+        await detector.close();
+      },
+    );
+
+    it.each([
+      [null, 2000],
+      [0.5, 1000],
+    ] as const)(
+      'uses the %s silence threshold timeout and keeps logs PII-free',
+      async (silenceThreshold, timeout) => {
+        vi.useFakeTimers();
+        const debug = vi.spyOn(log(), 'debug').mockImplementation(() => undefined);
+        const warn = vi.spyOn(log(), 'warn').mockImplementation(() => undefined);
+        const ended = vi.fn();
+        try {
+          const detector = new TurnDetection({
+            options: {
+              modelId: 'scribe_v3_live',
+              commitStrategy: 'turn_prediction',
+              serverVad: { vadSilenceThresholdSecs: silenceThreshold },
+            },
+            onEndOfSpeech: ended,
+          });
+          detector._setClassifierState({ vadSpeaking: true, audioDurationSinceCommitInS: 35.3 });
+          detector.onPartialTranscript(0, 'still speaking');
+          expect(
+            detector.onCommittedTranscript(
+              { message_type: 'committed_transcript', text: 'still speaking' },
+              'committed_transcript',
+            ),
+          ).toBe(true);
+          detector.onPartialTranscript(0, '');
+          await vi.advanceTimersByTimeAsync(timeout - 1);
+          expect(ended).not.toHaveBeenCalled();
+          await vi.advanceTimersByTimeAsync(1);
+          expect(ended).toHaveBeenCalledTimes(1);
+          await vi.advanceTimersByTimeAsync(2000);
+          expect(ended).toHaveBeenCalledTimes(1);
+          expect(debug).toHaveBeenCalledWith(
+            expect.objectContaining({
+              audioDurationSinceCommitInS: 35.3,
+              turnProbability: 0,
+              vadSpeaking: true,
+            }),
+            expect.stringContaining('deferring end of speech'),
+          );
+          expect(warn).toHaveBeenCalledWith(
+            expect.objectContaining({ eosTimeout: timeout, vadSpeaking: true }),
+            expect.stringContaining('emitting end of speech'),
+          );
+          const serializedLogs = JSON.stringify([...debug.mock.calls, ...warn.mock.calls]);
+          expect(serializedLogs).not.toContain('still speaking');
+          expect(serializedLogs).not.toContain('lk.pii.data');
+          await detector.close();
+        } finally {
+          debug.mockRestore();
+          warn.mockRestore();
+          vi.useRealTimers();
+        }
+      },
+    );
+
+    it('resets forced-commit duration for each segment', async () => {
+      vi.useFakeTimers();
+      const detector = new TurnDetection({
+        options: { modelId: 'scribe_v3_live', commitStrategy: 'turn_prediction' },
+        onEndOfSpeech: vi.fn(),
+      });
+      try {
+        detector._setClassifierState({ vadSpeaking: true, audioDurationSinceCommitInS: 35.3 });
+        detector.onPartialTranscript(0, 'still speaking');
+        expect(
+          detector.onCommittedTranscript(
+            { message_type: 'committed_transcript', text: 'still speaking' },
+            'committed_transcript',
+          ),
+        ).toBe(true);
+        detector.onPartialTranscript(0, 'next segment');
+        await detector.pushFrame(makeFrame(35300, 1000));
+        expect(
+          detector.onCommittedTranscript(
+            { message_type: 'committed_transcript', text: 'next segment' },
+            'committed_transcript',
+          ),
+        ).toBe(true);
+      } finally {
+        await detector.close();
+        vi.useRealTimers();
+      }
+    });
+
+    it('retains a forced decision across delayed timestamps and continuation-before-copy', async () => {
+      vi.useFakeTimers();
+      const ended = vi.fn();
+      const detector = new TurnDetection({
+        options: { modelId: 'scribe_v3_live', commitStrategy: 'turn_prediction' },
+        onEndOfSpeech: ended,
+      });
+      try {
+        detector._setClassifierState({ vadSpeaking: true, audioDurationSinceCommitInS: 35.3 });
+        detector.onPartialTranscript(0, 'still speaking');
+        expect(
+          detector.onCommittedTranscript(
+            { message_type: 'committed_transcript', text: 'still speaking' },
+            'committed_transcript_with_timestamps',
+          ),
+        ).toBe(false);
+        detector.onPartialTranscript(0.95, 'next segment');
+        detector._setClassifierState({ vadSpeaking: false });
+        expect(
+          detector.onCommittedTranscript(
+            { message_type: 'committed_transcript_with_timestamps', text: 'still speaking' },
+            'committed_transcript_with_timestamps',
+          ),
+        ).toBe(true);
+        await vi.advanceTimersByTimeAsync(5000);
+        expect(ended).not.toHaveBeenCalled();
+        detector.onCommittedTranscript(
+          { message_type: 'committed_transcript', text: 'next segment' },
+          'committed_transcript_with_timestamps',
+        );
+        const forced = detector.onCommittedTranscript(
+          { message_type: 'committed_transcript_with_timestamps', text: 'next segment' },
+          'committed_transcript_with_timestamps',
+        );
+        expect(forced).toBe(false);
+        detector.endSpeech();
+        expect(ended).toHaveBeenCalledTimes(1);
+      } finally {
+        await detector.close();
+        vi.useRealTimers();
+      }
+    });
+
+    it.each(['still speaking', 'next segment'])(
+      'resets partial dedupe on the plain commit before delayed timestamps (%s)',
+      async (continuation) => {
+        const detector = new TurnDetection({
+          options: { modelId: 'scribe_v3_live', commitStrategy: 'turn_prediction' },
+          onEndOfSpeech: vi.fn(),
+        });
+        detector._setClassifierState({ vadSpeaking: true, audioDurationSinceCommitInS: 35.3 });
+        expect(detector.onPartialTranscript(0, 'still speaking')).toBe(true);
+        detector.onCommittedTranscript(
+          { message_type: 'committed_transcript', text: 'still speaking' },
+          'committed_transcript_with_timestamps',
+        );
+        expect(detector.onPartialTranscript(0, continuation)).toBe(true);
+        detector.onCommittedTranscript(
+          { message_type: 'committed_transcript_with_timestamps', text: 'still speaking' },
+          'committed_transcript_with_timestamps',
+        );
+        expect(detector.onPartialTranscript(0, continuation)).toBe(false);
+        await detector.close();
+      },
+    );
+
+    it('cancels a forced-commit timer when the server sends its final boundary', async () => {
+      vi.useFakeTimers();
+      const ended = vi.fn();
+      const detector = new TurnDetection({
+        options: { modelId: 'scribe_v3_live', commitStrategy: 'turn_prediction' },
+        onEndOfSpeech: ended,
+      });
+      try {
+        detector._setClassifierState({ vadSpeaking: true, audioDurationSinceCommitInS: 35.3 });
+        detector.onPartialTranscript(0, 'still speaking');
+        detector.onCommittedTranscript(
+          { message_type: 'committed_transcript', text: 'still speaking' },
+          'committed_transcript',
+        );
+        const forced = detector.onCommittedTranscript(
+          { message_type: 'committed_transcript', text: '' },
+          'committed_transcript',
+        );
+        expect(forced).toBe(false);
+        detector.endSpeech();
+        await vi.advanceTimersByTimeAsync(5000);
+        expect(ended).toHaveBeenCalledTimes(1);
+      } finally {
+        await detector.close();
+        vi.useRealTimers();
+      }
+    });
+
+    it.each([
+      ['close', false],
+      ['close', true],
+      ['restart', false],
+      ['restart', true],
+    ] as const)(
+      'finishes a deferred turn on %s with timestamps=%s and isolates the next turn',
+      async (completion, includeTimestamps) => {
+        vi.useFakeTimers();
+        const ended = vi.fn();
+        const detector = new TurnDetection({
+          options: { modelId: 'scribe_v3_live', commitStrategy: 'turn_prediction' },
+          onEndOfSpeech: ended,
+        });
+        try {
+          detector._setClassifierState({ vadSpeaking: true, audioDurationSinceCommitInS: 35.3 });
+          detector.onPartialTranscript(0, 'still speaking');
+          const finalMessageType = includeTimestamps
+            ? 'committed_transcript_with_timestamps'
+            : 'committed_transcript';
+          detector.onCommittedTranscript(
+            { message_type: 'committed_transcript', text: 'still speaking' },
+            finalMessageType,
+          );
+          if (includeTimestamps) {
+            detector.onCommittedTranscript(
+              { message_type: 'committed_transcript_with_timestamps', text: 'still speaking' },
+              finalMessageType,
+            );
+          }
+          if (completion === 'restart') await detector.start();
+          else await detector.close();
+          expect(ended).toHaveBeenCalledTimes(1);
+          await vi.advanceTimersByTimeAsync(5000);
+          expect(ended).toHaveBeenCalledTimes(1);
+          if (completion === 'close') await detector.start();
+          detector.onPartialTranscript(1, 'new connection');
+          const forced = detector.onCommittedTranscript(
+            {
+              message_type: finalMessageType,
+              text: 'new connection',
+            },
+            finalMessageType,
+          );
+          expect(forced).toBe(false);
+          detector.endSpeech();
+          expect(ended).toHaveBeenCalledTimes(2);
+        } finally {
+          await detector.close();
+          vi.useRealTimers();
+        }
+      },
+    );
+
+    it.each(['serverFinal', 'timeout'])(
+      'does not end a new partial when a completed deferred turn closes (%s)',
+      async (completion) => {
+        vi.useFakeTimers();
+        const ended = vi.fn();
+        const detector = new TurnDetection({
+          options: { modelId: 'scribe_v3_live', commitStrategy: 'turn_prediction' },
+          onEndOfSpeech: ended,
+        });
+        try {
+          detector._setClassifierState({ vadSpeaking: true, audioDurationSinceCommitInS: 35.3 });
+          detector.onPartialTranscript(0, 'still speaking');
+          detector.onCommittedTranscript(
+            { message_type: 'committed_transcript', text: 'still speaking' },
+            'committed_transcript',
+          );
+          if (completion === 'serverFinal') {
+            detector.onCommittedTranscript(
+              { message_type: 'committed_transcript', text: 'done' },
+              'committed_transcript',
+            );
+            detector.endSpeech();
+          } else {
+            await vi.advanceTimersByTimeAsync(2000);
+          }
+          expect(ended).toHaveBeenCalledTimes(1);
+          detector.onPartialTranscript(undefined, 'new turn');
+          await detector.close();
+          expect(ended).toHaveBeenCalledTimes(1);
+        } finally {
+          vi.useRealTimers();
+        }
+      },
+    );
+
+    it('starts and closes local VAD and tolerates VAD startup failure', async () => {
+      const vad = new TestVAD();
+      const detector = new TurnDetection({
+        options: { modelId: 'scribe_v3_live', commitStrategy: 'turn_prediction' },
+        vad,
+        onEndOfSpeech: vi.fn(),
+      });
+      await detector.start();
+      vad.streams[0]!.emit(VADEventType.START_OF_SPEECH);
+      await detector.pushFrame(makeFrame(16000));
+      await detector.close();
+      expect(vad.streams[0]!.closeCalls).toBe(1);
+
+      const warn = vi.spyOn(log(), 'warn').mockImplementation(() => undefined);
+      const failing = new TurnDetection({
+        options: { modelId: 'scribe_v3_live', commitStrategy: 'turn_prediction' },
+        vad: new TestVAD(true),
+        onEndOfSpeech: vi.fn(),
+      });
+      await expect(failing.start()).resolves.toBeUndefined();
+      expect(warn).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.any(Error) }),
+        expect.stringContaining('disabling forced-commit guard'),
+      );
+      warn.mockRestore();
+    });
+
+    it.each(['pushFrame', 'inference', 'endInput'] as const)(
+      'disables local VAD after a %s failure without failing turn detection',
+      async (failurePoint) => {
+        class FailingStream extends TestVADStream {
+          override pushFrame(frame: AudioFrame): void {
+            if (failurePoint === 'pushFrame') throw new Error('VAD push failed');
+            super.pushFrame(frame);
+          }
+
+          override endInput(): void {
+            if (failurePoint === 'endInput') throw new Error('VAD end input failed');
+            super.endInput();
+          }
+
+          override next(): Promise<IteratorResult<VADEvent>> {
+            if (failurePoint === 'inference') return Promise.reject(new Error('VAD failed'));
+            return super.next();
+          }
+        }
+
+        class FailingVAD extends VAD {
+          label = 'test.FailingVAD';
+          streamInstance?: FailingStream;
+
+          constructor() {
+            super({ updateInterval: 100 });
+          }
+
+          stream(): VADStream {
+            this.streamInstance = new FailingStream(this);
+            return this.streamInstance;
+          }
+        }
+
+        const warn = vi.spyOn(log(), 'warn').mockImplementation(() => undefined);
+        const vad = new FailingVAD();
+        const detector = new TurnDetection({
+          options: { modelId: 'scribe_v3_live', commitStrategy: 'turn_prediction' },
+          vad,
+          onEndOfSpeech: vi.fn(),
+        });
+        await detector.start();
+        if (failurePoint === 'pushFrame') await detector.pushFrame(makeFrame());
+        if (failurePoint === 'inference') await detector.runVad();
+        if (failurePoint === 'endInput') await detector.endInput();
+        await detector.pushFrame(makeFrame());
+        await detector.close();
+        expect(vad.streamInstance?.closeCalls).toBe(1);
+        expect(warn).toHaveBeenCalledWith(
+          expect.objectContaining({ error: expect.any(Error) }),
+          expect.stringContaining('disabling forced-commit guard'),
+        );
+        warn.mockRestore();
+      },
+    );
+  });
   it('normalizes the primary language in the realtime connection URL', async () => {
     const url = await realtimeConnectionUrl({
       languageCode: 'en_US',
@@ -291,7 +1593,7 @@ describe('ElevenLabs STT', () => {
     new STT({ apiKey: 'test-key', model: 'scribe_v2', secondaryLanguages: ['ru'] });
 
     expect(warn).toHaveBeenCalledWith(
-      '`secondaryLanguages` is only supported for Scribe v2 realtime model and will be ignored',
+      '`secondaryLanguages` is only supported for realtime models and will be ignored',
     );
     warn.mockRestore();
   });
@@ -370,6 +1672,34 @@ describe('ElevenLabs STT', () => {
     const finals = events.filter((event) => event.type === sttLib.SpeechEventType.FINAL_TRANSCRIPT);
     expect(finals).toHaveLength(1);
     expect(finals[0]?.alternatives?.[0]?.language).toBe('es');
+  });
+
+  it.each([
+    [{ text: 'again', start: 0.5, end: 0.8 }, 'again'],
+    [{ text: 'again', start: 0, end: 0 }, undefined],
+    [undefined, undefined],
+  ] as const)('keeps only the latest timed final for EOS (%j)', async (lastWord, expectedText) => {
+    const events = await processStreamEvents(
+      [
+        committedTranscript('hello', {
+          withTimestamps: true,
+          words: [{ text: 'hello', start: 0.1, end: 0.4 }],
+        }),
+        committedTranscript('again', {
+          withTimestamps: true,
+          words: lastWord ? [lastWord] : [],
+        }),
+        committedTranscript('', { withTimestamps: true }),
+      ],
+      4,
+      null,
+      { languageCode: 'en', includeTimestamps: true, includeLanguageDetection: false },
+    );
+    const endpoint = events.at(-1);
+    expect(endpoint?.type).toBe(sttLib.SpeechEventType.END_OF_SPEECH);
+    if (expectedText)
+      expect(endpoint?.alternatives?.map((item) => item.text)).toEqual([expectedText]);
+    else expect(endpoint?.alternatives).toBeUndefined();
   });
 
   describe.each([
