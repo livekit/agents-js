@@ -276,7 +276,7 @@ export class TurnDetection {
       this.#partialTimeout = undefined;
       this.#logger.warn(
         { eosTimeout: timeout },
-        'emitting end of speech for an uncommitted partial after local VAD silence',
+        'emitting end of speech for an uncommitted partial while local VAD remains silent',
       );
       this.endSpeech();
     }, timeout);
