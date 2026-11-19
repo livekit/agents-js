@@ -23,7 +23,10 @@ export class StreamAdapter extends TTS {
   };
 
   #forwardError = (error: TTSError) => {
-    this.emit('error', error);
+    // an `error` emit with no listener throws; the wrapped instance has already reported it
+    if (this.listenerCount('error') > 0) {
+      this.emit('error', error);
+    }
   };
 
   #forwardFallbackActivated = (event: FallbackActivatedEvent) => {

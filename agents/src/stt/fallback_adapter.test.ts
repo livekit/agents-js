@@ -196,7 +196,7 @@ describe('FallbackAdapter', () => {
     const adapter = new FallbackAdapter({ sttInstances: [primary, fallback] });
 
     const handler = vi.fn();
-    (adapter as unknown as EventEmitter).on('stt_availability_changed', handler);
+    adapter.on('stt_availability_changed', handler);
 
     await adapter.recognize(emptyAudioFrame());
 

@@ -11,6 +11,7 @@ import { genAI, inputDelta, recordException, traceTypes, tracer } from '../telem
 import { type APIConnectOptions, intervalForRetry } from '../types.js';
 import { AsyncIterableQueue, Task, delay, startSoon, toError } from '../utils.js';
 import { type ChatContext, type ChatRole, type FunctionCall } from './chat_context.js';
+import type { AvailabilityChangedEvent } from './fallback_adapter.js';
 import {
   type ToolChoice,
   type ToolContext,
@@ -82,6 +83,8 @@ export interface LLMError {
 export type LLMCallbacks = {
   ['metrics_collected']: (metrics: LLMMetrics) => void;
   ['error']: (error: LLMError) => void;
+  /** A `FallbackAdapter` marked one of its LLM instances unavailable, or recovered it. */
+  ['llm_availability_changed']: (event: AvailabilityChangedEvent) => void;
 };
 
 export abstract class LLM extends (EventEmitter as new () => TypedEmitter<LLMCallbacks>) {

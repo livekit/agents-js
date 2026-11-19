@@ -20,6 +20,7 @@ import {
 } from '../types.js';
 import { AsyncIterableQueue, delay, mergeFrames, startSoon, toError } from '../utils.js';
 import type { TimedString } from '../voice/io.js';
+import type { AvailabilityChangedEvent } from './fallback_adapter.js';
 import {
   type MarkupInfo,
   type SpeechSteeringOptions,
@@ -159,6 +160,8 @@ export type TTSCallbacks = {
   ['metrics_collected']: (metrics: TTSMetrics) => void;
   ['error']: (error: TTSError) => void;
   ['fallback_activated']: (event: FallbackActivatedEvent) => void;
+  /** A `FallbackAdapter` marked one of its TTS instances unavailable, or recovered it. */
+  ['tts_availability_changed']: (event: AvailabilityChangedEvent) => void;
 };
 
 /**

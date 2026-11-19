@@ -245,7 +245,7 @@ export class FallbackAdapter extends STT {
 
   emitAvailabilityChanged(stt: STT, available: boolean): void {
     const event: AvailabilityChangedEvent = { stt, available };
-    (this as unknown as NodeJS.EventEmitter).emit('stt_availability_changed', event);
+    this.emit('stt_availability_changed', event);
   }
 
   private tryRecoverRecognize(stt: STT, frame: Parameters<STT['recognize']>[0]): void {

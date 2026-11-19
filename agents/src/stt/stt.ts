@@ -16,6 +16,7 @@ import type { AudioBuffer } from '../utils.js';
 import { AsyncIterableQueue, delay, startSoon, toError } from '../utils.js';
 import type { ConversationItemAddedEvent } from '../voice/events.js';
 import type { TimedString } from '../voice/index.js';
+import type { AvailabilityChangedEvent } from './fallback_adapter.js';
 
 /** Indicates start/middle/end of speech */
 export enum SpeechEventType {
@@ -175,6 +176,8 @@ export interface STTError {
 export type STTCallbacks = {
   ['metrics_collected']: (metrics: STTMetrics) => void;
   ['error']: (error: STTError) => void;
+  /** A `FallbackAdapter` marked one of its STT instances unavailable, or recovered it. */
+  ['stt_availability_changed']: (event: AvailabilityChangedEvent) => void;
 };
 
 /**

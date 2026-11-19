@@ -4,13 +4,14 @@
 import { AudioResampler } from '@livekit/rtc-node';
 import { type Throws, ThrowsPromise } from '@livekit/throws-transformer/throws';
 import { type Attributes, type Span, trace } from '@opentelemetry/api';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { APIConnectionError, APIError } from '../_exceptions.js';
 import { log } from '../log.js';
 import type { TTSMetrics } from '../metrics/base.js';
 import * as traceTypes from '../telemetry/trace_types.js';
 import { blingfire } from '../tokenize/index.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
-import { Task, cancelAndWait } from '../utils.js';
+import { Task, cancelAndWait, toError } from '../utils.js';
 import { StreamAdapter } from './stream_adapter.js';
 import {
   ChunkedStream,
@@ -26,8 +27,11 @@ import {
  */
 interface TTSStatus {
   available: boolean;
+  /** The recovery probe in flight (or the last one that ran), see `FallbackAdapter.tryRecovery`. */
   recoveringTask: Task<void> | null;
-  /** User attempts in flight; recovery probes discard their audio, so their notices aren't forwarded. */
+  /** When the last recovery probe started, on the `performance.now()` clock. */
+  lastProbeStartedAt?: number;
+  /** User attempts in flight: a notice outside any attempt (and outside a probe) is not forwarded. */
   serving: number;
 }
 
@@ -39,7 +43,11 @@ export interface FallbackAdapterOptions {
   ttsInstances: TTS[];
   /** Number of internal retries per TTS instance before moving to the next one. Defaults to 2. */
   maxRetryPerTTS?: number;
-  /** Delay in milliseconds before attempting to recover a failed TTS instance. Defaults to 1000. */
+  /**
+   * Minimum interval in milliseconds between the starts of recovery probes for one failed TTS
+   * instance. A probe starts when a request skips or fails over the instance, never on a timer,
+   * so an idle adapter sends no probes. Defaults to 1000.
+   */
   recoveryDelayMs?: number;
 }
 
@@ -62,14 +70,38 @@ const DEFAULT_FALLBACK_API_CONNECT_OPTIONS: APIConnectOptions = {
 const FORWARD_POLL_MS = 10;
 
 /**
+ * Set while a recovery probe's body runs. Everything the probe starts (its stream, the provider
+ * connection tasks, their event emitters) inherits it, so the notice forwarder can tell a probe's
+ * `fallback_activated` from a user attempt's even when both run on one instance at once. The
+ * Python adapter does the same with its `_in_recovery_probe` ContextVar.
+ */
+const inRecoveryProbe = new AsyncLocalStorage<true>();
+
+/** What a recovery probe synthesizes: short, so a probe costs next to nothing. */
+const RECOVERY_PROBE_TEXT = 'Hello world, this is a recovery test.';
+/** A probe that has not finished by then counts as failed. */
+const RECOVERY_PROBE_TIMEOUT_MS = 10_000;
+
+/**
  * Agent Fallback Adapter for TTS. Manages multiple TTS instances, providing automatic fallback between providers.
  *
  * When the primary TTS fails, it automatically switches to the next available provider in the list.
- * Failed providers are monitored in the background and restored when they recover.
+ * A failed provider is marked unavailable and probed in the background by the next requests that
+ * skip or fail over it, and restored once a probe succeeds or it serves a request (once every
+ * provider is down none is skipped, so each is retried; one that fails its retry is probed, and
+ * the one that serves goes unprobed). A provider that fails
+ * after its audio started ends the utterance (another provider would replay it) and is marked
+ * unavailable too; the adapter then emits a recoverable `error` event.
+ *
+ * Known limitation: a provider without a working `synthesize()`, such as `inference.TTS`, fails
+ * over on every chunked `synthesize()` request, as any provider bug does. Its recovery probe uses
+ * `stream()`, which works, so it is marked unavailable by each chunked request and restored by the
+ * next probe or request. Its streaming requests are unaffected. The adapter can't tell "not
+ * implemented" from a plugin bug without matching the error message, so it doesn't try.
  *
  * Features:
- * - Automatic failover to backup TTS providers on failure
- * - Background health checks to restore recovered providers
+ * - Automatic failover to backup TTS providers on any failure
+ * - Request-driven background probes to restore recovered providers
  * - Automatic audio resampling when TTS providers have different sample rates
  * - Support for both streaming and non-streaming TTS providers
  *
@@ -85,7 +117,7 @@ const FORWARD_POLL_MS = 10;
  *     new ElevenLabsTTS(),  // Fallback
  *   ],
  *   maxRetryPerTTS: 2,      // Retry each TTS twice before moving to next
- *   recoveryDelayMs: 1000,  // Check recovery every 1 second
+ *   recoveryDelayMs: 1000,  // Probe a failed TTS at most once per second
  * });
  *
  * ```
@@ -95,12 +127,12 @@ export class FallbackAdapter extends TTS {
   readonly ttsInstances: TTS[];
   /** Number of retries per TTS instance before falling back to the next one. */
   readonly maxRetryPerTTS: number;
-  /** Delay in milliseconds before attempting to recover a failed TTS instance. */
+  /** Minimum interval in milliseconds between the starts of recovery probes for one failed TTS instance. */
   readonly recoveryDelayMs: number;
 
   private _status: TTSStatus[] = [];
   private _logger = log();
-  private _recoveryTimeouts: Map<number, NodeJS.Timeout> = new Map();
+  private closed = false;
 
   label: string = `tts.FallbackAdapter`;
 
@@ -165,14 +197,16 @@ export class FallbackAdapter extends TTS {
    * Child `error` events are absorbed, never re-emitted: an unrecoverable
    * `tts_error` reaching `AgentSession` closes the session, and a child failing
    * is exactly what this adapter exists to survive. Recovery probes make that
-   * fatal in practice — they re-fail every `recoveryDelayMs` for as long as a
-   * provider is down. A listener is still attached so a child's `emit('error')`
+   * fatal in practice — they keep re-failing for as long as a provider is down.
+   * A listener is still attached so a child's `emit('error')`
    * never throws `ERR_UNHANDLED_ERROR`; logging is left to the attempt that
    * failed, which alone knows whether it was failing over or probing.
    *
    * What the adapter can't recover from still reaches the session, as this
-   * adapter's own error: every instance failing, or a failure after audio went
-   * out, which another instance can't take over without replaying it.
+   * adapter's own unrecoverable error: every instance failing. A failure after
+   * audio went out can't be taken over by another instance without replaying
+   * it, so it ends the utterance and reaches the session as a recoverable error
+   * (see `reportFailureAfterAudio`).
    */
   private readonly absorbChildError = () => {};
 
@@ -182,6 +216,9 @@ export class FallbackAdapter extends TTS {
     this.ttsInstances.forEach((tts, i) => {
       const status = this._status[i]!;
       const forwardFallbackActivated = (event: FallbackActivatedEvent) => {
+        // a probe's audio is discarded, so its notice must never reach the user, even while a user
+        // attempt is serving on the same instance
+        if (inRecoveryProbe.getStore()) return;
         if (status.serving > 0) {
           this.emit('fallback_activated', event);
         }
@@ -228,71 +265,179 @@ export class FallbackAdapter extends TTS {
 
   private emitAvailabilityChanged(tts: TTS, available: boolean): void {
     const event: AvailabilityChangedEvent = { tts, available };
-    (this as unknown as { emit: (event: string, data: AvailabilityChangedEvent) => void }).emit(
-      'tts_availability_changed',
-      event,
+    // a listener that throws must not turn the request that caused the change into a failure
+    try {
+      this.emit('tts_availability_changed', event);
+    } catch (error) {
+      this._logger.error({ tts: tts.label, error }, 'tts_availability_changed listener failed');
+    }
+  }
+
+  /**
+   * Probes a failed instance in the background; the instance is available again once a probe
+   * gets audio from it. Requests start probes, as in the Python adapter: one that skips an
+   * unavailable instance, or fails over one, calls this. No timer probes an idle adapter.
+   *
+   * The probe is a short `stream()` request, so a TTS that only streams (`inference.TTS`
+   * has no `synthesize()`) can recover. At most one probe runs per instance, and probes of
+   * one instance start at least `recoveryDelayMs` apart, so a burst of requests during an outage
+   * costs one probe per interval.
+   * @internal
+   */
+  tryRecovery(index: number): void {
+    if (this.closed) return;
+    const status = this._status[index]!;
+    if (status.recoveringTask && !status.recoveringTask.done) return;
+    const now = performance.now();
+    if (
+      status.lastProbeStartedAt !== undefined &&
+      now - status.lastProbeStartedAt < this.recoveryDelayMs
+    ) {
+      return;
+    }
+    status.lastProbeStartedAt = now;
+
+    const tts = this.ttsInstances[index]!;
+    status.recoveringTask = Task.from((controller) =>
+      // everything the probe starts inherits the flag; see `inRecoveryProbe`
+      inRecoveryProbe.run(true, async () => {
+        let stream: SynthesizeStream | undefined;
+        let streamingTts: TTS | undefined;
+        let timedOut = false;
+        const closeStream = () => stream?.close();
+        const timeout = setTimeout(() => {
+          timedOut = true;
+          closeStream();
+        }, RECOVERY_PROBE_TIMEOUT_MS);
+        controller.signal.addEventListener('abort', closeStream, { once: true });
+        try {
+          streamingTts = this.getStreamingInstance(index);
+          stream = streamingTts.stream({
+            connOptions: {
+              maxRetry: 0,
+              timeoutMs: RECOVERY_PROBE_TIMEOUT_MS,
+              retryIntervalMs: 1000,
+            },
+          });
+          stream.pushText(RECOVERY_PROBE_TEXT);
+          stream.endInput();
+          let audioReceived = false;
+          for await (const audio of stream) {
+            if (audio !== SynthesizeStream.END_OF_STREAM) audioReceived = true;
+          }
+          if (controller.signal.aborted) return;
+          // the timeout closed the stream: a probe that got some audio and then hung is no recovery
+          if (timedOut) {
+            throw new Error(`Recovery test did not finish within ${RECOVERY_PROBE_TIMEOUT_MS}ms`);
+          }
+          if (stream.error) {
+            throw stream.error;
+          }
+          if (!audioReceived) {
+            throw new Error('Recovery test completed but no audio was received');
+          }
+
+          // listeners must not inherit the probe flag, or a request they start loses its notices
+          inRecoveryProbe.exit(() => this.markAvailable(index));
+        } catch (error) {
+          if (controller.signal.aborted) return;
+          this._logger.debug({ tts: tts.label, error }, 'TTS recovery probe failed');
+        } finally {
+          clearTimeout(timeout);
+          controller.signal.removeEventListener('abort', closeStream);
+          stream?.close();
+          // a non-streaming instance gets a StreamAdapter for this probe only
+          if (streamingTts && streamingTts !== tts) {
+            await streamingTts.close();
+          }
+        }
+      }),
     );
   }
 
-  private tryRecovery(index: number): void {
-    const status = this._status[index]!;
-    const tts = this.ttsInstances[index]!;
-    if (status.recoveringTask && !status.recoveringTask.done) {
-      return;
-    }
-    status.recoveringTask = Task.from(async (controller) => {
-      try {
-        const testStream = tts.synthesize(
-          'Hello world, this is a recovery test.',
-          {
-            maxRetry: 0,
-            timeoutMs: 10000,
-            retryIntervalMs: 1000,
-          },
-          controller.signal,
-        );
-        let audioReceived = false;
-        for await (const _ of testStream) {
-          audioReceived = true;
-        }
-        if (testStream.error) {
-          throw testStream.error;
-        }
-        if (!audioReceived) {
-          throw new Error('Recovery test completed but no audio was received');
-        }
-
-        status.available = true;
-        status.recoveringTask = null;
-        this._logger.info({ tts: tts.label }, 'TTS recovered');
-        this.emitAvailabilityChanged(tts, true);
-      } catch (error) {
-        status.recoveringTask = null;
-        // Don't schedule retry if we're shutting down
-        if (controller.signal.aborted) {
-          return;
-        }
-        this._logger.debug({ tts: tts.label, error }, 'TTS recovery failed, will retry');
-        // Retry recovery after delay (matches Python's retry behavior)
-        const timeoutId = setTimeout(() => {
-          this._recoveryTimeouts.delete(index);
-          this.tryRecovery(index);
-        }, this.recoveryDelayMs);
-        this._recoveryTimeouts.set(index, timeoutId);
-      }
-    });
-  }
-
+  /**
+   * Marks an instance unavailable, so requests skip it (and probe it, see `tryRecovery`). This
+   * only flags the instance: it starts no recovery. The instance returns when a probe succeeds, or
+   * when it serves a request (see `markAvailable`). Emits `tts_availability_changed` if it was
+   * available.
+   */
   markUnAvailable(index: number): void {
     const status = this._status[index]!;
-    if (status.recoveringTask && !status.recoveringTask.done) {
-      return;
-    }
-    if (status.available) {
-      status.available = false;
-      this.emitAvailabilityChanged(this.ttsInstances[index]!, false);
-    }
+    if (!status.available) return;
+    status.available = false;
+    this.emitAvailabilityChanged(this.ttsInstances[index]!, false);
+  }
+
+  /**
+   * Marks an instance available again, after a probe succeeded or a request it served succeeded.
+   * Serving counts because once every instance is unavailable none is skipped, so the one that
+   * serves is never probed: it would otherwise stay unavailable for good. Emits
+   * `tts_availability_changed` if it was unavailable.
+   * @internal
+   */
+  markAvailable(index: number): void {
+    const status = this._status[index]!;
+    if (status.available) return;
+    status.available = true;
+    const tts = this.ttsInstances[index]!;
+    this._logger.info({ tts: tts.label }, 'TTS recovered');
+    this.emitAvailabilityChanged(tts, true);
+  }
+
+  /** An instance failed: requests skip it from now on, and probe it in the background. */
+  private markFailed(index: number): void {
+    this.markUnAvailable(index);
     this.tryRecovery(index);
+  }
+
+  /**
+   * An instance failed before any audio of the request went out: the request moves on to the
+   * next one. Any error fails over, not only API errors: a plain error from a provider (a
+   * plugin bug, a TTS without `synthesize()`) must not take the utterance down while another
+   * instance can serve it. A non-API error is logged at error level, with its stack, since
+   * it points at a bug rather than a provider outage.
+   * @internal
+   */
+  failOver(index: number, error: unknown): void {
+    const logged = { tts: this.ttsInstances[index]!.label, error: toError(error) };
+    if (error instanceof APIError) {
+      this._logger.warn(logged, 'TTS failed, switching to next instance');
+    } else {
+      this._logger.error(logged, 'TTS failed with an unexpected error, switching to next instance');
+    }
+    this.markFailed(index);
+  }
+
+  /**
+   * An instance failed after its audio went out. Another instance can't take over without
+   * replaying what the caller already heard, so the caller ends the utterance here. The
+   * instance is marked unavailable and probed like any failed one, and the failure is reported as
+   * a recoverable `tts_error`: the speech was cut short, but the next utterance is served by
+   * another instance, so `AgentSession` must not count it towards closing the session.
+   * @internal
+   */
+  reportFailureAfterAudio(index: number, error: unknown): void {
+    const tts = this.ttsInstances[index]!;
+    const failure = toError(error);
+    this._logger.warn(
+      { tts: tts.label, error: failure },
+      'TTS failed after audio pushed, ending the utterance without fallback',
+    );
+    this.markFailed(index);
+    // an `error` emit with no listener throws; the warning above already told the logs
+    if (this.listenerCount('error') === 0) return;
+    try {
+      this.emit('error', {
+        type: 'tts_error',
+        timestamp: Date.now(),
+        label: this.label,
+        error: failure,
+        recoverable: true,
+      });
+    } catch (listenerError) {
+      // a throwing listener must not stop the caller from ending the utterance
+      this._logger.error({ error: toError(listenerError) }, 'TTS error listener failed');
+    }
   }
 
   /**
@@ -325,19 +470,17 @@ export class FallbackAdapter extends TTS {
 
   /**
    * Close the FallbackAdapter and all underlying TTS instances.
-   * This cancels any ongoing recovery tasks and cleans up resources.
+   * This cancels any ongoing recovery probes, and none starts afterwards.
    */
   async close(): Promise<void> {
-    // clear all recovery timeouts so that it does not cause issue
-    this._recoveryTimeouts.forEach((timeoutId) => {
-      clearTimeout(timeoutId);
-    });
-    this._recoveryTimeouts.clear();
+    // set before the sweep: a stream still in flight runs its failure handling after this, and
+    // must not start a probe that nothing is left to cancel
+    this.closed = true;
 
     // Cancel all recovery tasks
     const recoveryTasks = this._status
       .map((s) => s.recoveringTask)
-      .filter((t): t is Task<void> => t !== null);
+      .filter((t): t is Task<void> => t !== null && !t.done);
 
     if (recoveryTasks.length > 0) {
       await cancelAndWait(recoveryTasks, 1000);
@@ -450,7 +593,7 @@ class FallbackChunkedStream extends ChunkedStream {
       const tts = this.adapter.ttsInstances[i]!;
       const status = this.adapter.status[i]!;
       if (!status.available && !allTTSFailed) {
-        this.adapter.markUnAvailable(i);
+        this.adapter.tryRecovery(i);
         continue;
       }
       const resampler = this.adapter.createResamplerForTTS(i);
@@ -500,9 +643,22 @@ class FallbackChunkedStream extends ChunkedStream {
 
         if (this.abortSignal.aborted) return;
 
+        // A provider that failed before anything reached the caller fails over without a flush:
+        // the flush would push the resampler's tail, the caller would hear a fragment, and the
+        // utterance would end here instead of on the next instance.
+        if (stream.error && !audioPushed) {
+          providerError = stream.error;
+          throw new APIConnectionError({
+            message: sawRawAudio
+              ? 'TTS synthesis failed before any audio was delivered'
+              : 'TTS synthesis completed but no audio was received',
+          });
+        }
+
         // Only flush the resampler if real audio actually went in — otherwise
         // flush() can return phantom frames that would mask a silent failure
-        // from the primary provider.
+        // from the primary provider. When audio was already delivered the flush comes first, so
+        // what the caller heard stays whole.
         if (resampler && sawRawAudio) {
           for (const frame of resampler.flush()) {
             this.queue.put({
@@ -523,42 +679,31 @@ class FallbackChunkedStream extends ChunkedStream {
           });
         }
 
-        // Audio already went out, so another instance would replay it: fail
-        // without retrying instead, so the session learns speech was lost.
+        // Audio already went out: handled in the catch below as a failure after audio.
         if (stream.error) {
           providerError = stream.error;
           throw new APIConnectionError({
             message: 'TTS synthesis failed after audio was received',
-            options: { retryable: false },
           });
         }
 
         this._logger.debug({ tts: tts.label }, 'TTS synthesis succeeded');
         this.servedTts = tts;
         recordFallbackServed(tts, i, this.ttsRequestSpan, this.callerSpan);
+        this.adapter.markAvailable(i);
         return;
       } catch (error) {
         if (this.abortSignal.aborted) return;
-        if (sawRawAudio) {
-          this._logger.error(
-            { tts: tts.label, error: providerError ?? error },
-            'TTS failed after audio pushed, cannot fallback mid-utterance',
-          );
+        // what reached the caller decides: a provider that failed before the resampler produced
+        // a frame has played nothing, so another instance can still serve the whole utterance
+        if (audioPushed) {
           // the caller heard this instance's audio: it served, partially
           this.servedTts = tts;
           recordFallbackServed(tts, i, this.ttsRequestSpan, this.callerSpan);
-          throw error;
+          this.adapter.reportFailureAfterAudio(i, providerError ?? error);
+          return;
         }
-
-        if (error instanceof APIError || error instanceof APIConnectionError) {
-          this._logger.warn(
-            { tts: tts.label, error: providerError ?? error },
-            'TTS failed, switching to next instance',
-          );
-          this.adapter.markUnAvailable(i);
-        } else {
-          throw error;
-        }
+        this.adapter.failOver(i, providerError ?? error);
       } finally {
         if (this.abortSignal.aborted && audioPushed) {
           this.servedTts = tts;
@@ -643,7 +788,7 @@ class FallbackSynthesizeStream extends SynthesizeStream {
       let lastSegmentId: string = '';
 
       if (!status.available && !allTTSFailed) {
-        this.adapter.markUnAvailable(i);
+        this.adapter.tryRecovery(i);
         continue;
       }
       const tts = this.adapter.getStreamingInstance(i);
@@ -743,10 +888,14 @@ class FallbackSynthesizeStream extends SynthesizeStream {
 
             if (this.abortSignal.aborted) return;
 
+            // A provider that failed before anything reached the caller must fail over, so its
+            // resampler is not flushed: the flush would push a fragment and end the utterance.
+            const failedBeforeAudio = !!stream.error && !this.audioPushed;
+
             // Only flush the resampler if real audio actually went in —
             // otherwise flush() can return phantom frames that would mask a
             // silent failure from the primary provider.
-            if (resampler && sawRawAudio) {
+            if (resampler && sawRawAudio && !failedBeforeAudio) {
               for (const frame of resampler.flush()) {
                 this.queue.put({
                   requestId: lastRequestId || '',
@@ -805,13 +954,11 @@ class FallbackSynthesizeStream extends SynthesizeStream {
           });
         }
 
-        // Audio already went out, so another instance would replay it: fail
-        // without retrying instead, so the session learns speech was lost.
+        // Audio already went out: handled in the catch below as a failure after audio.
         if (stream.error) {
           providerError = stream.error;
           throw new APIConnectionError({
             message: 'TTS stream failed after audio was received',
-            options: { retryable: false },
           });
         }
 
@@ -819,30 +966,22 @@ class FallbackSynthesizeStream extends SynthesizeStream {
         this._logger.debug({ tts: originalTts.label }, 'TTS stream succeeded');
         this.servedTts = originalTts;
         recordFallbackServed(originalTts, i, this.ttsRequestSpan, this.callerSpan);
+        this.adapter.markAvailable(i);
         await readInputLLMStream.catch(() => {});
         return;
       } catch (error) {
         if (this.abortSignal.aborted) return;
         if (this.audioPushed) {
-          this._logger.error(
-            { tts: originalTts.label, error: providerError ?? error },
-            'TTS failed after audio pushed, cannot fallback mid-utterance',
-          );
           // the caller heard this instance's audio: it served, partially
           this.servedTts = originalTts;
           recordFallbackServed(originalTts, i, this.ttsRequestSpan, this.callerSpan);
-          throw error;
+          this.adapter.reportFailureAfterAudio(i, providerError ?? error);
+          // end the utterance: the rest of the text is dropped, not replayed on another instance
+          this.queue.put(SynthesizeStream.END_OF_STREAM);
+          void readInputLLMStream.catch(() => {});
+          return;
         }
-
-        if (error instanceof APIError || error instanceof APIConnectionError) {
-          this._logger.warn(
-            { tts: originalTts.label, error: providerError ?? error },
-            'TTS failed, switching to next instance',
-          );
-          this.adapter.markUnAvailable(i);
-        } else {
-          throw error;
-        }
+        this.adapter.failOver(i, providerError ?? error);
       } finally {
         status.serving--;
         // the stream may have received text and failed before emitting audio;

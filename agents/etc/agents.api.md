@@ -3819,11 +3819,14 @@ class FallbackAdapter_3 extends TTS {
     close(): Promise<void>;
     // @internal
     createResamplerForTTS(index: number): AudioResampler | null;
+    // @internal
+    failOver(index: number, error: unknown): void;
     // (undocumented)
     getStreamingInstance(index: number): TTS;
     // (undocumented)
     label: string;
-    // (undocumented)
+    // @internal
+    markAvailable(index: number): void;
     markUnAvailable(index: number): void;
     readonly maxRetryPerTTS: number;
     get model(): string;
@@ -3831,6 +3834,8 @@ class FallbackAdapter_3 extends TTS {
     get provider(): string;
     readonly recoveryDelayMs: number;
     releaseIdleConnections(): Promise<void>;
+    // @internal
+    reportFailureAfterAudio(index: number, error: unknown): void;
     // Warning: (ae-forgotten-export) The symbol "TTSStatus" needs to be exported by the entry point index.d.ts
     get status(): TTSStatus[];
     // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "SynthesizeStream"
@@ -3839,6 +3844,8 @@ class FallbackAdapter_3 extends TTS {
     }): SynthesizeStream;
     // Warning: (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "ChunkedStream"
     synthesize(text: string, connOptions?: APIConnectOptions, abortSignal?: AbortSignal): ChunkedStream;
+    // @internal
+    tryRecovery(index: number): void;
     readonly ttsInstances: TTS[];
     // (undocumented)
     get _wrappedTts(): readonly TTS[];
@@ -5212,6 +5219,7 @@ const LLM_REQUEST: InputDeltaSite;
 export type LLMCallbacks = {
     ['metrics_collected']: (metrics: LLMMetrics) => void;
     ['error']: (error: LLMError) => void;
+    ['llm_availability_changed']: (event: AvailabilityChangedEvent) => void;
 };
 
 // @public
@@ -8023,6 +8031,7 @@ declare namespace stt_2 {
 type STTCallbacks = {
     ['metrics_collected']: (metrics: STTMetrics) => void;
     ['error']: (error: STTError) => void;
+    ['stt_availability_changed']: (event: AvailabilityChangedEvent_2) => void;
 };
 
 // @public
@@ -9126,6 +9135,7 @@ type TTSCallbacks = {
     ['metrics_collected']: (metrics: TTSMetrics) => void;
     ['error']: (error: TTSError) => void;
     ['fallback_activated']: (event: FallbackActivatedEvent) => void;
+    ['tts_availability_changed']: (event: AvailabilityChangedEvent_3) => void;
 };
 
 // @public
@@ -9992,7 +10002,7 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 // src/llm/tool_context.ts:756:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "ToolFlag" has more than one declaration; you need to add a TSDoc member reference selector
 // src/metrics/base.ts:226:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsInputTokenDetails" needs to be exported by the entry point index.d.ts
 // src/metrics/base.ts:230:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsOutputTokenDetails" needs to be exported by the entry point index.d.ts
-// src/stt/stt.ts:395:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "STT"
+// src/stt/stt.ts:398:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "STT"
 // src/utils.ts:468:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "cancelled"
 // src/voice/agent_session.ts:412:3 - (ae-unresolved-link) The @link reference could not be resolved: This type of declaration is not supported yet by the resolver
 // src/voice/agent_session.ts:1090:5 - (ae-forgotten-export) The symbol "RecordingOptions" needs to be exported by the entry point index.d.ts

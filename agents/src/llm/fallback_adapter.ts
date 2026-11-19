@@ -158,11 +158,7 @@ export class FallbackAdapter extends LLM {
    */
   _emitAvailabilityChanged(llm: LLM, available: boolean): void {
     const event: AvailabilityChangedEvent = { llm, available };
-    // Use type assertion for custom event
-    (this as unknown as { emit: (event: string, data: AvailabilityChangedEvent) => void }).emit(
-      'llm_availability_changed',
-      event,
-    );
+    this.emit('llm_availability_changed', event);
   }
 }
 

@@ -247,7 +247,7 @@ describe('FallbackAdapter', () => {
     const adapter = new FallbackAdapter({ llms: [llm1, llm2] });
 
     const eventSpy = vi.fn();
-    (adapter as any).on('llm_availability_changed', eventSpy);
+    adapter.on('llm_availability_changed', eventSpy);
 
     const stream = adapter.chat({
       chatCtx: {} as ChatContext,

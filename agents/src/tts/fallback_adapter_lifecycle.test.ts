@@ -324,7 +324,8 @@ describe('TTS fallback lifecycle', () => {
       const frame = await stream.next();
       expect(frame.done).toBe(false);
       expect(frame.value).not.toBe(SynthesizeStream.END_OF_STREAM);
-      expect(primary.streams).toHaveLength(1);
+      // the request's attempt, and the recovery probe the failover started
+      expect(primary.streams).toHaveLength(2);
       expect(secondary.streams).toHaveLength(1);
       expect(adapter.status.map((status) => status.available)).toEqual([false, true]);
       expect(errors).toEqual([]);
