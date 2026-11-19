@@ -1,0 +1,27 @@
+agents/src/voice/generation_reader_abort.test.ts
+  s_24b3d2e93994a5::t_2e8d1bef43d66a 91-93
+  s_24b3d2e93994a5::t_6b43aae7576edb 112-136
+  s_24b3d2e93994a5::t_ae20bf56ee713c 7,52-90,94-104
+agents/src/voice/generation.ts
+  s_24b3d2e93994a5::t_53ce567b7e108c 934,937,980
+.changeset/tts-text-reader-cleanup.md
+  s_24b3d2e93994a5::t_a6675ab3d37282 1-5
+agents/src/voice/agent_activity_say_stream.test.ts
+  s_24b3d2e93994a5::t_a6675ab3d37282 8,233,243,246
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f17298a95e42928e46e794c49d4e3f646676daa0",
+  "prompts": {},
+  "sessions": {
+    "s_24b3d2e93994a5": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1f4e7-d860-78a2-b52b-56005c39a55c",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
