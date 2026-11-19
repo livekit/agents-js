@@ -1,0 +1,20 @@
+examples/src/drive-thru/database.ts
+  s_e322e6441f1ee2::t_41c52f38453ca3 27-28
+  s_e322e6441f1ee2::t_94c2aa9da3c82a 20-21
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1bebf0a8bdd65e0d739cfda75ae127f113692dc9",
+  "prompts": {},
+  "sessions": {
+    "s_e322e6441f1ee2": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1f393-ad48-7a53-9682-e48cbcea3f9b",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
