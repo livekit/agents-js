@@ -196,7 +196,16 @@ export class TavusAPI {
     return responseData.persona_id;
   }
 
-  private async post(endpoint: string, payload: Record<string, unknown>): Promise<unknown> {
+  /** End a conversation, releasing its replica. */
+  async endConversation(conversationId: string): Promise<void> {
+    await this.post(`conversations/${conversationId}/end`, {}, { expectJson: false });
+  }
+
+  private async post(
+    endpoint: string,
+    payload: Record<string, unknown>,
+    { expectJson = true }: { expectJson?: boolean } = {},
+  ): Promise<unknown> {
     const url = `${this.apiUrl}/${endpoint}`;
     const body = JSON.stringify(payload);
 
@@ -228,6 +237,10 @@ export class TavusAPI {
             error.cause = cause;
           }
           throw error;
+        }
+
+        if (!expectJson) {
+          return undefined;
         }
 
         try {

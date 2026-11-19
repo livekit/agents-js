@@ -130,6 +130,26 @@ describe('Tavus TavusAPI.createConversation', () => {
   });
 });
 
+describe('Tavus TavusAPI.endConversation', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('posts to the end endpoint without reading a body', async () => {
+    // Tavus answers /end without a JSON body, so reading one would fail a call that succeeded
+    const json = vi.fn().mockRejectedValue(new SyntaxError('Unexpected end of JSON input'));
+    const f = vi.fn().mockResolvedValue({ ok: true, status: 200, json } as unknown as Response);
+    global.fetch = f as unknown as typeof fetch;
+
+    await new TavusAPI({ apiKey: 'k', apiUrl: 'http://tavus.test' }).endConversation('c1');
+
+    expect(f).toHaveBeenCalledTimes(1);
+    expect(f.mock.calls[0]![0]).toBe('http://tavus.test/conversations/c1/end');
+    expect((f.mock.calls[0]![1] as RequestInit).method).toBe('POST');
+    expect(json).not.toHaveBeenCalled();
+  });
+});
+
 describe('Tavus TavusAPI retry classification', () => {
   const connOptions: APIConnectOptions = {
     maxRetry: 2,
