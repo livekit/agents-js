@@ -552,6 +552,19 @@ describe('direct session', () => {
     ]);
   });
 
+  it("mints for the stream's snapshot voice, not the live one", async () => {
+    const t = await makeDirectTTS();
+    // The stream snapshots the current voice when it is created...
+    const stream = t.synthesize('Hello there.', NO_RETRY);
+    // ...and the caller switches voices before it has minted or connected.
+    t.updateOptions({ voice: '221100ffeeddccbbaa998877' });
+    await collect(stream);
+    // The session is minted for the voice the stream snapshotted, so the minted session and the
+    // task_start it carries always name the same voice.
+    expect(server.mintRequests).toEqual([{ voice_ids: [VOICE], budget_chars: BUDGET }]);
+    expect(server.received.find((m) => m.type === 'task_start')!.voice_id).toBe(VOICE);
+  });
+
   it('treats a spent session budget as retryable', async () => {
     const t = await makeDirectTTS();
     server.onTask = (ws, ctx) =>

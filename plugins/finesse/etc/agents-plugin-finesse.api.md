@@ -57,7 +57,7 @@ export class TTS extends tts.TTS {
     // @internal (undocumented)
     closeWs(ws: WebSocket_2): Promise<void>;
     // @internal
-    connectDirect(timeout: number): Promise<WebSocket_2>;
+    connectDirect(timeout: number, voice: string): Promise<WebSocket_2>;
     // @internal (undocumented)
     connectWs(timeout: number): Promise<WebSocket_2>;
     // @internal
@@ -65,7 +65,7 @@ export class TTS extends tts.TTS {
     // (undocumented)
     label: string;
     // @internal
-    mintSession(timeout: number): Promise<{
+    mintSession(timeout: number, voice: string): Promise<{
         url: string;
         token: string;
     }>;
@@ -75,6 +75,8 @@ export class TTS extends tts.TTS {
     _options(): ResolvedTTSOptions;
     // Warning: (ae-forgotten-export) The symbol "ConnectionPool" needs to be exported by the entry point index.d.ts
     pool: ConnectionPool<WebSocket_2>;
+    // @internal
+    poolFor(voice: string): ConnectionPool<WebSocket_2>;
     // (undocumented)
     prewarm(): void;
     // (undocumented)

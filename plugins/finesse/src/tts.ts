@@ -184,8 +184,12 @@ export class TTS extends tts.TTS {
   // Aborted by close(): stops one-shot syntheses, which aren't tracked in #streams, and makes a
   // handshake that completes afterwards discard its socket.
   #closeController = new AbortController();
-  /** Pooled Finesse connections. */
+  /** Pooled Finesse connections (classic mode; voice-agnostic). */
   pool: ConnectionPool<WebSocket>;
+  // A direct session is minted for one voice, so each voice gets its own pool: a stream always
+  // draws from the pool for the voice it snapshotted, which guarantees the session it uses was
+  // minted for that exact voice.
+  #directPools = new Map<string, ConnectionPool<WebSocket>>();
   label = 'finesse.TTS';
   /** @internal The realtime WebSocket URL; tests point it at a local server. */
   _wsUrl = FINESSE_WS_URL;
@@ -254,9 +258,9 @@ export class TTS extends tts.TTS {
     validate(opts);
     if (opts.voice !== undefined && opts.voice !== this.#opts.voice) {
       this.#opts.voice = opts.voice;
-      // A direct session is pinned to its voice, so drop pooled sessions; the next synthesis
-      // mints one for the new voice.
-      if (this.#opts.useDirectSession) this.pool.invalidate();
+      // In direct mode nothing needs dropping here: the next synthesis snapshots the new voice
+      // and draws from that voice's own pool (see poolFor), so it never reuses a session minted
+      // for the previous voice. The previous voice's pool simply idles out.
     }
     if (opts.language !== undefined) this.#opts.language = toFinesseLanguage(opts.language);
     if (opts.numStep !== undefined) this.#opts.numStep = opts.numStep;
@@ -289,12 +293,13 @@ export class TTS extends tts.TTS {
   }
 
   prewarm(): void {
-    this.pool.prewarm();
+    this.poolFor(this.#opts.voice).prewarm();
   }
 
   /** Release pooled connections; an in-flight synthesis keeps its until it finishes. */
   override async releaseIdleConnections(): Promise<void> {
     await this.pool.releaseIdle();
+    for (const pool of this.#directPools.values()) await pool.releaseIdle();
   }
 
   /** @internal Called by a stream once it is done, so finished streams aren't kept. */
@@ -309,11 +314,35 @@ export class TTS extends tts.TTS {
     }
     this.#streams.clear();
     await this.pool.close();
+    for (const pool of this.#directPools.values()) await pool.close();
+    this.#directPools.clear();
+  }
+
+  /**
+   * @internal Return the connection pool a stream for `voice` should use.
+   *
+   * Classic streams share one voice-agnostic pool. Direct sessions are minted for a single
+   * voice, so each voice gets its own pool; its connections are therefore always minted for the
+   * voice the caller asked for.
+   */
+  poolFor(voice: string): ConnectionPool<WebSocket> {
+    if (!this.#opts.useDirectSession) return this.pool;
+    let pool = this.#directPools.get(voice);
+    if (!pool) {
+      pool = new ConnectionPool<WebSocket>({
+        connectCb: (timeout) => this.connectDirect(timeout, voice),
+        closeCb: (ws) => this.closeWs(ws),
+        maxSessionDuration: 300_000,
+        markRefreshedOnGet: true,
+        connectTimeout: DEFAULT_API_CONNECT_OPTIONS.timeoutMs,
+      });
+      this.#directPools.set(voice, pool);
+    }
+    return pool;
   }
 
   /** @internal */
   async connectWs(timeout: number): Promise<WebSocket> {
-    if (this.#opts.useDirectSession) return this.connectDirect(timeout);
     const ws = new WebSocket(this._wsUrl, [SUBPROTOCOL], {
       headers: {
         'X-API-Key': this.#opts.apiKey,
@@ -361,9 +390,9 @@ export class TTS extends tts.TTS {
    * socket against the synthesis GPU itself, one hop closer than the relayed stream. The
    * per-turn protocol is identical.
    */
-  async connectDirect(timeout: number): Promise<WebSocket> {
+  async connectDirect(timeout: number, voice: string): Promise<WebSocket> {
     const started = Date.now();
-    const minted = await this.mintSession(timeout);
+    const minted = await this.mintSession(timeout, voice);
     const remaining = Math.max(0, timeout - (Date.now() - started));
     // The session token is the auth; it travels as the second subprotocol, not an API key.
     const ws = new WebSocket(minted.url, [SUBPROTOCOL, minted.token], {
@@ -379,7 +408,8 @@ export class TTS extends tts.TTS {
         });
       }
       ws.on('error', () => {});
-      ws.on('close', () => this.pool.remove(ws));
+      // A direct connection belongs to its voice's pool, so it must leave that pool on close.
+      ws.on('close', () => this.poolFor(voice).remove(ws));
       return ws;
     } catch (e) {
       try {
@@ -400,7 +430,7 @@ export class TTS extends tts.TTS {
   }
 
   /** @internal Create a direct realtime session on the backend, returning the GPU URL and token. */
-  async mintSession(timeout: number): Promise<{ url: string; token: string }> {
+  async mintSession(timeout: number, voice: string): Promise<{ url: string; token: string }> {
     let resp: Response;
     try {
       resp = await fetch(`${this._apiBase}/realtime/sessions`, {
@@ -411,7 +441,7 @@ export class TTS extends tts.TTS {
           'X-Finesse-Client': `livekit-agents-js/${__PACKAGE_VERSION__}`,
         },
         body: JSON.stringify({
-          voice_ids: [this.#opts.voice],
+          voice_ids: [voice],
           budget_chars: SESSION_BUDGET_CHARS,
         }),
         signal: AbortSignal.timeout(timeout),
@@ -439,9 +469,11 @@ export class TTS extends tts.TTS {
     const url = data?.url;
     const token = data?.token;
     if (typeof url !== 'string' || typeof token !== 'string') {
+      // The body is deliberately omitted: a malformed-but-successful response can carry the
+      // session token, which must never reach the retry/error logs.
       throw new APIStatusError({
         message: 'Finesse returned an unexpected session response',
-        options: { statusCode: resp.status, body },
+        options: { statusCode: resp.status },
       });
     }
     return { url, token };
@@ -637,7 +669,7 @@ async function runContext(host: ContextHost): Promise<void> {
     }
   };
 
-  await host.tts.pool.withConnection(
+  await host.tts.poolFor(opts.voice).withConnection(
     async (ws) => {
       if (ws.readyState !== WebSocket.OPEN) {
         throw new APIConnectionError({ message: 'Finesse connection closed while idle' });
