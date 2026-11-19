@@ -1,10 +1,25 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES.
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 import { Plugin } from '@livekit/agents';
 
-export { SpeechStream, STT, type STTOptions } from './stt.js';
-export { ChunkedStream, SynthesizeStream, TTS, type TTSOptions } from './tts.js';
+export {
+  type EndpointingConfig,
+  SpeechStream,
+  STT,
+  type STTInferenceMode,
+  type STTOptions,
+  type STTProviderOptions,
+} from './stt.js';
+export {
+  ChunkedStream,
+  SynthesizeStream,
+  TTS,
+  type TTSInferenceMode,
+  type TTSOptions,
+  type TTSProviderOptions,
+} from './tts.js';
 
 class NVIDIAPlugin extends Plugin {
   constructor() {

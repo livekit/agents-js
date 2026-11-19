@@ -1,3 +1,4 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES.
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
@@ -12,12 +13,13 @@ import {
   tts,
 } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
-import { RivaConnection, toAPIConnectionError } from './connection.js';
-import { log } from './log.js';
+import { readFileSync } from 'node:fs';
+import { RivaConnection, toAPIError } from './connection.js';
 import {
   type ModelConfigResponse,
   RivaSpeechSynthesis,
   type RivaSpeechSynthesisClient,
+  type SynthesizeSpeechRequest,
   type SynthesizeSpeechResponse,
 } from './proto.js';
 
@@ -25,6 +27,15 @@ const DEFAULT_SERVER = 'grpc.nvcf.nvidia.com:443';
 const DEFAULT_FUNCTION_ID = '877104f7-e885-42b9-8de8-f6e4c6303969';
 const DEFAULT_VOICE = 'Magpie-Multilingual.EN-US.Leo';
 const NUM_CHANNELS = 1;
+
+export type TTSInferenceMode = 'online' | 'offline';
+
+/** Additional NVIDIA Speech synthesis request fields. */
+export interface TTSProviderOptions {
+  customDictionary?: string;
+  customConfiguration?: Record<string, string>;
+  enableWordTimeOffsets?: boolean;
+}
 
 /** Options for NVIDIA Riva text-to-speech. */
 export interface TTSOptions {
@@ -42,6 +53,12 @@ export interface TTSOptions {
   server: string;
   /** Whether to connect with TLS. Disable for a locally hosted Riva NIM service. */
   useSsl: boolean;
+  /** WAV reference audio for zero-shot synthesis. */
+  audioPromptFile?: string;
+  /** Zero-shot decoder quality from 1 to 40. */
+  quality?: number;
+  options: TTSProviderOptions;
+  inferenceMode: TTSInferenceMode;
 }
 
 const defaultTTSOptions: TTSOptions = {
@@ -51,6 +68,8 @@ const defaultTTSOptions: TTSOptions = {
   sampleRate: 16000,
   server: DEFAULT_SERVER,
   useSsl: true,
+  options: {},
+  inferenceMode: 'online',
 };
 
 const connections = new WeakMap<TTS, RivaConnection<RivaSpeechSynthesisClient>>();
@@ -61,11 +80,11 @@ export class TTS extends tts.TTS {
   label = 'nvidia.TTS';
 
   get model(): string {
-    return this.#opts.voice;
+    return this.#opts.voice.split('.', 1)[0]!;
   }
 
   get provider(): string {
-    return 'NVIDIA';
+    return 'NVIDIA Speech';
   }
 
   /**
@@ -74,17 +93,21 @@ export class TTS extends tts.TTS {
    * @throws Error when `useSsl` is true and no API key is available.
    */
   constructor(opts: Partial<TTSOptions> = {}) {
-    const resolvedOpts = {
+    const resolvedOpts: TTSOptions = {
       ...defaultTTSOptions,
       ...opts,
+      options: { ...defaultTTSOptions.options, ...opts.options },
       apiKey: opts.apiKey || process.env.NVIDIA_API_KEY,
     };
+    if (!['online', 'offline'].includes(resolvedOpts.inferenceMode)) {
+      throw new Error("inferenceMode must be either 'online' or 'offline'");
+    }
     super(resolvedOpts.sampleRate, NUM_CHANNELS, { streaming: true });
     connections.set(this, new RivaConnection(resolvedOpts, RivaSpeechSynthesis));
     this.#opts = resolvedOpts;
   }
 
-  /** Synthesize complete text, one Riva request per sentence. */
+  /** Synthesize complete text in one NVIDIA Speech request. */
   synthesize(
     text: string,
     connOptions?: APIConnectOptions,
@@ -110,13 +133,20 @@ export class TTS extends tts.TTS {
       });
       const result: Record<string, { voices: string[] }> = {};
       for (const config of response.modelConfig) {
-        const language = config.parameters['language_code'] ?? 'unknown';
+        const languages =
+          config.parameters['language_code']
+            ?.split(',')
+            .map((language) => language.trim())
+            .filter(Boolean) ?? [];
         const voice = config.parameters['voice_name'] ?? 'unknown';
         const subvoices = config.parameters['subvoices'];
         const voices = subvoices
           ? subvoices.split(',').map((item) => `${voice}.${item.split(':')[0]}`)
           : [voice];
-        (result[language] ??= { voices: [] }).voices.push(...voices);
+        for (const language of languages.length ? languages : ['unknown']) {
+          const existing = (result[language] ??= { voices: [] }).voices;
+          for (const item of voices) if (!existing.includes(item)) existing.push(item);
+        }
       }
       return Object.fromEntries(Object.entries(result).sort(([a], [b]) => a.localeCompare(b)));
     } finally {
@@ -188,8 +218,11 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         const item = await this.input.next({ signal: attempt.signal });
         if (item.done) break;
         const data = item.value;
-        if (data === SynthesizeStream.FLUSH_SENTINEL) tokenizer.flush();
-        else tokenizer.pushText(data);
+        if (data === SynthesizeStream.FLUSH_SENTINEL) {
+          tokenizer.flush();
+          break;
+        }
+        tokenizer.pushText(data);
       }
       tokenizer.endInput();
     };
@@ -209,12 +242,16 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
     const tasks = [inputTask(), synthesizeTask] as const;
     try {
-      const [, error] = await Promise.all(tasks);
-      output.end();
-      if (error && !this.abortSignal.aborted) {
-        // The stream already consumed its input, so a retry would have no text to send.
-        throw new APIConnectionError({ message: error.message, options: { retryable: false } });
+      try {
+        await Promise.all(tasks);
+      } catch (error) {
+        output.end();
+        if (error instanceof Error && !this.abortSignal.aborted) {
+          throw new APIConnectionError({ message: error.message, options: { retryable: false } });
+        }
+        throw error;
       }
+      output.end();
       this.queue.put(SynthesizeStream.END_OF_STREAM);
     } finally {
       attempt.abort();
@@ -225,9 +262,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 }
 
 /**
- * Synthesizes complete text, one Riva request per sentence. Like the stream, a failed sentence is
- * logged and skipped; the request fails only when no audio was produced, so a retry replays
- * nothing the caller already received.
+ * Synthesizes complete text in one NVIDIA Speech request.
  */
 export class ChunkedStream extends tts.ChunkedStream {
   #opts: TTSOptions;
@@ -255,20 +290,15 @@ export class ChunkedStream extends tts.ChunkedStream {
     const client = await this.#connection.pool.get(this.#connOptions.timeoutMs);
     try {
       const output = new SegmentWriter(this.#opts.sampleRate, (audio) => this.queue.put(audio));
-      const error = await synthesizeSentences(
-        new tokenize.blingfire.SentenceTokenizer().tokenize(this.inputText),
-        {
-          client,
-          metadata: this.#connection.metadata,
-          opts: this.#opts,
-          output,
-          stopSignal: this.abortSignal,
-          callSignal: this.abortSignal,
-        },
+      await synthesizeRequest(
+        client,
+        this.#connection.metadata,
+        this.#opts,
+        this.inputText,
+        this.abortSignal,
+        (chunk) => output.write(chunk),
       );
       output.end();
-      // Nothing reached the caller, so the error's own status decides whether to retry.
-      if (error && !this.abortSignal.aborted) throw error;
     } finally {
       this.#connection.pool.put(client);
     }
@@ -332,39 +362,24 @@ interface SentenceContext {
 }
 
 /**
- * Synthesize sentences in order, one Riva request each. A failed sentence is logged and skipped,
- * matching the Python plugin. Returns the last failure only when no audio was produced, so the
- * caller decides whether the request fails.
+ * Synthesize sentences in order, stopping on the first provider failure.
  */
 async function synthesizeSentences(
   sentences: AsyncIterable<string> | Iterable<string>,
   ctx: SentenceContext,
-): Promise<APIConnectionError | undefined> {
-  let failure: APIConnectionError | undefined;
+): Promise<void> {
   for await (const sentence of sentences) {
     if (!sentence.trim()) continue;
     if (ctx.stopSignal.aborted) break;
     ctx.onSentence?.();
-    try {
-      await synthesizeSentence(
-        ctx.client,
-        ctx.metadata,
-        ctx.opts,
-        sentence,
-        ctx.callSignal,
-        (chunk) => ctx.output.write(chunk),
-      );
-    } catch (error) {
-      if (!(error instanceof APIConnectionError)) throw error;
-      failure = error;
-      log().error({ error }, 'NVIDIA TTS sentence failed');
-    }
+    await synthesizeRequest(ctx.client, ctx.metadata, ctx.opts, sentence, ctx.callSignal, (chunk) =>
+      ctx.output.write(chunk),
+    );
   }
-  return ctx.output.wroteAudio ? undefined : failure;
 }
 
-/** Synthesize one sentence, forwarding its PCM chunks until the call ends. */
-async function synthesizeSentence(
+/** Synthesize one request, forwarding its PCM chunks until the call ends. */
+async function synthesizeRequest(
   client: RivaSpeechSynthesisClient,
   metadata: grpc.Metadata,
   opts: TTSOptions,
@@ -372,16 +387,26 @@ async function synthesizeSentence(
   signal: AbortSignal,
   onAudio: (audio: Buffer) => void,
 ): Promise<void> {
-  const call = client.SynthesizeOnline(
-    {
-      text,
-      languageCode: opts.languageCode,
-      encoding: 'LINEAR_PCM',
-      sampleRateHz: opts.sampleRate,
-      voiceName: opts.voice,
-    },
-    metadata,
-  );
+  const request = synthesisRequest(text.trimStart().trim(), opts);
+  if (signal.aborted) return;
+  if (opts.inferenceMode === 'offline') {
+    await new Promise<void>((resolve, reject) => {
+      let cancel = () => {};
+      const call = client.Synthesize(request, metadata, {}, (error, response) => {
+        signal.removeEventListener('abort', cancel);
+        if (error) reject(toAPIError(error, 'NVIDIA Speech offline TTS'));
+        else {
+          if (!signal.aborted && response.audio.length > 0) onAudio(response.audio);
+          resolve();
+        }
+      });
+      cancel = () => call.cancel();
+      signal.addEventListener('abort', cancel, { once: true });
+    });
+    return;
+  }
+
+  const call = client.SynthesizeOnline(request, metadata);
   const cancel = () => call.cancel();
   signal.addEventListener('abort', cancel, { once: true });
   try {
@@ -392,10 +417,60 @@ async function synthesizeSentence(
       call.on('end', resolve);
       call.on('error', (error: grpc.ServiceError) => {
         if (signal.aborted) resolve();
-        else reject(toAPIConnectionError(error, 'NVIDIA TTS failed'));
+        else reject(toAPIError(error, 'NVIDIA Speech online TTS'));
       });
     });
   } finally {
     signal.removeEventListener('abort', cancel);
   }
+}
+
+function synthesisRequest(text: string, opts: TTSOptions): SynthesizeSpeechRequest {
+  return {
+    text,
+    languageCode: opts.languageCode,
+    encoding: 'LINEAR_PCM',
+    sampleRateHz: opts.sampleRate,
+    voiceName: opts.voice,
+    ...(opts.audioPromptFile && { zeroShotData: wavPrompt(opts.audioPromptFile, opts.quality) }),
+    ...(opts.options.customDictionary && { customDictionary: opts.options.customDictionary }),
+    ...(opts.options.customConfiguration && {
+      customConfiguration: opts.options.customConfiguration,
+    }),
+    ...(opts.options.enableWordTimeOffsets !== undefined && {
+      enableWordTimeOffsets: opts.options.enableWordTimeOffsets,
+    }),
+  };
+}
+
+function wavPrompt(
+  path: string,
+  quality = 20,
+): NonNullable<SynthesizeSpeechRequest['zeroShotData']> {
+  const wav = readFileSync(path);
+  if (wav.toString('ascii', 0, 4) !== 'RIFF' || wav.toString('ascii', 8, 12) !== 'WAVE') {
+    throw new Error('audioPromptFile must be a WAV file');
+  }
+  let offset = 12;
+  let sampleRate = 0;
+  let audio: Buffer | undefined;
+  while (offset + 8 <= wav.length) {
+    const id = wav.toString('ascii', offset, offset + 4);
+    const size = wav.readUInt32LE(offset + 4);
+    const start = offset + 8;
+    if (id === 'fmt ') {
+      if (wav.readUInt16LE(start) !== 1 || wav.readUInt16LE(start + 2) !== 1) {
+        throw new Error('audioPromptFile must contain mono LINEAR_PCM audio');
+      }
+      sampleRate = wav.readUInt32LE(start + 4);
+      if (wav.readUInt16LE(start + 14) !== 16) {
+        throw new Error('audioPromptFile must contain 16-bit LINEAR_PCM audio');
+      }
+    } else if (id === 'data') {
+      audio = wav.subarray(start, start + size);
+    }
+    offset = start + size + (size % 2);
+  }
+  if (!sampleRate || !audio) throw new Error('audioPromptFile is missing WAV audio data');
+  return { audioPrompt: audio, sampleRateHz: sampleRate, encoding: 'LINEAR_PCM', quality };
 }

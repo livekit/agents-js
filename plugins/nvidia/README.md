@@ -1,4 +1,5 @@
 <!--
+SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES.
 SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 
 SPDX-License-Identifier: Apache-2.0
@@ -6,7 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 
 # NVIDIA plugin for LiveKit Agents
 
-Support for [NVIDIA Riva](https://developer.nvidia.com/riva) speech AI services in LiveKit Agents.
+Support for NVIDIA Speech AI services in LiveKit Agents.
 
 ## Installation
 
@@ -24,11 +25,23 @@ Use an NVIDIA API key through `NVIDIA_API_KEY`, or connect to a self-hosted
 ```typescript
 import * as nvidia from '@livekit/agents-plugin-nvidia';
 
-const stt = new nvidia.STT();
-const tts = new nvidia.TTS();
+const stt = new nvidia.STT({
+  model: 'parakeet-1.1b-en-US-asr-streaming-silero-vad-sortformer',
+  inferenceMode: 'streaming',
+  endpointing: { mode: 'lowLatency' },
+});
+const tts = new nvidia.TTS({
+  voice: 'Magpie-Multilingual.EN-US.Leo',
+  sampleRate: 16000,
+  inferenceMode: 'online',
+});
 ```
 
-For a local NIM deployment, pass its gRPC address to `server` and disable SSL.
+STT defaults to `inferenceMode: 'auto'`; use `streaming` or `offline` to match the
+deployed model. TTS defaults to `online`; use `offline` for batch models.
+
+For a local NVIDIA Speech deployment, pass its gRPC address to `server` and set
+`useSsl: false` when TLS is not enabled.
 
 TTS reuses pooled gRPC channels. The last session using a provider releases its idle
 channels; active synthesis finishes before its channel closes. STT releases its channel
@@ -41,10 +54,9 @@ error so a fallback provider can take over. `synthesize()` sends one request per
 sentence of the complete text. It retries only when no audio was produced, and never
 retries a request rejected for bad input or credentials.
 
-STT reconnects after transport failures and unexpected server closure. Audio already
-sent to the failed connection is not replayed. An utterance open when a connection
-fails stays open until the next connection's final transcript ends it. Word timestamps
-remain on the stream clock, and usage metrics count the audio sent on each connection.
+STT reconnects after transport failures and unexpected server closure. It replays up to
+30 seconds of audio not covered by a final transcript, preserving word timestamps on the
+stream clock. Flush boundaries restart the backend RPC without closing the LiveKit stream.
 
 Transcripts include word-level timestamps. Set `enableDiarization: true` with a
 Sortformer-based model, such as the default model, to label final transcripts with a

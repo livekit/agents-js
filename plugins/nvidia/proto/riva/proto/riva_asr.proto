@@ -10,10 +10,17 @@ import "riva/proto/riva_audio.proto";
 import "riva/proto/riva_common.proto";
 
 service RivaSpeechRecognition {
+  rpc Recognize(RecognizeRequest) returns (RecognizeResponse) {}
   rpc StreamingRecognize(stream StreamingRecognizeRequest)
       returns (stream StreamingRecognizeResponse) {}
   rpc GetRivaSpeechRecognitionConfig(RivaSpeechRecognitionConfigRequest)
       returns (RivaSpeechRecognitionConfigResponse) {}
+}
+
+message RecognizeRequest {
+  RecognitionConfig config = 1;
+  bytes audio = 2;
+  nvidia.riva.RequestId id = 100;
 }
 
 message RivaSpeechRecognitionConfigRequest {
@@ -40,11 +47,30 @@ message RecognitionConfig {
   int32 sample_rate_hertz = 2;
   string language_code = 3;
   int32 max_alternatives = 4;
+  bool profanity_filter = 5;
+  repeated SpeechContext speech_contexts = 6;
   int32 audio_channel_count = 7;
   bool enable_word_time_offsets = 8;
   bool enable_automatic_punctuation = 11;
   string model = 13;
+  bool verbatim_transcripts = 14;
   SpeakerDiarizationConfig diarization_config = 19;
+  map<string, string> custom_configuration = 24;
+  optional EndpointingConfig endpointing_config = 25;
+}
+
+message EndpointingConfig {
+  optional int32 start_history = 1;
+  optional float start_threshold = 2;
+  optional int32 stop_history = 3;
+  optional float stop_threshold = 4;
+  optional int32 stop_history_eou = 5;
+  optional float stop_threshold_eou = 6;
+}
+
+message SpeechContext {
+  repeated string phrases = 1;
+  float boost = 4;
 }
 
 message SpeakerDiarizationConfig {
@@ -69,6 +95,17 @@ message SpeechRecognitionAlternative {
   string transcript = 1;
   float confidence = 2;
   repeated WordInfo words = 3;
+}
+
+message SpeechRecognitionResult {
+  repeated SpeechRecognitionAlternative alternatives = 1;
+  int32 channel_tag = 2;
+  float audio_processed = 3;
+}
+
+message RecognizeResponse {
+  repeated SpeechRecognitionResult results = 1;
+  nvidia.riva.RequestId id = 100;
 }
 
 message StreamingRecognitionResult {

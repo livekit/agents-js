@@ -138,6 +138,8 @@ export const _FLUSH_MARKER = Symbol('stt_flush_marker');
 export interface STTCapabilities {
   streaming: boolean;
   interimResults: boolean;
+  /** Whether the provider supports complete-buffer recognition. */
+  offlineRecognize?: boolean;
   /**
    * Whether the STT supports flushing the stream to finalize a segment.
    *

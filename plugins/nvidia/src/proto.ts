@@ -39,21 +39,39 @@ export interface StreamingRecognizeResponse {
   id: RequestId | null;
 }
 
+export type RecognizeResponse = StreamingRecognizeResponse;
+
+export interface EndpointingConfig {
+  startHistory?: number;
+  startThreshold?: number;
+  stopHistory?: number;
+  stopThreshold?: number;
+  stopHistoryEou?: number;
+  stopThresholdEou?: number;
+}
+
+export interface RecognitionConfig {
+  encoding: 'LINEAR_PCM';
+  sampleRateHertz: number;
+  languageCode: string;
+  maxAlternatives: number;
+  profanityFilter: boolean;
+  speechContexts: { phrases: string[]; boost: number }[];
+  audioChannelCount: number;
+  enableWordTimeOffsets: boolean;
+  enableAutomaticPunctuation: boolean;
+  model: string;
+  verbatimTranscripts: boolean;
+  diarizationConfig?: { enableSpeakerDiarization: boolean; maxSpeakerCount: number };
+  customConfiguration: Record<string, string>;
+  endpointingConfig?: EndpointingConfig;
+}
+
 /** ASR input: one configuration message followed by mono, signed 16-bit PCM chunks. */
 export type StreamingRecognizeRequest =
   | {
       streamingConfig: {
-        config: {
-          encoding: 'LINEAR_PCM';
-          sampleRateHertz: number;
-          languageCode: string;
-          maxAlternatives: number;
-          audioChannelCount: number;
-          enableWordTimeOffsets: boolean;
-          enableAutomaticPunctuation: boolean;
-          model: string;
-          diarizationConfig?: { enableSpeakerDiarization: boolean; maxSpeakerCount: number };
-        };
+        config: RecognitionConfig;
         interimResults: boolean;
       };
     }
@@ -66,6 +84,16 @@ export interface SynthesizeSpeechRequest {
   encoding: 'LINEAR_PCM';
   sampleRateHz: number;
   voiceName: string;
+  zeroShotData?: {
+    audioPrompt: Buffer;
+    sampleRateHz: number;
+    encoding: 'LINEAR_PCM';
+    quality: number;
+    transcript?: string;
+  };
+  customDictionary?: string;
+  customConfiguration?: Record<string, string>;
+  enableWordTimeOffsets?: boolean;
 }
 
 /** A decoded synthesis chunk; the loader supplies an empty buffer for omitted audio. */
@@ -78,6 +106,13 @@ export interface SynthesizeSpeechResponse {
 
 /** Typed ASR RPCs from the vendored riva_asr.proto service. */
 export interface RivaSpeechRecognitionClient extends grpc.Client {
+  /** Recognize a complete PCM recording. */
+  Recognize(
+    request: { config: RecognitionConfig; audio: Buffer },
+    metadata: grpc.Metadata,
+    options: grpc.CallOptions,
+    callback: (error: grpc.ServiceError | null, response: RecognizeResponse) => void,
+  ): grpc.ClientUnaryCall;
   /** Open a bidirectional recognition RPC; send configuration before audio. */
   StreamingRecognize(
     metadata: grpc.Metadata,
@@ -92,6 +127,13 @@ export interface RivaSpeechRecognitionClient extends grpc.Client {
 
 /** Typed synthesis RPCs from the vendored riva_tts.proto service. */
 export interface RivaSpeechSynthesisClient extends grpc.Client {
+  /** Synthesize one complete request as a unary response. */
+  Synthesize(
+    request: SynthesizeSpeechRequest,
+    metadata: grpc.Metadata,
+    options: grpc.CallOptions,
+    callback: (error: grpc.ServiceError | null, response: SynthesizeSpeechResponse) => void,
+  ): grpc.ClientUnaryCall;
   /** Synthesize one sentence as a server stream of PCM chunks. */
   SynthesizeOnline(
     request: SynthesizeSpeechRequest,
