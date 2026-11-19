@@ -1,0 +1,29 @@
+plugins/elevenlabs/package.json
+  s_e322e6441f1ee2::t_18743bd9ff7662 43
+turbo.json
+  s_e322e6441f1ee2::t_4528821094334a 28-30
+plugins/elevenlabs/src/_turn_detection.test.ts
+  s_e322e6441f1ee2::t_4a53f9d82dbf40 12,64,220
+  s_e322e6441f1ee2::t_6c55dcc093bc3d 131,133,306-343
+  s_e322e6441f1ee2::t_25554223fb02e4 189-192
+  s_e322e6441f1ee2::t_2f357ceaf209a7 287-290,345-373,375-389,391-404,406-420
+  s_e322e6441f1ee2::t_3763c2269738ec 1-11,13-63,65-130,132,134-188,193-219,221-286,291-305,344,374,390,405,421
+pnpm-lock.yaml
+  s_e322e6441f1ee2::t_4757c4473d495a 767-769,4340-4343,5469-5471,8985-8988,10159-10160
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "73a0d732c43b3bbe0be6917f2c6ea12481d8f0d8",
+  "prompts": {},
+  "sessions": {
+    "s_e322e6441f1ee2": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1f393-ad48-7a53-9682-e48cbcea3f9b",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
