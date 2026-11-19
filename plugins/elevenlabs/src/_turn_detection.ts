@@ -5,6 +5,7 @@ import { type VAD, VADEventType, type VADStream, log } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import type { CommitStrategy, VADOptions } from './stt.js';
 
+/** Options the forced-commit guard reads from the owning STT stream. */
 export interface TurnDetectionOptions {
   modelId: string;
   serverVad?: VADOptions | null;
@@ -16,6 +17,7 @@ interface PendingCommitResult {
   textUpdates: number;
 }
 
+/** Returns the explicit strategy, or the legacy default derived from `serverVad`. */
 export function resolveCommitStrategy(opts: TurnDetectionOptions): CommitStrategy {
   if (opts.commitStrategy !== undefined) return opts.commitStrategy;
   return opts.serverVad !== undefined && opts.serverVad !== null ? 'vad' : 'manual';
@@ -45,6 +47,7 @@ export class TurnDetection {
     this.#emitEndOfSpeech = opts.onEndOfSpeech;
   }
 
+  /** Resets per-connection state and opens a local VAD stream when the guard applies. */
   async start(): Promise<void> {
     await this.close();
     this.#reset();
@@ -64,6 +67,7 @@ export class TurnDetection {
     }
   }
 
+  /** Counts audio since the last commit and forwards it to the local VAD. */
   async pushFrame(frame: AudioFrame): Promise<void> {
     this.#audioDurationSinceCommitInS += frame.samplesPerChannel / frame.sampleRate;
     if (!this.#vadStream) return;
@@ -74,6 +78,7 @@ export class TurnDetection {
     }
   }
 
+  /** Ends local VAD input after all forwarded frames. */
   async endInput(): Promise<void> {
     if (!this.#vadStream) return;
     try {
@@ -83,6 +88,7 @@ export class TurnDetection {
     }
   }
 
+  /** Consumes local VAD events until the stream ends or is replaced. */
   async runVad(): Promise<void> {
     const stream = this.#vadStream;
     if (!stream) return;
@@ -97,16 +103,22 @@ export class TurnDetection {
     }
   }
 
+  /** Records a client commit so its transcript is never classified as forced. */
   onCommitRequested(): void {
     this.#pendingClientCommits += 1;
   }
 
+  /** Clears any deferred end of speech and emits it now. */
   endSpeech(): void {
     this.#eosPending = false;
     this.cancelEosTimeout();
     this.#emitEndOfSpeech();
   }
 
+  /**
+   * Records the latest turn probability. Returns whether the partial text changed, which also
+   * cancels a pending forced-commit timeout because the user is still speaking.
+   */
   onPartialTranscript(probability: number | undefined, text: string): boolean {
     this.#lastTurnProbability = probability;
     const changed = Boolean(text && text !== this.#lastPartialText);
@@ -118,6 +130,7 @@ export class TurnDetection {
     return changed;
   }
 
+  /** Classifies a committed transcript. Returns true when end of speech should be deferred. */
   onCommittedTranscript(
     data: {
       message_type?: string;
@@ -146,6 +159,7 @@ export class TurnDetection {
     return true;
   }
 
+  /** Cancels the fallback that ends a deferred turn without a continuation transcript. */
   cancelEosTimeout(): void {
     if (this.#eosTimeout) {
       clearTimeout(this.#eosTimeout);
@@ -153,10 +167,14 @@ export class TurnDetection {
     }
   }
 
+  /** Emits any deferred end of speech, then always releases the timer and local VAD. */
   async close(): Promise<void> {
-    if (this.#eosPending) this.endSpeech();
-    this.cancelEosTimeout();
-    await this.#closeVad();
+    try {
+      if (this.#eosPending) this.endSpeech();
+    } finally {
+      this.cancelEosTimeout();
+      await this.#closeVad();
+    }
   }
 
   /** Test hook for deterministic forced-commit scenarios. */

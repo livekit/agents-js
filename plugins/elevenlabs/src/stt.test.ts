@@ -88,6 +88,53 @@ async function collectUntilEnd(stream: sttLib.SpeechStream): Promise<sttLib.Spee
   return events;
 }
 
+/** Collects every stream event until the stream closes. */
+function collectAllEvents(stream: sttLib.SpeechStream): { events: sttLib.SpeechEvent[] } {
+  const events: sttLib.SpeechEvent[] = [];
+  void (async () => {
+    for await (const event of stream) events.push(event);
+  })();
+  return { events };
+}
+
+function turnEvents(events: sttLib.SpeechEvent[]): sttLib.SpeechEvent[] {
+  return events.filter(
+    (event) =>
+      event.type === sttLib.SpeechEventType.START_OF_SPEECH ||
+      event.type === sttLib.SpeechEventType.FINAL_TRANSCRIPT ||
+      event.type === sttLib.SpeechEventType.END_OF_SPEECH,
+  );
+}
+
+function finalTexts(events: sttLib.SpeechEvent[]): string[] {
+  return events.flatMap((event) =>
+    event.type === sttLib.SpeechEventType.FINAL_TRANSCRIPT
+      ? [event.alternatives?.[0]?.text ?? '']
+      : [],
+  );
+}
+
+/** Pushes 20 ms frames in real time, looping the source audio or sending silence. */
+function createPacedFeeder(stream: sttLib.SpeechStream, source: AudioFrame) {
+  const chunkSamples = Math.round(source.sampleRate / 50);
+  let sourceOffset = 0;
+  return async (durationInS: number, silence = false) => {
+    const startedAt = Date.now();
+    for (let index = 0; index < durationInS * 50; index++) {
+      const data = new Int16Array(chunkSamples * source.channels);
+      if (!silence) {
+        for (let sample = 0; sample < data.length; sample++) {
+          data[sample] = source.data[sourceOffset++ % source.data.length] ?? 0;
+        }
+      }
+      stream.pushFrame(new AudioFrame(data, source.sampleRate, source.channels, chunkSamples));
+      await new Promise((resolve) =>
+        setTimeout(resolve, Math.max(0, startedAt + (index + 1) * 20 - Date.now())),
+      );
+    }
+  };
+}
+
 async function processStreamEvents(
   messages: Record<string, unknown>[],
   expectedEventCount: number,
@@ -254,6 +301,16 @@ class TestVADStream extends VADStream {
     this.closeCalls += 1;
     super.close();
   }
+
+  /** Reads what a VAD implementation would receive until the input ends. */
+  async readInput(): Promise<AudioFrame[]> {
+    const frames: AudioFrame[] = [];
+    while (true) {
+      const { done, value } = await this.inputReader.read();
+      if (done) return frames;
+      if (value !== VADStream.FLUSH_SENTINEL) frames.push(value);
+    }
+  }
 }
 
 class TestVAD extends VAD {
@@ -321,19 +378,17 @@ describe('ElevenLabs STT integration', () => {
         languageCode: 'en',
         includeLanguageDetection: false,
       }).stream({ connOptions: { maxRetry: 2, retryIntervalMs: 2000, timeoutMs: 10000 } });
-      const speech = makeIntegrationSpeech();
+      // Scribe transcribes at about real time, so pace a clip that covers the reference sentence.
+      const feed = createPacedFeeder(stream, makeIntegrationSpeech());
+      const { events } = collectAllEvents(stream);
       try {
-        stream.pushFrame(speech);
-        stream.pushFrame(
-          AudioFrame.create(speech.sampleRate, speech.channels, speech.sampleRate * 3),
+        await feed(12);
+        await feed(4, true);
+        await waitUntil(
+          () => turnEvents(events).at(-1)?.type === sttLib.SpeechEventType.END_OF_SPEECH,
+          10_000,
         );
-        const events = await collectUntilEnd(stream);
-        const transcript = events
-          .filter((event) => event.type === sttLib.SpeechEventType.FINAL_TRANSCRIPT)
-          .map((event) => event.alternatives?.[0]?.text ?? '')
-          .join(' ');
-        expect(wordErrorRate(transcript, TRANSCRIPT)).toBeLessThanOrEqual(0.25);
-        expect(events.at(-1)?.type).toBe(sttLib.SpeechEventType.END_OF_SPEECH);
+        expect(wordErrorRate(finalTexts(events).join(' '), TRANSCRIPT)).toBeLessThanOrEqual(0.25);
       } finally {
         stream.close();
       }
@@ -344,49 +399,41 @@ describe('ElevenLabs STT integration', () => {
   it.skipIf(!hasElevenLabsApiKey)(
     'keeps a forced Scribe v3 segment open and eventually ends with stuck local VAD',
     async () => {
+      const decisions = vi.spyOn(TurnDetection.prototype, 'onCommittedTranscript');
       const stream = new STT({
         model: 'scribe_v3_live',
         commitStrategy: 'turn_prediction',
         serverVad: { vadSilenceThresholdSecs: 2 },
         vad: new StuckSpeakingVAD(),
         languageCode: 'en',
+        includeTimestamps: true,
         includeLanguageDetection: false,
       }).stream({ connOptions: { maxRetry: 2, retryIntervalMs: 2000, timeoutMs: 10000 } });
-      const source = makeIntegrationSpeech();
-      const chunkSamples = Math.round(source.sampleRate / 50);
-      let sourceOffset = 0;
-      let ended = false;
-      const eventsPromise = collectUntilEnd(stream).then((events) => {
-        ended = true;
-        return events;
-      });
-
-      const feed = async (durationInS: number, silence = false) => {
-        const deadline = Date.now();
-        for (let index = 0; index < durationInS * 50; index++) {
-          const data = new Int16Array(chunkSamples * source.channels);
-          if (!silence) {
-            for (let sample = 0; sample < data.length; sample++) {
-              data[sample] = source.data[sourceOffset++ % source.data.length] ?? 0;
-            }
-          }
-          stream.pushFrame(new AudioFrame(data, source.sampleRate, source.channels, chunkSamples));
-          await new Promise((resolve) =>
-            setTimeout(resolve, Math.max(0, deadline + (index + 1) * 20 - Date.now())),
-          );
-        }
-      };
+      const feed = createPacedFeeder(stream, makeIntegrationSpeech());
+      const { events } = collectAllEvents(stream);
+      const isEndOfSpeech = (event: sttLib.SpeechEvent) =>
+        event.type === sttLib.SpeechEventType.END_OF_SPEECH;
 
       try {
         await feed(40);
-        expect(ended).toBe(false);
+        // The provider forces a commit after about 36 seconds; the guard must defer it.
+        const suppressed = decisions.mock.results.filter(
+          (result) => result.type === 'return' && result.value === true,
+        );
+        expect(suppressed.length).toBeGreaterThan(0);
+        expect(finalTexts(events).length).toBeGreaterThan(0);
+        expect(events.some(isEndOfSpeech)).toBe(false);
+
         await feed(5, true);
-        const events = await eventsPromise;
-        expect(events.at(-1)?.type).toBe(sttLib.SpeechEventType.END_OF_SPEECH);
-        expect(
-          events.filter((event) => event.type === sttLib.SpeechEventType.END_OF_SPEECH),
-        ).toHaveLength(1);
+        await waitUntil(() => events.some(isEndOfSpeech), 10_000);
+        // Keep observing so a duplicate end of speech would be caught.
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+        const endpoints = events.filter(isEndOfSpeech);
+        expect(endpoints).toHaveLength(1);
+        expect(turnEvents(events).at(-1)).toBe(endpoints[0]);
+        expect(endpoints[0]?.alternatives?.[0]?.text).toBe(finalTexts(events).join(' '));
       } finally {
+        decisions.mockRestore();
         stream.close();
       }
     },
@@ -790,18 +837,8 @@ describe('ElevenLabs STT', () => {
 
   it('does not let an open local VAD output hold clean stream termination open', async () => {
     const { wss, baseURL } = await startWebSocketServer();
-    class OpenOutputVAD extends TestVAD {
-      override stream(): TestVADStream {
-        const stream = new (class extends TestVADStream {
-          override endInput(): void {
-            // Silero finishes inference without closing the VAD output iterator.
-          }
-        })(this);
-        this.streams.push(stream);
-        return stream;
-      }
-    }
-    const vad = new OpenOutputVAD();
+    // Like Silero, the base VADStream.endInput() leaves the VAD output iterator open.
+    const vad = new TestVAD();
     wss.on('connection', (ws) => {
       ws.once('message', () => setTimeout(() => ws.close(), 20));
     });
@@ -1078,6 +1115,183 @@ describe('ElevenLabs STT', () => {
         await waitUntil(() => sockets.length === 2, 2000);
         await new Promise((resolve) => setTimeout(resolve, 20));
         expect(stream._failed).toBe(false);
+      } finally {
+        stream.close();
+        await closeWebSocketServer(wss);
+      }
+    },
+  );
+
+  it.each([
+    ['strategy', 'frame'],
+    ['strategy', 'flush'],
+    ['providerError', 'frame'],
+    ['providerError', 'flush'],
+  ] as const)(
+    'sends the first %s-reconnect input (%s) on the replacement socket',
+    async (reconnectCause, input) => {
+      const { wss, baseURL } = await startWebSocketServer();
+      const received: { connection: number; bytes: number; commit: boolean }[] = [];
+      let connections = 0;
+      wss.on('connection', (ws) => {
+        const connection = ++connections;
+        ws.on('message', (raw) => {
+          const message = JSON.parse(raw.toString());
+          received.push({
+            connection,
+            bytes: Buffer.from(message.audio_base_64, 'base64').length,
+            commit: message.commit,
+          });
+        });
+        if (reconnectCause === 'providerError' && connection === 1) {
+          // Let the idle sender start waiting for input before the provider fails.
+          setTimeout(
+            () => ws.send(JSON.stringify({ message_type: 'transcriber_error', message: 'retry' })),
+            20,
+          );
+        }
+      });
+      const instance = new STT({
+        apiKey: 'test-key',
+        baseURL,
+        model: 'scribe_v3_live',
+        commitStrategy: 'vad',
+      });
+      const stream = instance.stream({
+        connOptions: { maxRetry: 2, retryIntervalMs: 0, timeoutMs: 1000 },
+      });
+      try {
+        await waitUntil(() => connections === 1);
+        if (reconnectCause === 'strategy') {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          instance.updateOptions({ commitStrategy: 'manual' });
+        }
+        await waitUntil(() => connections === 2);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+
+        if (input === 'frame') stream.pushFrame(makeFrame(800));
+        else stream.flush();
+        const expected =
+          input === 'frame'
+            ? [{ connection: 2, bytes: 1600, commit: false }]
+            : [
+                { connection: 2, bytes: MIN_COMMIT_SAMPLES * 2, commit: false },
+                { connection: 2, bytes: 0, commit: true },
+              ];
+        await waitUntil(() => received.length >= expected.length);
+        expect(received).toEqual(expected);
+        expect(stream._failed).toBe(false);
+      } finally {
+        stream.close();
+        await closeWebSocketServer(wss);
+      }
+    },
+  );
+
+  it('closes local VAD and the socket when the stream closes during a deferred turn', async () => {
+    const { wss, baseURL } = await startWebSocketServer();
+    const vad = new (class extends TestVAD {
+      override stream(): TestVADStream {
+        const stream = super.stream();
+        stream.emit(VADEventType.START_OF_SPEECH);
+        return stream;
+      }
+    })();
+    const sockets: WebSocket[] = [];
+    wss.on('connection', (ws) => {
+      sockets.push(ws);
+      ws.once('message', () => {
+        ws.send(JSON.stringify({ ...partialTranscript('hello'), turn_probability: 0 }));
+        ws.send(JSON.stringify(committedTranscript('hello')));
+      });
+    });
+    const stream = new STT({
+      apiKey: 'test-key',
+      baseURL,
+      model: 'scribe_v3_live',
+      commitStrategy: 'turn_prediction',
+      vad,
+      languageCode: 'en',
+      includeLanguageDetection: false,
+      audioChunkDuration: 35300,
+    }).stream({ connOptions: { maxRetry: 0, retryIntervalMs: 0, timeoutMs: 1000 } });
+    try {
+      stream.pushFrame(makeFrame(564800));
+      const events: sttLib.SpeechEvent[] = [];
+      while (events.at(-1)?.type !== sttLib.SpeechEventType.FINAL_TRANSCRIPT) {
+        events.push((await stream.next()).value!);
+      }
+      // The forced commit defers end of speech, so close() must finish the turn itself.
+      expect(events.map((event) => event.type)).not.toContain(sttLib.SpeechEventType.END_OF_SPEECH);
+
+      stream.close();
+      await waitUntil(() => sockets[0]?.readyState === sockets[0]?.CLOSED);
+      expect(vad.streams[0]?.closeCalls).toBe(1);
+    } finally {
+      stream.close();
+      sockets.forEach((socket) => socket.terminate());
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it.each([
+    [true, true, 0.1, 36],
+    [false, true, 35.5, 36],
+    [true, false, 0, 0],
+    [false, false, 0, 0],
+  ] as const)(
+    'combines a deferred turn when forced segment timed=%s and last segment timed=%s',
+    async (forcedSegmentTimed, lastSegmentTimed, expectedStartTime, expectedEndTime) => {
+      const { wss, baseURL } = await startWebSocketServer();
+      wss.on('connection', (ws) => {
+        ws.once('message', () => {
+          const send = (message: Record<string, unknown>) => ws.send(JSON.stringify(message));
+          send({ ...partialTranscript('hello'), turn_probability: 0 });
+          send(committedTranscript('hello'));
+          send(
+            committedTranscript('hello', {
+              withTimestamps: true,
+              words: forcedSegmentTimed ? [{ text: 'hello', start: 0.1, end: 35 }] : [],
+            }),
+          );
+          send({ ...partialTranscript('world'), turn_probability: 1 });
+          send(committedTranscript('world'));
+          send(
+            committedTranscript('world', {
+              withTimestamps: true,
+              words: lastSegmentTimed ? [{ text: 'world', start: 35.5, end: 36 }] : [],
+            }),
+          );
+        });
+      });
+      const stream = new STT({
+        apiKey: 'test-key',
+        baseURL,
+        model: 'scribe_v3_live',
+        commitStrategy: 'turn_prediction',
+        vad: new StuckSpeakingVAD(),
+        languageCode: 'en',
+        includeTimestamps: true,
+        includeLanguageDetection: false,
+        audioChunkDuration: 35300,
+      }).stream({ connOptions: { maxRetry: 0, retryIntervalMs: 0, timeoutMs: 1000 } });
+      try {
+        stream.pushFrame(makeFrame(564800));
+        const events = await collectUntilEnd(stream);
+        const finals = events.filter(
+          (event) => event.type === sttLib.SpeechEventType.FINAL_TRANSCRIPT,
+        );
+        expect(finals.map((event) => event.alternatives?.[0]?.text)).toEqual(['hello', 'world']);
+        const endpoints = events.filter(
+          (event) => event.type === sttLib.SpeechEventType.END_OF_SPEECH,
+        );
+        expect(endpoints).toHaveLength(1);
+        expect(endpoints[0]?.alternatives).toHaveLength(1);
+        expect(endpoints[0]?.alternatives?.[0]).toMatchObject({
+          text: 'hello world',
+          startTime: expectedStartTime,
+          endTime: expectedEndTime,
+        });
       } finally {
         stream.close();
         await closeWebSocketServer(wss);
@@ -1486,6 +1700,34 @@ describe('ElevenLabs STT', () => {
       warn.mockRestore();
     });
 
+    it('ends real VAD input after forwarded frames without an unhandled rejection', async () => {
+      const rejections: unknown[] = [];
+      const onRejection = (reason: unknown) => rejections.push(reason);
+      process.on('unhandledRejection', onRejection);
+      const vad = new TestVAD();
+      const detector = new TurnDetection({
+        options: { modelId: 'scribe_v3_live', commitStrategy: 'turn_prediction' },
+        vad,
+        onEndOfSpeech: vi.fn(),
+      });
+      try {
+        await detector.start();
+        const frames = [makeFrame(160), makeFrame(320)];
+        for (const frame of frames) await detector.pushFrame(frame);
+        await detector.endInput();
+        const input = await Promise.race([
+          vad.streams[0]!.readInput(),
+          new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 500)),
+        ]);
+        await new Promise((resolve) => setImmediate(resolve));
+        expect(input).toEqual(frames);
+        expect(rejections).toEqual([]);
+      } finally {
+        process.off('unhandledRejection', onRejection);
+        await detector.close();
+      }
+    });
+
     it.each(['pushFrame', 'inference', 'endInput'] as const)(
       'disables local VAD after a %s failure without failing turn detection',
       async (failurePoint) => {
@@ -1675,32 +1917,40 @@ describe('ElevenLabs STT', () => {
   });
 
   it.each([
-    [{ text: 'again', start: 0.5, end: 0.8 }, 'again'],
-    [{ text: 'again', start: 0, end: 0 }, undefined],
-    [undefined, undefined],
-  ] as const)('keeps only the latest timed final for EOS (%j)', async (lastWord, expectedText) => {
-    const events = await processStreamEvents(
-      [
-        committedTranscript('hello', {
-          withTimestamps: true,
-          words: [{ text: 'hello', start: 0.1, end: 0.4 }],
-        }),
-        committedTranscript('again', {
-          withTimestamps: true,
-          words: lastWord ? [lastWord] : [],
-        }),
-        committedTranscript('', { withTimestamps: true }),
-      ],
-      4,
-      null,
-      { languageCode: 'en', includeTimestamps: true, includeLanguageDetection: false },
-    );
-    const endpoint = events.at(-1);
-    expect(endpoint?.type).toBe(sttLib.SpeechEventType.END_OF_SPEECH);
-    if (expectedText)
-      expect(endpoint?.alternatives?.map((item) => item.text)).toEqual([expectedText]);
-    else expect(endpoint?.alternatives).toBeUndefined();
-  });
+    [{ text: 'again', start: 0.5, end: 0.8 }, 0.1, 0.8],
+    [{ text: 'again', start: 0, end: 0 }, 0, 0],
+    [undefined, 0, 0],
+  ] as const)(
+    'anchors EOS timing on the latest final (%j)',
+    async (lastWord, startTime, endTime) => {
+      const events = await processStreamEvents(
+        [
+          committedTranscript('hello', {
+            withTimestamps: true,
+            words: [{ text: 'hello', start: 0.1, end: 0.4 }],
+          }),
+          committedTranscript('again', {
+            withTimestamps: true,
+            words: lastWord ? [lastWord] : [],
+          }),
+          committedTranscript('', { withTimestamps: true }),
+        ],
+        4,
+        null,
+        { languageCode: 'en', includeTimestamps: true, includeLanguageDetection: false },
+      );
+      const endpoint = events.at(-1);
+      expect(endpoint?.type).toBe(sttLib.SpeechEventType.END_OF_SPEECH);
+      expect(endpoint?.alternatives?.map((item) => item.text)).toEqual(['hello again']);
+      expect(endpoint?.alternatives?.[0]).toMatchObject({ startTime, endTime });
+      if (lastWord?.end) {
+        expect(endpoint?.alternatives?.[0]?.words?.map((word) => word.text)).toEqual([
+          'hello',
+          'again',
+        ]);
+      }
+    },
+  );
 
   describe.each([
     'partial_transcript',

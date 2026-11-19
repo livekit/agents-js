@@ -45,6 +45,8 @@ The optional local `vad` helps detect forced segment commits during long turns. 
 the turn open when the last turn probability is below 0.9, 34-38 seconds of audio have been sent
 since the previous server commit, and local VAD still detects speech. The final transcript is
 emitted immediately. This is a heuristic because the provider does not report why it committed.
+The end-of-speech alternative combines the text of all final segments in the turn. Its start and
+end times are zero when the latest segment has no provider timing.
 
 If no new segment text arrives, the plugin emits end of speech after the server silence threshold
 plus 0.5 seconds (2 seconds with the server default). New segment text cancels this fallback and

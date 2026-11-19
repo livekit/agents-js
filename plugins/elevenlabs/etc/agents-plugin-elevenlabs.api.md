@@ -31,7 +31,7 @@ export class ChunkedStream extends tts.ChunkedStream {
 
 // Warning: (ae-missing-release-tag) "CommitStrategy" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
-// @public (undocumented)
+// @public
 export type CommitStrategy = 'manual' | 'vad' | 'turn_prediction';
 
 // Warning: (ae-missing-release-tag) "ElevenLabsSTTModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -134,7 +134,6 @@ export interface STTOptions {
     audioChunkDuration?: number;
     // (undocumented)
     baseURL?: string;
-    // (undocumented)
     commitStrategy?: CommitStrategy;
     // (undocumented)
     enableLogging?: boolean;

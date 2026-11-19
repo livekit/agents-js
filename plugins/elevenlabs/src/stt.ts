@@ -47,6 +47,14 @@ export type ElevenLabsSTTModels =
   | 'scribe_v3'
   | 'scribe_v3_live';
 
+/**
+ * How a realtime session commits transcript segments.
+ *
+ * - `manual`: the client commits on `flush()`.
+ * - `vad`: the provider commits after server-side VAD detects silence.
+ * - `turn_prediction`: the provider commits when its turn model predicts the user is done.
+ *   Only supported by `scribe_v3_live`.
+ */
 export type CommitStrategy = 'manual' | 'vad' | 'turn_prediction';
 
 const REALTIME_MODELS = new Set(['scribe_v2_realtime', 'scribe_v3_live']);
@@ -75,6 +83,11 @@ export interface STTOptions {
    */
   audioChunkDuration?: number;
   serverVad?: VADOptions | null;
+  /**
+   * Realtime commit strategy. Defaults to `vad` when `serverVad` is set and `manual` otherwise.
+   * `turn_prediction` requires `scribe_v3_live`. Changing it with `updateOptions()` reconnects
+   * open streams.
+   */
   commitStrategy?: CommitStrategy;
   /** Optional local VAD used to guard long Scribe v3 Live turns from forced segment commits. */
   vad?: VAD;
@@ -248,6 +261,28 @@ function parseStreamEvent(value: unknown): ElevenLabsStreamEvent {
     message: asString(record.message),
     details: asString(record.details),
     turn_probability: asNumber(record.turn_probability),
+  };
+}
+
+/**
+ * Combines the final segments of one turn into a single end-of-speech alternative. The text
+ * includes every segment. Timing stays unknown when the latest segment has no provider timing.
+ */
+function combineFinalSegments(
+  segments: stt.SpeechData[],
+  startTimeOffset: number,
+): stt.SpeechData | undefined {
+  const isTimed = (segment: stt.SpeechData) => segment.endTime > startTimeOffset;
+  const last = segments.at(-1);
+  if (!last) return undefined;
+  const first = segments.find(isTimed) ?? last;
+  const words = segments.flatMap((segment) => segment.words ?? []);
+  return {
+    ...last,
+    text: segments.map((segment) => segment.text).join(' '),
+    startTime: isTimed(last) ? first.startTime : 0,
+    endTime: isTimed(last) ? last.endTime : 0,
+    ...(words.length > 0 && { words }),
   };
 }
 
@@ -662,7 +697,7 @@ export class SpeechStream extends stt.SpeechStream {
   #sttInstance: STT;
   #reconnectEvent = new Future<void>();
   #speaking = false;
-  #finalAlternatives: stt.SpeechData[] = [];
+  #finalSegments: stt.SpeechData[] = [];
   #turnDetection: TurnDetection;
   #audioDurationCollector: PeriodicCollector<number>;
   #logger = log();
@@ -755,11 +790,12 @@ export class SpeechStream extends stt.SpeechStream {
       let closingWs = false;
       let detachRecvListeners = () => {};
       const sessionController = new AbortController();
+      const tasks: Task<void>[] = [];
 
       try {
         ws = await this.#connectWs();
         await this.#turnDetection.start();
-        this.#finalAlternatives = [];
+        this.#finalSegments = [];
 
         const keepaliveTask = Task.from(async (controller) => {
           while (!controller.signal.aborted) {
@@ -781,8 +817,6 @@ export class SpeechStream extends stt.SpeechStream {
             (this.#opts.sampleRate * this.#opts.audioChunkDuration) / 1000,
           );
           const audioByteStream = new AudioByteStream(this.#opts.sampleRate, 1, samplesPerChunk);
-          const abortPromise = waitForAbort(controller.signal);
-          const streamAbortPromise = waitForAbort(this.abortSignal);
           // Scribe closes the session on a commit with less than 300ms of audio since the
           // previous commit or the connect
           const minCommitSamples = (this.#opts.sampleRate * 3) / 10;
@@ -791,12 +825,14 @@ export class SpeechStream extends stt.SpeechStream {
 
           try {
             while (!this.closed) {
-              const result = await Promise.race([
-                this.input.next(),
-                abortPromise,
-                streamAbortPromise,
-              ]);
-              if (result === undefined) return;
+              let result: IteratorResult<AudioFrame | typeof SpeechStream.FLUSH_SENTINEL>;
+              try {
+                // Cancel the read on teardown so a replacement sender receives the next input.
+                result = await this.input.next({ signal: controller.signal });
+              } catch (error) {
+                if (controller.signal.aborted) return;
+                throw error;
+              }
               if (result.done) break;
 
               const data = result.value;
@@ -918,6 +954,7 @@ export class SpeechStream extends stt.SpeechStream {
 
         // VADStream.endInput() does not close its output iterator. Keep consuming VAD events for
         // forced-commit classification, but do not make clean connection completion wait on it.
+        tasks.push(keepaliveTask, sendTask, recvTask);
         void this.#turnDetection.runVad();
         const runResult = await Promise.race([
           Promise.all([keepaliveTask.result, sendTask.result, recvTask.result]).then(
@@ -937,8 +974,13 @@ export class SpeechStream extends stt.SpeechStream {
         detachRecvListeners();
         detachRecvListeners = () => {};
         sessionController.abort();
-        await this.#turnDetection.close();
-        ws?.close();
+        try {
+          // The old sender must stop reading input before a reconnect starts a new one.
+          await Promise.allSettled(tasks.map((task) => task.result));
+          await this.#turnDetection.close();
+        } finally {
+          ws?.close();
+        }
       }
     }
   }
@@ -1114,7 +1156,7 @@ export class SpeechStream extends stt.SpeechStream {
           type: stt.SpeechEventType.FINAL_TRANSCRIPT,
           alternatives: [speechData],
         });
-        this.#finalAlternatives = endTime > 0 ? [speechData] : [];
+        this.#finalSegments.push(speechData);
       }
       if (!isForcedCommit && (!text || resolveCommitStrategy(this.#opts) !== 'manual')) {
         this.#turnDetection.endSpeech();
@@ -1152,13 +1194,16 @@ export class SpeechStream extends stt.SpeechStream {
   }
 
   #emitEndOfSpeech(): void {
-    if (!this.#speaking) return;
-    const alternatives = this.#finalAlternatives as [stt.SpeechData, ...stt.SpeechData[]];
+    const segments = this.#finalSegments;
+    const speaking = this.#speaking;
+    this.#finalSegments = [];
+    this.#speaking = false;
+    // A deferred end of speech can fire during teardown after the event queue closes.
+    if (!speaking || this.queue.closed) return;
+    const alternative = combineFinalSegments(segments, this.startTimeOffset);
     this.queue.put({
       type: stt.SpeechEventType.END_OF_SPEECH,
-      ...(alternatives.length > 0 && { alternatives }),
+      ...(alternative && { alternatives: [alternative] }),
     });
-    this.#finalAlternatives = [];
-    this.#speaking = false;
   }
 }
