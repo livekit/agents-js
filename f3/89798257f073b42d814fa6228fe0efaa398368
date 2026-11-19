@@ -1,0 +1,21 @@
+agents/src/stt/stt.ts
+  s_e322e6441f1ee2::t_a635eb3bc90ba7 39-40
+agents/etc/agents.api.md
+  s_e322e6441f1ee2::t_d10e33acc91a4e 9995
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f389798257f073b42d814fa6228fe0efaa398368",
+  "prompts": {},
+  "sessions": {
+    "s_e322e6441f1ee2": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1f393-ad48-7a53-9682-e48cbcea3f9b",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
