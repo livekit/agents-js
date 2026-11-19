@@ -5,7 +5,7 @@ import { type VAD, VADEventType, type VADStream, log } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import type { CommitStrategy, VADOptions } from './stt.js';
 
-/** Options the forced-commit guard reads from the owning STT stream. */
+/** Options the turn boundary guards read from the owning STT stream. */
 export interface TurnDetectionOptions {
   modelId: string;
   serverVad?: VADOptions | null;
@@ -23,7 +23,7 @@ export function resolveCommitStrategy(opts: TurnDetectionOptions): CommitStrateg
   return opts.serverVad !== undefined && opts.serverVad !== null ? 'vad' : 'manual';
 }
 
-/** Defers end of speech for suspected provider-forced segment commits. */
+/** Guards forced segment commits and uncommitted partials using local VAD. */
 export class TurnDetection {
   readonly #opts: TurnDetectionOptions;
   readonly #vad?: VAD;
@@ -32,6 +32,8 @@ export class TurnDetection {
   #vadStream?: VADStream;
   #vadClosePromise?: Promise<void>;
   #eosTimeout?: ReturnType<typeof setTimeout>;
+  #partialTimeout?: ReturnType<typeof setTimeout>;
+  #partialPending = false;
   #vadSpeaking = false;
   #audioDurationSinceCommitInS = 0;
   #pendingClientCommits = 0;
@@ -95,11 +97,19 @@ export class TurnDetection {
     try {
       for await (const event of stream) {
         if (stream !== this.#vadStream) break;
-        if (event.type === VADEventType.START_OF_SPEECH) this.#vadSpeaking = true;
-        if (event.type === VADEventType.END_OF_SPEECH) this.#vadSpeaking = false;
+        if (event.type === VADEventType.START_OF_SPEECH) {
+          this.#vadSpeaking = true;
+          this.#cancelPartialTimeout();
+        }
+        if (event.type === VADEventType.END_OF_SPEECH) {
+          this.#vadSpeaking = false;
+          this.#startPartialTimeout();
+        }
       }
     } catch (error) {
       if (stream === this.#vadStream) await this.#disableVad(error);
+    } finally {
+      if (stream === this.#vadStream) await this.#closeVad();
     }
   }
 
@@ -111,7 +121,9 @@ export class TurnDetection {
   /** Clears any deferred end of speech and emits it now. */
   endSpeech(): void {
     this.#eosPending = false;
+    this.#partialPending = false;
     this.cancelEosTimeout();
+    this.#cancelPartialTimeout();
     this.#emitEndOfSpeech();
   }
 
@@ -126,6 +138,8 @@ export class TurnDetection {
       this.#lastPartialText = text;
       this.#textUpdates += 1;
       this.cancelEosTimeout();
+      this.#partialPending = true;
+      this.#startPartialTimeout();
     }
     return changed;
   }
@@ -140,7 +154,7 @@ export class TurnDetection {
   ): boolean {
     const messageType = data.message_type;
     const hasText = Boolean(data.text);
-    let result: PendingCommitResult = { forced: false, textUpdates: this.#textUpdates };
+    let result: PendingCommitResult | undefined;
     if (messageType === 'committed_transcript') {
       result = this.#classifyCommit(hasText);
       if (finalMessageType === 'committed_transcript_with_timestamps') {
@@ -153,9 +167,14 @@ export class TurnDetection {
       result = this.#pendingCommitResults.shift() ?? this.#classifyCommit(hasText);
     }
 
-    if (messageType !== finalMessageType || !result.forced || !hasText) return false;
+    // A delayed timestamp copy must not cancel the timeout for a newer partial.
+    if (result?.textUpdates === this.#textUpdates) {
+      this.#partialPending = false;
+      this.#cancelPartialTimeout();
+    }
+    if (messageType !== finalMessageType || !result?.forced || !hasText) return false;
     this.#eosPending = true;
-    if (result.textUpdates === this.#textUpdates) this.#startEosTimeout();
+    if (result.textUpdates === this.#textUpdates || !this.#partialPending) this.#startEosTimeout();
     return true;
   }
 
@@ -167,12 +186,13 @@ export class TurnDetection {
     }
   }
 
-  /** Emits any deferred end of speech, then always releases the timer and local VAD. */
+  /** Finishes a guarded turn, then always releases both timers and local VAD. */
   async close(): Promise<void> {
     try {
-      if (this.#eosPending) this.endSpeech();
+      if (this.#eosPending || (this.#partialPending && this.#vadStream)) this.endSpeech();
     } finally {
       this.cancelEosTimeout();
+      this.#cancelPartialTimeout();
       await this.#closeVad();
     }
   }
@@ -195,6 +215,7 @@ export class TurnDetection {
     this.#lastTurnProbability = undefined;
     this.#lastPartialText = '';
     this.#eosPending = false;
+    this.#partialPending = false;
     this.#textUpdates = 0;
     this.#pendingCommitResults = [];
   }
@@ -228,8 +249,7 @@ export class TurnDetection {
 
   #startEosTimeout(): void {
     this.cancelEosTimeout();
-    const thresholdInS = this.#opts.serverVad?.vadSilenceThresholdSecs ?? 1.5;
-    const timeout = (thresholdInS + 0.5) * 1000;
+    const timeout = this.#eosTimeoutDuration;
     this.#eosTimeout = setTimeout(() => {
       this.#eosTimeout = undefined;
       this.#logger.warn(
@@ -244,6 +264,31 @@ export class TurnDetection {
     }, timeout);
   }
 
+  get #eosTimeoutDuration(): number {
+    return ((this.#opts.serverVad?.vadSilenceThresholdSecs ?? 1.5) + 0.5) * 1000;
+  }
+
+  #startPartialTimeout(): void {
+    if (this.#partialTimeout || !this.#partialPending || !this.#vadStream || this.#vadSpeaking)
+      return;
+    const timeout = this.#eosTimeoutDuration;
+    this.#partialTimeout = setTimeout(() => {
+      this.#partialTimeout = undefined;
+      this.#logger.warn(
+        { eosTimeout: timeout },
+        'emitting end of speech for an uncommitted partial after local VAD silence',
+      );
+      this.endSpeech();
+    }, timeout);
+  }
+
+  #cancelPartialTimeout(): void {
+    if (this.#partialTimeout) {
+      clearTimeout(this.#partialTimeout);
+      this.#partialTimeout = undefined;
+    }
+  }
+
   async #disableVad(error: unknown): Promise<void> {
     if (!this.#vadStream) return;
     this.#logger.warn(
@@ -254,6 +299,8 @@ export class TurnDetection {
   }
 
   async #closeVad(): Promise<void> {
+    this.#cancelPartialTimeout();
+    this.#partialPending = false;
     const stream = this.#vadStream;
     this.#vadStream = undefined;
     this.#vadSpeaking = false;

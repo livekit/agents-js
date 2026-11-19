@@ -89,7 +89,7 @@ export interface STTOptions {
    * open streams.
    */
   commitStrategy?: CommitStrategy;
-  /** Optional local VAD used to guard long Scribe v3 Live turns from forced segment commits. */
+  /** Optional local VAD that guards Scribe v3 Live forced commits and uncommitted partial turns. */
   vad?: VAD;
   includeTimestamps?: boolean;
   httpSession?: STTHTTPSession;

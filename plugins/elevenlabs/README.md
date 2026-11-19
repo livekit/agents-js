@@ -53,6 +53,13 @@ keeps local VAD in the speaking state. Without a local `vad`, automatic server c
 end speech. Before reconnecting, the plugin finishes any deferred turn. If local VAD fails, the
 plugin warns and disables the guard for that connection while transcription continues.
 
+With a local `vad`, the plugin also closes a turn opened by a partial transcript if no commit
+arrives and VAD stays silent for the server silence threshold plus 0.5 seconds (2 seconds by
+default). Further partials do not extend this deadline. VAD speech cancels the timer; when speech
+ends, a fresh silence window starts. This emits only end of speech, without promoting the partial
+to a final transcript. The fallback is limited to `scribe_v3_live` with an automatic commit strategy
+and is disabled if local VAD fails.
+
 The other commit strategies are `manual` and `vad`. If `commitStrategy` is omitted, the plugin uses
 `vad` when `serverVad` is an object and `manual` otherwise. An explicit strategy takes precedence.
 Calling `stt.updateOptions({ commitStrategy: ... })` reconnects every active stream, so change the
