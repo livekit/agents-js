@@ -10,7 +10,7 @@
  */
 import { SeverityNumber } from '@opentelemetry/api-logs';
 import { AccessToken } from 'livekit-server-sdk';
-import { getWorkerToken } from '../job_token.js';
+import { getWorkerToken, observabilityToken } from '../job_token.js';
 import { ATTRIBUTE_REDACTION_ENABLED } from '../types.js';
 import { resolveObservabilityUrl } from './observability_endpoint.js';
 import { REDACTED_EXCEPTION_MESSAGE, isPIIAttribute } from './redaction.js';
@@ -280,10 +280,9 @@ export class PinoCloudExporter {
   }
 
   private async ensureJwt(): Promise<void> {
-    // token mode: the current worker token, as is
-    const workerToken = getWorkerToken();
-    if (workerToken) {
-      this.jwt = workerToken;
+    // token mode: the job's current token
+    if (getWorkerToken()) {
+      this.jwt = observabilityToken();
       return;
     }
     if (this.jwt) return;

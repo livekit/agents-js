@@ -3,8 +3,9 @@
 // SPDX-License-Identifier: Apache-2.0
 import { type DisconnectReason, Room } from '@livekit/rtc-node';
 import { defineAgent } from '../generator.js';
+import { createAccessToken } from '../inference/utils.js';
 import { JobContext } from '../job.js';
-import { getWorkerToken } from '../job_token.js';
+import { observabilityToken } from '../job_token.js';
 import { tracer } from '../telemetry/index.js';
 
 export default defineAgent({
@@ -50,19 +51,16 @@ export default defineAgent({
     });
 
     const scenario = ctx.job.metadata;
-    if (scenario === 'worker token') {
-      // reports the worker token it reads, at start and when the test asks
-      return new Promise<void>((resolve) => {
-        process.send!({ case: 'testWorkerToken', token: getWorkerToken() });
-        process.on('message', (msg: { case: string }) => {
-          if (msg.case === 'testReportWorkerToken') {
-            process.send!({ case: 'testWorkerToken', token: getWorkerToken() });
-          } else if (msg.case === 'testEnd') {
-            ctx.shutdown();
-            resolve();
-          }
+    if (scenario === 'job tokens') {
+      // reports the tokens inference and telemetry would send, as the entrypoint starts
+      return (async () => {
+        process.send!({
+          case: 'testJobTokens',
+          inference: await createAccessToken('', ''),
+          observability: observabilityToken(),
         });
-      });
+        ctx.shutdown();
+      })();
     }
     if (scenario === 'job api') {
       return (async () => {

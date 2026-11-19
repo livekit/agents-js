@@ -40,7 +40,7 @@ import { ATTR_SERVICE_NAME } from '@opentelemetry/semantic-conventions';
 import FormData from 'form-data';
 import { AccessToken } from 'livekit-server-sdk';
 import fs from 'node:fs/promises';
-import { getWorkerToken } from '../job_token.js';
+import { getWorkerToken, observabilityToken } from '../job_token.js';
 import type { ChatItem } from '../llm/index.js';
 import { enableOtelLogging, log } from '../log.js';
 import { filterZeroValues } from '../metrics/model_usage.js';
@@ -583,8 +583,8 @@ interface PreparedCloudPipeline {
 let preparedCloud: PreparedCloudPipeline | undefined;
 
 /**
- * The headers option of a cloud exporter. In token mode the worker token can be replaced while
- * the job runs (refresh), so the exporter gets the current one for each request.
+ * The headers option of a cloud exporter. In token mode the job renews its token while it runs,
+ * so the exporter gets the current one for each request.
  */
 function cloudExporterHeaders(
   headers: Record<string, string>,
@@ -593,9 +593,8 @@ function cloudExporterHeaders(
 }
 
 async function cloudAuthHeaders(): Promise<Record<string, string>> {
-  // token mode: the worker token, as is
-  const workerToken = getWorkerToken();
-  if (workerToken) return { Authorization: `Bearer ${workerToken}` };
+  // token mode: the job's current token
+  if (getWorkerToken()) return { Authorization: `Bearer ${observabilityToken()}` };
 
   const apiKey = process.env.LIVEKIT_API_KEY;
   const apiSecret = process.env.LIVEKIT_API_SECRET;
@@ -664,7 +663,8 @@ export async function prepareCloudTracer(
   }
   if (!(current instanceof ProxyTracerProvider)) return; // the user's provider records
 
-  const headers = await cloudAuthHeaders();
+  // token mode: the exporter asks for the job's current token on each request
+  const headers = getWorkerToken() ? {} : await cloudAuthHeaders();
   const gate = new JobSpanGateExporter(
     new UploadGateTraceExporter({
       url: `${observabilityUrl}/observability/traces/otlp/v0`,
@@ -760,7 +760,8 @@ export async function setupCloudTracer(
   const observabilityUrl = resolveObservabilityUrl(options);
 
   try {
-    const headers = await cloudAuthHeaders();
+    // token mode: the exporters ask for the job's current token on each request
+    const headers = getWorkerToken() ? {} : await cloudAuthHeaders();
     const baseMetadata = cloudBaseMetadata(roomId, jobId, agentName);
     const cloudAgentId = baseMetadata[ATTR_CLOUD_AGENT_ID] as string | undefined;
     const deploymentId = baseMetadata[ATTR_DEPLOYMENT_ID] as string | undefined;
@@ -1166,8 +1167,8 @@ export async function uploadSessionReport(
     return;
   }
 
-  // token mode: the worker token, as is
-  let jwt = getWorkerToken();
+  // token mode: the job's current token
+  let jwt = getWorkerToken() ? observabilityToken() : undefined;
   if (!jwt) {
     const apiKey = process.env.LIVEKIT_API_KEY;
     const apiSecret = process.env.LIVEKIT_API_SECRET;

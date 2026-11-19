@@ -25,10 +25,13 @@ import {
   waitForEntrypointShutdown,
 } from '../job_lifecycle.js';
 import {
+  INFERENCE_CLAIMS,
   JOB_TOKEN_IPC_TIMEOUT,
   type JobToken,
   JobTokenClient,
+  OBSERVABILITY_CLAIMS,
   getWorkerToken,
+  setTokenClient,
 } from '../job_token.js';
 import { initializeLogger, log } from '../log.js';
 import { loggerOptions, setLoggerState } from '../log_core.js';
@@ -219,6 +222,7 @@ const startJob = (
   // token mode: the job holds no API key or secret, and gets its tokens from the server
   if (!info.apiKey && !info.apiSecret && getWorkerToken()) {
     ctx._jobTokens = new JobTokenClient(new JobTokenIPC().createJobToken);
+    setTokenClient(ctx._jobTokens);
   }
 
   const task = (async () => {
@@ -237,7 +241,12 @@ const startJob = (
     });
 
     let span: Span | undefined;
+    let stopJobTokens: (() => void) | undefined;
     try {
+      // token mode: inference and telemetry read the job's tokens from the cache, so get them
+      // before the entrypoint runs, and keep them current for as long as the job runs
+      stopJobTokens = await ctx._jobTokens?.keepCurrent([INFERENCE_CLAIMS, OBSERVABILITY_CLAIMS]);
+
       // before the first span: without a provider the job's root would not record
       await ctx._prepareTelemetry();
 
@@ -350,6 +359,7 @@ const startJob = (
         await flushJobTraces(logger);
         await flushJobLogs(logger);
       } finally {
+        stopJobTokens?.();
         safeSend({ case: 'done', value: undefined });
         joinFuture.resolve();
       }
@@ -473,11 +483,6 @@ const startJob = (
             agent.onSimulationEnd,
           );
           logger.debug('job started');
-          break;
-        }
-        case 'updateWorkerToken': {
-          // read by getWorkerToken(), for inference and telemetry
-          process.env.LIVEKIT_TOKEN = msg.value.token;
           break;
         }
         case 'shutdownRequest': {

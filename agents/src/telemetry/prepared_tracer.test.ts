@@ -18,6 +18,7 @@ import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import { createServer } from 'node:http';
 import { type AddressInfo } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { JobTokenClient, OBSERVABILITY_CLAIMS, setTokenClient } from '../job_token.js';
 import { initializeLogger } from '../log.js';
 import { ATTRIBUTE_REDACTION_ENABLED } from '../types.js';
 import { REDACTED_EXCEPTION_MESSAGE } from './redaction.js';
@@ -347,12 +348,18 @@ describe('prepared cloud tracer', () => {
     expect(seen[0]!.attributes['lk.pii.user_transcript']).toBeUndefined();
   });
 
-  it('sends the refreshed worker token on later uploads in token mode', async () => {
+  it("sends the job's renewed token on later uploads in token mode", async () => {
     // token mode: no key or secret, the worker token is in LIVEKIT_TOKEN
     delete process.env.LIVEKIT_API_KEY;
     delete process.env.LIVEKIT_API_SECRET;
     const prevToken = process.env.LIVEKIT_TOKEN;
-    process.env.LIVEKIT_TOKEN = 'token-1';
+    process.env.LIVEKIT_TOKEN = 'worker-token';
+    const jobTokens = async (token: string) => {
+      const client = new JobTokenClient(async () => ({ token, expiresAt: Date.now() + 600_000 }));
+      await client.token(OBSERVABILITY_CLAIMS);
+      setTokenClient(client);
+    };
+    await jobTokens('token-1');
 
     const traceAuth: (string | undefined)[] = [];
     const server = createServer((req, res) => {
@@ -375,14 +382,15 @@ describe('prepared cloud tracer', () => {
       await flush();
       expect(traceAuth).toEqual(['Bearer token-1']);
 
-      // the worker got a new token (UpdateWorkerToken sets it in the job's environment)
-      process.env.LIVEKIT_TOKEN = 'token-2';
+      // the job renewed its token
+      await jobTokens('token-2');
       tracer.startSpan({ name: 'agent_turn' }).end();
       await flush();
       expect(traceAuth).toEqual(['Bearer token-1', 'Bearer token-2']);
     } finally {
       await _resetPreparedCloudTracer();
       await new Promise((resolve) => server.close(resolve));
+      setTokenClient(new JobTokenClient(vi.fn()));
       if (prevToken === undefined) delete process.env.LIVEKIT_TOKEN;
       else process.env.LIVEKIT_TOKEN = prevToken;
     }

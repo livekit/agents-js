@@ -230,24 +230,27 @@ describe('job API tokens', () => {
     const { authorizations } = await runJobApi({ createJobToken });
 
     expect(authorizations).toEqual(['Bearer job-token', 'Bearer job-token']);
-    expect(createJobToken).toHaveBeenCalledTimes(1);
-    const [jobId, claims] = createJobToken.mock.calls[0]!;
+    const apiCalls = createJobToken.mock.calls.filter(([, claims]) => claims.includes('video'));
+    expect(apiCalls).toHaveLength(1);
+    const [jobId, claims] = apiCalls[0]!;
     expect(jobId).toBe('AJ_api');
     expect(JSON.parse(claims)).toEqual({ video: { roomCreate: true } });
   }, 20_000);
 
   it('in token mode, carries the server error back to the job', async () => {
     tokenModeEnv();
-    const createJobToken = vi.fn(async () => {
+    // the job's own tokens (inference, observability) are given; the server API call's are not
+    const createJobToken = vi.fn(async (_jobId: string, claims: string) => {
+      if (!claims.includes('video')) return { token: 't', expiresAt: Date.now() + 600_000 };
       throw new Error('the LiveKit server refused CreateJobToken: claim not allowed');
     });
 
     const { authorizations, tokenResponses } = await runJobApi({ createJobToken });
 
     // each call asks again: a refusal is not cached
-    expect(createJobToken).toHaveBeenCalledTimes(2);
+    expect(createJobToken).toHaveBeenCalledTimes(4);
     expect(authorizations).toEqual([]);
-    expect(tokenResponses.map((m) => m.value)).toEqual([
+    expect(tokenResponses.slice(2).map((m) => m.value)).toEqual([
       expect.objectContaining({
         error: 'the LiveKit server refused CreateJobToken: claim not allowed',
       }),
@@ -275,8 +278,12 @@ describe('job API tokens', () => {
     expect(claims).toMatchObject({ iss: 'devkey', video: { roomCreate: true } });
   }, 20_000);
 
-  it('in token mode, the job reads the current worker token: at start, and after a refresh', async () => {
-    tokenModeEnv(); // the process starts with 'worker-token'
+  it('in token mode, gets the inference and observability tokens before the entrypoint', async () => {
+    tokenModeEnv();
+    const createJobToken = vi.fn(async (_jobId: string, claims: string) => ({
+      token: `token for ${claims}`,
+      expiresAt: Date.now() + 600_000,
+    }));
     const proc = new TestJobProcExecutor({
       agent: 'unused',
       initializeTimeout: 10_000,
@@ -286,38 +293,41 @@ describe('job API tokens', () => {
       pingInterval: 2500,
       pingTimeout: 60_000,
       highPingThreshold: 500,
+      createJobToken,
     });
-    const tokens: (string | undefined)[] = [];
+    const reports: unknown[] = [];
     try {
       await proc.start();
-      proc.proc!.on('message', (message: { case: string; token?: string }) => {
-        if (message.case === 'testWorkerToken') tokens.push(message.token);
+      proc.proc!.on('message', (message: { case: string }) => {
+        if (message.case === 'testJobTokens') reports.push(message);
       });
       await proc.initialize({ sessionEndTimeout: 1000 });
-
-      // refreshed in the worker while the process was idle
-      process.env.LIVEKIT_TOKEN = 'refreshed-before-start';
       await proc.launchJob({
         acceptArguments: { name: 'n', identity: 'i', metadata: '' },
-        job: new Job({ id: 'AJ_token', metadata: 'worker token' }),
+        job: new Job({ id: 'AJ_tokens', metadata: 'job tokens' }),
         url: 'wss://example.com',
         token: 'token',
         workerId: 'W_1',
       });
-      await vi.waitFor(() => expect(tokens).toEqual(['refreshed-before-start']));
-
-      // refreshed while the job runs
-      proc.updateWorkerToken('refreshed-while-running');
-      proc.proc!.send({ case: 'testReportWorkerToken' } as unknown as IPCMessage);
-      await vi.waitFor(() =>
-        expect(tokens).toEqual(['refreshed-before-start', 'refreshed-while-running']),
-      );
-
-      proc.proc!.send({ case: 'testEnd' } as unknown as IPCMessage);
       await proc.join();
       expect(proc.status).toBe(JobStatus.SUCCESS);
     } finally {
       await proc.close();
     }
+
+    const inference = JSON.stringify({ identity: 'agent', inference: { perform: true } });
+    const observability = JSON.stringify({ observability: { write: true } });
+    expect(createJobToken.mock.calls).toEqual([
+      ['AJ_tokens', inference],
+      ['AJ_tokens', observability],
+    ]);
+    // never the worker token
+    expect(reports).toEqual([
+      {
+        case: 'testJobTokens',
+        inference: `token for ${inference}`,
+        observability: `token for ${observability}`,
+      },
+    ]);
   }, 20_000);
 });

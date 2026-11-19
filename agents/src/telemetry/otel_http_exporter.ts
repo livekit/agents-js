@@ -10,7 +10,7 @@
  */
 import { SeverityNumber } from '@opentelemetry/api-logs';
 import { AccessToken } from 'livekit-server-sdk';
-import { getWorkerToken } from '../job_token.js';
+import { getWorkerToken, observabilityToken } from '../job_token.js';
 import { resolveObservabilityUrl } from './observability_endpoint.js';
 import { fetchWithUploadGate, uploadGate } from './upload_gate.js';
 
@@ -110,10 +110,9 @@ export class SimpleOTLPHttpLogExporter {
   }
 
   private async ensureJwt(): Promise<void> {
-    // token mode: the current worker token, as is
-    const workerToken = getWorkerToken();
-    if (workerToken) {
-      this.jwt = workerToken;
+    // token mode: the job's current token
+    if (getWorkerToken()) {
+      this.jwt = observabilityToken();
       return;
     }
     if (this.jwt) return;

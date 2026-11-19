@@ -5,9 +5,19 @@ import { CreateJobTokenResponse, type WorkerMessage } from '@livekit/protocol';
 import { context as otelContext, trace } from '@opentelemetry/api';
 import type { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { LLM } from './inference/llm.js';
 import { STT } from './inference/stt.js';
+import { TTS } from './inference/tts.js';
 import { createAccessToken, resolveCredentials } from './inference/utils.js';
-import { CreateJobTokenRequests, JobTokenClient, getWorkerToken } from './job_token.js';
+import {
+  CreateJobTokenRequests,
+  INFERENCE_CLAIMS,
+  JobTokenClient,
+  OBSERVABILITY_CLAIMS,
+  getWorkerToken,
+  setTokenClient,
+} from './job_token.js';
+import { log } from './log.js';
 import { SimpleOTLPHttpLogExporter } from './telemetry/otel_http_exporter.js';
 import { PinoCloudExporter } from './telemetry/pino_otel_transport.js';
 import { setupCloudTracer, tracer } from './telemetry/traces.js';
@@ -38,6 +48,8 @@ function tokenModeEnv() {
 }
 
 afterEach(() => {
+  // no job token, as outside a job
+  setTokenClient(new JobTokenClient(vi.fn()));
   process.env = { ...originalEnv };
   vi.restoreAllMocks();
   vi.useRealTimers();
@@ -177,6 +189,73 @@ describe('JobTokenClient', () => {
     await expect(client.token('a')).resolves.toBe('t');
   });
 
+  it('reads a cached token as absent once it has expired', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(1_000_000);
+    const client = new JobTokenClient(async () => ({ token: 't', expiresAt: 1_600_000 }));
+    await client.token('a');
+    vi.setSystemTime(1_599_999);
+    expect(client.cachedToken('a')).toBe('t');
+    vi.setSystemTime(1_600_000);
+    expect(client.cachedToken('a')).toBeUndefined();
+  });
+
+  it('keepCurrent gets the tokens first, then renews each at half its lifetime', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    vi.setSystemTime(1_000_000);
+    let n = 0;
+    // the lifetime comes from the server: 'a' lives 10 minutes, 'b' 30
+    const createJobToken = vi.fn(async (claims: string) => ({
+      token: `${claims}-${++n}`,
+      expiresAt: Date.now() + (claims === 'a' ? 600_000 : 1_800_000),
+    }));
+    const client = new JobTokenClient(createJobToken);
+
+    const stop = await client.keepCurrent(['a', 'b']);
+    expect(client.cachedToken('a')).toBe('a-1');
+    expect(client.cachedToken('b')).toBe('b-2');
+
+    await vi.advanceTimersByTimeAsync(299_999);
+    expect(createJobToken).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(client.cachedToken('a')).toBe('a-3');
+    expect(client.cachedToken('b')).toBe('b-2');
+
+    // 'a' again at 600s, then both at 900s
+    await vi.advanceTimersByTimeAsync(600_000);
+    expect(createJobToken.mock.calls.map(([claims]) => claims)).toEqual([
+      'a',
+      'b',
+      'a',
+      'a',
+      'a',
+      'b',
+    ]);
+    expect(client.cachedToken('b')).toBe('b-6');
+
+    stop();
+    await vi.advanceTimersByTimeAsync(3_600_000);
+    expect(createJobToken).toHaveBeenCalledTimes(6);
+  });
+
+  it('keepCurrent logs a failure and asks again after a short delay', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    const warn = vi.spyOn(log(), 'warn');
+    const createJobToken = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('the worker did not answer'))
+      .mockResolvedValue({ token: 't', expiresAt: Date.now() + 600_000 });
+    const client = new JobTokenClient(createJobToken);
+
+    const stop = await client.keepCurrent(['a']);
+    expect(client.cachedToken('a')).toBeUndefined();
+    expect(warn).toHaveBeenCalledWith(expect.anything(), 'failed to get a job token, retrying');
+
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(client.cachedToken('a')).toBe('t');
+    stop();
+  });
+
   it('asks for the grants of a server SDK call as claims JSON', async () => {
     const createJobToken = vi.fn(async () => ({ token: 't', expiresAt: Date.now() + 600_000 }));
     const client = new JobTokenClient(createJobToken);
@@ -191,14 +270,37 @@ describe('JobTokenClient', () => {
   });
 });
 
+/** A client that holds a token for these claims, as a job has after it started. */
+async function clientWithToken(claims: string, token: string) {
+  const client = new JobTokenClient(async () => ({ token, expiresAt: Date.now() + 600_000 }));
+  await client.token(claims);
+  return client;
+}
+
 describe('inference in token mode', () => {
-  it('uses the worker token in place of a signed token', async () => {
+  it('needs a running job: never the worker token', async () => {
+    tokenModeEnv();
+    const { apiKey, apiSecret } = resolveCredentials();
+    const error =
+      'LiveKit Inference in token mode (LIVEKIT_TOKEN without an API key and secret) needs a running job';
+    // outside a job (prewarm), or in a job that has no token yet
+    await expect(createAccessToken(apiKey, apiSecret)).rejects.toThrow(error);
+  });
+
+  it("uses the job's inference token in place of a signed token", async () => {
     tokenModeEnv();
     const { apiKey, apiSecret } = resolveCredentials();
     expect({ apiKey, apiSecret }).toEqual({ apiKey: '', apiSecret: '' });
-    await expect(createAccessToken(apiKey, apiSecret)).resolves.toBe('worker-token');
-    // the STT resolves the same credentials, so it no longer needs a key and secret
+    setTokenClient(await clientWithToken(INFERENCE_CLAIMS, 'inference-token'));
+    await expect(createAccessToken(apiKey, apiSecret)).resolves.toBe('inference-token');
+  });
+
+  it('constructs the models before a job: only a request needs its token', () => {
+    tokenModeEnv();
+    // as in prewarm, kept for the job
+    expect(() => new LLM({ model: 'openai/gpt-4o-mini' })).not.toThrow();
     expect(() => new STT({ model: 'deepgram/nova-3' })).not.toThrow();
+    expect(() => new TTS({ model: 'cartesia/sonic' })).not.toThrow();
   });
 
   it('prefers inference credentials when they are set', async () => {
@@ -207,7 +309,10 @@ describe('inference in token mode', () => {
     process.env.LIVEKIT_INFERENCE_API_SECRET = 'inference-secret-inference-secret';
     const { apiKey, apiSecret } = resolveCredentials();
     expect(apiKey).toBe('inference-key');
-    await expect(createAccessToken(apiKey, apiSecret)).resolves.not.toBe('worker-token');
+    const token = await createAccessToken(apiKey, apiSecret);
+    expect(JSON.parse(Buffer.from(token.split('.')[1]!, 'base64url').toString())).toMatchObject({
+      iss: 'inference-key',
+    });
   });
 
   it('signs with the API key and secret in key mode', async () => {
@@ -241,20 +346,25 @@ describe('telemetry in token mode', () => {
     fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{}'));
   });
 
+  const withJobToken = async () =>
+    setTokenClient(await clientWithToken(OBSERVABILITY_CLAIMS, 'observability-token'));
+
   const authorization = () =>
     new Headers(fetchSpy.mock.calls.at(-1)?.[1]?.headers).get('Authorization');
 
-  it('sends session logs with the worker token', async () => {
+  it("sends session logs with the job's observability token", async () => {
+    await withJobToken();
     const exporter = new SimpleOTLPHttpLogExporter({
       observabilityUrl: 'https://example.livekit.cloud',
       resourceAttributes: {},
       scopeName: 'test',
     });
     await exporter.export([{ body: 'rec', timestampMs: 0, attributes: {} }]);
-    expect(authorization()).toBe('Bearer worker-token');
+    expect(authorization()).toBe('Bearer observability-token');
   });
 
-  it('sends job logs with the worker token', async () => {
+  it("sends job logs with the job's observability token", async () => {
+    await withJobToken();
     const exporter = new PinoCloudExporter({
       observabilityUrl: 'https://example.livekit.cloud',
       roomId: 'room1',
@@ -262,10 +372,11 @@ describe('telemetry in token mode', () => {
     });
     exporter.emit({ level: 30, time: 0, msg: 'hello' });
     await exporter.flush();
-    expect(authorization()).toBe('Bearer worker-token');
+    expect(authorization()).toBe('Bearer observability-token');
   });
 
-  it('sends traces with the worker token', async () => {
+  it("sends traces with the job's current observability token", async () => {
+    await withJobToken();
     try {
       await setupCloudTracer({
         roomId: 'room1',
@@ -273,14 +384,29 @@ describe('telemetry in token mode', () => {
         observabilityUrl: 'https://example.livekit.cloud',
         enableLogs: false,
       });
-      // the exporter reads the headers for each request, so that it follows a token refresh
+      // the exporter reads the headers for each request, so that it follows a token renewal
       expect(traceExporterHeaders).toHaveLength(1);
       const headers = traceExporterHeaders[0] as () => Promise<Record<string, string>>;
-      expect(await headers()).toEqual({ Authorization: 'Bearer worker-token' });
+      expect(await headers()).toEqual({ Authorization: 'Bearer observability-token' });
+      setTokenClient(await clientWithToken(OBSERVABILITY_CLAIMS, 'renewed-token'));
+      expect(await headers()).toEqual({ Authorization: 'Bearer renewed-token' });
     } finally {
       await (tracer.getProvider() as NodeTracerProvider).shutdown?.();
       otelContext.disable();
       trace.disable();
     }
+  });
+
+  it('never sends the worker token without a job token', async () => {
+    setTokenClient(new JobTokenClient(vi.fn()));
+    const exporter = new SimpleOTLPHttpLogExporter({
+      observabilityUrl: 'https://example.livekit.cloud',
+      resourceAttributes: {},
+      scopeName: 'test',
+    });
+    await expect(
+      exporter.export([{ body: 'rec', timestampMs: 0, attributes: {} }]),
+    ).rejects.toThrow('no observability token');
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });

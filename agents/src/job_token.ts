@@ -8,6 +8,7 @@ import {
 } from '@livekit/protocol';
 import { type TokenProvider, claimsToJwtPayload } from 'livekit-server-sdk';
 import { randomUUID } from 'node:crypto';
+import { log } from './log.js';
 
 /** How long the worker waits for the server to answer a CreateJobTokenRequest. */
 export const CREATE_JOB_TOKEN_TIMEOUT = 5000;
@@ -18,12 +19,20 @@ export const CREATE_JOB_TOKEN_TIMEOUT = 5000;
  */
 export const JOB_TOKEN_IPC_TIMEOUT = CREATE_JOB_TOKEN_TIMEOUT + 1000;
 
+/** How long a job waits to ask again for a token it could not get. */
+const JOB_TOKEN_RETRY_DELAY = 5000;
+
+// the claims of the tokens a job keeps current in token mode, for inference and telemetry
+export const INFERENCE_CLAIMS = JSON.stringify({ identity: 'agent', inference: { perform: true } });
+export const OBSERVABILITY_CLAIMS = JSON.stringify({ observability: { write: true } });
+
 /**
  * The worker token in token mode, where the agent holds no API key or secret and is given a
  * pre-minted token in `LIVEKIT_TOKEN` instead; undefined in key mode.
  *
- * The worker exports the token to the environment, so its job processes inherit it. This is the
- * one place the token is read, so a refreshed token only has to be put where this reads it.
+ * The worker registers with it, and exports it to the environment, so its job processes inherit
+ * it. A job uses it only to know that it runs in token mode: it gets its own tokens from the
+ * server.
  */
 export function getWorkerToken(): string | undefined {
   if (process.env.LIVEKIT_API_KEY || process.env.LIVEKIT_API_SECRET) return undefined;
@@ -117,7 +126,7 @@ export class CreateJobTokenRequests {
  */
 export class JobTokenClient {
   #createJobToken: (claims: string) => Promise<JobToken>;
-  #cache = new Map<string, { token: string; renewAt: number }>();
+  #cache = new Map<string, { token: string; renewAt: number; expiresAt: number }>();
   #inflight = new Map<string, Promise<string>>();
 
   /** @param createJobToken - asks the worker for a token with these claims */
@@ -138,13 +147,76 @@ export class JobTokenClient {
     return inflight;
   }
 
+  /** The last token created with these claims, unless it has expired. */
+  cachedToken(claims: string): string | undefined {
+    const cached = this.#cache.get(claims);
+    return cached && Date.now() < cached.expiresAt ? cached.token : undefined;
+  }
+
+  /**
+   * Gets a token with each of these claims, then renews each one at half of its lifetime until
+   * the returned function is called. A token it cannot get is logged, and asked for again after
+   * a short delay.
+   */
+  async keepCurrent(claims: string[]): Promise<() => void> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let stopped = false;
+    const renew = async () => {
+      let delay = JOB_TOKEN_RETRY_DELAY;
+      try {
+        await Promise.all(claims.map((c) => this.token(c)));
+        delay = Math.min(...claims.map((c) => this.#cache.get(c)!.renewAt)) - Date.now();
+      } catch (error) {
+        log().warn({ error }, 'failed to get a job token, retrying');
+      }
+      if (!stopped) timer = setTimeout(() => void renew(), Math.max(delay, 0));
+    };
+    await renew();
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
+  }
+
   /** For the server SDK clients: a token with the grants each call needs. */
   tokenProvider: TokenProvider = (grants) => this.token(JSON.stringify(claimsToJwtPayload(grants)));
 
   async #create(claims: string): Promise<string> {
     const requestedAt = Date.now();
     const { token, expiresAt } = await this.#createJobToken(claims);
-    this.#cache.set(claims, { token, renewAt: requestedAt + (expiresAt - requestedAt) / 2 });
+    this.#cache.set(claims, {
+      token,
+      renewAt: requestedAt + (expiresAt - requestedAt) / 2,
+      expiresAt,
+    });
     return token;
   }
+}
+
+let tokenClient: JobTokenClient | undefined;
+
+/** Token mode: the job's client, which inference and telemetry read their tokens from. */
+export function setTokenClient(client: JobTokenClient) {
+  tokenClient = client;
+}
+
+/**
+ * Token mode: the token the job keeps current for these claims; undefined outside a job, before
+ * the first fetch, and once it has expired. The client is kept for the process, not found through
+ * the job context: one job runs per job process, and the telemetry exporters run outside the
+ * job's async context.
+ */
+export function jobToken(claims: string): string | undefined {
+  return tokenClient?.cachedToken(claims);
+}
+
+/** Token mode: the job's observability token, for telemetry; never the worker token. */
+export function observabilityToken(): string {
+  const token = jobToken(OBSERVABILITY_CLAIMS);
+  if (!token) {
+    throw new Error(
+      'no observability token: in token mode (LIVEKIT_TOKEN), the job gets it from the LiveKit server',
+    );
+  }
+  return token;
 }

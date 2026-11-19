@@ -19,7 +19,7 @@ import {
   buildMetadataHeaders,
   createAccessToken,
   getDefaultInferenceUrl,
-  inferenceWorkerToken,
+  inferenceTokenMode,
 } from './utils.js';
 
 const DEFAULT_SAMPLE_RATE = 16000;
@@ -140,8 +140,8 @@ export class AvatarSession extends BaseAvatarSession {
     this.baseURL = options.baseURL ?? getDefaultInferenceUrl();
     this.apiKey =
       options.apiKey ?? process.env.LIVEKIT_INFERENCE_API_KEY ?? process.env.LIVEKIT_API_KEY ?? '';
-    // token mode: no key or secret, createAccessToken uses the worker token
-    const tokenMode = !!inferenceWorkerToken(options.apiKey, options.apiSecret);
+    // token mode: no key or secret, createAccessToken uses the job's token
+    const tokenMode = inferenceTokenMode(options.apiKey, options.apiSecret);
     if (!this.apiKey && !tokenMode) {
       throw new Error(
         'apiKey is required, either as argument or set LIVEKIT_API_KEY environment variable',

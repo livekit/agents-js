@@ -25,7 +25,6 @@ import { WebSocket, WebSocketServer } from 'ws';
 import { type JobExecutor, JobStatus } from './ipc/job_executor.js';
 import { JobProcExecutor } from './ipc/job_proc_executor.js';
 import { ProcPool } from './ipc/proc_pool.js';
-import type { RunningJobInfo } from './job.js';
 import { getWorkerToken } from './job_token.js';
 import { Future, rejectOnAbort } from './utils.js';
 import { AgentServer, MissingCredentialsError, ServerOptions } from './worker.js';
@@ -751,38 +750,14 @@ describe('AgentServer token mode', () => {
     ).toThrow('API Secret is required');
   });
 
-  it('takes a refreshed worker token: for the next registration, and the running jobs', async () => {
+  it('takes a refreshed worker token for the next registration', async () => {
     tokenModeEnv();
     const { wss, authorization } = await fakeServer();
-    const newExecutor = () =>
-      new JobProcExecutor({
-        agent: 'agent',
-        initializeTimeout: 1000,
-        closeTimeout: 1000,
-        memoryWarnMB: 0,
-        memoryLimitMB: 0,
-        pingInterval: 2500,
-        pingTimeout: 60000,
-        highPingThreshold: 500,
-      });
-    const running = newExecutor();
-    const idle = newExecutor();
-    vi.spyOn(running, 'runningJob', 'get').mockReturnValue({
-      job: new Job({ id: 'AJ_1' }),
-    } as RunningJobInfo);
-    const runningUpdate = vi.spyOn(running, 'updateWorkerToken').mockImplementation(() => {});
-    const idleUpdate = vi.spyOn(idle, 'updateWorkerToken').mockImplementation(() => {});
-    const processes = vi
-      .spyOn(ProcPool.prototype, 'processes', 'get')
-      .mockReturnValue([running, idle]);
     const start = vi.spyOn(ProcPool.prototype, 'start').mockImplementation(() => {});
     const server = newServer(wss);
 
-    // an idle process gets it from launchJob, when its job starts
     server._updateWorkerToken('refreshed-token');
     expect(getWorkerToken()).toBe('refreshed-token');
-    expect(runningUpdate).toHaveBeenCalledExactlyOnceWith('refreshed-token');
-    expect(idleUpdate).not.toHaveBeenCalled();
 
     const run = server.run().catch(() => undefined);
     try {
@@ -791,7 +766,6 @@ describe('AgentServer token mode', () => {
       await server.close();
       await run;
       start.mockRestore();
-      processes.mockRestore();
       wss.close();
     }
   });
