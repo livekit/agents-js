@@ -1,0 +1,37 @@
+.changeset/silly-cats-listen.md
+  s_e322e6441f1ee2::t_2a778bf4cbb813 6-7
+plugins/elevenlabs/src/stt.ts
+  s_e322e6441f1ee2::t_d39269a10c1d63 92
+plugins/elevenlabs/src/_turn_detection.ts
+  s_e322e6441f1ee2::t_169e88b7fb9e67 189,192
+  s_e322e6441f1ee2::t_085599ecd43e84 8,26,35-36,100-107,111-112,124,126,141-142,157,170-175,195,218,252,267-271,274-291,302-303
+  s_e322e6441f1ee2::t_0a667a21b62f07 272-273
+  s_e322e6441f1ee2::t_6c62636068f2d0 177
+plugins/elevenlabs/src/stt.test.ts
+  s_e322e6441f1ee2::t_7dd48902fd40e1 1389,1391,1395
+  s_e322e6441f1ee2::t_8fa7a613ee113f 1344-1359
+  s_e322e6441f1ee2::t_991b5c690e1952 1382-1388,1390,1392-1394,1396-1398,1417-1434,1437-1491,1493-1494
+  s_e322e6441f1ee2::t_d8b6b8985391f3 19,1238,1245
+  s_e322e6441f1ee2::t_aeccba9e8ecd3d 1236-1237,1239-1244,1246-1277,1279-1281,1283-1343,1399-1416,1435-1436,1492
+  s_e322e6441f1ee2::t_28d169dfa48c30 1278,1282
+  s_e322e6441f1ee2::t_dbed513851ecbe 1360-1381
+  s_e322e6441f1ee2::t_9c6d18dcadffc4 1495
+plugins/elevenlabs/README.md
+  s_e322e6441f1ee2::t_993149a774cc8d 56-62
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "57e3455980cbd8b259f21ce0c95d2e583a8f20fc",
+  "prompts": {},
+  "sessions": {
+    "s_e322e6441f1ee2": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1f393-ad48-7a53-9682-e48cbcea3f9b",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
