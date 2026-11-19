@@ -1262,8 +1262,22 @@ describe('ElevenLabs STT', () => {
       vi.useRealTimers();
     });
 
+    it.each([false, true])(
+      'ignores an existing-turn partial with VAD initially speaking=%s',
+      async (speaking) => {
+        if (speaking) {
+          vad.streams[0]!.emit(VADEventType.START_OF_SPEECH);
+          await vi.advanceTimersByTimeAsync(0);
+        }
+        detector.onPartialTranscript(0.5, 'continuation', false);
+        if (speaking) vad.streams[0]!.emit(VADEventType.END_OF_SPEECH);
+        await vi.advanceTimersByTimeAsync(3000);
+        expect(ended).not.toHaveBeenCalled();
+      },
+    );
+
     it('ends an uncommitted partial once without extending the deadline for duplicates', async () => {
-      detector.onPartialTranscript(0.76, 'Yeah.');
+      detector.onPartialTranscript(0.76, 'Yeah.', true);
       await vi.advanceTimersByTimeAsync(700);
       expect(detector.onPartialTranscript(0.8, 'Yeah.')).toBe(false);
       await vi.advanceTimersByTimeAsync(299);
@@ -1276,7 +1290,7 @@ describe('ElevenLabs STT', () => {
     });
 
     it('does not extend the deadline for changed partial text without VAD speech', async () => {
-      detector.onPartialTranscript(0.5, 'Hello');
+      detector.onPartialTranscript(0.5, 'Hello', true);
       await vi.advanceTimersByTimeAsync(700);
       detector.onPartialTranscript(0.5, 'Hello there');
       await vi.advanceTimersByTimeAsync(299);
@@ -1286,7 +1300,7 @@ describe('ElevenLabs STT', () => {
     });
 
     it('requires a full quiet window after local VAD speech', async () => {
-      detector.onPartialTranscript(0.5, 'Hello');
+      detector.onPartialTranscript(0.5, 'Hello', true);
       await vi.advanceTimersByTimeAsync(700);
       vad.streams[0]!.emit(VADEventType.START_OF_SPEECH);
       await vi.advanceTimersByTimeAsync(2000);
@@ -1302,7 +1316,7 @@ describe('ElevenLabs STT', () => {
     });
 
     it.each(['Hello', ''])('cancels the timeout when the provider commits %j', async (text) => {
-      detector.onPartialTranscript(0.5, 'Hello');
+      detector.onPartialTranscript(0.5, 'Hello', true);
       await vi.advanceTimersByTimeAsync(700);
       detector.onCommittedTranscript(
         { message_type: 'committed_transcript', text },
@@ -1320,9 +1334,9 @@ describe('ElevenLabs STT', () => {
       expect(ended).toHaveBeenCalledTimes(1);
     });
 
-    it('keeps the continuation timeout when a forced commit timestamp copy arrives late', async () => {
+    it('does not enable a continuation timeout when a forced timestamp copy arrives late', async () => {
       detector._setClassifierState({ vadSpeaking: true, audioDurationSinceCommitInS: 35.3 });
-      detector.onPartialTranscript(0.5, 'Old segment');
+      detector.onPartialTranscript(0.5, 'Old segment', true);
       detector.onCommittedTranscript(
         { message_type: 'committed_transcript', text: 'Old segment' },
         'committed_transcript_with_timestamps',
@@ -1337,18 +1351,18 @@ describe('ElevenLabs STT', () => {
           'committed_transcript_with_timestamps',
         ),
       ).toBe(true);
-      await vi.advanceTimersByTimeAsync(300);
-      expect(ended).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(ended).not.toHaveBeenCalled();
     });
 
     it('ignores an unselected timestamp copy while a newer partial is pending', async () => {
-      detector.onPartialTranscript(0.5, 'Old segment');
+      detector.onPartialTranscript(0.5, 'Old segment', true);
       detector.onCommittedTranscript(
         { message_type: 'committed_transcript', text: 'Old segment' },
         'committed_transcript',
       );
       detector.endSpeech();
-      detector.onPartialTranscript(0.5, 'New segment');
+      detector.onPartialTranscript(0.5, 'New segment', true);
       detector.onCommittedTranscript(
         { message_type: 'committed_transcript_with_timestamps', text: 'Old segment' },
         'committed_transcript',
@@ -1357,18 +1371,13 @@ describe('ElevenLabs STT', () => {
       expect(ended).toHaveBeenCalledTimes(2);
     });
 
-    it('bounds a forced timestamp copy that arrives after the continuation already timed out', async () => {
+    it('guards a fresh partial turn after the forced-commit fallback ends the previous turn', async () => {
       detector._setClassifierState({ vadSpeaking: true, audioDurationSinceCommitInS: 35.3 });
-      detector.onPartialTranscript(0.5, 'Old segment');
+      detector.onPartialTranscript(0.5, 'Old segment', true);
       detector.onCommittedTranscript(
         { message_type: 'committed_transcript', text: 'Old segment' },
         'committed_transcript_with_timestamps',
       );
-      vad.streams[0]!.emit(VADEventType.END_OF_SPEECH);
-      await vi.advanceTimersByTimeAsync(0);
-      detector.onPartialTranscript(0.5, 'New segment');
-      await vi.advanceTimersByTimeAsync(1000);
-      expect(ended).toHaveBeenCalledTimes(1);
       expect(
         detector.onCommittedTranscript(
           { message_type: 'committed_transcript_with_timestamps', text: 'Old segment' },
@@ -1376,13 +1385,17 @@ describe('ElevenLabs STT', () => {
         ),
       ).toBe(true);
       await vi.advanceTimersByTimeAsync(1000);
+      expect(ended).toHaveBeenCalledTimes(1);
+      detector.onPartialTranscript(0.5, 'Fresh turn', true);
+      vad.streams[0]!.emit(VADEventType.END_OF_SPEECH);
+      await vi.advanceTimersByTimeAsync(1000);
       expect(ended).toHaveBeenCalledTimes(2);
     });
 
     it.each(['close', 'restart'] as const)(
       'cancels the old connection timeout on %s',
       async (action) => {
-        detector.onPartialTranscript(0.5, 'Old connection');
+        detector.onPartialTranscript(0.5, 'Old connection', true);
         await vi.advanceTimersByTimeAsync(700);
         if (action === 'restart') await detector.start();
         else await detector.close();
@@ -1390,7 +1403,7 @@ describe('ElevenLabs STT', () => {
         await vi.advanceTimersByTimeAsync(2000);
         expect(ended).toHaveBeenCalledTimes(1);
         if (action === 'restart') {
-          detector.onPartialTranscript(0.5, 'New connection');
+          detector.onPartialTranscript(0.5, 'New connection', true);
           await vi.advanceTimersByTimeAsync(1000);
           expect(ended).toHaveBeenCalledTimes(2);
         }
@@ -1398,7 +1411,7 @@ describe('ElevenLabs STT', () => {
     );
 
     it('cancels the timeout if local VAD fails', async () => {
-      detector.onPartialTranscript(0.5, 'Hello');
+      detector.onPartialTranscript(0.5, 'Hello', true);
       vi.spyOn(vad.streams[0]!, 'pushFrame').mockImplementation(() => {
         throw new Error('VAD failed');
       });
@@ -1424,7 +1437,7 @@ describe('ElevenLabs STT', () => {
         });
         try {
           await other.start();
-          other.onPartialTranscript(0.5, 'Hello');
+          other.onPartialTranscript(0.5, 'Hello', true);
           await vi.advanceTimersByTimeAsync(10000);
           expect(ended).not.toHaveBeenCalled();
         } finally {
@@ -1485,6 +1498,69 @@ describe('ElevenLabs STT', () => {
           sttLib.SpeechEventType.FINAL_TRANSCRIPT,
           sttLib.SpeechEventType.END_OF_SPEECH,
         ]);
+      } finally {
+        stream.close();
+        for (const socket of wss.clients) socket.terminate();
+        await closeWebSocketServer(wss);
+      }
+    },
+  );
+
+  it.each([false, true])(
+    'does not time out a mid-turn continuation after a forced commit with timestamps=%s',
+    async (includeTimestamps) => {
+      const { wss, baseURL } = await startWebSocketServer();
+      const connected = once(wss, 'connection');
+      const vad = new (class extends TestVAD {
+        override stream(): TestVADStream {
+          const stream = super.stream();
+          stream.emit(VADEventType.START_OF_SPEECH);
+          return stream;
+        }
+      })();
+      const stream = new STT({
+        apiKey: 'test-key',
+        baseURL,
+        model: 'scribe_v3_live',
+        commitStrategy: 'turn_prediction',
+        vad,
+        includeTimestamps,
+        includeLanguageDetection: false,
+        audioChunkDuration: 35300,
+        serverVad: { vadSilenceThresholdSecs: 0.5 },
+      }).stream();
+      const { events } = collectAllEvents(stream);
+      try {
+        const [socket] = (await connected) as [WebSocket];
+        const audioReceived = once(socket, 'message');
+        stream.pushFrame(makeFrame(564800));
+        await audioReceived;
+        socket.send(JSON.stringify({ ...partialTranscript('old segment'), turn_probability: 0.5 }));
+        socket.send(JSON.stringify(committedTranscript('old segment')));
+        if (includeTimestamps) {
+          socket.send(JSON.stringify(committedTranscript('old segment', { withTimestamps: true })));
+        }
+        await waitUntil(() => finalTexts(events).length === 1);
+        socket.send(JSON.stringify(partialTranscript('continuation')));
+        await waitUntil(() => interimTexts(events).includes('continuation'));
+        vad.streams[0]!.emit(VADEventType.END_OF_SPEECH);
+        await new Promise((resolve) => setTimeout(resolve, 1200));
+        expect(
+          events.filter((event) => event.type === sttLib.SpeechEventType.START_OF_SPEECH),
+        ).toHaveLength(1);
+        expect(
+          events.filter((event) => event.type === sttLib.SpeechEventType.END_OF_SPEECH),
+        ).toHaveLength(0);
+        socket.send(JSON.stringify(committedTranscript('continuation')));
+        if (includeTimestamps) {
+          socket.send(
+            JSON.stringify(committedTranscript('continuation', { withTimestamps: true })),
+          );
+        }
+        await waitUntil(() =>
+          events.some((event) => event.type === sttLib.SpeechEventType.END_OF_SPEECH),
+        );
+        expect(finalTexts(events)).toEqual(['old segment', 'continuation']);
       } finally {
         stream.close();
         for (const socket of wss.clients) socket.terminate();

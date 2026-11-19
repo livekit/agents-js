@@ -34,6 +34,7 @@ export class TurnDetection {
   #eosTimeout?: ReturnType<typeof setTimeout>;
   #partialTimeout?: ReturnType<typeof setTimeout>;
   #partialPending = false;
+  #partialStartedTurn = false;
   #vadSpeaking = false;
   #audioDurationSinceCommitInS = 0;
   #pendingClientCommits = 0;
@@ -122,6 +123,7 @@ export class TurnDetection {
   endSpeech(): void {
     this.#eosPending = false;
     this.#partialPending = false;
+    this.#partialStartedTurn = false;
     this.cancelEosTimeout();
     this.#cancelPartialTimeout();
     this.#emitEndOfSpeech();
@@ -130,8 +132,9 @@ export class TurnDetection {
   /**
    * Records the latest turn probability. Returns whether the partial text changed, which also
    * cancels a pending forced-commit timeout because the user is still speaking.
+   * Only a partial that starts a turn enables the uncommitted-partial timeout.
    */
-  onPartialTranscript(probability: number | undefined, text: string): boolean {
+  onPartialTranscript(probability: number | undefined, text: string, startsTurn = false): boolean {
     this.#lastTurnProbability = probability;
     const changed = Boolean(text && text !== this.#lastPartialText);
     if (changed) {
@@ -139,6 +142,7 @@ export class TurnDetection {
       this.#textUpdates += 1;
       this.cancelEosTimeout();
       this.#partialPending = true;
+      if (startsTurn) this.#partialStartedTurn = true;
       this.#startPartialTimeout();
     }
     return changed;
@@ -170,6 +174,7 @@ export class TurnDetection {
     // A delayed timestamp copy must not cancel the timeout for a newer partial.
     if (result?.textUpdates === this.#textUpdates) {
       this.#partialPending = false;
+      this.#partialStartedTurn = false;
       this.#cancelPartialTimeout();
     }
     if (messageType !== finalMessageType || !result?.forced || !hasText) return false;
@@ -189,7 +194,12 @@ export class TurnDetection {
   /** Finishes a guarded turn, then always releases both timers and local VAD. */
   async close(): Promise<void> {
     try {
-      if (this.#eosPending || (this.#partialPending && this.#vadStream)) this.endSpeech();
+      if (
+        this.#eosPending ||
+        (this.#partialStartedTurn && this.#partialPending && this.#vadStream)
+      ) {
+        this.endSpeech();
+      }
     } finally {
       this.cancelEosTimeout();
       this.#cancelPartialTimeout();
@@ -216,6 +226,7 @@ export class TurnDetection {
     this.#lastPartialText = '';
     this.#eosPending = false;
     this.#partialPending = false;
+    this.#partialStartedTurn = false;
     this.#textUpdates = 0;
     this.#pendingCommitResults = [];
   }
@@ -269,7 +280,13 @@ export class TurnDetection {
   }
 
   #startPartialTimeout(): void {
-    if (this.#partialTimeout || !this.#partialPending || !this.#vadStream || this.#vadSpeaking)
+    if (
+      this.#partialTimeout ||
+      !this.#partialStartedTurn ||
+      !this.#partialPending ||
+      !this.#vadStream ||
+      this.#vadSpeaking
+    )
       return;
     const timeout = this.#eosTimeoutDuration;
     this.#partialTimeout = setTimeout(() => {
@@ -301,6 +318,7 @@ export class TurnDetection {
   async #closeVad(): Promise<void> {
     this.#cancelPartialTimeout();
     this.#partialPending = false;
+    this.#partialStartedTurn = false;
     const stream = this.#vadStream;
     this.#vadStream = undefined;
     this.#vadSpeaking = false;

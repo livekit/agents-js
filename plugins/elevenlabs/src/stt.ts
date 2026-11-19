@@ -1112,7 +1112,11 @@ export class SpeechStream extends stt.SpeechStream {
       isForcedCommit = this.#turnDetection.onCommittedTranscript(data, this.#finalMessageType);
     }
     if (messageType === 'partial_transcript') {
-      const textChanged = this.#turnDetection.onPartialTranscript(data.turn_probability, text);
+      const textChanged = this.#turnDetection.onPartialTranscript(
+        data.turn_probability,
+        text,
+        !this.#speaking,
+      );
       this.#logger.debug({ 'lk.pii.data': data }, 'Received message type partial_transcript');
       if (textChanged) {
         if (!this.#speaking) {
