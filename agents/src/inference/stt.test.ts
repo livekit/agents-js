@@ -6,7 +6,7 @@ import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import WebSocket, { WebSocketServer } from 'ws';
-import { APIStatusError } from '../_exceptions.js';
+import { APIConnectionError, APIStatusError } from '../_exceptions.js';
 import * as agents from '../index.js';
 import { asLanguageCode, normalizeLanguage } from '../language.js';
 import { AgentHandoffItem, ChatMessage } from '../llm/index.js';
@@ -959,13 +959,13 @@ describe('Inference STT connection lifecycle', () => {
         connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1000 },
       });
       const stream = stt.stream();
-      const result = (async () => {
+      const finals: SpeechEvent[] = [];
+      const outputTask = (async () => {
         for await (const event of stream) {
-          if (event.type === SpeechEventType.FINAL_TRANSCRIPT) return event;
+          if (event.type === SpeechEventType.FINAL_TRANSCRIPT) finals.push(event);
         }
-        throw new Error('stream ended without a final transcript');
       })();
-      void result.catch(() => {});
+      void outputTask.catch(() => {});
       const frame = new AudioFrame(new Int16Array(800), 16000, 1, 800);
       try {
         stream.pushFrame(frame);
@@ -982,6 +982,12 @@ describe('Inference STT connection lifecycle', () => {
         await new Promise((resolve) => setTimeout(resolve, 50));
         expect(audioConnections).toEqual([1]);
         expect(completionSeen).toBe(false);
+        oldSocket!.send(JSON.stringify({ type: 'final_transcript', transcript: 'before ready' }));
+        await vi.waitFor(
+          () =>
+            expect(finals.map((event) => event.alternatives?.[0]?.text)).toEqual(['before ready']),
+          { timeout: 500 },
+        );
         newSocket!.send(JSON.stringify({ type: 'session.handoff.ready', handoff_id: 'h1' }));
         await Promise.race([
           completed,
@@ -999,10 +1005,11 @@ describe('Inference STT connection lifecycle', () => {
         ]);
         expect(audioConnections).toEqual([1, 2]);
         if (model.startsWith('speechmatics/')) expect(vad.streams).toBe(1);
-        const final = await result;
-        expect(final.alternatives?.[0]?.startTime).toBeCloseTo(0.05, 2);
+        await vi.waitFor(() => expect(finals).toHaveLength(2));
+        expect(finals[1]?.alternatives?.[0]?.startTime).toBeCloseTo(0.05, 2);
       } finally {
         stream.close();
+        await outputTask;
         for (const client of server.clients) client.terminate();
         await new Promise<void>((resolve) => server.close(() => resolve()));
       }
@@ -2745,62 +2752,74 @@ describe('Inference STT connection lifecycle', () => {
     }
   });
 
-  it('reconnects with a deferred session keyterm replacement, not the replaced terms', async () => {
-    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
-    await once(server, 'listening');
-    const address = server.address() as AddressInfo;
-    const created: Record<string, unknown>[] = [];
-    let firstSocket: WebSocket | undefined;
-    let updated!: () => void;
-    const updateSeen = new Promise<void>((resolve) => {
-      updated = resolve;
-    });
-    let reconnected!: () => void;
-    const secondCreate = new Promise<void>((resolve) => {
-      reconnected = resolve;
-    });
-    server.on('connection', (socket) => {
-      socket.on('message', (raw) => {
-        const event = JSON.parse(raw.toString()) as {
-          type: string;
-          settings?: { extra?: Record<string, unknown> };
-        };
-        if (event.type === 'session.create') {
-          created.push(event.settings?.extra ?? {});
-          socket.send(JSON.stringify({ type: 'session.created' }));
-          if (created.length === 1) firstSocket = socket;
-          else reconnected();
-        } else if (event.type === 'session.update') updated();
+  it.each([false, true])(
+    'reconnects with deferred keyterms (first redial fails: %s)',
+    async (failFirstRedial) => {
+      const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+      await once(server, 'listening');
+      const address = server.address() as AddressInfo;
+      const created: Record<string, unknown>[] = [];
+      let firstSocket: WebSocket | undefined;
+      let updated!: () => void;
+      const updateSeen = new Promise<void>((resolve) => {
+        updated = resolve;
       });
-    });
-    const stt = makeStt({
-      model: 'deepgram/nova-3',
-      modelOptions: { keyterm: ['Acme'] },
-      baseURL: `http://127.0.0.1:${address.port}`,
-      connOptions: { maxRetry: 1, retryIntervalMs: 1, timeoutMs: 1_000 },
-    });
-    stt.on('error', () => {});
-    const stream = stt.stream();
-    try {
-      await vi.waitFor(() => expect(firstSocket).toBeDefined());
-      stt._updateSessionKeyterms(['Stale']);
-      await updateSeen;
-      stream['speaking'] = true;
-      stt._updateSessionKeyterms(['Fresh']);
-      firstSocket!.close();
-      await Promise.race([
-        secondCreate,
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('reconnect timeout')), 2000),
-        ),
-      ]);
-      expect(created[1]!.keyterm).toEqual(['Acme', 'Fresh']);
-    } finally {
-      stream.close();
-      for (const client of server.clients) client.terminate();
-      await new Promise<void>((resolve) => server.close(() => resolve()));
-    }
-  });
+      let reconnected!: () => void;
+      const secondCreate = new Promise<void>((resolve) => {
+        reconnected = resolve;
+      });
+      server.on('connection', (socket) => {
+        socket.on('message', (raw) => {
+          const event = JSON.parse(raw.toString()) as {
+            type: string;
+            settings?: { extra?: Record<string, unknown> };
+          };
+          if (event.type === 'session.create') {
+            created.push(event.settings?.extra ?? {});
+            socket.send(JSON.stringify({ type: 'session.created' }));
+            if (created.length === 1) firstSocket = socket;
+            else reconnected();
+          } else if (event.type === 'session.update') updated();
+        });
+      });
+      const stt = makeStt({
+        model: 'deepgram/nova-3',
+        modelOptions: { keyterm: ['Acme'] },
+        baseURL: `http://127.0.0.1:${address.port}`,
+        connOptions: { maxRetry: 2, retryIntervalMs: 1, timeoutMs: 1_000 },
+      });
+      stt.on('error', () => {});
+      const connect = stt.connectWs.bind(stt);
+      const dial = vi.spyOn(stt, 'connectWs');
+      if (failFirstRedial) {
+        dial
+          .mockImplementationOnce(connect)
+          .mockRejectedValueOnce(new APIConnectionError({ message: 'first redial failed' }));
+      }
+      const stream = stt.stream();
+      try {
+        await vi.waitFor(() => expect(firstSocket).toBeDefined());
+        stt._updateSessionKeyterms(['Stale']);
+        await updateSeen;
+        stream['speaking'] = true;
+        stt._updateSessionKeyterms(['Fresh']);
+        firstSocket!.close();
+        await Promise.race([
+          secondCreate,
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('reconnect timeout')), 2000),
+          ),
+        ]);
+        expect(dial).toHaveBeenCalledTimes(failFirstRedial ? 3 : 2);
+        expect(created[1]!.keyterm).toEqual(['Acme', 'Fresh']);
+      } finally {
+        dial.mockRestore();
+        stream.close();
+        for (const client of server.clients) client.terminate();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      }
+    },
+  );
 
   it('does not require a final transcript after an interim', async () => {
     const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
