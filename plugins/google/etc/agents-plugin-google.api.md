@@ -176,6 +176,38 @@ interface CustomPronunciations {
     pronunciations: CustomPronunciationParams[];
 }
 
+// Warning: (ae-missing-release-tag) "DecisionModel" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export class DecisionModel extends llm.DecisionModel {
+    constructor(input?: DecisionModelOptions);
+    // (undocumented)
+    protected _evaluateImpl(input: {
+        input: string;
+        decisions: Readonly<Record<string, llm.Decision>>;
+        connOptions: APIConnectOptions;
+        abortSignal: AbortSignal;
+    }): Promise<llm.DecisionResponse>;
+    // (undocumented)
+    get model(): string;
+    // (undocumented)
+    get provider(): string;
+}
+
+// Warning: (ae-missing-release-tag) "DecisionModelOptions" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+export interface DecisionModelOptions {
+    apiKey?: string;
+    client?: GoogleGenAI;
+    model?: DecisionModels | (string & NonNullable<unknown>);
+}
+
+// Warning: (ae-missing-release-tag) "DecisionModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public (undocumented)
+export type DecisionModels = 'gemini-decision-1' | 'gemini-decision-eap';
+
 // Warning: (ae-missing-release-tag) "FileSearch" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
