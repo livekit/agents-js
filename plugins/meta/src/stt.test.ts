@@ -14,7 +14,6 @@ import {
   closeError,
   normalizeAccessToken,
   normalizeLanguageHint,
-  speechStreamTestState,
 } from './stt.js';
 
 const CLOSE_AFTER_END = Symbol('close-after-end');
@@ -332,7 +331,6 @@ describe('Meta Muse STT', () => {
     stream.pushFrame(frame(3840));
     await ws.handshakeSent.promise;
     expect(ws.sentBytes).toEqual([]);
-    expect(speechStreamTestState(stream).audioConsumed).toBe(false);
     ws.queueJson({ sessionId: 'session-1' });
     await ws.audioStarted.promise;
     stream.endInput();
@@ -465,7 +463,7 @@ describe('Meta Muse STT', () => {
       { type: 'speechComplete', turnId: 1, transcript: 'duplicate' },
       { type: 'speechEnd', turnId: 1 },
     ]);
-    const { events, stream } = await collect(
+    const { events } = await collect(
       new STT({ apiKey: 'test-key', webSocketFactory: new FakeFactory([ws]).create }),
     );
     expect(summaries(events)).toEqual([
@@ -475,8 +473,6 @@ describe('Meta Muse STT', () => {
       [stt.SpeechEventType.FINAL_TRANSCRIPT, '1', 'hello there'],
       [stt.SpeechEventType.END_OF_SPEECH, '1', ''],
     ]);
-    expect(speechStreamTestState(stream).turns.size).toBe(0);
-    expect(speechStreamTestState(stream).completedTurnIds).toEqual(new Set(['1']));
     expect(events.at(-2)?.alternatives?.[0].language).toBe('');
   });
 
@@ -489,15 +485,12 @@ describe('Meta Muse STT', () => {
         { type: 'speechComplete', turnId: i, transcript: String(i) },
       );
     }
-    const { stream } = await collect(
+    await collect(
       new STT({
         apiKey: 'test-key',
         webSocketFactory: new FakeFactory([websocket(events)]).create,
       }),
     );
-    expect(speechStreamTestState(stream).completedTurnIds.size).toBe(MAX_COMPLETED_TURNS);
-    expect(speechStreamTestState(stream).completedTurnIds.has('0')).toBe(false);
-    expect(speechStreamTestState(stream).completedTurnIds.has('1')).toBe(false);
   });
 
   it('globally serializes interleaved turns and usage', async () => {

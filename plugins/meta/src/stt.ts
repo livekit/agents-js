@@ -135,21 +135,7 @@ interface TurnState {
   usageCaptured: boolean;
 }
 
-interface SpeechStreamTestState {
-  audioConsumed: boolean;
-  turns: Map<string, TurnState>;
-  completedTurnIds: Set<string>;
-  completedTurnOrder: string[];
-}
-
-const SPEECH_STREAM_TEST_STATES = new WeakMap<SpeechStream, () => SpeechStreamTestState>();
 const SPEECH_STREAM_CLOSE_PROMISES = new WeakMap<SpeechStream, () => Promise<void>>();
-
-export function speechStreamTestState(stream: SpeechStream): SpeechStreamTestState {
-  const state = SPEECH_STREAM_TEST_STATES.get(stream);
-  if (!state) throw new Error('unknown Meta speech stream');
-  return state();
-}
 
 function sanitizedErrorName(error: unknown): string {
   if (!(error instanceof Error)) return 'Error';
@@ -503,12 +489,6 @@ export class SpeechStream extends stt.SpeechStream {
     super(sttInstance, SAMPLE_RATE, connOptions);
     this.#opts = opts;
     this.#timeoutMs = connOptions?.timeoutMs ?? DEFAULT_API_CONNECT_OPTIONS.timeoutMs;
-    SPEECH_STREAM_TEST_STATES.set(this, () => ({
-      audioConsumed: this.#audioConsumed,
-      turns: this.#turns,
-      completedTurnIds: this.#completedTurnIds,
-      completedTurnOrder: this.#completedTurnOrder,
-    }));
     SPEECH_STREAM_CLOSE_PROMISES.set(this, () => this.#attemptDone);
   }
 
