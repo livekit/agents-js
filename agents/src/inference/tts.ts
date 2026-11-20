@@ -959,9 +959,22 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
                 'Received error message from LiveKit TTS WebSocket',
               );
               await resourceCleanup();
-              completionFuture.reject(
-                new APIError(`LiveKit TTS returned error: ${serverEvent.message}`),
-              );
+              {
+                const detail = serverEvent.data ?? serverEvent.message;
+                const text =
+                  detail === undefined
+                    ? undefined
+                    : typeof detail === 'string'
+                      ? detail
+                      : JSON.stringify(detail);
+                const message = [serverEvent.code, text].filter(Boolean).join(': ');
+                completionFuture.reject(
+                  new APIError(`LiveKit TTS returned error: ${message || 'unknown error'}`, {
+                    body: serverEvent,
+                    retryable: serverEvent.retryable ?? true,
+                  }),
+                );
+              }
               return;
           }
         }

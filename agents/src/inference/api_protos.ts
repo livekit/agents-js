@@ -72,7 +72,11 @@ export const ttsFallbackActivatedEventSchema = z.object({
 
 export const ttsErrorEventSchema = z.object({
   type: z.literal('error'),
+  // The gateway sends `code`, `data` and `retryable`; `message` is kept for older senders.
+  code: z.string().optional(),
+  data: z.unknown().optional(),
   message: z.string().optional(),
+  retryable: z.boolean().optional(),
   session_id: z.string().optional(),
 });
 
