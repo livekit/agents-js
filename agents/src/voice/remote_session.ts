@@ -1013,17 +1013,13 @@ export class SessionHost {
   };
 
   private onFunctionToolsExecuted = (event: FunctionToolsExecutedEvent): void => {
+    // encoded as the chat history encodes them, so a consumer can match each item to the
+    // history by id
     const pbCalls = event.functionCalls.map(
-      (fc: FCItem) => new pb.FunctionCall({ name: fc.name, arguments: fc.args, callId: fc.callId }),
+      (fc: FCItem) => encodeChatItem(fc).item.value as pb.FunctionCall,
     );
     const pbOutputs = event.functionCallOutputs.map(
-      (fco: FCOItem) =>
-        new pb.FunctionCallOutput({
-          callId: fco.callId,
-          name: fco.name,
-          output: fco.output,
-          isError: fco.isError,
-        }),
+      (fco: FCOItem) => encodeChatItem(fco).item.value as pb.FunctionCallOutput,
     );
     this.emitEvent(
       {
