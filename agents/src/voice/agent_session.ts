@@ -1305,6 +1305,30 @@ export class AgentSession<
     return this.activity.interrupt(options);
   }
 
+  /**
+   * Reset the user-away timeout after external user activity.
+   *
+   * If the user is away, changes their state to listening. Restarts the full timeout when both
+   * the user and agent are listening. Does nothing when away detection is disabled or the session
+   * is not active.
+   */
+  resetAwayTimer(): void {
+    if (
+      !this.started ||
+      this.closing ||
+      this.sessionOptions.userAwayTimeout === null ||
+      this.sessionOptions.userAwayTimeout === undefined
+    ) {
+      return;
+    }
+
+    if (this._userState === 'away') {
+      this._updateUserState('listening');
+    } else if (this._userState === 'listening' && this._agentState === 'listening') {
+      this._setUserAwayTimer();
+    }
+  }
+
   /** @internal — emit a debug/trace payload to the debugger/recorder. */
   _emitDebugMessage(payload: JsonObject): void {
     const debugMessage = new pb.DebugMessage({ payload: Struct.fromJson(payload) });

@@ -1,0 +1,68 @@
+# SPDX-FileCopyrightText: 2026 LiveKit, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+name: Deploy Homepage Examples
+
+on:
+  # Manual runs deploy from the branch selected in the Actions UI.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy ${{ matrix.example }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - example: card-auth
+            entrypoint: examples/dist/homepage/card-auth/card_auth_agent.js
+            agent_id: CA_VQbKpqrwX4dm
+          - example: frontdesk
+            entrypoint: examples/dist/homepage/frontdesk/frontdesk_agent.js
+            agent_id: CA_nvPHLZuA2nNn
+          - example: restaurant-ordering
+            entrypoint: examples/dist/homepage/restaurant-ordering/restaurant_ordering.js
+            agent_id: CA_dfEVnhCfFTCY
+          - example: vehicle-service
+            entrypoint: examples/dist/homepage/vehicle-service/vehicle_service.js
+            agent_id: CA_CTSsG7YwPurk
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Install LiveKit CLI
+        run: |
+          curl -sSL https://get.livekit.io/cli | bash
+          lk --version
+
+      - name: Add LiveKit Cloud project
+        env:
+          LIVEKIT_URL: ${{ secrets.LIVEKIT_EXAMPLES_URL }}
+          LIVEKIT_API_KEY: ${{ secrets.LIVEKIT_EXAMPLES_API_KEY }}
+          LIVEKIT_API_SECRET: ${{ secrets.LIVEKIT_EXAMPLES_API_SECRET }}
+        run: |
+          lk project add examples \
+            --url "$LIVEKIT_URL" \
+            --api-key "$LIVEKIT_API_KEY" \
+            --api-secret "$LIVEKIT_API_SECRET" \
+            --default
+
+      # Deployment uses the repository root because the examples consume workspace packages.
+      - name: Prepare deployment context
+        env:
+          LIVEKIT_URL: ${{ secrets.LIVEKIT_EXAMPLES_URL }}
+          AGENT_ID: ${{ matrix.agent_id }}
+          ENTRYPOINT: ${{ matrix.entrypoint }}
+        run: |
+          host="${LIVEKIT_URL#*://}"
+          printf '[project]\n  subdomain = "%s"\n\n[agent]\n  id = "%s"\n' \
+            "${host%%.*}" "$AGENT_ID" > livekit.toml
+          sed "s|__HOMEPAGE_ENTRYPOINT__|$ENTRYPOINT|" \
+            examples/src/homepage/Dockerfile.homepage > Dockerfile
+
+      - name: Deploy ${{ matrix.example }}
+        run: lk agent deploy .
