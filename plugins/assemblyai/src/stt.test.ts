@@ -1,11 +1,12 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { log } from '@livekit/agents';
 import { VAD } from '@livekit/agents-plugin-silero';
 import { stt } from '@livekit/agents-plugins-test';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { WebSocketServer } from 'ws';
 import { STT } from './stt.js';
 
@@ -200,6 +201,32 @@ describe('AssemblyAI options', () => {
       expect(url.searchParams.get('language_detection')).toBe('true');
     } finally {
       await closeWebSocketServer(wss);
+    }
+  });
+
+  it('defaults to assemblyai-stt-3-7-realtime-agent', () => {
+    const stt = new STT({ apiKey: 'test-key' });
+
+    expect(stt.model).toBe('assemblyai-stt-3-7-realtime-agent');
+  });
+
+  it('accepts u3-pro parameters with the deprecated alias', () => {
+    const stt = new STT({ apiKey: 'test-key', speechModel: 'u3-pro', continuousPartials: true });
+
+    expect(stt.model).toBe('assemblyai-stt-3-7-realtime-agent');
+  });
+
+  it('warns and rewrites the deprecated u3-pro alias to the default model', () => {
+    const warn = vi.spyOn(log(), 'warn').mockImplementation(() => undefined);
+
+    try {
+      const stt = new STT({ apiKey: 'test-key', speechModel: 'u3-pro' });
+
+      expect(stt.model).toBe('assemblyai-stt-3-7-realtime-agent');
+      expect(warn).toHaveBeenCalledOnce();
+      expect(warn.mock.calls[0]?.[0]).toContain('assemblyai-stt-3-7-realtime-agent');
+    } finally {
+      warn.mockRestore();
     }
   });
 

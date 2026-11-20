@@ -10,7 +10,6 @@ import { Attributes } from '@opentelemetry/api';
 import { AudioFrame } from '@livekit/rtc-node';
 import { AudioResampler } from '@livekit/rtc-node';
 import { Context } from '@opentelemetry/api';
-import { default as default_2 } from 'ws';
 import type { E2EEOptions } from '@livekit/rtc-node';
 import { EventEmitter } from 'events';
 import { EventEmitter as EventEmitter_2 } from 'node:events';
@@ -6474,6 +6473,8 @@ export abstract class RealtimeSession extends EventEmitter {
 // @public (undocumented)
 class RealtimeSession_3 extends RealtimeSession_2 {
     constructor(realtimeModel: RealtimeModel_2, options?: llm_2.RealtimeSessionOptions);
+    // @internal (undocumented)
+    protected get acceptsEmptyDeleteAcknowledgement(): boolean;
     // (undocumented)
     close(): Promise<void>;
     // (undocumented)
@@ -6485,7 +6486,7 @@ class RealtimeSession_3 extends RealtimeSession_2 {
     // (undocumented)
     protected createToolsUpdateEvent(tools: ToolContext): api_proto.SessionUpdateEvent;
     // (undocumented)
-    protected createWsConn(): Promise<default_2>;
+    protected createWsConn(): Promise<WebSocket_2>;
     // (undocumented)
     protected handleConversationItemCreated(event: api_proto.ConversationItemCreatedEvent): void;
     // (undocumented)
@@ -6504,6 +6505,8 @@ class RealtimeSession_3 extends RealtimeSession_2 {
     protected isFatalError(error: unknown): boolean;
     // (undocumented)
     protected resetInputTurnState(): void;
+    // @internal (undocumented)
+    protected waitForSocketRecycle(ws: WebSocket_2, signal: AbortSignal): Promise<void>;
 }
 
 // @public
@@ -7984,7 +7987,7 @@ class STT_2<TModel extends STTModels> extends STT {
         vad?: VAD;
     });
     // (undocumented)
-    connectWs(timeout: number): Promise<WebSocket_2>;
+    connectWs(timeout: number, opts?: InferenceSTTOptions<TModel>, sessionKeyterms?: string[], handoffProbeId?: string): Promise<WebSocket_2>;
     // (undocumented)
     static fromModelString(modelString: string): STT_2<AnyString>;
     // (undocumented)
@@ -10013,7 +10016,7 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 //
 // src/_exceptions.ts:90:5 - (ae-forgotten-export) The symbol "APIStatusErrorOptions" needs to be exported by the entry point index.d.ts
 // src/_exceptions.ts:128:5 - (ae-forgotten-export) The symbol "APIErrorOptions" needs to be exported by the entry point index.d.ts
-// src/inference/tts.ts:328:5 - (ae-forgotten-export) The symbol "TTSEncoding" needs to be exported by the entry point index.d.ts
+// src/inference/tts.ts:354:5 - (ae-forgotten-export) The symbol "TTSEncoding" needs to be exported by the entry point index.d.ts
 // src/llm/chat_context.ts:80:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "audio"
 // src/llm/tool_context.ts:709:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "ToolFlag" has more than one declaration; you need to add a TSDoc member reference selector
 // src/llm/tool_context.ts:756:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "ToolFlag" has more than one declaration; you need to add a TSDoc member reference selector
