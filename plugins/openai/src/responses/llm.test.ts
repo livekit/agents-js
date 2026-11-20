@@ -200,3 +200,68 @@ if (hasOpenAIApiKey) {
     it.skip('requires OPENAI_API_KEY', () => {});
   });
 }
+
+describe('OpenAI Responses HTTP usage', () => {
+  async function usageFor(usage: Record<string, unknown>) {
+    const completed = {
+      type: 'response.completed',
+      response: { id: 'resp_1', usage },
+    };
+    const client = {
+      responses: {
+        create: async () => ({
+          async *[Symbol.asyncIterator]() {
+            yield RESPONSE_CREATED;
+            yield completed;
+          },
+        }),
+      },
+    };
+    const model = new LLM({
+      model: 'gpt-5',
+      apiKey: 'test-key',
+      useWebSocket: false,
+      client: client as unknown as OpenAI,
+    });
+
+    const chatCtx = ChatContext.empty();
+    chatCtx.addMessage({ role: 'user', content: 'hi' });
+    const stream = model.chat({
+      chatCtx,
+      connOptions: { maxRetry: 0, retryIntervalMs: 0, timeoutMs: 5000 },
+    });
+    for await (const chunk of stream) {
+      if (chunk.usage) return chunk.usage;
+    }
+    return undefined;
+  }
+
+  it('reports reasoning tokens', async () => {
+    const usage = await usageFor({
+      input_tokens: 100,
+      input_tokens_details: { cached_tokens: 40 },
+      output_tokens: 80,
+      output_tokens_details: { reasoning_tokens: 30 },
+      total_tokens: 180,
+    });
+
+    expect(usage).toMatchObject({
+      promptTokens: 100,
+      promptCachedTokens: 40,
+      completionTokens: 80,
+      reasoningTokens: 30,
+      totalTokens: 180,
+    });
+  });
+
+  it('accepts usage without the token detail blocks', async () => {
+    const usage = await usageFor({ input_tokens: 10, output_tokens: 5, total_tokens: 15 });
+
+    expect(usage).toMatchObject({
+      promptTokens: 10,
+      promptCachedTokens: 0,
+      completionTokens: 5,
+      totalTokens: 15,
+    });
+  });
+});
