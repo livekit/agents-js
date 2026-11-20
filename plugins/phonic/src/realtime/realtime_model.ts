@@ -1301,21 +1301,26 @@ export class RealtimeSession extends llm.RealtimeSession {
     // End the agent session the same way an app-initiated shutdown would, letting the final
     // reply play out. Whether the room is deleted is left to the room options. There is no
     // public accessor for the job's primary session, so this reads the field
-    // `telemetry.primarySession()` uses. Only the primary session is reachable, so another
-    // session in the job (such as a warm transfer's) is left to the app via the event.
+    // `telemetry.primarySession()` uses.
     const agentSession = getJobContext(false)?._primaryAgentSession;
-    if (agentSession === undefined) {
-      return;
-    }
-    let ownsConversation: boolean;
+    let ownsConversation = false;
     try {
-      ownsConversation = agentSession.currentAgent.getActivityOrThrow().realtimeLLMSession === this;
+      ownsConversation =
+        agentSession?.currentAgent.getActivityOrThrow().realtimeLLMSession === this;
     } catch {
-      return;
+      // no running agent, so nothing owns this conversation yet
     }
     if (ownsConversation) {
-      agentSession.shutdown({ drain: true });
+      agentSession!.shutdown({ drain: true });
+      return;
     }
+
+    // Only the job's primary session can be shut down from here. Any other owner, such as a
+    // second session, learns of the end as an error.
+    this.emitError(
+      new APIError(`Phonic ended the conversation: ${reason}`, { retryable: false }),
+      false,
+    );
   }
 
   private emitError(error: Error, recoverable: boolean): void {

@@ -81,13 +81,16 @@ describe('Phonic conversation end', () => {
     expect(shutdowns).toEqual([{ drain: true }]);
   });
 
-  it("leaves the primary session running when another session's conversation ends", async () => {
+  it('falls back to an error when another session owns the conversation', async () => {
     await startSession();
     primary.realtimeSession = {};
     socketHandlers.get('close')!({ code: 4505, reason: 'closed' });
 
     expect(ended).toEqual([{ reason: 'time_limit_reached' }]);
     expect(shutdowns).toEqual([]);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]!.recoverable).toBe(false);
+    expect(errors[0]!.error).not.toBeInstanceOf(PhonicNoInputTimeoutError);
   });
 
   it('reports a no-input timeout as one typed unrecoverable error', async () => {
