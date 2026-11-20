@@ -6,7 +6,11 @@ import { AudioResampler } from '@livekit/rtc-node';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import type { Span } from '@opentelemetry/api';
 import { context as otelContext } from '@opentelemetry/api';
-import type { ReadableStream, ReadableStreamDefaultReader } from 'stream/web';
+import {
+  ReadableStream,
+  type ReadableStreamDefaultReader,
+  type ReadableStreamReadResult,
+} from 'stream/web';
 import type { Instructions } from '../llm/chat_context.js';
 import {
   type ChatContext,
@@ -1112,6 +1116,82 @@ export function performTTSInference(
     Task.from((controller) => inferenceTask(controller.signal), controller, 'performTTSInference'),
     genData,
   ];
+}
+
+/**
+ * Forward the TTS-aligned transcript, falling back to the generated text.
+ *
+ * `alignedTranscript` says the TTS was asked for word timings, not that the provider that
+ * served this turn returned any. A server-side fallback in LiveKit Inference can serve a
+ * turn without the requested options, so the timed stream can end without a single item.
+ * Forwarding it alone would leave the turn with no transcript, so the generated text is
+ * forwarded instead, without word timings. This matches the Python SDK.
+ *
+ * Neither source is cancelled: the generated text is also written by the segment producer,
+ * which must finish independently. Aborting `signal` stops reading and releases both
+ * sources without a fallback.
+ */
+export function alignedTranscriptOrText(
+  timedTexts: ReadableStream<TimedString>,
+  text: ReadableStream<string>,
+  signal: AbortSignal,
+): ReadableStream<string | TimedString> {
+  let reader: ReadableStreamDefaultReader<TimedString | string> | undefined;
+  let aligned = false;
+  let fellBack = false;
+  const release = () => {
+    // A read pending on the released reader rejects, which pull() treats as the end.
+    reader?.releaseLock();
+    reader = undefined;
+  };
+  const onAbort = () => release();
+
+  return new ReadableStream<string | TimedString>({
+    start() {
+      reader = timedTexts.getReader();
+      signal.addEventListener('abort', onAbort, { once: true });
+      if (signal.aborted) release();
+    },
+    async pull(controller) {
+      const finish = () => {
+        signal.removeEventListener('abort', onAbort);
+        release();
+        controller.close();
+      };
+      while (true) {
+        if (signal.aborted || !reader) return finish();
+        let result: ReadableStreamReadResult<TimedString | string>;
+        try {
+          result = await reader.read();
+        } catch (error) {
+          // Released by an abort while reading.
+          if (signal.aborted || !reader) return finish();
+          signal.removeEventListener('abort', onAbort);
+          release();
+          controller.error(error);
+          return;
+        }
+        if (signal.aborted) return finish();
+        if (!result.done) {
+          if (!fellBack) aligned = true;
+          controller.enqueue(result.value);
+          return;
+        }
+        if (aligned || fellBack) return finish();
+        fellBack = true;
+        log().warn(
+          'no aligned transcript was returned from tts, ' +
+            'forwarding the generated text without word timings',
+        );
+        release();
+        reader = text.getReader();
+      }
+    },
+    cancel() {
+      signal.removeEventListener('abort', onAbort);
+      release();
+    },
+  });
 }
 
 export interface _TextOut {
