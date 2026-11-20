@@ -923,6 +923,42 @@ world
       }
     });
 
+    it('preserves stereo channels and duration when resampling', async () => {
+      const inputFrame = createAudioFrame(48000, 960, 2);
+      const inputStream = new ReadableStream<AudioFrame>({
+        start(controller) {
+          controller.enqueue(inputFrame);
+          controller.close();
+        },
+      });
+      const frames = await streamToArray(
+        resampleStream({ stream: inputStream, outputRate: 16000 }),
+      );
+      expect(frames.length).toBeGreaterThan(0);
+      expect(frames.every((frame) => frame.channels === 2)).toBe(true);
+      expect(frames.reduce((total, frame) => total + frame.samplesPerChannel, 0)).toBe(320);
+    });
+
+    it('reconfigures the resampler when the channel count changes', async () => {
+      const inputStream = new ReadableStream<AudioFrame>({
+        start(controller) {
+          controller.enqueue(createAudioFrame(48000, 960, 1));
+          controller.enqueue(createAudioFrame(48000, 960, 2));
+          controller.close();
+        },
+      });
+      const frames = await streamToArray(
+        resampleStream({ stream: inputStream, outputRate: 16000 }),
+      );
+      for (const channels of [1, 2]) {
+        expect(
+          frames
+            .filter((frame) => frame.channels === channels)
+            .reduce((total, frame) => total + frame.samplesPerChannel, 0),
+        ).toBe(320);
+      }
+    });
+
     it('should handle same input and output rate', async () => {
       const sampleRate = 44100;
       const inputFrame = createAudioFrame(sampleRate, 1024);
