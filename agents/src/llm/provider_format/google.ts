@@ -65,6 +65,8 @@ export async function toChatCtx(
         } else if (content && typeof content === 'object') {
           if (content.type === 'image_content') {
             parts.push(await toImagePart(content));
+          } else if (content.type === 'audio_content') {
+            continue;
           } else {
             // Handle other content types as JSON
             parts.push({ text: JSON.stringify(content) });
@@ -101,7 +103,7 @@ export async function toChatCtx(
   }
 
   // Gemini requires the last message to end with user's turn before they can generate
-  if (injectDummyUserMessage && currentRole !== 'user') {
+  if (injectDummyUserMessage && turns.at(-1)?.role !== 'user') {
     turns.push({ role: 'user', parts: [{ text: '.' }] });
   }
 
