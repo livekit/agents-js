@@ -88,16 +88,17 @@ export type TTSOutputAudioCodec = 'wav' | 'linear16' | 'mulaw' | 'alaw';
  * Supported Sarvam AI STT models.
  *
  * @remarks
- * - `saaras:v3` — recommended for new integrations. Supports all 22 languages, modes, and prompts.
+ * - `saaras:v4` — default and recommended for new integrations. Supports all 22 languages and modes.
+ * - `saaras:v3` — supports all 22 languages and modes.
  * - `saaras:v2.5` — dedicated Indic-to-English translation via `/speech-to-text-translate`.
  *   Auto-detects the source language; supports prompts but not language codes or modes.
- * - `saarika:v2.5` — will be deprecated soon. All its languages are available in `saaras:v3`.
+ * - `saarika:v2.5` — will be deprecated soon. All its languages are available in `saaras:v3` and `saaras:v4`.
  *
  * @see {@link https://docs.sarvam.ai/api-reference-docs/getting-started/models/saaras | Saaras model docs}
  */
-export type STTModels = 'saaras:v3' | 'saaras:v2.5' | 'saarika:v2.5';
+export type STTModels = 'saaras:v4' | 'saaras:v3' | 'saaras:v2.5' | 'saarika:v2.5';
 
-/** Transcription modes available on saaras:v3 */
+/** Transcription modes available on saaras:v3 and saaras:v4 */
 export type STTModes = 'transcribe' | 'translate' | 'verbatim' | 'translit' | 'codemix';
 
 /**
@@ -118,7 +119,7 @@ export type STTV2Languages =
   | 'en-IN'
   | 'gu-IN';
 
-/** saaras:v3 supports all v2 languages plus 12 additional ones (22 Indian + English) */
+/** saaras:v3 and saaras:v4 support all v2 languages plus 12 additional ones */
 export type STTV3Languages =
   | STTV2Languages
   | 'as-IN'
