@@ -414,7 +414,70 @@ describe('inference.LLM X-LiveKit-Inference-Priority header', () => {
   });
 });
 
+const CITIES = ['Paris', 'London', 'Rome'];
+
+function allCallsInOneDelta() {
+  // Some OpenAI-compatible providers (e.g. Ollama) send every parallel call,
+  // complete, in a single chunk.
+  return CITIES.map((city, index) => ({
+    index,
+    id: `call-${index}`,
+    type: 'function',
+    function: {
+      name: 'get_weather',
+      arguments: JSON.stringify({ city }),
+    },
+  }));
+}
+
+function emittedCities(chunks: Awaited<ReturnType<typeof collectChatChunks>>) {
+  return chunks.flatMap((chunk) =>
+    (chunk.delta?.toolCalls ?? []).map((call) => JSON.parse(call.args).city),
+  );
+}
+
 describe('inference.LLM streamed tool calls', () => {
+  it('emits all parallel calls sent in one chunk', async () => {
+    const chunks = await collectChatChunks([
+      {
+        id: 'chatcmpl_test',
+        choices: [
+          {
+            index: 0,
+            finish_reason: null,
+            delta: { tool_calls: allCallsInOneDelta() },
+          },
+        ],
+      },
+      {
+        id: 'chatcmpl_test',
+        choices: [{ index: 0, finish_reason: 'tool_calls', delta: {} }],
+      },
+    ]);
+
+    expect(emittedCities(chunks)).toEqual(CITIES);
+  });
+
+  it.each(['tool_calls', 'stop'])(
+    'emits all parallel calls sent in the finishing chunk (%s)',
+    async (finishReason) => {
+      const chunks = await collectChatChunks([
+        {
+          id: 'chatcmpl_test',
+          choices: [
+            {
+              index: 0,
+              finish_reason: finishReason,
+              delta: { tool_calls: allCallsInOneDelta() },
+            },
+          ],
+        },
+      ]);
+
+      expect(emittedCities(chunks)).toEqual(CITIES);
+    },
+  );
+
   it('does not expose content alongside tool calls', async () => {
     const chunks = await collectChatChunks(
       [
