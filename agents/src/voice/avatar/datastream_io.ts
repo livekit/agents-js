@@ -223,7 +223,7 @@ export class DataStreamAudioOutput extends AudioOutput {
       })
       .catch((error) => {
         this.#logger.warn(
-          { error, destinationIdentity: this.destinationIdentity },
+          { error, 'lk.pii.destination_identity': this.destinationIdentity },
           'failed to perform clear buffer rpc',
         );
 
