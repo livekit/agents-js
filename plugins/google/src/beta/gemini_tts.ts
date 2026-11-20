@@ -138,7 +138,10 @@ export class TTS extends tts.TTS {
     const gcpProject: string | undefined = project || process.env.GOOGLE_CLOUD_PROJECT;
     const gcpLocation: string | undefined =
       location || process.env.GOOGLE_CLOUD_LOCATION || 'us-central1';
-    const useVertexai = vertexai ?? process.env.GOOGLE_GENAI_USE_VERTEXAI === 'true';
+    const useVertexai =
+      vertexai ??
+      (process.env.GOOGLE_GENAI_USE_VERTEXAI === 'true' ||
+        process.env.GOOGLE_GENAI_USE_VERTEXAI === '1');
     const geminiApiKey = apiKey || process.env.GOOGLE_API_KEY;
 
     let finalProject: string | undefined = gcpProject;

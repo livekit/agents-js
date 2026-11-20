@@ -1,10 +1,11 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { GoogleGenAI } from '@google/genai';
 import { tts as agentsTts, tokenize } from '@livekit/agents';
 import { STT } from '@livekit/agents-plugin-openai';
 import { tts } from '@livekit/agents-plugins-test';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TTS } from './gemini_tts.js';
 
 const { generateContentStream } = vi.hoisted(() => ({
@@ -73,6 +74,35 @@ async function synthesize(tts: TTS, text: string): Promise<void> {
     // drain
   }
 }
+
+describe('Google Gemini TTS client options', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it.each(['true', '1'])('uses Vertex AI when GOOGLE_GENAI_USE_VERTEXAI=%s', (value) => {
+    vi.stubEnv('GOOGLE_GENAI_USE_VERTEXAI', value);
+    vi.stubEnv('GOOGLE_CLOUD_PROJECT', 'test-project');
+    vi.stubEnv('GOOGLE_API_KEY', 'test-api-key');
+    vi.mocked(GoogleGenAI).mockClear();
+
+    new TTS();
+
+    expect(GoogleGenAI).toHaveBeenCalledWith(
+      expect.objectContaining({ vertexai: true, project: 'test-project' }),
+    );
+  });
+
+  it('uses the Gemini API key when GOOGLE_GENAI_USE_VERTEXAI is unset', () => {
+    vi.stubEnv('GOOGLE_GENAI_USE_VERTEXAI', '');
+    vi.stubEnv('GOOGLE_API_KEY', 'test-api-key');
+    vi.mocked(GoogleGenAI).mockClear();
+
+    new TTS();
+
+    expect(GoogleGenAI).toHaveBeenCalledWith({ apiKey: 'test-api-key' });
+  });
+});
 
 describe('Google Gemini TTS expressive markup', () => {
   beforeEach(() => {
