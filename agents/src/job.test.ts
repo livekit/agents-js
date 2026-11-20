@@ -243,6 +243,33 @@ describe('JobContext.simulationContext', () => {
   });
 });
 
+describe('SimulationContext.defines', () => {
+  const simJob = (defines?: Record<string, string>) =>
+    createJobContextWithRoom(
+      {},
+      {
+        attributes: {
+          'lk.simulator.dispatch': JSON.stringify({ simulationRunId: 'SR_1', defines }),
+        },
+      },
+    ).ctx;
+
+  it('exposes the dispatch defines', () => {
+    expect(simJob({ prompt: 'b', llm: 'gpt-5' }).simulationContext()!.defines()).toEqual({
+      prompt: 'b',
+      llm: 'gpt-5',
+    });
+  });
+
+  it('is empty without defines', () => {
+    expect(simJob().simulationContext()!.defines()).toEqual({});
+  });
+
+  it('is read-only', () => {
+    expect(Object.isFrozen(simJob({ llm: 'gpt-5' }).simulationContext()!.defines())).toBe(true);
+  });
+});
+
 describe('JobContext.inferenceHeaders', () => {
   const dispatch = (mode: string) =>
     JSON.stringify({ simulationRunId: 'SR_1', scenario: { label: 's' }, mode });
