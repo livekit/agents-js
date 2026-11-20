@@ -9,7 +9,6 @@ import type { STTError } from '../stt/stt.js';
 import { Future } from '../utils.js';
 import { AgentSession, resolveRecordingOptions } from './agent_session.js';
 import { AgentSessionEventTypes, CloseReason, createUserInputTranscribedEvent } from './events.js';
-import { SpeechHandle } from './speech_handle.js';
 
 type AgentSessionInternals = AgentSession & {
   _agentState: string;
@@ -191,19 +190,14 @@ describe('AgentSession AEC warmup', () => {
 });
 
 describe('AgentSession.run', () => {
-  it('forwards inputModality to generateReply', async () => {
+  it('forwards inputModality to the user turn reply', async () => {
     const session = new AgentSession();
-    const generateReply = vi
-      .spyOn(session, 'generateReply')
-      .mockImplementation(() => SpeechHandle.create());
+    const reply = vi.spyOn(session, '_replyToUserText').mockResolvedValue(undefined);
 
     session.run({ userInput: 'hello', inputModality: 'audio' });
 
     await vi.waitFor(() => {
-      expect(generateReply).toHaveBeenCalledWith({
-        userInput: 'hello',
-        inputModality: 'audio',
-      });
+      expect(reply).toHaveBeenCalledWith('hello', 'audio');
     });
   });
 });

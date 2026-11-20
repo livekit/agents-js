@@ -49,9 +49,9 @@ import {
   ParticipantTranscriptionOutput,
 } from './_output.js';
 
-export const DEFAULT_TEXT_INPUT_CALLBACK: TextInputCallback = (sess, ev) => {
+export const DEFAULT_TEXT_INPUT_CALLBACK: TextInputCallback = async (sess, ev) => {
   sess.interrupt();
-  sess.generateReply({ userInput: ev.text });
+  await sess._replyToUserText(ev.text);
 };
 
 export const DEFAULT_PARTICIPANT_KINDS: ParticipantKind[] = [
