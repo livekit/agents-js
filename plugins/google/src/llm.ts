@@ -88,6 +88,85 @@ export const LONG_DECODE_HTTP_TIMEOUT_MS = 20 * 60 * 1000;
 export const LONG_DECODE_MAX_REQUESTS = 32;
 export const LONG_DECODE_CONTEXT_WINDOW = 1_000_000;
 const callerSetMaxOutputTokensConfigs = new WeakSet<GenerateContentConfig>();
+const READ_TIMEOUT_HEADER = 'X-LiveKit-Agents-Read-Timeout-Ms';
+
+function fetchWithReadTimeout(fetchFn: types.Fetch): types.Fetch {
+  return async (input, init) => {
+    const headers = new Headers(init?.headers);
+    const timeoutValue = headers.get(READ_TIMEOUT_HEADER);
+    if (timeoutValue === null) {
+      return fetchFn(input, init);
+    }
+    headers.delete(READ_TIMEOUT_HEADER);
+
+    const timeoutMs = Number(timeoutValue);
+    const controller = new AbortController();
+    const abortSignal = init?.signal;
+    const abort = () => controller.abort(abortSignal?.reason);
+    if (abortSignal?.aborted) {
+      abort();
+    } else {
+      abortSignal?.addEventListener('abort', abort, { once: true });
+    }
+
+    const read = async <T>(operation: Promise<T>): Promise<T> => {
+      let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+      const timeout = new Promise<never>((_, reject) => {
+        timeoutHandle = setTimeout(() => {
+          const error = new DOMException(
+            `Google LLM response timed out after ${timeoutMs}ms without data`,
+            'TimeoutError',
+          );
+          controller.abort(error);
+          reject(error);
+        }, timeoutMs);
+        timeoutHandle.unref?.();
+      });
+      try {
+        return await Promise.race([operation, timeout]);
+      } finally {
+        if (timeoutHandle !== undefined) {
+          clearTimeout(timeoutHandle);
+        }
+      }
+    };
+
+    try {
+      const response = await read(fetchFn(input, { ...init, headers, signal: controller.signal }));
+      if (response.body === null) {
+        abortSignal?.removeEventListener('abort', abort);
+        return response;
+      }
+
+      const reader = response.body.getReader();
+      const body = new ReadableStream<Uint8Array>({
+        async pull(streamController) {
+          try {
+            const { done, value } = await read(reader.read());
+            if (done) {
+              abortSignal?.removeEventListener('abort', abort);
+              streamController.close();
+            } else {
+              streamController.enqueue(value);
+            }
+          } catch (error) {
+            abortSignal?.removeEventListener('abort', abort);
+            streamController.error(error);
+          }
+        },
+        async cancel(reason) {
+          abortSignal?.removeEventListener('abort', abort);
+          controller.abort(reason);
+          await reader.cancel(reason);
+        },
+      });
+      return new Response(body, response);
+    } catch (error) {
+      abortSignal?.removeEventListener('abort', abort);
+      throw error;
+    }
+  };
+}
 
 function toFunctionCallingConfig(
   toolChoice: llm.ToolChoice | undefined,
@@ -288,9 +367,15 @@ export class LLM extends llm.LLM {
           vertexai: true,
           project: gcpProject,
           location: gcpLocation,
+          httpOptions: {
+            fetch: fetchWithReadTimeout(httpOptions?.fetch ?? globalThis.fetch),
+          },
         }
       : {
           apiKey: geminiApiKey,
+          httpOptions: {
+            fetch: fetchWithReadTimeout(httpOptions?.fetch ?? globalThis.fetch),
+          },
         };
 
     this.#client = new GoogleGenAI(clientOptions);
@@ -339,7 +424,7 @@ export class LLM extends llm.LLM {
     const extras: GenerateContentConfig = { ...extraKwargs } as GenerateContentConfig;
 
     if (this.#opts.httpOptions !== undefined && extras.httpOptions === undefined) {
-      extras.httpOptions = this.#opts.httpOptions;
+      extras.httpOptions = { ...this.#opts.httpOptions, fetch: undefined };
     }
 
     toolChoice = toolChoice !== undefined ? toolChoice : this.#opts.toolChoice;
@@ -620,16 +705,31 @@ export class LLMStream extends llm.LLMStream {
       const timeout = longDecode
         ? Math.max(this.connOptions.timeoutMs, LONG_DECODE_HTTP_TIMEOUT_MS)
         : this.connOptions.timeoutMs;
-      const httpOptions = {
-        ...this.#extraKwargs.httpOptions,
-        timeout: this.#extraKwargs.httpOptions?.timeout ?? Math.floor(timeout),
-      };
-      requestConfig.httpOptions = httpOptions;
+      const pluginSetTimeout = this.#extraKwargs.httpOptions?.timeout === undefined;
+      const headers = { ...this.#extraKwargs.httpOptions?.headers };
+      const configuredHeaders = new Headers(headers);
+      if (pluginSetTimeout && !configuredHeaders.has('X-Server-Timeout')) {
+        headers['X-Server-Timeout'] = String(LONG_DECODE_HTTP_TIMEOUT_MS / 1000);
+      }
+      if (pluginSetTimeout) {
+        headers[READ_TIMEOUT_HEADER] = String(Math.floor(timeout));
+      }
       // a caller's signal must not stand in for the stream's own: closing the stream has to
       // cancel every request, continuation hops included
       requestConfig.abortSignal = requestConfig.abortSignal
         ? AbortSignal.any([requestConfig.abortSignal, this.abortController.signal])
         : this.abortController.signal;
+      const httpOptions = {
+        ...this.#extraKwargs.httpOptions,
+        headers,
+        // The SDK timeout spans the whole response; the client fetch resets this per read instead.
+        timeout: this.#extraKwargs.httpOptions?.timeout,
+        fetch:
+          this.#extraKwargs.httpOptions?.fetch === undefined
+            ? undefined
+            : fetchWithReadTimeout(this.#extraKwargs.httpOptions.fetch),
+      };
+      requestConfig.httpOptions = httpOptions;
       if (longDecode) {
         requestConfig.automaticContinuation = false;
       }

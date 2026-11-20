@@ -490,7 +490,12 @@ describe('Google Gemini 4 long decode', () => {
   it('extends the read timeout for a long reasoning turn', async () => {
     const streams = new FakeStreams([[response({ text: 'hi', finishReason: FinishReason.STOP })]]);
     await collect(google(), streams);
-    expect(streams.configs[0]?.httpOptions?.timeout).toBe(LONG_DECODE_HTTP_TIMEOUT_MS);
+    expect(streams.configs[0]?.httpOptions?.headers?.['X-LiveKit-Agents-Read-Timeout-Ms']).toBe(
+      String(LONG_DECODE_HTTP_TIMEOUT_MS),
+    );
+    expect(streams.configs[0]?.httpOptions?.headers?.['X-Server-Timeout']).toBe(
+      String(LONG_DECODE_HTTP_TIMEOUT_MS / 1000),
+    );
   });
 });
 
