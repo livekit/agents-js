@@ -87,11 +87,14 @@ const RECOVERY_PROBE_TIMEOUT_MS = 10_000;
  *
  * When the primary TTS fails, it automatically switches to the next available provider in the list.
  * A failed provider is marked unavailable and probed in the background by the next requests that
- * skip or fail over it, and restored once a probe succeeds or it serves a request (once every
- * provider is down none is skipped, so each is retried; one that fails its retry is probed, and
- * the one that serves goes unprobed). A provider that fails
- * after its audio started ends the utterance (another provider would replay it) and is marked
- * unavailable too; the adapter then emits a recoverable `error` event.
+ * skip or fail over it, and restored once a probe succeeds or it serves a request with audio.
+ * A request never fails while a provider remains untried: when every provider it tried has failed,
+ * it tries the ones it skipped as unavailable, in priority order, as a last resort. Once every
+ * provider is down none is skipped, so each is tried in turn; one that fails is probed, and the
+ * one that serves is restored. A provider that fails after its audio started ends the utterance
+ * (another provider would replay it) and is marked unavailable too; the adapter then emits an
+ * `error` event, recoverable when the adapter has another provider to serve the next utterance and
+ * unrecoverable when it has only one.
  *
  * Known limitation: a provider without a working `synthesize()`, such as `inference.TTS`, fails
  * over on every chunked `synthesize()` request, as any provider bug does. Its recovery probe uses
@@ -205,8 +208,9 @@ export class FallbackAdapter extends TTS {
    * What the adapter can't recover from still reaches the session, as this
    * adapter's own unrecoverable error: every instance failing. A failure after
    * audio went out can't be taken over by another instance without replaying
-   * it, so it ends the utterance and reaches the session as a recoverable error
-   * (see `reportFailureAfterAudio`).
+   * it, so it ends the utterance and reaches the session as an error that is
+   * recoverable when another instance can serve the next utterance (see
+   * `reportFailureAfterAudio`).
    */
   private readonly absorbChildError = () => {};
 
@@ -356,10 +360,10 @@ export class FallbackAdapter extends TTS {
   }
 
   /**
-   * Marks an instance unavailable, so requests skip it (and probe it, see `tryRecovery`). This
-   * only flags the instance: it starts no recovery. The instance returns when a probe succeeds, or
-   * when it serves a request (see `markAvailable`). Emits `tts_availability_changed` if it was
-   * available.
+   * Marks an instance unavailable, so requests skip it (and probe it, see `tryRecovery`), trying it
+   * only as a last resort after the others failed. This only flags the instance: it starts no
+   * recovery. The instance returns when a probe succeeds, or when it serves a request with audio
+   * (see `markAvailable`). Emits `tts_availability_changed` if it was available.
    */
   markUnAvailable(index: number): void {
     const status = this._status[index]!;
@@ -370,8 +374,10 @@ export class FallbackAdapter extends TTS {
 
   /**
    * Marks an instance available again, after a probe succeeded or a request it served succeeded.
-   * Serving counts because once every instance is unavailable none is skipped, so the one that
-   * serves is never probed: it would otherwise stay unavailable for good. Emits
+   * Serving counts because an instance that serves as a last resort, or once every instance is
+   * unavailable, is not probed first: it would otherwise stay unavailable for good. A request
+   * served by the instance counts only if audio reached the caller, so a request that made no
+   * provider call (blank input) or produced no frame proves nothing. Emits
    * `tts_availability_changed` if it was unavailable.
    * @internal
    */
@@ -412,8 +418,10 @@ export class FallbackAdapter extends TTS {
    * An instance failed after its audio went out. Another instance can't take over without
    * replaying what the caller already heard, so the caller ends the utterance here. The
    * instance is marked unavailable and probed like any failed one, and the failure is reported as
-   * a recoverable `tts_error`: the speech was cut short, but the next utterance is served by
-   * another instance, so `AgentSession` must not count it towards closing the session.
+   * a `tts_error`. It is recoverable when the adapter has another instance: the speech was cut
+   * short, but the next utterance is served by another instance (every other one is tried as a
+   * last resort), so `AgentSession` must not count it towards closing the session. With a single
+   * instance nothing else can serve the next utterance, so the error is unrecoverable.
    * @internal
    */
   reportFailureAfterAudio(index: number, error: unknown): void {
@@ -432,7 +440,7 @@ export class FallbackAdapter extends TTS {
         timestamp: Date.now(),
         label: this.label,
         error: failure,
-        recoverable: true,
+        recoverable: this.ttsInstances.length > 1,
       });
     } catch (listenerError) {
       // a throwing listener must not stop the caller from ending the utterance
@@ -512,6 +520,21 @@ export class FallbackAdapter extends TTS {
   }
 }
 
+/**
+ * The instances a request tries, in order: every one in priority order, then, as a last resort,
+ * the ones it skipped as unavailable (`skipped`, filled by the caller while it iterates). A request
+ * fails only after this runs out, so it never fails while an instance remains untried.
+ */
+function* attemptOrder(count: number, skipped: readonly number[]): Generator<number> {
+  for (let i = 0; i < count; i++) yield i;
+  if (skipped.length > 0) {
+    log().warn(
+      'Every available TTS instance failed, trying the ones marked unavailable as a last resort',
+    );
+    yield* skipped;
+  }
+}
+
 /** The instance that served: its label, position, model and provider. */
 function fallbackAttrs(tts: TTS, index: number): Attributes {
   const attrs: Attributes = {
@@ -588,12 +611,15 @@ class FallbackChunkedStream extends ChunkedStream {
     if (allTTSFailed) {
       this._logger.warn('All fallback TTS instances failed, retrying from first...');
     }
-    for (let i = 0; i < this.adapter.ttsInstances.length; i++) {
+    // instances skipped as unavailable: tried again, as a last resort, after the others failed
+    const skipped: number[] = [];
+    for (const i of attemptOrder(this.adapter.ttsInstances.length, skipped)) {
       if (this.abortSignal.aborted) return;
       const tts = this.adapter.ttsInstances[i]!;
       const status = this.adapter.status[i]!;
-      if (!status.available && !allTTSFailed) {
+      if (!status.available && !allTTSFailed && !skipped.includes(i)) {
         this.adapter.tryRecovery(i);
+        skipped.push(i);
         continue;
       }
       const resampler = this.adapter.createResamplerForTTS(i);
@@ -690,7 +716,8 @@ class FallbackChunkedStream extends ChunkedStream {
         this._logger.debug({ tts: tts.label }, 'TTS synthesis succeeded');
         this.servedTts = tts;
         recordFallbackServed(tts, i, this.ttsRequestSpan, this.callerSpan);
-        this.adapter.markAvailable(i);
+        // served means audio reached the caller
+        if (audioPushed) this.adapter.markAvailable(i);
         return;
       } catch (error) {
         if (this.abortSignal.aborted) return;
@@ -780,15 +807,18 @@ class FallbackSynthesizeStream extends SynthesizeStream {
       }
     })();
 
-    for (let i = 0; i < this.adapter.ttsInstances.length; i++) {
+    // instances skipped as unavailable: tried again, as a last resort, after the others failed
+    const skipped: number[] = [];
+    for (const i of attemptOrder(this.adapter.ttsInstances.length, skipped)) {
       if (this.abortSignal.aborted) return;
       const originalTts = this.adapter.ttsInstances[i]!;
       const status = this.adapter.status[i]!;
       let lastRequestId: string = '';
       let lastSegmentId: string = '';
 
-      if (!status.available && !allTTSFailed) {
+      if (!status.available && !allTTSFailed && !skipped.includes(i)) {
         this.adapter.tryRecovery(i);
+        skipped.push(i);
         continue;
       }
       const tts = this.adapter.getStreamingInstance(i);
@@ -966,7 +996,9 @@ class FallbackSynthesizeStream extends SynthesizeStream {
         this._logger.debug({ tts: originalTts.label }, 'TTS stream succeeded');
         this.servedTts = originalTts;
         recordFallbackServed(originalTts, i, this.ttsRequestSpan, this.callerSpan);
-        this.adapter.markAvailable(i);
+        // served means audio reached the caller: an earlier instance's audio would have ended the
+        // request, so `audioPushed` here is this instance's
+        if (this.audioPushed) this.adapter.markAvailable(i);
         await readInputLLMStream.catch(() => {});
         return;
       } catch (error) {
