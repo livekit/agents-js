@@ -5,8 +5,11 @@ import {
   type APIConnectOptions,
   APIConnectionError,
   APIError,
+  APIStatusError,
+  APITimeoutError,
   type AudioBuffer,
   AudioByteStream,
+  DEFAULT_API_CONNECT_OPTIONS,
   Task,
   log,
   normalizeLanguage,
@@ -28,6 +31,27 @@ const defaultSTTOptions: Partial<BasetenSttOptions> = {
   vadMinSilenceDurationMs: 300,
   vadSpeechPadMs: 30,
 };
+
+function asNonRetryable(error: APIError): APIError {
+  if (error instanceof APITimeoutError) {
+    return new APITimeoutError({ message: error.message, options: { retryable: false } });
+  }
+  if (error instanceof APIStatusError) {
+    return new APIStatusError({
+      message: error.message,
+      options: {
+        body: error.body,
+        requestId: error.requestId,
+        retryable: false,
+        statusCode: error.statusCode,
+      },
+    });
+  }
+  if (error instanceof APIConnectionError) {
+    return new APIConnectionError({ message: error.message, options: { retryable: false } });
+  }
+  return new APIError(error.message, { body: error.body, retryable: false });
+}
 
 export class STT extends stt.STT {
   #opts: BasetenSttOptions;
@@ -92,11 +116,13 @@ export class SpeechStream extends stt.SpeechStream {
   #logger = log();
   #speaking = false;
   #requestId = '';
+  #timeoutMs: number;
   label = 'baseten.SpeechStream';
 
   constructor(stt: STT, opts: BasetenSttOptions, connOptions?: APIConnectOptions) {
     super(stt, opts.sampleRate, connOptions);
     this.#opts = opts;
+    this.#timeoutMs = connOptions?.timeoutMs ?? DEFAULT_API_CONNECT_OPTIONS.timeoutMs;
     this.closed = false;
   }
 
@@ -109,47 +135,23 @@ export class SpeechStream extends stt.SpeechStream {
   }
 
   protected async run() {
-    const maxRetry = 32;
-    let retries = 0;
+    const ws = new WebSocket(this.getWsUrl(), {
+      headers: { Authorization: `Api-Key ${this.#opts.apiKey}` },
+    });
 
-    while (!this.input.closed && !this.closed) {
-      const url = this.getWsUrl();
-      const headers = {
-        Authorization: `Api-Key ${this.#opts.apiKey}`,
-      };
-
-      const ws = new WebSocket(url, { headers });
-
-      try {
-        await waitForWebSocketOpen(ws, 'Baseten');
-
-        await this.#runWS(ws);
-      } catch (e) {
-        if (!this.closed && !this.input.closed) {
-          if ((e instanceof APIError && !e.retryable) || retries >= maxRetry) {
-            throw e;
-          }
-
-          const delay = Math.min(retries * 5, 10);
-          retries++;
-
-          this.#logger.warn(
-            `failed to connect to Baseten, retrying in ${delay} seconds: ${e} (${retries}/${maxRetry})`,
-          );
-          await new Promise((resolve) => setTimeout(resolve, delay * 1000));
-        } else {
-          this.#logger.warn(
-            `Baseten disconnected, connection is closed: ${e} (inputClosed: ${this.input.closed}, isClosed: ${this.closed})`,
-          );
-        }
-      }
-    }
-
-    this.closed = true;
+    await waitForWebSocketOpen(ws, 'Baseten');
+    await this.#runWS(ws);
   }
 
   async #runWS(ws: WebSocket) {
     let closing = false;
+    let inputEnded = false;
+    let endAudioSent = false;
+    let endAudioAcknowledged = false;
+    let resolveEndAudioSent = () => {};
+    const endAudioSentPromise = new Promise<void>((resolve) => {
+      resolveEndAudioSent = resolve;
+    });
     const attemptController = new AbortController();
     const attemptSignal = AbortSignal.any([this.abortSignal, attemptController.signal]);
 
@@ -209,18 +211,31 @@ export class SpeechStream extends stt.SpeechStream {
             ws.send(buffer);
           }
         }
+        inputEnded = true;
+        for (const frame of audioByteStream.flush()) {
+          ws.send(Buffer.from(frame.data.buffer, frame.data.byteOffset, frame.data.byteLength));
+        }
+        ws.send(JSON.stringify({ type: 'end_audio' }));
+        endAudioSent = true;
+        resolveEndAudioSent();
       } catch (error) {
         if (!attemptSignal.aborted) throw error;
-      } finally {
-        closing = true;
-        ws.close();
       }
     };
 
     const listenTask = Task.from(async () => {
+      let fallbackTimer: ReturnType<typeof setTimeout> | undefined;
+      let flushTimer: ReturnType<typeof setTimeout> | undefined;
       const listenMessage = new Promise<void>((resolve, reject) => {
+        const waitForLegacyRuntime = () => {
+          clearTimeout(fallbackTimer);
+          fallbackTimer = setTimeout(resolve, 5_000);
+        };
+        void endAudioSentPromise.then(waitForLegacyRuntime);
+
         ws.on('message', (data) => {
           try {
+            if (endAudioSent && !endAudioAcknowledged) waitForLegacyRuntime();
             let jsonString: string;
 
             if (typeof data === 'string') {
@@ -234,6 +249,29 @@ export class SpeechStream extends stt.SpeechStream {
             }
 
             const msg = JSON.parse(jsonString);
+            if (msg.type === 'end_audio') {
+              const status = msg.body?.status;
+              if (status === 'finished') {
+                clearTimeout(fallbackTimer);
+                clearTimeout(flushTimer);
+                resolve();
+              } else if (status === 'acknowledged' && !endAudioAcknowledged) {
+                endAudioAcknowledged = true;
+                clearTimeout(fallbackTimer);
+                flushTimer = setTimeout(
+                  () =>
+                    reject(
+                      new APITimeoutError({
+                        message: 'Baseten did not finish flushing audio',
+                        options: { retryable: false },
+                      }),
+                    ),
+                  this.#timeoutMs,
+                );
+              }
+              return;
+            }
+
             const isFinal = msg.is_final ?? true;
             const segments = msg.segments ?? [];
             const transcript = msg.transcript ?? '';
@@ -328,22 +366,39 @@ export class SpeechStream extends stt.SpeechStream {
 
         ws.on('close', (code) => {
           if (closing || attemptSignal.aborted) resolve();
-          else {
+          else if (!inputEnded) {
             reject(
               new APIConnectionError({
                 message: `Baseten STT WebSocket closed unexpectedly (${code})`,
+              }),
+            );
+          } else {
+            reject(
+              new APIStatusError({
+                message: `Baseten STT WebSocket closed unexpectedly (${code})`,
+                options: { statusCode: code, retryable: false },
               }),
             );
           }
         });
       });
 
-      await Promise.race([listenMessage, waitForAbort(attemptSignal)]);
+      try {
+        await Promise.race([listenMessage, waitForAbort(attemptSignal)]);
+      } finally {
+        clearTimeout(fallbackTimer);
+        clearTimeout(flushTimer);
+      }
     });
 
     const sendPromise = sendTask();
     try {
       await Promise.all([sendPromise, listenTask.result]);
+    } catch (error) {
+      if (inputEnded && error instanceof APIError && error.retryable) {
+        throw asNonRetryable(error);
+      }
+      throw error;
     } finally {
       closing = true;
       attemptController.abort();
