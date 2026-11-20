@@ -2993,6 +2993,8 @@ interface DeepgramOptions {
     profanity_filter?: boolean;
     punctuate?: boolean;
     smart_format?: boolean;
+    utterance_end?: boolean;
+    utterance_end_ms?: number;
 }
 
 // @public (undocumented)
