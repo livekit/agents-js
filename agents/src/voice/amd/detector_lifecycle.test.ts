@@ -39,6 +39,9 @@ import { FakeLLM } from '../testing/fake_llm.js';
 import {
   ClassifierLLM,
   CustomerAgent,
+  FakeAudioOutput,
+  FakeTTS,
+  RecordingLLM,
   commit,
   commitTurn,
   dtmfCalls,
@@ -122,6 +125,10 @@ interface ActivityInternals {
 
 function activityOf(session: AgentSession): AgentActivity & ActivityInternals {
   return session._activity as unknown as AgentActivity & ActivityInternals;
+}
+
+function openingOf(detector: AMD): SpeechHandle | undefined {
+  return (detector as unknown as { opening: SpeechHandle | undefined }).opening;
 }
 
 /** Python `activity._no_pending_speech`. */
@@ -717,6 +724,231 @@ describe('AMD lifecycle', () => {
       await waitFor(handle.waitForPlayout());
     },
   );
+
+  describe('opening', () => {
+    function assistantMessages(session: AgentSession): string[] {
+      return session.currentAgent.chatCtx.items
+        .filter((item): item is ChatMessage => item instanceof ChatMessage)
+        .filter((message) => message.role === 'assistant')
+        .map((message) => message.textContent ?? '');
+    }
+
+    it('takes text or instructions but not both', () => {
+      const session = new AgentSession({});
+      expect(
+        () =>
+          new AMD(session, {
+            llm: null,
+            stt: null,
+            openingText: 'Hi.',
+            openingInstructions: 'Greet.',
+          }),
+      ).toThrow('either openingText or openingInstructions');
+      expect(() => new AMD(session, { llm: null, stt: null, openingText: ' ' })).toThrow(
+        'openingText must not be empty',
+      );
+      expect(() => new AMD(session, { llm: null, stt: null, openingInstructions: '' })).toThrow(
+        'openingInstructions must not be empty',
+      );
+    });
+
+    it('text plays while other replies stay held', async () => {
+      const opening = 'Hi, this is Alex from Acme Dental.';
+      const { detector, session, classifier, model } = await running({ openingText: opening });
+      await eventually(() => assistantMessages(session).join() === opening);
+      // the opening skips the reply hold; every other reply still waits for a prediction
+      expect(activityOf(session)._authorizationPaused).toBe(true);
+      expect(model.calls.size).toBe(0);
+
+      commitTurn(detector, endOfTurn('Hello?'));
+      const request = await classifier.request();
+      const history = request.chatCtx.items
+        .filter((item): item is ChatMessage => item instanceof ChatMessage)
+        .slice(2)
+        .map((message) => [message.role, message.textContent]);
+      expect(history).toEqual([
+        ['assistant', AGENT_REPLY],
+        ['user', 'Hello?'],
+      ]);
+    });
+
+    it('instructions generate a reply without tools', async () => {
+      const { session, model } = await running({ openingInstructions: 'Greet Sam.' });
+      const call = await waitFor(model.calls.get());
+      expect(call.toolChoice).toBe('none');
+      // JS adds reply instructions to the system message, which the fake LLM cannot answer;
+      // the text test covers playback through the reply hold
+      const system = call.chatCtx.items[0] as ChatMessage;
+      expect(system.role).toBe('system');
+      expect(system.textContent).toContain('Greet Sam.');
+      expect(activityOf(session)._authorizationPaused).toBe(true);
+    });
+
+    it.each(['before listening', 'before playout'])(
+      'participant speech %s cancels it',
+      async (spoke) => {
+        const session = new AgentSession({
+          llm: new RecordingLLM(),
+          // the opening's audio arrives after the participant starts speaking
+          tts: new SlowTTS(50, 500),
+          turnHandling: { turnDetection: 'manual' },
+          aecWarmupDuration: null,
+        });
+        session.output.audio = new FakeAudioOutput();
+        await session.start({ agent: new CustomerAgent() });
+        const created: SpeechCreatedEvent[] = [];
+        session.on(AgentSessionEventTypes.SpeechCreated, (ev) => created.push(ev));
+        const detector = new AMD(session, {
+          llm: new ClassifierLLM(),
+          stt: null,
+          openingText: 'Hi.',
+        });
+        onTestFinished(async () => {
+          await detector.aclose();
+          await session.close();
+        });
+        if (spoke === 'before listening') {
+          session._updateUserState('speaking');
+        }
+        await detector.start();
+        await eventually(() => detector.lifecycle === AMDLifecycle.ACTIVE);
+        if (spoke === 'before listening') {
+          expect(created).toHaveLength(0);
+        } else {
+          const opening = openingOf(detector);
+          expect(opening).toBeDefined();
+          expect(created).toHaveLength(1);
+          speechStarted(detector);
+          await waitFor(opening!.waitForPlayout());
+          expect(opening!.interrupted).toBe(true);
+        }
+        expect(openingOf(detector)).toBeUndefined();
+        expect(assistantMessages(session)).toEqual([]);
+      },
+    );
+
+    async function startedSession(tts: TTS = new FakeTTS(50)): Promise<AgentSession> {
+      const session = new AgentSession({
+        llm: new RecordingLLM(),
+        tts,
+        turnHandling: { turnDetection: 'manual' },
+        aecWarmupDuration: null,
+      });
+      session.output.audio = new FakeAudioOutput();
+      await session.start({ agent: new CustomerAgent() });
+      onTestFinished(() => session.close());
+      return session;
+    }
+
+    it('is exempt from the reply hold before it is queued', async () => {
+      const session = await startedSession();
+      const activity = session._activity as unknown as {
+        scheduleSpeech(handle: SpeechHandle, priority: number, force?: boolean): void;
+      };
+      const schedule = activity.scheduleSpeech.bind(activity);
+      const exempt: boolean[] = [];
+      vi.spyOn(activity, 'scheduleSpeech').mockImplementation((handle, priority, force) => {
+        exempt.push(handle._bypassAuthorizationPause);
+        schedule(handle, priority, force);
+      });
+      const detector = new AMD(session, {
+        llm: new ClassifierLLM(),
+        stt: null,
+        openingText: 'Hi.',
+      });
+      onTestFinished(() => detector.aclose());
+      await detector.start();
+      await eventually(() => exempt.length > 0);
+      expect(exempt).toEqual([true]);
+    });
+
+    it('failure keeps amd listening', async () => {
+      const session = await startedSession();
+      vi.spyOn(session, '_say').mockImplementation(() => {
+        throw new Error('closing');
+      });
+      const detector = new AMD(session, {
+        llm: new ClassifierLLM(),
+        stt: null,
+        openingText: 'Hi.',
+      });
+      onTestFinished(() => detector.aclose());
+      await detector.start();
+      await eventually(() => detector.lifecycle === AMDLifecycle.ACTIVE);
+      expect(session._say).toHaveBeenCalled();
+      expect(openingOf(detector)).toBeUndefined();
+      expect(detector.lifecycle).toBe(AMDLifecycle.ACTIVE);
+    });
+
+    it('a turn during it waits for its prediction', async () => {
+      const { detector, session, classifier, model } = await running({
+        openingText: 'Hi, this is Alex.',
+        sessionOptions: { tts: new FakeTTS(1_000) },
+      });
+      await eventually(() => (detector as unknown as { openingPlayed: boolean }).openingPlayed);
+      void session._activity!.onEndOfTurn(endOfTurn());
+      const request = await classifier.request();
+      // the opening's exemption does not reach the reply to the turn
+      await delay(50);
+      expect(model.calls.size).toBe(0);
+      expect(activityOf(session)._authorizationPaused).toBe(true);
+      classifier.prediction(request.currentTurn.extra.turn_id as number, AMDCategory.HUMAN);
+      await waitFor(model.calls.get());
+    });
+
+    it('a result without a reply cancels it before playout', async () => {
+      const { detector, classifier } = await running({
+        openingText: 'Hi.',
+        sessionOptions: { tts: new SlowTTS(50, 500) },
+      });
+      const opening = openingOf(detector);
+      expect(opening).toBeDefined();
+      // a commit without a speech edge, so only completion can stop the opening
+      commitTurn(detector, endOfTurn('The number you dialed is not in service.'));
+      const request = await classifier.request();
+      classifier.prediction(
+        request.currentTurn.extra.turn_id as number,
+        AMDCategory.MACHINE_UNAVAILABLE,
+      );
+      await waitFor(detector.execute());
+      await waitFor(opening!.waitForPlayout());
+      expect(opening!.interrupted).toBe(true);
+      expect((detector as unknown as { openingPlayed: boolean }).openingPlayed).toBe(false);
+    });
+
+    it('participant speech after it starts is a normal interruption', async () => {
+      const { detector } = await running({
+        openingText: 'Hi, this is Alex.',
+        sessionOptions: { tts: new FakeTTS(1_000) },
+      });
+      const opening = openingOf(detector);
+      expect(opening).toBeDefined();
+      await eventually(() => (detector as unknown as { openingPlayed: boolean }).openingPlayed);
+      speechStarted(detector);
+      await delay(10);
+      // AMD leaves a playing opening to the session's interruption handling
+      expect(opening!.interrupted).toBe(false);
+      expect(openingOf(detector)).toBe(opening);
+    });
+
+    it('text needs a TTS model', async () => {
+      const session = new AgentSession({
+        llm: new RecordingLLM(),
+        turnHandling: { turnDetection: 'manual' },
+        aecWarmupDuration: null,
+      });
+      session.output.audio = new FakeAudioOutput();
+      await session.start({ agent: new CustomerAgent() });
+      onTestFinished(() => session.close());
+      const detector = new AMD(session, {
+        llm: new ClassifierLLM(),
+        stt: null,
+        openingText: 'Hi.',
+      });
+      await expect(detector.start()).rejects.toThrow('openingText requires a TTS model');
+      expect(session.amd).toBeNull();
+    });
+  });
 
   it('user turn limit does not reply while amd runs', async () => {
     const { detector, session } = await running();

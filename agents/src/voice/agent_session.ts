@@ -1261,6 +1261,21 @@ export class AgentSession<
       // AMD would hold the speech and play it after detection
       throw new Error('say() is not supported while AMD is running');
     }
+    return this._say(text, options);
+  }
+
+  /** @internal say() without the AMD check, for a speech that AMD starts itself. */
+  _say(
+    text: string | ReadableStream<string>,
+    options?: {
+      audio?: ReadableStream<AudioFrame>;
+      allowInterruptions?: boolean;
+      addToChatCtx?: boolean;
+    },
+  ): SpeechHandle {
+    if (!this.activity) {
+      throw new Error('AgentSession is not running');
+    }
 
     const doSay = (activity: AgentActivity, nextActivity?: AgentActivity) => {
       if (activity.schedulingPaused) {
@@ -1450,6 +1465,14 @@ export class AgentSession<
     if (this._amd) {
       // AMD would hold the reply and play it after detection
       throw new Error('generateReply() is not supported while AMD is running');
+    }
+    return this._generateReply(options);
+  }
+
+  /** @internal generateReply() without the AMD check, for a speech that AMD starts itself. */
+  _generateReply(options?: Parameters<AgentSession['generateReply']>[0]): SpeechHandle {
+    if (!this.activity) {
+      throw new Error('AgentSession is not running');
     }
 
     const userMessage =

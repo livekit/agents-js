@@ -522,6 +522,8 @@ export class AgentSession<UserData = UnknownUserData> extends AgentSession_base 
         inputModality?: 'audio' | 'text';
     }): SpeechHandle;
     // @internal
+    _generateReply(options?: Parameters<AgentSession['generateReply']>[0]): SpeechHandle;
+    // @internal
     _globalRunState?: RunResult;
     // (undocumented)
     get history(): ChatContext;
@@ -586,6 +588,12 @@ export class AgentSession<UserData = UnknownUserData> extends AgentSession_base 
     }): RunResult<T>;
     // (undocumented)
     say(text: string | ReadableStream_2<string>, options?: {
+        audio?: ReadableStream_2<AudioFrame>;
+        allowInterruptions?: boolean;
+        addToChatCtx?: boolean;
+    }): SpeechHandle;
+    // @internal
+    _say(text: string | ReadableStream_2<string>, options?: {
         audio?: ReadableStream_2<AudioFrame>;
         allowInterruptions?: boolean;
         addToChatCtx?: boolean;
@@ -922,6 +930,8 @@ export interface AMDOptions {
     machineSilenceThreshold?: number;
     maxInferenceTimeouts?: number;
     maxUncertainTurns?: number;
+    openingInstructions?: string | null;
+    openingText?: string | null;
     participantIdentity?: string;
     screeningInstructions?: string | null;
     stt?: STT | string | null;
@@ -7609,6 +7619,8 @@ export class SpeechHandle {
     _authorizedAt?: number;
     // @internal (undocumented)
     _authorizeGeneration(): void;
+    // @internal
+    _bypassAuthorizationPause: boolean;
     // @internal (undocumented)
     _cancel(source?: InterruptionSource): SpeechHandle;
     // (undocumented)
@@ -10134,9 +10146,9 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 // src/utils.ts:468:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "cancelled"
 // src/voice/agent_session.ts:413:3 - (ae-unresolved-link) The @link reference could not be resolved: This type of declaration is not supported yet by the resolver
 // src/voice/agent_session.ts:1090:5 - (ae-forgotten-export) The symbol "RecordingOptions" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1836:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1836:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1836:5 - (ae-forgotten-export) The symbol "LLMError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1859:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1859:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1859:5 - (ae-forgotten-export) The symbol "LLMError" needs to be exported by the entry point index.d.ts
 // src/voice/events.ts:468:3 - (ae-forgotten-export) The symbol "InterruptionDetectionError" needs to be exported by the entry point index.d.ts
 // src/voice/room_io/_output.ts:183:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "segmentTags"
 // src/voice/testing/run_result.ts:94:5 - (ae-forgotten-export) The symbol "OutputSchema" needs to be exported by the entry point index.d.ts

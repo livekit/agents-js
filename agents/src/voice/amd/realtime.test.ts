@@ -432,7 +432,9 @@ async function running({
   amdStt,
   userTranscription = true,
   turnDetection = 'manual',
+  openingInstructions = null,
 }: {
+  openingInstructions?: string | null;
   machineSilenceThreshold?: number;
   agent?: Agent;
   sessionStt?: boolean;
@@ -466,6 +468,7 @@ async function running({
     llm: classifier,
     stt: amdStt ?? null,
     machineSilenceThreshold,
+    openingInstructions,
   });
   onTestFinished(async () => {
     await detector.aclose();
@@ -525,6 +528,15 @@ async function done(handle: SpeechHandle, timeoutMs = 2_000): Promise<void> {
 }
 
 describe('AMD with realtime models', () => {
+  it('opening instructions generate with a realtime model', async () => {
+    const { detector, session, rt } = await running({ openingInstructions: 'Greet Sam.' });
+    await eventually(() => rt.generateReplyCalls === 1);
+    expect(rt.replyInstructions[0]).toContain('Greet Sam.');
+    // the opening skips the reply hold; every other reply still waits
+    expect((detector as unknown as { opening: SpeechHandle | undefined }).opening).toBeDefined();
+    expect(activityOf(session)._authorizationPaused).toBe(true);
+  });
+
   it.each([
     ['server_turn_detection', 'client-side turn detection'],
     ['auto_tool_reply', 'client-controlled tool replies'],

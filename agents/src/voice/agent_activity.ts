@@ -3063,7 +3063,7 @@ export class AgentActivity implements RecognitionHooks {
         if (!heapItem) {
           throw new Error('Speech queue is empty');
         }
-        if (this._authorizationPaused) {
+        if (this._authorizationPaused && !heapItem[2]._bypassAuthorizationPause) {
           this.speechQueue.push(heapItem);
           break;
         }

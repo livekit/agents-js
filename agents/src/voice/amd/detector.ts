@@ -161,6 +161,24 @@ export interface AMDOptions {
    * machine stage preceded the human. `null` keeps the Agent's own instructions.
    */
   humanInstructions?: string | null;
+  /**
+   * Fixed text that the agent says first, when AMD starts listening. With
+   * `waitUntilAnswered`, that is after the SIP answer. Requires a TTS model. Set at most one
+   * of `openingText` and `openingInstructions`. `null` (the default) lets the participant
+   * speak first. The opening is skipped if the participant is already speaking, and
+   * cancelled, without a retry, if the participant starts speaking before it plays. Once
+   * it plays, participant speech interrupts it as usual. Do not also start speech before
+   * AMD, such as a reply in `onEnter`: AMD holds that speech, and the opening waits behind
+   * it. With a realtime model, a cancelled opening can stay in the model's server-side
+   * history.
+   */
+  openingText?: string | null;
+  /**
+   * Instructions for a reply that the agent generates and says first, when AMD starts
+   * listening. The reply cannot call tools. Set at most one of `openingText` and
+   * `openingInstructions`. The opening follows the same rules as `openingText`.
+   */
+  openingInstructions?: string | null;
   /** Silent, inactive time before AMD completes outside voicemail, in ms. Defaults to 10 s. */
   idleTimeout?: number;
   /**
@@ -276,7 +294,8 @@ class AMDTurnHooks implements TurnHooks {
  * and never execute actions.
  * AMD enables interruptions on the session and current Agent, then restores
  * their settings when detection finishes. Direct speech generation during AMD
- * is not supported.
+ * is not supported. To let the agent speak first, set `openingText` or
+ * `openingInstructions`.
  *
  * @example
  * ```ts
@@ -302,6 +321,11 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
   private participantIdentity: string | undefined;
   private readonly waitUntilAnswered: boolean;
   private readonly instructions: ReadonlyMap<AMDCategory, string | null>;
+  private readonly openingText: string | null;
+  private readonly openingInstructions: string | null;
+  private opening: SpeechHandle | undefined;
+  private openingPlayed = false;
+  private startingOpening = false;
   private readonly options: ResolvedOptions;
   private uncertainTurns = 0;
   private inferenceTimeouts = 0;
@@ -368,6 +392,8 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
       voicemailInstructions = DEFAULT_VOICEMAIL_INSTRUCTIONS,
       ivrInstructions = DEFAULT_IVR_INSTRUCTIONS,
       humanInstructions = DEFAULT_HUMAN_INSTRUCTIONS,
+      openingText = null,
+      openingInstructions = null,
       idleTimeout = 10_000,
       voicemailIdleTimeout = 10_000,
       timeout = 60_000,
@@ -391,6 +417,15 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     }
     if (machineSilenceThreshold < 0) {
       throw new Error('machineSilenceThreshold must be non-negative');
+    }
+    if (openingText !== null && openingInstructions !== null) {
+      throw new Error('set either openingText or openingInstructions, not both');
+    }
+    if (openingText !== null && !openingText.trim()) {
+      throw new Error('openingText must not be empty');
+    }
+    if (openingInstructions !== null && !openingInstructions.trim()) {
+      throw new Error('openingInstructions must not be empty');
     }
     if (llm === undefined || stt === undefined) {
       const apiKey = process.env.LIVEKIT_INFERENCE_API_KEY || process.env.LIVEKIT_API_KEY;
@@ -432,6 +467,8 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
       [AMDCategory.MACHINE_IVR, ivrInstructions],
       [AMDCategory.HUMAN, humanInstructions],
     ]);
+    this.openingText = openingText;
+    this.openingInstructions = openingInstructions;
     this.options = {
       idleTimeout,
       voicemailIdleTimeout,
@@ -507,6 +544,13 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     }
     if (model instanceof DecisionModel && !model.capabilities.decisionKinds.includes('choice')) {
       throw new Error('amd requires a decision model that supports choice decisions');
+    }
+    // unlike Python, JS realtime models cannot say() without a TTS model
+    if (this.openingText !== null && activity.tts === undefined) {
+      throw new Error('amd openingText requires a TTS model');
+    }
+    if (this.openingInstructions !== null && activity.llm === undefined) {
+      throw new Error('amd openingInstructions requires an LLM on the session');
     }
 
     if (this.lifecycle !== AMDLifecycle.INITIALIZED) {
@@ -645,6 +689,7 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
       }
       this._updateIdle();
       this.logger.info({ sessionId: this.sessionId }, 'amd started listening');
+      this.startOpening();
     };
 
     const roomIO = this.session._roomIO;
@@ -779,6 +824,11 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
       this.speechStartedAt = now - delay;
       this.speechEndedAt = undefined;
       this.speechSinceCommit = true;
+      if (this.opening !== undefined && !this.openingPlayed) {
+        // the participant spoke first: their turn gets a normal reply instead
+        this.opening._cancel();
+        this.opening = undefined;
+      }
     } else if (event.oldState === 'speaking') {
       if (this.speechStartedAt !== undefined) {
         this.speechDuration += Math.max(0, now - delay - this.speechStartedAt);
@@ -928,7 +978,15 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     }
   }
 
-  private onAgentStateChanged = (_event: AgentStateChangedEvent): void => {
+  private onAgentStateChanged = (event: AgentStateChangedEvent): void => {
+    if (
+      event.newState === 'speaking' &&
+      this.opening !== undefined &&
+      this.session._activity?.currentSpeech === this.opening
+    ) {
+      // from here on, participant speech interrupts the opening as usual
+      this.openingPlayed = true;
+    }
     this._updateIdle();
   };
 
@@ -1388,9 +1446,54 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     this._updateIdle();
   };
 
+  // region: opening
+
+  /** Let the agent speak first, before AMD allows any other reply. */
+  private startOpening(): void {
+    if (this.openingText === null && this.openingInstructions === null) {
+      return;
+    }
+    if (this.session.userState === 'speaking') {
+      this.logger.debug('amd opening skipped: the participant spoke first');
+      return;
+    }
+    // onSpeechCreated marks the handle before it is queued, so the reply hold does not
+    // apply to it
+    this.startingOpening = true;
+    let handle: SpeechHandle;
+    try {
+      handle =
+        this.openingText !== null
+          ? this.session._say(this.openingText, { allowInterruptions: true })
+          : this.session._generateReply({
+              instructions: this.openingInstructions!,
+              toolChoice: 'none',
+              allowInterruptions: true,
+            });
+    } catch (error) {
+      this.logger.warn({ errorType: errorType(error) }, 'amd opening failed');
+      return;
+    } finally {
+      this.startingOpening = false;
+    }
+    this.opening = handle;
+    handle.addDoneCallback(this.onOpeningDone);
+  }
+
+  private onOpeningDone = (handle: SpeechHandle): void => {
+    if (handle === this.opening) {
+      this.opening = undefined;
+    }
+  };
+
+  // endregion
+
   private onSpeechCreated = (event: SpeechCreatedEvent): void => {
     if (this.lifecycle === AMDLifecycle.FINISHED) {
       return;
+    }
+    if (this.startingOpening) {
+      event.speechHandle._bypassAuthorizationPause = true;
     }
     this.speeches.add(event.speechHandle);
     event.speechHandle.addDoneCallback(this.onSpeechDone);
