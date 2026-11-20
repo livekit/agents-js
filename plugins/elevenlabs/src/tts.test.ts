@@ -788,4 +788,75 @@ describe('ElevenLabs text-to-dialogue', () => {
       await closeWebSocketServer(wss);
     }
   }, 15_000);
+
+  it('retires an unused dialogue socket', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
+    const { wss, baseURL } = await startWebSocketServer();
+    const elevenlabs = new TTS({
+      apiKey: 'test-key',
+      baseURL,
+      model: 'eleven_v4',
+      voiceId: 'voice-1',
+    });
+
+    try {
+      const connection = await elevenlabs.currentConnection();
+      await vi.advanceTimersByTimeAsync(15_000);
+
+      expect(connection.closed).toBe(true);
+    } finally {
+      await elevenlabs.close();
+      await closeWebSocketServer(wss);
+      vi.useRealTimers();
+    }
+  });
+
+  it('retires a dialogue socket after its last context ends', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
+    const { wss, baseURL } = await startWebSocketServer();
+    let serverSocket: WebSocket | undefined;
+    let contextId: unknown;
+    wss.on('connection', (ws) => {
+      serverSocket = ws;
+      ws.on('message', (raw) => {
+        const message = JSON.parse(raw.toString()) as Record<string, unknown>;
+        contextId ??= message.context_id;
+      });
+    });
+    const elevenlabs = new TTS({
+      apiKey: 'test-key',
+      baseURL,
+      model: 'eleven_v4',
+      voiceId: 'voice-1',
+    });
+    const stream = elevenlabs.stream({
+      connOptions: { maxRetry: 0, retryIntervalMs: 0, timeoutMs: 30_000 },
+    });
+    const output = (async () => {
+      for await (const _event of stream) {
+        // Consume the generated audio.
+      }
+    })();
+
+    try {
+      stream.pushText('hello world.');
+      stream.endInput();
+      await vi.waitUntil(() => contextId !== undefined);
+      const connection = await elevenlabs.currentConnection();
+
+      await vi.advanceTimersByTimeAsync(14_000);
+      serverSocket!.send(JSON.stringify({ context_id: contextId, is_final: true }));
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      await vi.advanceTimersByTimeAsync(10);
+      await output;
+      await vi.advanceTimersByTimeAsync(990);
+
+      expect(connection.closed).toBe(true);
+    } finally {
+      stream.close();
+      await elevenlabs.close();
+      await closeWebSocketServer(wss);
+      vi.useRealTimers();
+    }
+  });
 });

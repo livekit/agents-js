@@ -35,6 +35,9 @@ const AUTHORIZATION_HEADER = 'xi-api-key';
 const WS_INACTIVITY_TIMEOUT = 180;
 const DEFAULT_ENCODING: TTSEncoding = 'pcm_22050';
 const DIALOGUE_KEEP_ALIVE_INTERVAL = 10_000;
+// The server closes sockets that receive nothing for 20 seconds with input_timeout_exceeded.
+const DIALOGUE_IDLE_RETIRE = 15_000;
+const DIALOGUE_IDLE_POLL = 1_000;
 const DIALOGUE_VOICE_SETTINGS_FIELDS = new Set<keyof VoiceSettings>([
   'stability',
   'similarity_boost',
@@ -334,6 +337,7 @@ class Connection {
   #inputQueueResolver: (() => void) | null = null;
   #closingContexts = new Set<string>();
   #lastContextSend = new Map<string, number>();
+  #lastSend = performance.now();
 
   constructor(opts: ResolvedTTSOptions) {
     this.#opts = opts;
@@ -422,21 +426,25 @@ class Connection {
     this.#inputQueueResolver?.();
   }
 
+  #sendJson(data: Record<string, unknown>): void {
+    if (!this.#ws) return;
+    this.#ws.send(JSON.stringify(data));
+    this.#lastSend = performance.now();
+  }
+
   #nextKeepAliveDelay(): number {
     const now = performance.now();
-    const eligible = [...this.#activeContexts].filter(
-      (contextId) => !this.#closingContexts.has(contextId),
-    );
-    if (eligible.length === 0) return DIALOGUE_KEEP_ALIVE_INTERVAL;
-    return Math.max(
-      0,
-      Math.min(
-        ...eligible.map(
-          (contextId) =>
-            (this.#lastContextSend.get(contextId) ?? now) + DIALOGUE_KEEP_ALIVE_INTERVAL - now,
-        ),
-      ),
-    );
+    let nextDue = this.#lastSend + DIALOGUE_IDLE_RETIRE;
+    if (this.#contextData.size > 0 || this.#activeContexts.size > 0) {
+      // Retirement waits for the last context, so poll for it once the deadline passes.
+      nextDue = Math.max(nextDue, now + DIALOGUE_IDLE_POLL);
+    }
+    for (const contextId of this.#activeContexts) {
+      if (this.#closingContexts.has(contextId)) continue;
+      const lastSent = this.#lastContextSend.get(contextId) ?? now;
+      nextDue = Math.min(nextDue, lastSent + DIALOGUE_KEEP_ALIVE_INTERVAL);
+    }
+    return Math.max(0, nextDue - now);
   }
 
   async #sendDueKeepAlives(): Promise<void> {
@@ -446,7 +454,7 @@ class Connection {
       if (this.#closingContexts.has(contextId)) continue;
       const lastSent = this.#lastContextSend.get(contextId);
       if (lastSent === undefined || now - lastSent >= DIALOGUE_KEEP_ALIVE_INTERVAL) {
-        this.#ws.send(JSON.stringify({ context_id: contextId, keep_alive: true }));
+        this.#sendJson({ context_id: contextId, keep_alive: true });
         this.#lastContextSend.set(contextId, now);
       }
     }
@@ -477,7 +485,17 @@ class Connection {
 
         const msg = this.#inputQueue.shift();
         if (!msg) {
-          if (dialogue) await this.#sendDueKeepAlives();
+          if (dialogue) {
+            if (
+              this.#contextData.size === 0 &&
+              this.#activeContexts.size === 0 &&
+              performance.now() >= this.#lastSend + DIALOGUE_IDLE_RETIRE
+            ) {
+              // Close first so a prewarm loop can replace the socket before the server timeout.
+              break;
+            }
+            await this.#sendDueKeepAlives();
+          }
           continue;
         }
 
@@ -518,8 +536,11 @@ class Connection {
               initPkt.pronunciation_dictionary_locators = locators;
             }
 
-            const initPktStr = JSON.stringify(initPkt);
-            this.#ws.send(initPktStr);
+            if (dialogue) {
+              this.#sendJson(initPkt);
+            } else {
+              this.#ws.send(JSON.stringify(initPkt));
+            }
             this.#activeContexts.add(content.contextId);
           }
 
@@ -536,9 +557,12 @@ class Connection {
             pkt.flush = true;
           }
 
-          const pktStr = JSON.stringify(pkt);
           this.#startTimeoutTimer(content.contextId);
-          this.#ws.send(pktStr);
+          if (dialogue) {
+            this.#sendJson(pkt);
+          } else {
+            this.#ws.send(JSON.stringify(pkt));
+          }
           if (dialogue) this.#lastContextSend.set(content.contextId, performance.now());
         } else {
           // CloseContext
@@ -549,9 +573,12 @@ class Connection {
               context_id: closeMsg.contextId,
               close_context: true,
             };
-            const closePktStr = JSON.stringify(closePkt);
             this.#markInputClosed(closeMsg.contextId);
-            this.#ws.send(closePktStr);
+            if (dialogue) {
+              this.#sendJson(closePkt);
+            } else {
+              this.#ws.send(JSON.stringify(closePkt));
+            }
           }
         }
 
@@ -853,6 +880,10 @@ class Connection {
       await this.#recvTask.catch(() => {});
     }
   }
+
+  async waitUntilClosed(): Promise<void> {
+    await this.#recvTask;
+  }
 }
 
 export class TTS extends tts.TTS {
@@ -860,6 +891,7 @@ export class TTS extends tts.TTS {
   #streams = new Set<SynthesizeStream>();
   #currentConnection: Connection | null = null;
   #connectionLock = new Mutex();
+  #prewarmController: AbortController | null = null;
   #logger = log();
 
   label = 'elevenlabs.TTS';
@@ -1044,6 +1076,58 @@ export class TTS extends tts.TTS {
     }
   }
 
+  override prewarm(): void {
+    if (this.#prewarmController) return;
+    const controller = new AbortController();
+    this.#prewarmController = controller;
+    void this.#runPrewarm(controller.signal).finally(() => {
+      if (this.#prewarmController === controller) this.#prewarmController = null;
+    });
+  }
+
+  async #runPrewarm(signal: AbortSignal): Promise<void> {
+    let retryDelay = 1_000;
+    while (!signal.aborted) {
+      try {
+        const conn = await this.currentConnection();
+        retryDelay = 1_000;
+        if (signal.aborted) {
+          await conn.close();
+          return;
+        }
+        if (!isDialogueModel(this.#opts.model)) return;
+
+        // Retired dialogue sockets are replaced so the next turn still gets a warm connection.
+        await new Promise<void>((resolve) => {
+          const onAbort = () => resolve();
+          signal.addEventListener('abort', onAbort, { once: true });
+          void conn.waitUntilClosed().finally(() => {
+            signal.removeEventListener('abort', onAbort);
+            resolve();
+          });
+        });
+      } catch (error) {
+        if (error instanceof APIStatusError && !error.retryable) {
+          this.#logger.warn({ error }, 'elevenlabs prewarm stopped after non-retryable API error');
+          return;
+        }
+        if (signal.aborted) return;
+        await new Promise<void>((resolve) => {
+          const onAbort = () => {
+            clearTimeout(timer);
+            resolve();
+          };
+          const timer = setTimeout(() => {
+            signal.removeEventListener('abort', onAbort);
+            resolve();
+          }, retryDelay);
+          signal.addEventListener('abort', onAbort, { once: true });
+        });
+        retryDelay = Math.min(retryDelay * 2, 30_000);
+      }
+    }
+  }
+
   synthesize(text: string): ChunkedStream {
     return new ChunkedStream(this, text, { ...this.#opts });
   }
@@ -1055,6 +1139,9 @@ export class TTS extends tts.TTS {
   }
 
   async close(): Promise<void> {
+    this.#prewarmController?.abort();
+    this.#prewarmController = null;
+
     for (const stream of this.#streams) {
       stream.close();
     }
