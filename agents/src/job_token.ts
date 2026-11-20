@@ -169,7 +169,8 @@ export class JobTokenClient {
       } catch (error) {
         log().warn({ error }, 'failed to get a job token, retrying');
       }
-      if (!stopped) timer = setTimeout(() => void renew(), Math.max(delay, 0));
+      // the floor keeps a bad expiry from the server from making this a busy loop
+      if (!stopped) timer = setTimeout(() => void renew(), Math.max(delay, JOB_TOKEN_RETRY_DELAY));
     };
     await renew();
     return () => {
