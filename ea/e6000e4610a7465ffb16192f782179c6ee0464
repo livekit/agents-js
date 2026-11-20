@@ -1,0 +1,41 @@
+agents/src/llm/decisions.test.ts
+  s_a5482a5a3c06d1::t_50d469b7f2d5d7 172
+  s_a5482a5a3c06d1::t_9ba01c14ccef9a 638-643,664-668,675
+  s_a5482a5a3c06d1::t_5e41703fa95f18 707-723
+  s_a5482a5a3c06d1::t_ecb424f46689ff 789-790
+  s_a5482a5a3c06d1::t_7e4681f319b327 65-67,152
+  s_a5482a5a3c06d1::t_5b712e82b810a6 4,619-637,644-647,661-663,764-788,796-798
+.changeset/curly-pumas-decide.md
+  s_a5482a5a3c06d1::t_47e6c18d315d86 2
+agents/src/inference/decision_model.ts
+  s_a5482a5a3c06d1::t_32977b78104f49 35
+  s_a5482a5a3c06d1::t_61d45026c96f96 4,11,46-71,89-130,135-136,140-150,153-155,158,160,225,237-242,265,273,279-281
+  s_a5482a5a3c06d1::t_9ba01c14ccef9a 131-134,137-139
+agents/src/inference/decision_model.test.ts
+  s_a5482a5a3c06d1::t_7e4681f319b327 339-344,346-347
+  s_a5482a5a3c06d1::t_ecb424f46689ff 32-33,64-338,345,348-360,369,371,373,381,384-385
+  s_a5482a5a3c06d1::t_22313297a0d9f0 4-8,11-31,34-40,49,53,58-63
+agents/src/llm/decision_fallback_adapter.ts
+  s_a5482a5a3c06d1::t_32977b78104f49 21,31,33
+  s_a5482a5a3c06d1::t_9b086046adfcf6 15,34,60,67-68,85,89,91-92,139,223-228,235-254,261-262
+  s_a5482a5a3c06d1::t_9ba01c14ccef9a 229-234
+agents/etc/agents.api.md
+  s_a5482a5a3c06d1::t_ecb424f46689ff 2963,2974,2978
+  s_a5482a5a3c06d1::t_11dd7adb36a65a 2852,2987
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "eae6000e4610a7465ffb16192f782179c6ee0464",
+  "prompts": {},
+  "sessions": {
+    "s_a5482a5a3c06d1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1f991-a413-7920-8bdb-334a908aabb1",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
