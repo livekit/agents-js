@@ -652,7 +652,7 @@ export class SpeechStream extends stt.SpeechStream {
       const closed = new Promise<void>((_, reject) => {
         ws.once('close', (code: number, reason: Buffer) => {
           if (!closing) {
-            this.#logger.error(`WebSocket closed with code ${code}: ${reason}`);
+            this.#logger.error({ code, 'lk.pii.reason': reason.toString() }, 'WebSocket closed');
             reject(
               new APIConnectionError({
                 message: `Sarvam STT WebSocket closed unexpectedly (${code})`,

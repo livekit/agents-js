@@ -1609,7 +1609,7 @@ export function performToolExecutions({
             {
               function: toolCall.name,
               speech_id: speechHandle.id,
-              error: toError(rawError).message,
+              error: toError(rawError),
             },
             'exception occurred while executing tool',
           );

@@ -131,7 +131,7 @@ export class StreamAdapterWrapper extends SpeechStream {
             } catch (error) {
               let logger = log();
               if (error instanceof Error) {
-                logger = logger.child({ error: error.message });
+                logger = logger.child({ error: error });
               } else {
                 logger = logger.child({ error });
               }

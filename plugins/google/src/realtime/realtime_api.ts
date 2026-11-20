@@ -1177,7 +1177,7 @@ export class RealtimeSession extends llm.RealtimeSession {
             // onerror is called for network-level errors (connection refused, DNS failure, TLS errors).
             // Application-level errors (e.g., invalid model name) come through onclose with error codes.
             onerror: (error: ErrorEvent) => {
-              this.#logger.error('Gemini Live session error:', error);
+              this.#logger.error({ error: error }, 'Gemini Live session error:');
               if (!connected.stale && !this.#closed && !this.sessionShouldClose.isSet) {
                 this.#sessionError = new APIConnectionError({
                   message: error.message || 'Gemini Live connection error',
@@ -1216,7 +1216,10 @@ export class RealtimeSession extends llm.RealtimeSession {
                   this.markRestartNeeded();
                 }
               } else {
-                this.#logger.debug('Gemini Live session closed:', event.code, event.reason);
+                this.#logger.debug(
+                  { code: event.code, 'lk.pii.reason': event.reason },
+                  'Gemini Live session closed',
+                );
                 if (!connected.session) {
                   setupClosed.reject(
                     new APIConnectionError({
@@ -1285,7 +1288,7 @@ export class RealtimeSession extends llm.RealtimeSession {
           throw sessionError;
         }
       } catch (error) {
-        this.#logger.error(`Gemini Realtime API error: ${error}`);
+        this.#logger.error({ error: error }, 'Gemini Realtime API error');
 
         if (this.#closed) break;
 
@@ -1421,7 +1424,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       }
     } catch (e) {
       if (!this.sessionShouldClose.isSet) {
-        this.#logger.error(`Error in send task: ${e}`);
+        this.#logger.error({ error: e }, 'Error in send task');
         this.#sessionError = e instanceof Error ? e : new Error(String(e), { cause: e });
         this.markRestartNeeded();
       }
@@ -1544,7 +1547,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       }
     } catch (e) {
       if (!this.sessionShouldClose.isSet) {
-        this.#logger.error(`Error in onReceiveMessage: ${e}`);
+        this.#logger.error({ error: e }, 'Error in onReceiveMessage');
         this.#sessionError = e instanceof Error ? e : new Error(String(e), { cause: e });
         this.markRestartNeeded();
       }
@@ -1891,7 +1894,7 @@ export class RealtimeSession extends llm.RealtimeSession {
 
             gen.audioChannel.write(audioFrame);
           } catch (error) {
-            this.#logger.error('Error processing audio data:', error);
+            this.#logger.error({ error: error }, 'Error processing audio data:');
           }
         }
       }

@@ -396,12 +396,14 @@ export class SpeechStream extends stt.SpeechStream {
           retries++;
 
           this.#logger.warn(
-            `failed to connect to Deepgram, retrying in ${delay} seconds: ${e} (${retries}/${maxRetry})`,
+            { error: e },
+            `failed to connect to Deepgram, retrying in ${delay} seconds (${retries}/${maxRetry})`,
           );
           await new Promise((resolve) => setTimeout(resolve, delay * 1000));
         } else {
           this.#logger.warn(
-            `Deepgram disconnected, connection is closed: ${e} (inputClosed: ${this.input.closed}, isClosed: ${this.closed})`,
+            { error: e },
+            `Deepgram disconnected, connection is closed (inputClosed: ${this.input.closed}, isClosed: ${this.closed})`,
           );
         }
       }

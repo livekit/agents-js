@@ -479,7 +479,7 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
         }
       }
     } catch (error) {
-      this.logger.error('Error in STTStream mainTask:', error);
+      this.logger.error({ error: error }, 'Error in STTStream mainTask:');
     } finally {
       reader.releaseLock();
     }

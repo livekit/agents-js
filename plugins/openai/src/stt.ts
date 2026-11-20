@@ -14,6 +14,7 @@ import {
   type VADStream,
   getBaseLanguage,
   inference,
+  log,
   mergeFrames,
   normalizeLanguage,
   stt,
@@ -741,7 +742,7 @@ export class SpeechStream extends stt.SpeechStream {
     try {
       this.#ws.send(JSON.stringify(this.#sessionUpdateEvent()));
     } catch (error) {
-      console.warn('failed to update the OpenAI transcription session', error);
+      log().warn({ error }, 'failed to update the OpenAI transcription session');
     }
   }
 

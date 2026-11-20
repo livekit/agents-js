@@ -10,10 +10,14 @@
  */
 import { SeverityNumber } from '@opentelemetry/api-logs';
 import { AccessToken } from 'livekit-server-sdk';
+import { pino } from 'pino';
 import { ATTRIBUTE_REDACTION_ENABLED } from '../types.js';
 import { resolveObservabilityUrl } from './observability_endpoint.js';
 import { REDACTED_EXCEPTION_MESSAGE, isPIIAttribute } from './redaction.js';
 import { fetchWithUploadGate, uploadGate } from './upload_gate.js';
+
+// Export failures must not be sent back into the exporter that just failed.
+const exporterLogger = pino({ serializers: { error: pino.stdSerializers.err } }, process.stderr);
 
 export interface PinoLogObject {
   level: number;
@@ -88,18 +92,33 @@ function convertValue(value: unknown): unknown {
 
 function redactSerializedException(value: unknown): unknown {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
-    return value;
+    return REDACTED_EXCEPTION_MESSAGE;
   }
 
   const exception = value as Record<string, unknown>;
-  if (typeof exception.type !== 'string' || typeof exception.message !== 'string') {
-    return value;
+  const redacted: Record<string, unknown> = { message: REDACTED_EXCEPTION_MESSAGE };
+  if (typeof exception.type === 'string') redacted.type = exception.type;
+  // These are protocol/transport metadata, not free-form messages, bodies, stacks, or causes.
+  for (const key of [
+    'code',
+    'statusCode',
+    'status_code',
+    'status',
+    'errno',
+    'retryable',
+    'requestId',
+    'request_id',
+  ]) {
+    const value = exception[key];
+    if (
+      typeof value === 'string' ||
+      typeof value === 'boolean' ||
+      (typeof value === 'number' && Number.isFinite(value))
+    ) {
+      redacted[key] = value;
+    }
   }
-
-  return {
-    type: exception.type,
-    message: REDACTED_EXCEPTION_MESSAGE,
-  };
+  return redacted;
 }
 
 /**
@@ -220,7 +239,7 @@ export class PinoCloudExporter {
         await this.sendLogs(logs);
       } catch (error) {
         this.pendingLogs = [...logs, ...this.pendingLogs];
-        console.error('[PinoCloudExporter] Failed to flush logs:', error);
+        exporterLogger.error({ error }, '[PinoCloudExporter] Failed to flush logs');
         return;
       }
     }

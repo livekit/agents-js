@@ -453,12 +453,7 @@ export class AvatarSession extends BaseAvatarSession {
           throw apiError;
         }
         retryAfterMs = (apiError as { retryAfterMs?: number }).retryAfterMs;
-        this.logger.warn(
-          { provider: this.providerName, error: String(apiError) },
-          apiError instanceof APITimeoutError
-            ? 'avatar gateway request timed out'
-            : 'failed to call avatar gateway',
-        );
+        this.logger.warn({ provider: this.providerName, error: apiError }, `${label} failed`);
       }
 
       if (i < this.connOptions.maxRetry) {
