@@ -902,11 +902,8 @@ export class AgentTask<ResultT = unknown, UserData = any> extends Agent<UserData
             if (pendingOnEnterTask) {
               try {
                 await pendingOnEnterTask.result;
-              } catch (error) {
-                this.#logger.error(
-                  { error },
-                  `error in onEnter task of agent ${this.constructor.name}`,
-                );
+              } catch {
+                // already logged by the activity that ran onEnter
               }
             }
 
