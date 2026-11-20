@@ -16,7 +16,7 @@ export type JSONSchema7Definition = JSONSchema7 | boolean;
 /**
  * Converts JSON Schema 7 to OpenAPI Schema 3.0
  */
-// Adapted from https://github.com/vercel/ai/blob/main/packages/google/src/convert-json-schema-to-openapi-schema.ts
+// Adapted from https://github.com/vercel/ai/blob/d4485fece81e2643b95dd48e71a70bb89897c4d4/packages/google/src/convert-json-schema-to-openapi-schema.ts
 export function convertJSONSchemaToOpenAPISchema(jsonSchema: JSONSchema7Definition): unknown {
   // parameters need to be undefined if they are empty objects:
   if (jsonSchema == null || isEmptyObjectSchema(jsonSchema)) {
