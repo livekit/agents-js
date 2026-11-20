@@ -1,0 +1,32 @@
+# SPDX-FileCopyrightText: 2026 LiveKit, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+# syntax=docker/dockerfile:1
+
+ARG NODE_VERSION=24
+FROM node:${NODE_VERSION}-bookworm-slim
+
+ENV PNPM_HOME=/pnpm
+ENV PATH=$PNPM_HOME:$PATH
+ENV NODE_ENV=production
+
+RUN apt-get update -qq \
+    && apt-get install --no-install-recommends -y ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && corepack enable
+
+WORKDIR /app
+
+ARG UID=10001
+RUN adduser --disabled-password --gecos "" --home /app --shell /sbin/nologin --uid ${UID} appuser \
+    && mkdir -p /pnpm \
+    && chown -R appuser:appuser /app /pnpm
+
+USER appuser
+COPY --chown=appuser:appuser . .
+
+RUN pnpm install --frozen-lockfile \
+    && pnpm build \
+    && pnpm --filter livekit-agents-examples exec livekit-agents download-files
+
+CMD ["node", "__HOMEPAGE_ENTRYPOINT__", "start"]
