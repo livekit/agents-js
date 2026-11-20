@@ -12,6 +12,7 @@ import {
   log,
 } from '@livekit/agents';
 import type { ChatModels } from './models.js';
+import { WebSearch } from './tools.js';
 
 const NO_FORCED_TOOL_CHOICE_PATTERNS = [
   'claude-opus-5-5',
@@ -19,6 +20,17 @@ const NO_FORCED_TOOL_CHOICE_PATTERNS = [
   'claude-fable-5-1',
   'claude-mythos-5-1',
 ];
+
+/**
+ * Anthropic search state exposed on `ChatChunk.delta.extra.anthropic` and chat items.
+ * @public
+ */
+export interface AnthropicResponseData {
+  /** Server calls and results, including opaque content required for subsequent turns. */
+  serverTools?: (Anthropic.ServerToolUseBlock | Anthropic.WebSearchToolResultBlock)[];
+  /** Citations supporting the assistant's text. */
+  citations?: Anthropic.TextCitation[];
+}
 
 /** Configuration options for the Anthropic LLM plugin. */
 export interface LLMOptions {
@@ -130,12 +142,37 @@ export class LLM extends llm.LLM {
     for (const msg of chatCtx.items) {
       if (msg.type === 'message') {
         const textContent = msg.rawTextContent || '';
+        const anthropicData = msg.extra.anthropic as AnthropicResponseData | undefined;
+        const serverTools = anthropicData?.serverTools ?? [];
+        const completedSearches = new Set(
+          serverTools
+            .filter((block) => block.type === 'web_search_tool_result')
+            .map((block) => block.tool_use_id),
+        );
         if (msg.role === 'system' || msg.role === 'developer') {
           system.push({ type: 'text', text: textContent });
         } else if (msg.role === 'user' || msg.role === 'assistant') {
           rawMessages.push({
             role: msg.role,
-            content: textContent,
+            content:
+              msg.role === 'assistant' && anthropicData
+                ? [
+                    // An interrupted search must not leave an unmatched server call in history.
+                    ...serverTools.filter(
+                      (block) =>
+                        block.type !== 'server_tool_use' || completedSearches.has(block.id),
+                    ),
+                    ...(textContent
+                      ? [
+                          {
+                            type: 'text' as const,
+                            text: textContent,
+                            citations: msg.interrupted ? undefined : anthropicData.citations,
+                          },
+                        ]
+                      : []),
+                  ]
+                : textContent,
           });
         }
       } else if (msg.type === 'function_call') {
@@ -143,6 +180,7 @@ export class LLM extends llm.LLM {
         rawMessages.push({
           role: 'assistant',
           content: [
+            ...((msg.extra.anthropic as AnthropicResponseData | undefined)?.serverTools ?? []),
             {
               type: 'tool_use',
               id: msg.callId,
@@ -230,7 +268,7 @@ export class LLM extends llm.LLM {
 
     // Build Anthropic tool schemas
     const toolCtx = llm.toToolContext(toolCtxInput);
-    const anthropicTools: Anthropic.Tool[] = [];
+    const anthropicTools: Anthropic.ToolUnion[] = [];
     if (toolCtx) {
       for (const [name, tool] of llm.sortedToolEntries(toolCtx)) {
         anthropicTools.push({
@@ -240,6 +278,14 @@ export class LLM extends llm.LLM {
             ? llm.toJsonSchema(tool.parameters, false)
             : { type: 'object', properties: {} }) as Anthropic.Tool.InputSchema,
         });
+      }
+    }
+
+    for (const tool of toolCtx?.providerTools ?? []) {
+      if (tool instanceof WebSearch) {
+        anthropicTools.push(tool.toToolConfig());
+      } else {
+        log().warn({ tool: tool.id }, 'anthropic llm: unsupported provider tool');
       }
     }
 
@@ -354,91 +400,173 @@ export class LLMStream extends llm.LLMStream {
     this.#cacheCreationTokens = 0;
     this.#cacheReadTokens = 0;
 
-    try {
-      const stream = await this.#client.messages.create(this.#requestParams, {
-        timeout: this.connOptions.timeoutMs,
+    let serverTools: NonNullable<AnthropicResponseData['serverTools']> = [];
+    const citations: Anthropic.TextCitation[] = [];
+    let requestParams = this.#requestParams;
+    const publishExtra = () =>
+      this.queue.put({
+        id: this.#requestId,
+        delta: {
+          role: 'assistant',
+          extra: {
+            anthropic: {
+              serverTools: [...serverTools],
+              citations: [...citations],
+            },
+          },
+        },
       });
-      for await (const event of stream) {
-        if (event.type === 'message_start') {
-          this.#requestId = event.message.id;
-          this.#inputTokens = event.message.usage.input_tokens;
-          this.#outputTokens = event.message.usage.output_tokens;
-          this.#cacheCreationTokens = event.message.usage.cache_creation_input_tokens ?? 0;
-          this.#cacheReadTokens = event.message.usage.cache_read_input_tokens ?? 0;
-        } else if (event.type === 'message_delta') {
-          this.#outputTokens = event.usage.output_tokens;
-        } else if (
-          event.type === 'content_block_start' &&
-          event.content_block.type === 'tool_use'
-        ) {
-          this.#toolCallId = event.content_block.id;
-          this.#fncName = event.content_block.name;
-          this.#fncRawArgs = '';
-        } else if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
-          let text = event.delta.text;
-
-          // Filter chain-of-thought <thinking> blocks when tools are active
-          if (this.#toolCtx) {
-            const thinkingStart = text.indexOf('<thinking>');
-            if (thinkingStart >= 0) {
-              const preThinking = text.slice(0, thinkingStart);
-              if (preThinking) {
-                this.queue.put({
-                  id: this.#requestId,
-                  delta: { role: 'assistant', content: preThinking },
-                });
-                retryable = false;
-              }
-              text = text.slice(thinkingStart + '<thinking>'.length);
-              this.#ignoringCoT = true;
+    try {
+      for (let continuation = 0; ; continuation++) {
+        const content: Anthropic.ContentBlock[] = [];
+        const toolCalls: llm.FunctionCall[] = [];
+        let block: Anthropic.ContentBlock | undefined;
+        let rawInput = '';
+        let stopReason: Anthropic.StopReason | null = null;
+        let outputTokens = 0;
+        const stream = await this.#client.messages.create(requestParams, {
+          timeout: this.connOptions.timeoutMs,
+          signal: this.abortController.signal,
+        });
+        for await (const event of stream) {
+          // Keep the native response for pause_turn continuation without changing the public transcript.
+          if (event.type === 'content_block_start') {
+            block = structuredClone(event.content_block);
+            rawInput = '';
+          } else if (event.type === 'content_block_delta') {
+            const delta = event.delta;
+            if (delta.type === 'input_json_delta') rawInput += delta.partial_json;
+            else if (delta.type === 'text_delta' && block?.type === 'text')
+              block.text += delta.text;
+            else if (delta.type === 'citations_delta') {
+              citations.push(delta.citation);
+              if (block?.type === 'text') (block.citations ??= []).push(delta.citation);
+              publishExtra();
+            } else if (delta.type === 'thinking_delta' && block?.type === 'thinking')
+              block.thinking += delta.thinking;
+            else if (delta.type === 'signature_delta' && block?.type === 'thinking')
+              block.signature += delta.signature;
+          } else if (event.type === 'content_block_stop' && block) {
+            if (block.type === 'server_tool_use' && rawInput) block.input = JSON.parse(rawInput);
+            content.push(block);
+            if (block.type === 'server_tool_use' || block.type === 'web_search_tool_result') {
+              serverTools.push(block);
+              retryable = false;
+              if (block.type === 'web_search_tool_result') publishExtra();
             }
+            block = undefined;
+          }
+
+          if (event.type === 'message_start') {
+            this.#requestId = event.message.id;
+            this.#inputTokens += event.message.usage.input_tokens;
+            outputTokens = event.message.usage.output_tokens;
+            this.#outputTokens += outputTokens;
+            this.#cacheCreationTokens += event.message.usage.cache_creation_input_tokens ?? 0;
+            this.#cacheReadTokens += event.message.usage.cache_read_input_tokens ?? 0;
+          } else if (event.type === 'message_delta') {
+            this.#outputTokens += event.usage.output_tokens - outputTokens;
+            outputTokens = event.usage.output_tokens;
+            stopReason = event.delta.stop_reason;
+          } else if (
+            event.type === 'content_block_start' &&
+            event.content_block.type === 'tool_use'
+          ) {
+            this.#toolCallId = event.content_block.id;
+            this.#fncName = event.content_block.name;
+            this.#fncRawArgs = '';
+          } else if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
+            let text = event.delta.text;
+
+            // Filter chain-of-thought <thinking> blocks when tools are active
+            if (this.#toolCtx) {
+              const thinkingStart = text.indexOf('<thinking>');
+              if (thinkingStart >= 0) {
+                const preThinking = text.slice(0, thinkingStart);
+                if (preThinking) {
+                  this.queue.put({
+                    id: this.#requestId,
+                    delta: { role: 'assistant', content: preThinking },
+                  });
+                  retryable = false;
+                }
+                text = text.slice(thinkingStart + '<thinking>'.length);
+                this.#ignoringCoT = true;
+              }
+              if (this.#ignoringCoT) {
+                const thinkingEnd = text.indexOf('</thinking>');
+                if (thinkingEnd >= 0) {
+                  text = text.slice(thinkingEnd + '</thinking>'.length);
+                  this.#ignoringCoT = false;
+                }
+              }
+            }
+
             if (this.#ignoringCoT) {
-              const thinkingEnd = text.indexOf('</thinking>');
-              if (thinkingEnd >= 0) {
-                text = text.slice(thinkingEnd + '</thinking>'.length);
-                this.#ignoringCoT = false;
-              }
+              continue;
             }
-          }
 
-          if (this.#ignoringCoT) {
-            continue;
-          }
-
-          // A delta can be reduced to an empty string when it was entirely a
-          // <thinking> block; don't emit it or mark the stream non-retryable.
-          if (text) {
-            this.queue.put({
-              id: this.#requestId,
-              delta: { role: 'assistant', content: text },
+            // A delta can be reduced to an empty string when it was entirely a
+            // <thinking> block; don't emit it or mark the stream non-retryable.
+            if (text) {
+              this.queue.put({
+                id: this.#requestId,
+                delta: { role: 'assistant', content: text },
+              });
+              retryable = false;
+            }
+          } else if (
+            event.type === 'content_block_delta' &&
+            event.delta.type === 'input_json_delta' &&
+            this.#toolCallId
+          ) {
+            this.#fncRawArgs += event.delta.partial_json;
+          } else if (event.type === 'content_block_stop' && this.#toolCallId) {
+            const toolCall = llm.FunctionCall.create({
+              callId: this.#toolCallId,
+              name: this.#fncName || '',
+              args: this.#fncRawArgs || '',
             });
+            // A parallel server call can follow a client call. Wait for the whole
+            // response so its state is preserved even when there is no spoken text.
+            if (
+              serverTools.length > 0 ||
+              requestParams.tools?.some((tool) => tool.type === 'web_search_20250305')
+            ) {
+              toolCalls.push(toolCall);
+            } else {
+              this.queue.put({
+                id: this.#requestId,
+                delta: { role: 'assistant', toolCalls: [toolCall] },
+              });
+            }
+            this.#toolCallId = undefined;
+            this.#fncName = undefined;
+            this.#fncRawArgs = undefined;
             retryable = false;
           }
-        } else if (
-          event.type === 'content_block_delta' &&
-          event.delta.type === 'input_json_delta'
-        ) {
-          this.#fncRawArgs += event.delta.partial_json;
-        } else if (event.type === 'content_block_stop' && this.#toolCallId) {
-          this.queue.put({
-            id: this.#requestId,
-            delta: {
-              role: 'assistant',
-              toolCalls: [
-                llm.FunctionCall.create({
-                  callId: this.#toolCallId,
-                  name: this.#fncName || '',
-                  args: this.#fncRawArgs || '',
-                }),
-              ],
-            },
-          });
-          this.#toolCallId = undefined;
-          this.#fncName = undefined;
-          this.#fncRawArgs = undefined;
-          retryable = false;
         }
+
+        if (toolCalls.length > 0) {
+          const extra =
+            serverTools.length > 0
+              ? { anthropic: { serverTools: [], citations: [...citations] } }
+              : undefined;
+          if (serverTools.length > 0) toolCalls[0]!.extra.anthropic = { serverTools };
+          serverTools = [];
+          this.queue.put({ id: this.#requestId, delta: { role: 'assistant', toolCalls, extra } });
+        }
+        if (stopReason !== 'pause_turn' || this.abortController.signal.aborted) break;
+        // Continuing an already-run server tool must never retry the original request.
+        retryable = false;
+        if (continuation >= 4)
+          throw new Error('Anthropic web search remained paused after 5 requests');
+        requestParams = {
+          ...requestParams,
+          messages: [...requestParams.messages, { role: 'assistant', content }],
+        };
       }
+      if (serverTools.length > 0 || citations.length > 0) publishExtra();
 
       // Emit final usage chunk. Anthropic reports cached tokens separately from
       // input_tokens, so fold them into promptTokens like the Python plugin does.
@@ -454,6 +582,7 @@ export class LLMStream extends llm.LLMStream {
         },
       });
     } catch (e: unknown) {
+      if (this.abortController.signal.aborted) return;
       if (e instanceof Anthropic.APIError) {
         if (e.status === 408) {
           throw new APITimeoutError({

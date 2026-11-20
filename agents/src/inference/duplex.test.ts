@@ -5,7 +5,8 @@ import { once } from 'node:events';
 import type { IncomingHttpHeaders } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { WebSocket, WebSocketServer } from 'ws';
+import type { WebSocket } from 'ws';
+import { WebSocketServer } from 'ws';
 import { z } from 'zod';
 import { DuplexRealtimeAdapter } from '../llm/duplex_adapter.js';
 import type {
