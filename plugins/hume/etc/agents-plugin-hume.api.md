@@ -77,7 +77,7 @@ export interface TTSOptions {
     // (undocumented)
     trailingSilence?: number;
     // (undocumented)
-    voice?: VoiceById | VoiceByName;
+    voice?: VoiceById | VoiceByName | null;
 }
 
 // Warning: (ae-missing-release-tag) "Utterance" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
@@ -93,7 +93,7 @@ export interface Utterance {
     // (undocumented)
     trailing_silence?: number;
     // (undocumented)
-    voice?: VoiceById | VoiceByName;
+    voice?: VoiceById | VoiceByName | null;
 }
 
 // Warning: (ae-missing-release-tag) "VoiceById" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
