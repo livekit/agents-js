@@ -243,6 +243,7 @@ export const ATTR_PREVIOUS_AGENT_LABEL = 'lk.previous_agent_label';
 /** Label of the provider that served the request. */
 export const ATTR_FALLBACK_LABEL = 'lk.fallback.label';
 export const ATTR_FALLBACK_INDEX = 'lk.fallback.index';
+export const ATTR_FALLBACK_RECOVERY = 'lk.fallback.recovery';
 
 // Adaptive Interruption attributes
 export const ATTR_IS_INTERRUPTION = 'lk.is_interruption';

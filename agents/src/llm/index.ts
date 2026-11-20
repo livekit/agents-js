@@ -108,6 +108,13 @@ export {
 } from './decisions.js';
 
 export {
+  DecisionModelFallbackAdapter,
+  type DecisionAvailabilityChangedEvent,
+  type DecisionModelFallbackAdapterOptions,
+  type DecisionModelFallbackCallbacks,
+} from './decision_fallback_adapter.js';
+
+export {
   RealtimeError,
   RealtimeModel,
   RealtimeSession,
