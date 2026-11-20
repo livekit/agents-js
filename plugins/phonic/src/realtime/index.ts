@@ -2,7 +2,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 export {
+  PhonicNoInputTimeoutError,
   RealtimeModel,
+  type ConversationEndedReason,
+  type PhonicConversationEndedEvent,
   type RealtimeModelOptions,
   type PhonicToolConfig,
   type PhonicConfig,
