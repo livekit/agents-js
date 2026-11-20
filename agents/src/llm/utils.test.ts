@@ -521,6 +521,27 @@ describe('executeToolCall', () => {
     expect(result.output).toMatch(/Arguments parsing failed/);
   });
 
+  it('should treat null for an optional argument as omitted', async () => {
+    const updateUserInfo = tool({
+      name: 'updateUserInfo',
+      description: 'update user info',
+      parameters: z.object({ name: z.string().optional(), email: z.string().optional() }),
+      execute: async (args) => args,
+    });
+
+    const result = await executeToolCall(
+      FunctionCall.create({
+        callId: 'call-optional-null-1',
+        name: 'updateUserInfo',
+        args: '{"name":"Theo","email":null}',
+      }),
+      new ToolContext([updateUserInfo]),
+    );
+
+    expect(result.isError).toBe(false);
+    expect(JSON.parse(result.output)).toEqual({ name: 'Theo' });
+  });
+
   it('should preserve a genuine null for a nullable defaulted argument', async () => {
     const maybe = tool({
       name: 'maybe',
