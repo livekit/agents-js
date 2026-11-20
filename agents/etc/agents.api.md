@@ -6177,7 +6177,7 @@ export class ProbabilityResult {
 }
 
 // @public (undocumented)
-export type ProviderFormat = 'openai' | 'openai.responses' | 'google' | 'mistralai';
+export type ProviderFormat = 'openai' | 'openai.responses' | 'google' | 'mistralai' | 'aws';
 
 // @internal
 const _providerTables: {
