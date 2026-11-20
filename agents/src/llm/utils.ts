@@ -276,21 +276,6 @@ export const createToolOptions = <UserData extends UnknownUserData>(
   } as unknown as ToolOptions<UserData>;
 };
 
-/** @internal */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export const oaiParams = (schema: any, isOpenai: boolean = true): OpenAIFunctionParameters => {
-  // Adapted from https://github.com/vercel/ai/blob/56eb0ee9/packages/provider-utils/src/zod-schema.ts
-  const jsonSchema = zodSchemaToJsonSchema(schema, isOpenai);
-  const { properties, required, additionalProperties } = jsonSchema as OpenAIFunctionParameters;
-
-  return {
-    type: 'object',
-    properties,
-    required,
-    additionalProperties,
-  };
-};
-
 const templateTokenPatterns = [
   /<\|[^<>|]{0,40}\|>/g,
   /<\|[^<>a-zA-Z0-9_]{0,10}/g,

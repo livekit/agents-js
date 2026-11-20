@@ -19,7 +19,7 @@ import {
   isFunctionTool,
   tool,
 } from './tool_context.js';
-import { createToolOptions, oaiParams } from './utils.js';
+import { createToolOptions, toJsonSchema } from './utils.js';
 
 describe('tools object compatibility', () => {
   it('preserves metadata on named tools and through anonymous tool normalization', () => {
@@ -106,71 +106,6 @@ describe('tools object compatibility', () => {
 });
 
 describe('Tool Context', () => {
-  describe('oaiParams', () => {
-    it('should handle basic object schema', () => {
-      const schema = z.object({
-        name: z.string().describe('The user name'),
-        age: z.number().describe('The user age'),
-      });
-
-      const result = oaiParams(schema);
-
-      expect(result).toMatchSnapshot();
-    });
-
-    it('should handle enum fields', () => {
-      const schema = z.object({
-        color: z.enum(['red', 'blue', 'green']).describe('Choose a color'),
-      });
-
-      const result = oaiParams(schema);
-
-      expect(result).toMatchSnapshot();
-    });
-
-    it('should handle array fields', () => {
-      const schema = z.object({
-        tags: z.array(z.string()).describe('List of tags'),
-      });
-
-      const result = oaiParams(schema);
-
-      expect(result).toMatchSnapshot();
-    });
-
-    it('should handle array of enums', () => {
-      const schema = z.object({
-        colors: z.array(z.enum(['red', 'blue', 'green'])).describe('List of colors'),
-      });
-
-      const result = oaiParams(schema);
-
-      expect(result).toMatchSnapshot();
-    });
-
-    it('should handle optional fields', () => {
-      const schema = z.object({
-        name: z.string().describe('The user name'),
-        age: z.number().optional().describe('The user age'),
-      });
-
-      const result = oaiParams(schema);
-
-      expect(result).toMatchSnapshot();
-    });
-
-    it('should handle fields without descriptions', () => {
-      const schema = z.object({
-        name: z.string(),
-        age: z.number(),
-      });
-
-      const result = oaiParams(schema);
-
-      expect(result).toMatchSnapshot();
-    });
-  });
-
   describe('tool', () => {
     it('should create and execute a basic core tool', async () => {
       const getWeather = tool({
@@ -230,7 +165,7 @@ describe('Tool Context', () => {
         },
       });
 
-      const params = oaiParams(testFunction.parameters);
+      const params = toJsonSchema(testFunction.parameters);
       expect(params.properties).toHaveProperty(CONFIRM_DUPLICATE_PARAM);
       expect(params.required).toContain(CONFIRM_DUPLICATE_PARAM);
 
@@ -321,28 +256,6 @@ describe('Tool Context', () => {
 
       expect(result).toBe(100);
       expect(duration).toBeGreaterThanOrEqual(95); // Allow for small timing variations
-    });
-
-    describe('nested array support', () => {
-      it('should handle nested array fields', () => {
-        const schema = z.object({
-          items: z.array(
-            z.object({
-              name: z.string().describe('the item name'),
-              modifiers: z
-                .array(
-                  z.object({
-                    modifier_name: z.string(),
-                    modifier_value: z.string(),
-                  }),
-                )
-                .describe('list of the modifiers applied on this item, such as size'),
-            }),
-          ),
-        });
-        const result = oaiParams(schema);
-        expect(result).toMatchSnapshot();
-      });
     });
 
     describe('optional parameters', () => {
@@ -542,66 +455,6 @@ describe('Tool Context', () => {
           createToolOptions('test-nested'),
         );
         expect(result).toBe('John Doe (john@example.com)');
-      });
-    });
-
-    describe('oaiParams with v4 schemas', () => {
-      it('should convert v4 basic object schema', () => {
-        const schema = z4.object({
-          name: z4.string().describe('User name'),
-          age: z4.number().describe('User age'),
-        });
-
-        const result = oaiParams(schema);
-
-        expect(result.type).toBe('object');
-        expect(result.properties).toHaveProperty('name');
-        expect(result.properties).toHaveProperty('age');
-        expect(result.required).toContain('name');
-        expect(result.required).toContain('age');
-      });
-
-      it('should handle v4 optional fields', () => {
-        const schema = z4.object({
-          required: z4.string(),
-          optional: z4.string().optional(),
-        });
-
-        const result = oaiParams(schema);
-
-        expect(result.required).toContain('required');
-        expect(result.required).not.toContain('optional');
-      });
-
-      it('should handle v4 enum fields', () => {
-        const schema = z4.object({
-          status: z4.enum(['pending', 'approved', 'rejected']),
-        });
-
-        const result = oaiParams(schema);
-
-        const properties = result.properties as Record<string, Record<string, unknown>>;
-        expect(properties.status?.enum).toEqual(['pending', 'approved', 'rejected']);
-      });
-
-      it('should handle v4 array fields', () => {
-        const schema = z4.object({
-          items: z4.array(z4.string()),
-        });
-
-        const result = oaiParams(schema);
-
-        const properties = result.properties as Record<string, any>;
-        expect(
-          properties.items && typeof properties.items === 'object'
-            ? properties.items.type
-            : undefined,
-        ).toBe('array');
-        expect(
-          properties.items && properties.items.items && typeof properties.items.items === 'object'
-            ? properties.items.items.type
-            : undefined,
-        ).toBe('string');
       });
     });
   });
