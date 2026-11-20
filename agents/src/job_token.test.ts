@@ -303,6 +303,23 @@ describe('inference in token mode', () => {
     expect(() => new TTS({ model: 'cartesia/sonic' })).not.toThrow();
   });
 
+  it('leaves prewarm for the job: it runs once, and has no token before the job', async () => {
+    tokenModeEnv();
+    const llm = new LLM({ model: 'openai/gpt-4o-mini' });
+    const list = vi.fn(async () => {});
+    (llm as unknown as { client: { models: { list: typeof list } } }).client.models.list = list;
+
+    llm.prewarm();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(list).not.toHaveBeenCalled();
+
+    setTokenClient(await clientWithToken(INFERENCE_CLAIMS, 'inference-token'));
+    llm.prewarm();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(list).toHaveBeenCalledTimes(1);
+    await llm.aclose();
+  });
+
   it('prefers inference credentials when they are set', async () => {
     tokenModeEnv();
     process.env.LIVEKIT_INFERENCE_API_KEY = 'inference-key';

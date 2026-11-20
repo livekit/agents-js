@@ -20,6 +20,7 @@ import {
   INFERENCE_PRIORITY_HEADER,
   INFERENCE_PROVIDER_HEADER,
   type InferenceClass,
+  accessTokenAvailable,
   buildMetadataHeaders,
   createAccessToken,
   getDefaultInferenceUrl,
@@ -264,6 +265,12 @@ export class LLM extends llm.LLM {
 
   get provider(): string {
     return 'livekit';
+  }
+
+  override prewarm(): void {
+    // prewarm runs once: without a token yet (token mode, before the job) leave it for the
+    // call that the job makes
+    if (accessTokenAvailable(this.opts.apiKey, this.opts.apiSecret)) super.prewarm();
   }
 
   protected override async _prewarmImpl(signal: AbortSignal): Promise<void> {

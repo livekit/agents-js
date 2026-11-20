@@ -81,6 +81,11 @@ export function resolveCredentials(
   return { apiKey: resolvedApiKey, apiSecret: resolvedApiSecret };
 }
 
+/** False in token mode outside a running job, where {@link createAccessToken} throws. */
+export function accessTokenAvailable(apiKey?: string, apiSecret?: string): boolean {
+  return !inferenceTokenMode(apiKey, apiSecret) || jobToken(INFERENCE_CLAIMS) !== undefined;
+}
+
 export async function createAccessToken(
   apiKey: string,
   apiSecret: string,
