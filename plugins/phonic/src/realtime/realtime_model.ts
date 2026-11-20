@@ -1301,8 +1301,21 @@ export class RealtimeSession extends llm.RealtimeSession {
     // End the agent session the same way an app-initiated shutdown would, letting the final
     // reply play out. Whether the room is deleted is left to the room options. There is no
     // public accessor for the job's primary session, so this reads the field
-    // `telemetry.primarySession()` uses.
-    getJobContext(false)?._primaryAgentSession?.shutdown({ drain: true });
+    // `telemetry.primarySession()` uses. Only the primary session is reachable, so another
+    // session in the job (such as a warm transfer's) is left to the app via the event.
+    const agentSession = getJobContext(false)?._primaryAgentSession;
+    if (agentSession === undefined) {
+      return;
+    }
+    let ownsConversation: boolean;
+    try {
+      ownsConversation = agentSession.currentAgent.getActivityOrThrow().realtimeLLMSession === this;
+    } catch {
+      return;
+    }
+    if (ownsConversation) {
+      agentSession.shutdown({ drain: true });
+    }
   }
 
   private emitError(error: Error, recoverable: boolean): void {

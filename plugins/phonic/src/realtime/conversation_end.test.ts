@@ -13,6 +13,8 @@ import {
 
 const socketHandlers = vi.hoisted(() => new Map<string, (arg: unknown) => void>());
 const shutdowns = vi.hoisted(() => [] as Array<{ drain?: boolean }>);
+// The realtime session run by the job's primary agent session.
+const primary = vi.hoisted(() => ({ realtimeSession: undefined as unknown }));
 
 vi.mock('phonic', () => ({
   PhonicClient: class {
@@ -30,7 +32,12 @@ vi.mock('phonic', () => ({
 vi.mock('@livekit/agents', async (importOriginal) => ({
   ...(await importOriginal<typeof agents>()),
   getJobContext: () => ({
-    _primaryAgentSession: { shutdown: (options: { drain?: boolean }) => shutdowns.push(options) },
+    _primaryAgentSession: {
+      shutdown: (options: { drain?: boolean }) => shutdowns.push(options),
+      currentAgent: {
+        getActivityOrThrow: () => ({ realtimeLLMSession: primary.realtimeSession }),
+      },
+    },
   }),
 }));
 
@@ -41,6 +48,7 @@ describe('Phonic conversation end', () => {
 
   async function startSession(): Promise<void> {
     session = new RealtimeModel({ apiKey: 'test-key' }).session({ instructions: 'be brief' });
+    primary.realtimeSession = session;
     errors = [];
     ended = [];
     session.on('error', (error: llm.RealtimeModelError) => errors.push(error));
@@ -55,6 +63,7 @@ describe('Phonic conversation end', () => {
     session = undefined;
     socketHandlers.clear();
     shutdowns.length = 0;
+    primary.realtimeSession = undefined;
   });
 
   it.each([
@@ -70,6 +79,15 @@ describe('Phonic conversation end', () => {
     expect(errors).toEqual([]);
     expect(ended).toEqual([{ reason }]);
     expect(shutdowns).toEqual([{ drain: true }]);
+  });
+
+  it("leaves the primary session running when another session's conversation ends", async () => {
+    await startSession();
+    primary.realtimeSession = {};
+    socketHandlers.get('close')!({ code: 4505, reason: 'closed' });
+
+    expect(ended).toEqual([{ reason: 'time_limit_reached' }]);
+    expect(shutdowns).toEqual([]);
   });
 
   it('reports a no-input timeout as one typed unrecoverable error', async () => {
