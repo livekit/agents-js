@@ -1,0 +1,5 @@
+---
+'@livekit/agents': patch
+---
+
+Fix a streaming `inference.TTS` turn that ended with text sent and no audio received finishing silently, with no `tts_error`. A stream that replays its input on retry now treats such a turn as a retryable `APIError`, like the Python SDK. The turn is retried with the text replayed, and one unrecoverable error is emitted if every attempt is silent (immediately with `maxRetry: 0`). Only text with a letter or digit counts, so punctuation, emoji and zero-width text cannot cause retries; Python counts any non-empty text. A `session.closed` without audio is retried too. A turn that ends with `done` and no audio drops its gateway connection from the pool, so the retry opens a new one. An `END_OF_STREAM` that arrives before any audio, for such text, is held back so the consumer keeps reading until the retry. Inside a `FallbackAdapter`, a silent `inference.TTS` child is now retried `maxRetryPerTTS` times before the adapter fails over. This applies only to streams that turn on the protected `SynthesizeStream.replayInputOnRetry` field, which is `inference.TTS` today. Plugins are unchanged.

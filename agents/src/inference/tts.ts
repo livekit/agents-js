@@ -13,6 +13,7 @@ import { createStreamChannel } from '../stream/stream_channel.js';
 import type { ChunkedStream } from '../tts/index.js';
 import { SynthesizeStream as BaseSynthesizeStream, TTS as BaseTTS } from '../tts/index.js';
 import { dropBracketCues, sentenceTokenizer } from '../tts/provider_format.js';
+import { hasSpeakableText } from '../tts/tts.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import {
   Event,
@@ -714,6 +715,11 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
     const eventChannel = createStreamChannel<TtsServerEvent>();
     const requestId = shortuuid('tts_request_');
     const inputSentEvent = new Event();
+    // A turn that ends with `done` after speakable text was sent and no audio came back. The
+    // gateway connection that did that is not reused: see the end of the connection callback.
+    let transcriptSent = false;
+    let audioQueued = false;
+    let silentDone = false;
 
     // Signal for protocol-driven completion (when 'done' message is received)
     const completionFuture = new Future<void>();
@@ -740,6 +746,7 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
 
     const sendLastFrame = (segmentId: string, final: boolean) => {
       if (lastFrame) {
+        audioQueued = true;
         this.queue.put({
           requestId,
           segmentId,
@@ -789,6 +796,7 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
           : ev.token;
 
         this.markStarted();
+        if (hasSpeakableText(converted)) transcriptSent = true;
         await sendClientEvent(
           {
             type: 'input_transcript',
@@ -953,6 +961,7 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
                 lastFrame = frame;
               }
               sendLastFrame(currentSessionId!, true);
+              silentDone = transcriptSent && !audioQueued;
               this.queue.put(SynthesizeStream.END_OF_STREAM);
               await resourceCleanup();
               completionFuture.resolve();
@@ -1051,8 +1060,16 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
               await cancelAndWait(tasks, 5000);
               this.abortController.signal.removeEventListener('abort', onStreamAbort);
             }
-            if (!runController.signal.aborted && state.handoffId !== undefined) {
-              retireTtsSocket(ws, state, this.tts.pool);
+            if (!runController.signal.aborted) {
+              if (state.handoffId !== undefined) {
+                // retires the socket and acknowledges the handoff
+                retireTtsSocket(ws, state, this.tts.pool);
+              } else if (silentDone) {
+                // The no-audio guard retries this turn. Take the connection out of the pool so the
+                // retry gets a new one. The pool lends a connection to one stream at a time, so no
+                // other stream is using it.
+                this.tts.pool.remove(ws);
+              }
             }
           } catch (e) {
             // If aborted, don't throw - let cleanup handle it

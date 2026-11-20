@@ -1035,10 +1035,16 @@ describe('Inference TTS retry replays the turn', () => {
     send(conn, { type: 'done' });
   }
 
+  async function drainAll(stream: AsyncIterable<unknown>) {
+    const events: Array<'audio' | 'END_OF_STREAM'> = [];
+    for await (const event of stream) {
+      events.push(typeof event === 'symbol' ? 'END_OF_STREAM' : 'audio');
+    }
+    return events;
+  }
+
   async function drain(stream: AsyncIterable<unknown>) {
-    let frames = 0;
-    for await (const event of stream) if (typeof event !== 'symbol') frames++;
-    return frames;
+    return (await drainAll(stream)).filter((e) => e === 'audio').length;
   }
 
   it('sends the same text on the retry connection and speaks it', async () => {
@@ -1252,6 +1258,232 @@ describe('Inference TTS retry replays the turn', () => {
       expect(errors.map((e) => e.recoverable)).toEqual([false]);
       expect(stream.error).toBeDefined();
       expect(gw.conns).toHaveLength(1);
+    } finally {
+      stream.close();
+      await tts.close();
+      await gw.close();
+    }
+  });
+  it('retries with the text when the gateway ends a turn with done and no audio, then speaks it', async () => {
+    let flushes = 0;
+    const gw = await gateway((conn, event) => {
+      if (event.type !== 'session.flush') return;
+      flushes++;
+      if (flushes === 1) {
+        send(conn, { type: 'done' }); // the turn ends with no audio
+      } else {
+        serveTurn(conn);
+      }
+    });
+    const tts = makeTts({ baseURL: gw.url });
+    const errors: unknown[] = [];
+    tts.on('error', (e) => errors.push(e));
+    const stream = tts.stream({ connOptions: RETRY_OPTIONS });
+    try {
+      stream.pushText('Hello there.');
+      stream.endInput();
+      const events = await drainAll(stream);
+
+      // two turns reached the gateway, both with the whole text, on two connections: a silent
+      // `done` takes its socket out of the pool
+      expect(gw.conns.map(transcripts)).toEqual([['Hello there. '], ['Hello there. ']]);
+      // the silent turn's END_OF_STREAM did not end the consumer's read before the retry's audio
+      expect(events.filter((e) => e === 'audio').length).toBeGreaterThan(0);
+      expect(events.at(-1)).toBe('END_OF_STREAM');
+      expect(events.filter((e) => e === 'END_OF_STREAM')).toHaveLength(1);
+      expect(stream.error).toBeUndefined();
+      expect(errors).toEqual([]);
+    } finally {
+      stream.close();
+      await tts.close();
+      await gw.close();
+    }
+  });
+
+  it('reports one unrecoverable error when every turn ends with done and no audio', async () => {
+    const gw = await gateway((conn, event) => {
+      if (event.type === 'session.flush') send(conn, { type: 'done' });
+    });
+    const tts = makeTts({ baseURL: gw.url });
+    const errors: Array<{ recoverable: boolean; error: Error }> = [];
+    tts.on('error', (e) => errors.push(e));
+    const stream = tts.stream({ connOptions: { ...RETRY_OPTIONS, maxRetry: 2 } });
+    try {
+      stream.pushText('Hello there.');
+      stream.endInput();
+      const events = await drainAll(stream);
+
+      expect(gw.conns.flatMap(transcripts)).toEqual([
+        'Hello there. ',
+        'Hello there. ',
+        'Hello there. ',
+      ]);
+      expect(events).toEqual([]);
+      expect(errors.map((e) => e.recoverable)).toEqual([false]);
+      expect(errors[0]!.error.message).toMatch(/no audio frames were pushed/);
+      expect(stream.error).toBeDefined();
+    } finally {
+      stream.close();
+      await tts.close();
+      await gw.close();
+    }
+  });
+
+  it('opens a new connection for the retry after a silent done', async () => {
+    // the first connection always answers done with no audio; a new one serves the turn
+    const gw = await gateway((conn, event) => {
+      if (event.type !== 'session.flush') return;
+      if (conn.index === 0) send(conn, { type: 'done' });
+      else serveTurn(conn);
+    });
+    const tts = makeTts({ baseURL: gw.url });
+    const errors: unknown[] = [];
+    tts.on('error', (e) => errors.push(e));
+    const stream = tts.stream({ connOptions: RETRY_OPTIONS });
+    try {
+      stream.pushText('Hello there.');
+      stream.endInput();
+      const events = await drainAll(stream);
+
+      expect(gw.conns.map(transcripts)).toEqual([['Hello there. '], ['Hello there. ']]);
+      expect(events.filter((e) => e === 'audio').length).toBeGreaterThan(0);
+      expect(stream.error).toBeUndefined();
+      expect(errors).toEqual([]);
+    } finally {
+      stream.close();
+      await tts.close();
+      await gw.close();
+    }
+  });
+
+  it('acknowledges a pending handoff when a silent done ends the turn', async () => {
+    const gw = await gateway((conn, event) => {
+      if (event.type !== 'session.flush') return;
+      if (conn.index === 0) {
+        send(conn, { type: 'session.handoff.request', handoff_id: 'h1' });
+        send(conn, { type: 'done' });
+      } else {
+        serveTurn(conn);
+      }
+    });
+    const tts = makeTts({ baseURL: gw.url });
+    const errors: unknown[] = [];
+    tts.on('error', (e) => errors.push(e));
+    const stream = tts.stream({ connOptions: RETRY_OPTIONS });
+    try {
+      stream.pushText('Hello there.');
+      stream.endInput();
+      const events = await drainAll(stream);
+
+      expect(events.filter((e) => e === 'audio').length).toBeGreaterThan(0);
+      expect(gw.conns).toHaveLength(2);
+      expect(gw.conns[0]!.events).toContainEqual({
+        type: 'session.handoff.complete',
+        handoff_id: 'h1',
+      });
+      expect(errors).toEqual([]);
+    } finally {
+      stream.close();
+      await tts.close();
+      await gw.close();
+    }
+  });
+
+  it('keeps the connection after a silent done for text that is not speakable', async () => {
+    // a gateway that returns no audio for punctuation
+    const gw = await gateway((conn, event) => {
+      if (event.type === 'session.flush') send(conn, { type: 'done' });
+    });
+    const tts = makeTts({ baseURL: gw.url });
+    const errors: unknown[] = [];
+    tts.on('error', (e) => errors.push(e));
+    try {
+      for (let turn = 0; turn < 2; turn++) {
+        const stream = tts.stream({ connOptions: RETRY_OPTIONS });
+        stream.pushText('...');
+        stream.endInput();
+        expect(await drainAll(stream)).toEqual(['END_OF_STREAM']);
+        stream.close();
+      }
+
+      expect(gw.conns).toHaveLength(1); // the second turn reused it
+      expect(gw.conns[0]!.events.filter((e) => e.type === 'input_transcript')).toHaveLength(2);
+      expect(errors).toEqual([]);
+    } finally {
+      await tts.close();
+      await gw.close();
+    }
+  });
+
+  it('reports one unrecoverable error at once with maxRetry 0', async () => {
+    const gw = await gateway((conn, event) => {
+      if (event.type === 'session.flush') send(conn, { type: 'done' });
+    });
+    const tts = makeTts({ baseURL: gw.url });
+    const errors: Array<{ recoverable: boolean; error: Error }> = [];
+    tts.on('error', (e) => errors.push(e));
+    const stream = tts.stream({ connOptions: { ...RETRY_OPTIONS, maxRetry: 0 } });
+    try {
+      stream.pushText('Hello there.');
+      stream.endInput();
+      const events = await drainAll(stream);
+
+      expect(gw.conns.flatMap(transcripts)).toEqual(['Hello there. ']);
+      expect(events).toEqual([]);
+      expect(errors.map((e) => e.recoverable)).toEqual([false]);
+      expect(errors[0]!.error.message).toMatch(/no audio frames were pushed/);
+    } finally {
+      stream.close();
+      await tts.close();
+      await gw.close();
+    }
+  });
+
+  it('retries a turn that the gateway ends with session.closed and no audio', async () => {
+    let flushes = 0;
+    const gw = await gateway((conn, event) => {
+      if (event.type !== 'session.flush') return;
+      flushes++;
+      if (flushes === 1) send(conn, { type: 'session.closed' });
+      else serveTurn(conn);
+    });
+    const tts = makeTts({ baseURL: gw.url });
+    const errors: unknown[] = [];
+    tts.on('error', (e) => errors.push(e));
+    const stream = tts.stream({ connOptions: RETRY_OPTIONS });
+    try {
+      stream.pushText('Hello there.');
+      stream.endInput();
+      const events = await drainAll(stream);
+
+      expect(gw.conns.flatMap(transcripts)).toEqual(['Hello there. ', 'Hello there. ']);
+      expect(events.filter((e) => e === 'audio').length).toBeGreaterThan(0);
+      expect(events.at(-1)).toBe('END_OF_STREAM');
+      expect(stream.error).toBeUndefined();
+      expect(errors).toEqual([]);
+    } finally {
+      stream.close();
+      await tts.close();
+      await gw.close();
+    }
+  });
+
+  it('does not raise for a turn with no text that the gateway ends with done', async () => {
+    const gw = await gateway((conn, event) => {
+      if (event.type === 'session.flush') send(conn, { type: 'done' });
+    });
+    const tts = makeTts({ baseURL: gw.url });
+    const errors: unknown[] = [];
+    tts.on('error', (e) => errors.push(e));
+    const stream = tts.stream({ connOptions: RETRY_OPTIONS });
+    try {
+      stream.pushText('   ');
+      stream.endInput();
+      const events = await drainAll(stream);
+
+      expect(events).toEqual(['END_OF_STREAM']);
+      expect(stream.error).toBeUndefined();
+      expect(errors).toEqual([]);
     } finally {
       stream.close();
       await tts.close();

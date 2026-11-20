@@ -105,10 +105,23 @@ async function settlementByNextTurn(promise: Promise<void>): Promise<'settled' |
   ]);
 }
 
-async function consume(stream: AsyncIterable<unknown>): Promise<void> {
-  for await (const _event of stream) {
-    // Consume through whole-stream output closure.
+/** Read the stream to its end, as the consumer does, and report what it saw. */
+async function collect(stream: AsyncIterable<unknown>) {
+  const events: Array<'audio' | 'END_OF_STREAM'> = [];
+  for await (const event of stream) {
+    events.push(event === SynthesizeStream.END_OF_STREAM ? 'END_OF_STREAM' : 'audio');
   }
+  return events;
+}
+
+async function consume(stream: AsyncIterable<unknown>): Promise<void> {
+  await collect(stream);
+}
+
+function errorsOf(tts: TTS) {
+  const errors: Array<{ recoverable: boolean; message: string }> = [];
+  tts.on('error', (e) => errors.push({ recoverable: e.recoverable, message: e.error.message }));
+  return errors;
 }
 
 describe('SynthesizeStream whole-stream completion', () => {
@@ -421,12 +434,6 @@ describe('SynthesizeStream input replay on retry (replayInputOnRetry on)', () =>
 
   const OPTIONS: APIConnectOptions = { maxRetry: 3, retryIntervalMs: 0, timeoutMs: 1000 };
 
-  function errorsOf(tts: TTS) {
-    const errors: Array<{ recoverable: boolean; message: string }> = [];
-    tts.on('error', (e) => errors.push({ recoverable: e.recoverable, message: e.error.message }));
-    return errors;
-  }
-
   it('gives the retry the same input the failed attempt consumed', async () => {
     const tts = new TestTTS();
     const stream = new ReplayStream(tts, OPTIONS, async (attempt, s) => {
@@ -705,6 +712,331 @@ describe('SynthesizeStream input replay on retry (replayInputOnRetry on)', () =>
   });
 });
 
+describe('SynthesizeStream turn that ends without audio (replayInputOnRetry on)', () => {
+  beforeAll(() => {
+    initializeLogger({ pretty: false });
+  });
+
+  const OPTIONS: APIConnectOptions = { maxRetry: 2, retryIntervalMs: 0, timeoutMs: 1000 };
+
+  it('retries with the text replayed, then reports one unrecoverable error', async () => {
+    const tts = new TestTTS();
+    const errors = errorsOf(tts);
+    const stream = new ReplayStream(tts, OPTIONS, async (attempt, s) => {
+      await s.readInput(attempt); // reads the text, then ends without audio
+    });
+
+    stream.pushText('Hello ');
+    stream.pushText('there.');
+    stream.endInput();
+    const events = await collect(stream);
+
+    const turn = ['Hello ', 'there.', 'FLUSH'];
+    expect(stream.seen).toEqual([turn, turn, turn]); // maxRetry 2: three attempts
+    expect(events).toEqual([]);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]!.recoverable).toBe(false);
+    expect(errors[0]!.message).toMatch(/no audio frames were pushed/);
+    expect(errors[0]!.message).not.toContain('Hello'); // the text can be long, so it stays out
+    expect(stream.error).toBeDefined();
+  });
+
+  it('ends without error when a retry produces audio', async () => {
+    const tts = new TestTTS();
+    const errors = errorsOf(tts);
+    const stream = new ReplayStream(tts, OPTIONS, async (attempt, s) => {
+      await s.readInput(attempt);
+      if (attempt === 2) s.putAudio();
+    });
+
+    stream.pushText('Hello there.');
+    stream.endInput();
+    const events = await collect(stream);
+
+    expect(stream.seen).toEqual([
+      ['Hello there.', 'FLUSH'],
+      ['Hello there.', 'FLUSH'],
+      ['Hello there.', 'FLUSH'],
+    ]);
+    expect(events).toEqual(['audio']);
+    expect(errors).toEqual([]);
+    expect(stream.error).toBeUndefined();
+  });
+
+  it('holds back the END_OF_STREAM of a silent attempt so the consumer reads the retry', async () => {
+    const tts = new TestTTS();
+    const stream = new ReplayStream(tts, OPTIONS, async (attempt, s) => {
+      await s.readInput(attempt);
+      if (attempt === 1) s.putAudio();
+      s['queue'].put(SynthesizeStream.END_OF_STREAM); // a provider says `done` either way
+    });
+
+    stream.pushText('Hello there.');
+    stream.endInput();
+    const events = await collect(stream);
+
+    // the consumer stops at the first END_OF_STREAM, so one from attempt 0 would have ended the
+    // turn before the retry ran
+    expect(stream.seen).toHaveLength(2);
+    expect(events).toEqual(['audio', 'END_OF_STREAM']);
+  });
+
+  it('does not count END_OF_STREAM as audio', async () => {
+    const tts = new TestTTS();
+    const errors = errorsOf(tts);
+    const stream = new ReplayStream(tts, OPTIONS, async (attempt, s) => {
+      await s.readInput(attempt);
+      s['queue'].put(SynthesizeStream.END_OF_STREAM);
+    });
+
+    stream.pushText('Hello there.');
+    stream.endInput();
+    await consume(stream);
+
+    expect(stream.seen).toHaveLength(3);
+    expect(errors.map((e) => e.recoverable)).toEqual([false]);
+  });
+
+  it('emits metrics once, for the attempt that produced audio', async () => {
+    const tts = new TestTTS();
+    const metrics: TTSMetrics[] = [];
+    tts.on('metrics_collected', (m) => metrics.push(m));
+    const stream = new ReplayStream(tts, OPTIONS, async (attempt, s) => {
+      s.startClock();
+      await s.readInput(attempt);
+      if (attempt === 1) s.putAudio();
+    });
+
+    stream.pushText('Hello');
+    stream.endInput();
+    await consume(stream);
+    await vi.waitFor(() => expect(metrics).toHaveLength(1));
+
+    expect(metrics.map((m) => ({ chars: m.charactersCount, cancelled: m.cancelled }))).toEqual([
+      { chars: 5, cancelled: false },
+    ]);
+  });
+
+  it('does not raise for input that is only whitespace', async () => {
+    const tts = new TestTTS();
+    const errors = errorsOf(tts);
+    const stream = new ReplayStream(tts, OPTIONS, async (attempt, s) => {
+      await s.readInput(attempt);
+      s['queue'].put(SynthesizeStream.END_OF_STREAM);
+    });
+
+    stream.pushText('  ');
+    stream.pushText('\n\t');
+    stream.endInput();
+    const events = await collect(stream);
+
+    expect(stream.seen).toHaveLength(1);
+    expect(events).toEqual(['END_OF_STREAM']);
+    expect(errors).toEqual([]);
+    expect(stream.error).toBeUndefined();
+  });
+
+  it('does not raise for input that is only flushes', async () => {
+    const tts = new TestTTS();
+    const errors = errorsOf(tts);
+    const stream = new ReplayStream(tts, OPTIONS, async (attempt, s) => {
+      await s.readInput(attempt);
+    });
+
+    stream.flush();
+    stream.flush();
+    stream.endInput();
+    await consume(stream);
+
+    expect(stream.seen).toEqual([['FLUSH', 'FLUSH', 'FLUSH']]);
+    expect(errors).toEqual([]);
+    expect(stream.error).toBeUndefined();
+  });
+
+  it('does not raise when the stream is closed during the turn', async () => {
+    const tts = new TestTTS();
+    const errors = errorsOf(tts);
+    const stream = new ReplayStream(tts, OPTIONS, async (attempt, s) => {
+      await s.readInput(attempt, 1);
+      await s.waitForAbort(); // an interrupted turn: the provider returns once it is closed
+    });
+
+    stream.pushText('Hello there.');
+    await stream.attemptStarted[0]!.promise;
+    await sleep(20);
+    stream.close();
+    await consume(stream);
+    await sleep(FIRST_RETRY_DELAY_MS + 50); // past the time a retry would have started
+
+    expect(stream.seen).toHaveLength(1);
+    expect(errors).toEqual([]);
+    expect(stream.error).toBeUndefined();
+  });
+
+  it('does not raise for a closed stream, even with maxRetry 0', async () => {
+    const tts = new TestTTS();
+    const errors = errorsOf(tts);
+    const stream = new ReplayStream(tts, { ...OPTIONS, maxRetry: 0 }, async (attempt, s) => {
+      await s.readInput(attempt, 1);
+      await s.waitForAbort(); // an interrupted turn: the provider returns once it is closed
+    });
+
+    stream.pushText('Hello there.');
+    await stream.attemptStarted[0]!.promise;
+    await sleep(20);
+    stream.close();
+    await consume(stream);
+    await sleep(50); // `close()` ends the output at once; the attempt settles after it
+
+    // with no retries left, an error here would be emitted at once
+    expect(stream.seen).toHaveLength(1);
+    expect(errors).toEqual([]);
+    expect(stream.error).toBeUndefined();
+  });
+
+  it('does not raise when the stream is closed during the last attempt', async () => {
+    const tts = new TestTTS();
+    const errors = errorsOf(tts);
+    const stream = new ReplayStream(tts, { ...OPTIONS, maxRetry: 1 }, async (attempt, s) => {
+      if (attempt === 0) {
+        await s.readInput(attempt); // a silent turn: fails the guard and retries
+        return;
+      }
+      await s.readInput(attempt, 1);
+      await s.waitForAbort(); // the close lands while the last attempt is running
+    });
+
+    stream.pushText('Hello there.');
+    stream.endInput();
+    await stream.attemptStarted[1]!.promise;
+    await sleep(20);
+    stream.close();
+    await consume(stream);
+    await sleep(50); // `close()` ends the output at once; the attempt settles after it
+
+    expect(stream.seen).toHaveLength(2);
+    expect(errors).toEqual([]);
+    expect(stream.error).toBeUndefined();
+  });
+
+  it('reports one unrecoverable error at once with maxRetry 0', async () => {
+    const tts = new TestTTS();
+    const errors = errorsOf(tts);
+    const stream = new ReplayStream(tts, { ...OPTIONS, maxRetry: 0 }, async (attempt, s) => {
+      await s.readInput(attempt);
+    });
+
+    stream.pushText('Hello there.');
+    stream.endInput();
+    const events = await collect(stream);
+
+    expect(stream.seen).toHaveLength(1);
+    expect(events).toEqual([]);
+    expect(errors.map((e) => e.recoverable)).toEqual([false]);
+    expect(errors[0]!.message).toMatch(/no audio frames were pushed/);
+  });
+
+  // Text a provider may turn into no audio without anything being wrong.
+  it.each([
+    ['a period', '.'],
+    ['an ellipsis', '...'],
+    ['an ellipsis character', '\u2026'],
+    ['an asterisk', '*'],
+    ['a quote', '"'],
+    ['an emoji', '\u{1F600}'],
+    ['a zero-width space', '\u200b'],
+    ['mixed punctuation, emoji and zero-width text', ' ... \u2026 * " \u{1F44B} \u200b\n'],
+  ])('does not raise for input that is only %s', async (_name, text) => {
+    const tts = new TestTTS();
+    const errors = errorsOf(tts);
+    const stream = new ReplayStream(tts, OPTIONS, async (attempt, s) => {
+      await s.readInput(attempt);
+      s['queue'].put(SynthesizeStream.END_OF_STREAM);
+    });
+
+    stream.pushText(text);
+    stream.endInput();
+    const events = await collect(stream);
+
+    expect(stream.seen).toHaveLength(1); // no retry
+    expect(events).toEqual(['END_OF_STREAM']);
+    expect(errors).toEqual([]);
+    expect(stream.error).toBeUndefined();
+  });
+
+  it.each([
+    ['a Latin letter', 'Hi.'],
+    ['a digit', '42'],
+    ['Japanese', '\u3053\u3093\u306b\u3061\u306f'],
+    ['Arabic', '\u0645\u0631\u062d\u0628\u0627'],
+  ])('raises for a silent turn with text in %s', async (_name, text) => {
+    const tts = new TestTTS();
+    const errors = errorsOf(tts);
+    const stream = new ReplayStream(tts, { ...OPTIONS, maxRetry: 1 }, async (attempt, s) => {
+      await s.readInput(attempt);
+    });
+
+    stream.pushText(text);
+    stream.endInput();
+    await consume(stream);
+
+    expect(stream.seen).toHaveLength(2);
+    expect(errors.map((e) => e.recoverable)).toEqual([false]);
+  });
+
+  it('raises when speakable text follows text that is not speakable', async () => {
+    const tts = new TestTTS();
+    const errors = errorsOf(tts);
+    const stream = new ReplayStream(tts, { ...OPTIONS, maxRetry: 1 }, async (attempt, s) => {
+      await s.readInput(attempt);
+    });
+
+    stream.pushText('...');
+    stream.pushText('Done');
+    stream.endInput();
+    await consume(stream);
+
+    expect(stream.seen).toHaveLength(2);
+    expect(errors.map((e) => e.recoverable)).toEqual([false]);
+  });
+
+  it('does not raise when audio went out and the attempt then ends normally', async () => {
+    const tts = new TestTTS();
+    const errors = errorsOf(tts);
+    const stream = new ReplayStream(tts, OPTIONS, async (attempt, s) => {
+      await s.readInput(attempt);
+      s.putAudio();
+    });
+
+    stream.pushText('Hello there.');
+    stream.endInput();
+    await consume(stream);
+
+    expect(stream.seen).toHaveLength(1);
+    expect(errors).toEqual([]);
+  });
+
+  it('does not raise a second error when audio from a failed attempt arrives during the delay', async () => {
+    const tts = new TestTTS();
+    const errors = errorsOf(tts);
+    const stream = new ReplayStream(tts, OPTIONS, async (attempt, s) => {
+      await s.readInput(attempt);
+      if (attempt === 0) throw retryable();
+    });
+
+    stream.pushText('A ');
+    stream.endInput();
+    await stream.attemptStarted[0]!.promise;
+    await sleep(20); // inside the 100 ms first-retry delay
+    stream.putAudio(); // a late frame; the stream-wide latch now covers the retry too
+    await consume(stream);
+
+    // attempt 1 resolves with no audio of its own, but audio already went out: no error, no retry
+    expect(stream.seen).toHaveLength(2);
+    expect(errors).toEqual([]);
+  });
+});
+
 describe('SynthesizeStream with replayInputOnRetry off (the default)', () => {
   beforeAll(() => {
     initializeLogger({ pretty: false });
@@ -803,6 +1135,37 @@ describe('SynthesizeStream with replayInputOnRetry off (the default)', () => {
     await consume(stream);
 
     expect(stream.seen).toEqual([['Once.', 'FLUSH']]);
+  });
+});
+
+describe('SynthesizeStream turn that ends without audio (replayInputOnRetry off)', () => {
+  beforeAll(() => {
+    initializeLogger({ pretty: false });
+  });
+
+  it('ends without error, as before', async () => {
+    const tts = new TestTTS();
+    const errors: unknown[] = [];
+    tts.on('error', (e) => errors.push(e));
+    const stream = new ReplayStream(
+      tts,
+      { maxRetry: 3, retryIntervalMs: 0, timeoutMs: 1000 },
+      async (attempt, s) => {
+        await s.readInput(attempt);
+        s['queue'].put(SynthesizeStream.END_OF_STREAM);
+      },
+      false,
+    );
+
+    stream.pushText('Hello there.');
+    stream.endInput();
+    const events: unknown[] = [];
+    for await (const event of stream) events.push(event);
+
+    expect(stream.seen).toEqual([['Hello there.', 'FLUSH']]);
+    expect(events).toEqual([SynthesizeStream.END_OF_STREAM]);
+    expect(errors).toEqual([]);
+    expect(stream.error).toBeUndefined();
   });
 });
 

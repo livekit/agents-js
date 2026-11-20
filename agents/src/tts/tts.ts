@@ -30,6 +30,16 @@ import {
   supportedNonverbals,
 } from './provider_format.js';
 
+const SPEAKABLE_TEXT = /[\p{L}\p{N}]/u;
+
+/**
+ * Whether `text` has a letter or digit in any script. Punctuation, symbols, emoji and zero-width
+ * characters do not count: a provider may return no audio for them without anything being wrong.
+ */
+export function hasSpeakableText(text: string): boolean {
+  return SPEAKABLE_TEXT.test(text);
+}
+
 /**
  * SynthesizedAudio is a packet of speech synthesis as returned by the TTS.
  */
@@ -389,6 +399,9 @@ export abstract class SynthesizeStream
    * has put audio on `queue`, because a retry would play the turn again on top of what was already
    * heard. The error is then emitted once as unrecoverable, which the Python SDK also does.
    *
+   * It also turns on the no-audio guard (see `#assertAudioPushed`), which needs the replay to have
+   * text to retry with.
+   *
    * It is off by default because plugins that read `input` once, build a sentence tokenizer once
    * per stream, or write to `input` directly would break or stay silent with it on. With it off,
    * nothing is buffered and a retry behaves as it always has.
@@ -443,6 +456,9 @@ export abstract class SynthesizeStream
   // Set the first time a provider puts audio on `queue` and never cleared. `queue` is shared by
   // all attempts, so a per-attempt flag would let a late frame from a failed attempt be missed.
   #audioPushed = false;
+  // Set when the caller pushes text with a letter or digit. Used with `#audioPushed` for the
+  // no-audio guard. Never cleared: every attempt replays all of the stream's text.
+  #textPushed = false;
 
   constructor(tts: TTS, connOptions: APIConnectOptions = DEFAULT_API_CONNECT_OPTIONS) {
     this.#tts = tts;
@@ -524,7 +540,9 @@ export abstract class SynthesizeStream
             this.#providerRequestIds = [];
             this.#currentAttemptSpan = attemptSpan;
             try {
-              return await this.run();
+              const result = await this.run();
+              this.#assertAudioPushed();
+              return result;
             } catch (error) {
               recordException(attemptSpan, toError(error));
               throw error;
@@ -591,6 +609,38 @@ export abstract class SynthesizeStream
     }
     this.#audioPushed = true;
     this.#inputBuffer = [];
+  }
+
+  /** Text was pushed and no audio arrived. Always false when `replayInputOnRetry` is off. */
+  #textWithoutAudio(): boolean {
+    return this.replayInputOnRetry && this.#textPushed && !this.#audioPushed;
+  }
+
+  /**
+   * The no-audio guard. After an attempt's `run()` resolves, fail it with a retryable `APIError`
+   * when the caller pushed text and no audio reached `queue`. Otherwise a provider that ends a
+   * turn without audio leaves it silent, with no error. The retry loop replays the text and emits
+   * one unrecoverable error after `maxRetry`. It is on only with `replayInputOnRetry`, because a
+   * retry without a replay sends no text.
+   *
+   * Differences from Python's `SynthesizeStream._main_task`, which raises the same error:
+   * - Python checks the last segment of the attempt. This stream has no segments and `#audioPushed`
+   *   is stream-wide, so audio from earlier in the stream counts and the stream does not retry
+   *   after audio.
+   * - Python treats any text that is not empty after `strip()` as speakable. This guard needs a
+   *   letter or digit (`hasSpeakableText`), so punctuation, emoji and zero-width text, which a
+   *   provider may legitimately turn into no audio, cannot cause retries and an error.
+   * - The message leaves out the text, which can be long. Python includes it.
+   *
+   * It is skipped once the stream is closed, so an interrupted turn raises nothing. An
+   * `END_OF_STREAM` that arrives before any audio is held back in `monitorMetrics`: the consumer
+   * stops at the first one and the retry has not run yet.
+   */
+  #assertAudioPushed() {
+    if (this.closed || !this.#textWithoutAudio()) {
+      return;
+    }
+    throw new APIError('no audio frames were pushed for the text sent to the stream');
   }
 
   /**
@@ -790,7 +840,10 @@ export abstract class SynthesizeStream
         break;
       }
       if (audio === SynthesizeStream.END_OF_STREAM) {
-        this.output.put(audio);
+        // Held back for text without audio: the retry is coming (see `#assertAudioPushed`).
+        if (!this.#textWithoutAudio()) {
+          this.output.put(audio);
+        }
         continue;
       }
       if (this.#startedTime !== undefined) {
@@ -903,8 +956,9 @@ export abstract class SynthesizeStream
    * failure; the item is then kept for the retry's queue only.
    */
   #recordInput(item: string | typeof SynthesizeStream.FLUSH_SENTINEL) {
-    if (this.replayInputOnRetry && !this.#audioPushed) {
-      this.#inputBuffer.push(item);
+    if (this.replayInputOnRetry) {
+      if (!this.#audioPushed) this.#inputBuffer.push(item);
+      if (typeof item === 'string' && hasSpeakableText(item)) this.#textPushed = true;
     }
     if (!this.input.closed) {
       this.input.put(item);
