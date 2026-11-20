@@ -19,6 +19,7 @@ export {
   type TTSOptions,
   type TTSV2Options,
   type TTSV3Options,
+  type TTSV4FlashOptions,
 } from './tts.js';
 
 class SarvamPlugin extends Plugin {
