@@ -355,13 +355,19 @@ export type DecisionModelCallbacks = {
   ['metrics_collected']: (metrics: DecisionMetrics) => void;
 };
 
+const DecisionModelEventEmitter = EventEmitter as new <
+  Callbacks extends DecisionModelCallbacks,
+>() => TypedEmitter<Callbacks>;
+
 /**
  * Provider-neutral batched decisions over a text input or conversation.
  *
  * A ChatContext is converted to a `role: text` transcript, so every provider receives
  * the same text. In `onUserTurnCompleted`, add the new message to the context first.
  */
-export abstract class DecisionModel extends (EventEmitter as new () => TypedEmitter<DecisionModelCallbacks>) {
+export abstract class DecisionModel<
+  Callbacks extends DecisionModelCallbacks = DecisionModelCallbacks,
+> extends DecisionModelEventEmitter<Callbacks> {
   readonly capabilities: DecisionCapabilities;
   readonly #label: string;
 
@@ -486,7 +492,7 @@ export abstract class DecisionModel extends (EventEmitter as new () => TypedEmit
           if (response.outputTokens !== undefined) {
             span.setAttribute(traceTypes.ATTR_GEN_AI_USAGE_OUTPUT_TOKENS, response.outputTokens);
           }
-          this.emit('metrics_collected', {
+          (this as unknown as TypedEmitter<DecisionModelCallbacks>).emit('metrics_collected', {
             type: 'decision_metrics',
             label: this.label(),
             requestId: response.requestId,

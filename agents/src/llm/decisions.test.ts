@@ -1,9 +1,13 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { SpanStatusCode } from '@opentelemetry/api';
+import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base';
+import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import { describe, expect, it, vi } from 'vitest';
 import { APIConnectionError, APIStatusError, APITimeoutError } from '../_exceptions.js';
 import type { DecisionMetrics } from '../metrics/base.js';
+import { setTracerProvider, tracer } from '../telemetry/index.js';
 import type { APIConnectOptions } from '../types.js';
 import {
   AgentConfigUpdate,
@@ -658,6 +662,79 @@ describe('DecisionModelFallbackAdapter', () => {
     await adapter.aclose();
   });
 
+  it('continues notifying listeners and trying models after a listener throws', async () => {
+    const primary = new SwitchModel('primary', new Error('primary failed'));
+    const backup = new SwitchModel('backup', new Error('backup failed'));
+    const adapter = new DecisionModelFallbackAdapter({
+      models: [primary, backup, new SwitchModel('healthy')],
+    });
+    const failedOnce = vi.fn(() => {
+      throw new Error('availability listener failed');
+    });
+    const observed = vi.fn();
+    adapter.once('decision_availability_changed', failedOnce);
+    adapter.on('decision_availability_changed', observed);
+
+    try {
+      expect((await evaluate(adapter, { decisions: CHECK })).model).toBe('healthy');
+      expect(failedOnce).toHaveBeenCalledTimes(1);
+      expect(observed.mock.calls).toEqual([
+        [{ model: primary, available: false }],
+        [{ model: backup, available: false }],
+      ]);
+    } finally {
+      await adapter.aclose();
+    }
+  });
+
+  it('propagates TypeError from an availability listener before trying the backup', async () => {
+    const backup = new SwitchModel('backup');
+    const [adapter] = fallback([new SwitchModel('primary', new Error('down')), backup]);
+    const error = new TypeError('invalid availability listener');
+    adapter.on('decision_availability_changed', () => {
+      throw error;
+    });
+
+    try {
+      await expect(evaluate(adapter, { decisions: CHECK })).rejects.toBe(error);
+      expect(backup.requests).toEqual([]);
+    } finally {
+      await adapter.aclose();
+    }
+  });
+
+  it('records total failure on the adapter span and leaves cancellation unset', async () => {
+    const originalProvider = tracer.getProvider();
+    const exporter = new InMemorySpanExporter();
+    const provider = new NodeTracerProvider({
+      spanProcessors: [new SimpleSpanProcessor(exporter)],
+    });
+    setTracerProvider(provider, { allowPii: true });
+    const [adapter] = fallback([new SwitchModel('primary', new Error('down'))]);
+    try {
+      await expect(evaluate(adapter, { decisions: CHECK })).rejects.toBeInstanceOf(
+        APIConnectionError,
+      );
+      const abortSignal = AbortSignal.abort(new Error('caller cancelled'));
+      await expect(evaluate(adapter, { decisions: CHECK, abortSignal })).rejects.toBe(
+        abortSignal.reason,
+      );
+      const spans = exporter
+        .getFinishedSpans()
+        .filter((span) => span.name === 'decision_fallback_adapter');
+      expect(spans.map((span) => span.status.code)).toEqual([
+        SpanStatusCode.ERROR,
+        SpanStatusCode.UNSET,
+      ]);
+      expect(spans[0]?.events.map((event) => event.name)).toContain('exception');
+      expect(spans[1]?.events).toEqual([]);
+    } finally {
+      await adapter.aclose();
+      setTracerProvider(originalProvider);
+      await provider.shutdown();
+    }
+  });
+
   it.each([
     [1000, {}],
     [50, { attemptTimeoutMs: 50 }],
@@ -784,8 +861,11 @@ describe('DecisionModelFallbackAdapter', () => {
 
     expect(adapter.models).toEqual([primary, secondary]);
     expect(() => Array.prototype.pop.call(adapter.models)).toThrow(TypeError);
+    expect(Reflect.set(adapter, 'models', [secondary])).toBe(false);
     expect((await evaluate(adapter, { decisions: CHECK })).model).toBe('primary');
+    expect(primary.listenerCount('metrics_collected')).toBe(1);
     await adapter.aclose();
+    expect(primary.listenerCount('metrics_collected')).toBe(0);
   });
 
   it('does not bring a model back for an empty batch', async () => {

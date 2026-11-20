@@ -203,6 +203,41 @@ describe('inference.DecisionModel', () => {
   });
 
   it.each([
+    ['+01.00', ' 0_1 ', true],
+    ['0x1', '1', false],
+    ['1', '1e0', false],
+  ] as const)(
+    'validates score distribution index %j and legend index %j',
+    async (probabilityIndex, levelIndex, valid) => {
+      const body = responseBody();
+      const result = await model({
+        fetch: async () =>
+          Response.json({
+            ...body,
+            answers: {
+              ...body.answers,
+              grade: {
+                ...body.answers.grade,
+                probabilities: { 0: 0.4, [probabilityIndex]: 0.6 },
+                legend: { 0: 'Low', [levelIndex]: 'High' },
+              },
+            },
+          }),
+      }).evaluate({ input: '', decisions: QUESTIONS });
+      if (valid) {
+        expect(result.errors).toEqual({});
+        expect(result.results.grade).toMatchObject({
+          probabilities: { 0: 0.4, 1: 0.6 },
+          levels: ['Low', 'High'],
+        });
+      } else {
+        expect(result.errors).toEqual({ grade: 'invalid decision answer' });
+        expect(Object.keys(result.results)).toEqual(['check', 'intent']);
+      }
+    },
+  );
+
+  it.each([
     [['Low'], 'score legend does not match distribution'],
     [['High', 'Low'], 'score distribution does not match levels'],
     [{ 1: 'Low', 2: 'High' }, 'score legend does not match distribution'],

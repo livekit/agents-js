@@ -2,10 +2,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { trace } from '@opentelemetry/api';
-import { EventEmitter } from 'node:events';
 import { APIConnectionError, APIError } from '../_exceptions.js';
 import { log } from '../log.js';
-import { traceTypes, tracer } from '../telemetry/index.js';
+import { recordException, traceTypes, tracer } from '../telemetry/index.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import type { ChatContext } from './chat_context.js';
 import {
@@ -56,12 +55,12 @@ function name(model: DecisionModel): string {
  * Models are tried in order. A failed model is skipped until a background copy of a request
  * succeeds on it. Partial decision errors are returned without falling back.
  */
-export class DecisionModelFallbackAdapter extends DecisionModel {
-  readonly models: readonly DecisionModel[];
+export class DecisionModelFallbackAdapter extends DecisionModel<DecisionModelFallbackCallbacks> {
   readonly attemptTimeoutMs: number;
   readonly maxRetryPerModel: number;
   readonly retryIntervalMs: number;
 
+  readonly #models: readonly DecisionModel[];
   private readonly status: ModelStatus[];
   private readonly logger = log();
   private readonly forwardMetrics: DecisionModelCallbacks['metrics_collected'] = (metrics) =>
@@ -82,20 +81,25 @@ export class DecisionModelFallbackAdapter extends DecisionModel {
     if (kinds.length === 0) throw new Error('the decision models share no decision kind');
     super({ capabilities: { decisionKinds: kinds } });
 
-    this.models = Object.freeze([...models]);
+    this.#models = Object.freeze([...models]);
     this.attemptTimeoutMs = attemptTimeoutMs;
     this.maxRetryPerModel = maxRetryPerModel;
     this.retryIntervalMs = retryIntervalMs;
-    this.status = this.models.map(() => ({ available: true }));
+    this.status = this.#models.map(() => ({ available: true }));
 
-    for (const model of new Set(this.models)) {
+    for (const model of new Set(this.#models)) {
       model.on('metrics_collected', this.forwardMetrics);
     }
   }
 
+  /** Models in the configured fallback order. */
+  get models(): readonly DecisionModel[] {
+    return this.#models;
+  }
+
   private nextInstance(): DecisionModel {
     const index = this.status.findIndex((status) => status.available);
-    return this.models[index === -1 ? 0 : index]!;
+    return this.#models[index === -1 ? 0 : index]!;
   }
 
   override get model(): string {
@@ -104,22 +108,6 @@ export class DecisionModelFallbackAdapter extends DecisionModel {
 
   override get provider(): string {
     return this.nextInstance().provider;
-  }
-
-  override on<Event extends keyof DecisionModelFallbackCallbacks>(
-    event: Event,
-    listener: DecisionModelFallbackCallbacks[Event],
-  ): this {
-    EventEmitter.prototype.on.call(this, event, listener);
-    return this;
-  }
-
-  override off<Event extends keyof DecisionModelFallbackCallbacks>(
-    event: Event,
-    listener: DecisionModelFallbackCallbacks[Event],
-  ): this {
-    EventEmitter.prototype.off.call(this, event, listener);
-    return this;
   }
 
   override async evaluate({
@@ -133,21 +121,34 @@ export class DecisionModelFallbackAdapter extends DecisionModel {
     connOptions?: APIConnectOptions;
     abortSignal?: AbortSignal;
   }): Promise<DecisionResponse> {
-    const definitions = copyDecisions(decisions);
-    validateDecisions(definitions, this.capabilities);
-    if (Object.keys(definitions).length === 0) {
-      return new DecisionResponse({ results: {}, model: this.model, provider: this.provider });
-    }
-
-    const text = typeof input === 'string' ? input : formatTranscript(input);
-    const childOptions = {
-      ...connOptions,
-      maxRetry: this.maxRetryPerModel,
-      timeoutMs: this.attemptTimeoutMs,
-      retryIntervalMs: this.retryIntervalMs,
-    };
     return tracer.startActiveSpan(
-      async () => this.evaluateImpl(text, definitions, childOptions, abortSignal),
+      async (span) => {
+        try {
+          const definitions = copyDecisions(decisions);
+          validateDecisions(definitions, this.capabilities);
+          if (Object.keys(definitions).length === 0) {
+            return new DecisionResponse({
+              results: {},
+              model: this.model,
+              provider: this.provider,
+            });
+          }
+
+          const text = typeof input === 'string' ? input : formatTranscript(input);
+          const childOptions = {
+            ...connOptions,
+            maxRetry: this.maxRetryPerModel,
+            timeoutMs: this.attemptTimeoutMs,
+            retryIntervalMs: this.retryIntervalMs,
+          };
+          return await this.evaluateImpl(text, definitions, childOptions, abortSignal);
+        } catch (error) {
+          if (!abortSignal?.aborted || error !== abortSignal.reason) {
+            recordException(span, error instanceof Error ? error : new Error(String(error)));
+          }
+          throw error;
+        }
+      },
       { name: 'decision_fallback_adapter' },
     );
   }
@@ -166,19 +167,14 @@ export class DecisionModelFallbackAdapter extends DecisionModel {
     const allFailed = this.status.every((status) => !status.available);
     if (allFailed) this.logger.error('all decision models are unavailable, retrying...');
 
-    for (let index = 0; index < this.models.length; index++) {
+    for (let index = 0; index < this.#models.length; index++) {
       abortSignal?.throwIfAborted();
-      const model = this.models[index]!;
+      const model = this.#models[index]!;
       const status = this.status[index]!;
       if (status.available || allFailed) {
+        let response: DecisionResponse | undefined;
         try {
-          const response = await model.evaluate({ input, decisions, connOptions, abortSignal });
-          this.setAvailable(model, status, true);
-          trace.getActiveSpan()?.setAttributes({
-            [traceTypes.ATTR_FALLBACK_LABEL]: model.label(),
-            [traceTypes.ATTR_FALLBACK_INDEX]: index,
-          });
-          return response;
+          response = await model.evaluate({ input, decisions, connOptions, abortSignal });
         } catch (error) {
           if (abortSignal?.aborted) throw abortSignal.reason;
           if (error instanceof APIError) {
@@ -191,11 +187,19 @@ export class DecisionModelFallbackAdapter extends DecisionModel {
           }
           this.setAvailable(model, status, false);
         }
+        if (response) {
+          this.setAvailable(model, status, true);
+          trace.getActiveSpan()?.setAttributes({
+            [traceTypes.ATTR_FALLBACK_LABEL]: model.label(),
+            [traceTypes.ATTR_FALLBACK_INDEX]: index,
+          });
+          return response;
+        }
       }
       this.tryRecovery(model, status, input, decisions, connOptions);
     }
 
-    const names = this.models.map(name);
+    const names = this.#models.map(name);
     throw new APIConnectionError({
       message: `all decision models failed (${JSON.stringify(names)}) after ${(
         (performance.now() - started) /
@@ -207,7 +211,16 @@ export class DecisionModelFallbackAdapter extends DecisionModel {
   private setAvailable(model: DecisionModel, status: ModelStatus, available: boolean): void {
     if (status.available === available) return;
     status.available = available;
-    EventEmitter.prototype.emit.call(this, 'decision_availability_changed', { model, available });
+    const event = { model, available };
+    // Use the listener wrappers so once() still removes its listener before invocation.
+    for (const listener of this.rawListeners('decision_availability_changed')) {
+      try {
+        listener.call(this, event);
+      } catch (error) {
+        if (error instanceof TypeError) throw error;
+        this.logger.error({ error }, 'decision availability listener failed');
+      }
+    }
   }
 
   private tryRecovery(
@@ -258,7 +271,7 @@ export class DecisionModelFallbackAdapter extends DecisionModel {
     this.closed = true;
     for (const status of this.status) status.recoveryController?.abort();
     await Promise.allSettled(this.status.flatMap((status) => status.recoveringTask ?? []));
-    for (const model of new Set(this.models)) {
+    for (const model of new Set(this.#models)) {
       model.off('metrics_collected', this.forwardMetrics);
     }
   }

@@ -2887,10 +2887,10 @@ export type DecisionMetrics = {
     metadata?: MetricsMetadata;
 };
 
-// Warning: (ae-forgotten-export) The symbol "DecisionModel_base" needs to be exported by the entry point index.d.ts
+// Warning: (ae-forgotten-export) The symbol "DecisionModelEventEmitter" needs to be exported by the entry point index.d.ts
 //
 // @public
-export abstract class DecisionModel extends DecisionModel_base {
+export abstract class DecisionModel<Callbacks extends DecisionModelCallbacks = DecisionModelCallbacks> extends DecisionModelEventEmitter<Callbacks> {
     constructor(input: {
         capabilities: DecisionCapabilities;
     });
@@ -2940,7 +2940,7 @@ export type DecisionModelCallbacks = {
 };
 
 // @public
-export class DecisionModelFallbackAdapter extends DecisionModel {
+export class DecisionModelFallbackAdapter extends DecisionModel<DecisionModelFallbackCallbacks> {
     constructor(input: DecisionModelFallbackAdapterOptions);
     // (undocumented)
     aclose(): Promise<void>;
@@ -2959,12 +2959,7 @@ export class DecisionModelFallbackAdapter extends DecisionModel {
     readonly maxRetryPerModel: number;
     // (undocumented)
     get model(): string;
-    // (undocumented)
-    readonly models: readonly DecisionModel[];
-    // (undocumented)
-    off<Event extends keyof DecisionModelFallbackCallbacks>(event: Event, listener: DecisionModelFallbackCallbacks[Event]): this;
-    // (undocumented)
-    on<Event extends keyof DecisionModelFallbackCallbacks>(event: Event, listener: DecisionModelFallbackCallbacks[Event]): this;
+    get models(): readonly DecisionModel[];
     // (undocumented)
     get provider(): string;
     // (undocumented)

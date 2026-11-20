@@ -99,8 +99,12 @@ function parseGatewayResponse(text: string) {
 function byLevelIndex(values: Record<string, unknown> | string[]): Record<string, unknown> {
   return Object.fromEntries(
     Object.entries(values).map(([key, value]) => {
-      const index = Number(key);
-      if (!key.trim() || !Number.isSafeInteger(index)) {
+      const decimal = key.trim();
+      if (!/^[+-]?\d(?:_?\d)*(?:\.0+)?$/.test(decimal)) {
+        throw new Error('invalid level index');
+      }
+      const index = Number(decimal.replaceAll('_', ''));
+      if (!Number.isSafeInteger(index)) {
         throw new Error('invalid level index');
       }
       return [index, value];
