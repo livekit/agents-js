@@ -797,6 +797,21 @@ describe('AgentActivity - false interruption resume', () => {
     expect(activity.agentSession.output.audio.resume).not.toHaveBeenCalled();
   });
 
+  it('asks recognition to drop a turn skipped below minWords', async () => {
+    const activity = endOfTurnActivity(undefined);
+    Object.assign(activity.agent, { _stt: {} });
+    Object.assign(activity.agentSession.sessionOptions.turnHandling.interruption, { minWords: 2 });
+    Object.assign(activity, { logger: { debug: vi.fn(), info: vi.fn() } });
+
+    const skipped = { ...endOfTurnInfo(), newTranscript: 'Okay.' };
+    expect(await activity.onEndOfTurn(skipped)).toBe(false);
+    expect(skipped.dropTranscript).toBe(true);
+
+    const committed = { ...endOfTurnInfo(), newTranscript: 'Stop right there.' };
+    expect(await activity.onEndOfTurn(committed)).toBe(true);
+    expect(committed.dropTranscript).toBeUndefined();
+  });
+
   it('does not end agent speech when handing a paused speech to another activity', async () => {
     const activity = falseInterruptionActivity();
     const handle = activity.pausedSpeech!.handle;
