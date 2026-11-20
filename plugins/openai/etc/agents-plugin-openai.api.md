@@ -1014,6 +1014,7 @@ interface LLMOptions_2 {
     baseURL?: string;
     // (undocumented)
     client?: OpenAI;
+    include?: OpenAI.Responses.ResponseIncludable[];
     maxOutputTokens?: number;
     // (undocumented)
     metadata?: Record<string, string>;
