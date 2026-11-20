@@ -180,6 +180,8 @@ class SegmentSynchronizerImpl {
   private pausedDuration: number = 0;
   /** Gate held closed while paused; the main task awaits it between words. */
   private outputEnabledFuture: Future<void> = new Future();
+  /** A clear sets this flag. Then resume() keeps the gate closed for this segment. */
+  private audioCleared: boolean = false;
 
   private logger = log();
 
@@ -362,8 +364,19 @@ class SegmentSynchronizerImpl {
       }
       this.pausedWallTime = undefined;
     }
-    if (!this.outputEnabledFuture.done) {
+    if (!this.outputEnabledFuture.done && !this.audioCleared) {
       this.outputEnabledFuture.resolve();
+    }
+  }
+
+  /** Stops the words of this segment after a clear. close() still opens the gate. */
+  clearAudio(): void {
+    if (this.closed || this.audioData.pushedDuration === 0) {
+      return;
+    }
+    this.audioCleared = true;
+    if (this.outputEnabledFuture.done) {
+      this.outputEnabledFuture = new Future();
     }
   }
 
@@ -432,14 +445,7 @@ class SegmentSynchronizerImpl {
     for await (const wordToken of this.textData.wordStream) {
       const word = wordToken.token;
 
-      if (!this.outputEnabledFuture.done) {
-        await this.outputEnabledFuture.await;
-        if (this.interrupted) {
-          return;
-        }
-      }
-
-      if (this.closed && !this.playbackCompleted) {
+      if (!(await this.waitForOutputEnabled())) {
         return;
       }
 
@@ -518,6 +524,10 @@ class SegmentSynchronizerImpl {
       }
 
       await this.sleepIfNotClosed(delayTime / 2);
+      // a pause or a clear can close the gate during the sleep, so hold the word
+      if (!(await this.waitForOutputEnabled())) {
+        return;
+      }
       this.outputStreamWriter.write(
         createTimedString({
           text: forwardedWord,
@@ -540,6 +550,18 @@ class SegmentSynchronizerImpl {
       );
       this.textData.forwardedText += remaining;
     }
+  }
+
+  /** Waits while the gate is closed. Returns false when mainTask must stop. */
+  private async waitForOutputEnabled(): Promise<boolean> {
+    // loop: a clear can close the gate again before this task wakes up
+    while (!this.outputEnabledFuture.done) {
+      await this.outputEnabledFuture.await;
+      if (this.interrupted) {
+        return false;
+      }
+    }
+    return !(this.closed && !this.playbackCompleted);
   }
 
   /** Elapsed audio-playback time in seconds — wall-clock minus paused time. */
@@ -881,6 +903,8 @@ class SyncedAudioOutput extends AudioOutput {
   }
 
   clearBuffer() {
+    // the user never hears cleared audio, so the segment stops its words here
+    this.synchronizer._impl.clearAudio();
     this.nextInChainAudio.clearBuffer();
   }
 
