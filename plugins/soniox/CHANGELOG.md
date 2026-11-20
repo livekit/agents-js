@@ -1,5 +1,14 @@
 # @livekit/agents-plugin-soniox
 
+## 1.10.2
+
+### Patch Changes
+
+- Add `enableAgentTextInput` with `SpeechStream.pushAgentText()` for Soniox's agent text input (stt-rt-v6), and `endpointSensitivity`. - [#2949](https://github.com/livekit/agents-js/pull/2949) ([@anzemur](https://github.com/anzemur))
+
+- Updated dependencies [[`0e78274`](https://github.com/livekit/agents-js/commit/0e78274971de67377615852d6db5831b18fd549a), [`556fcc1`](https://github.com/livekit/agents-js/commit/556fcc1ee285164557a459ca4b0ef7780a88118e), [`e9e8bd7`](https://github.com/livekit/agents-js/commit/e9e8bd72b8a5f54c2dd4e09851afaf63235232b6), [`3b80d1b`](https://github.com/livekit/agents-js/commit/3b80d1b37c5b0ed386ecdebfc150ff4ae4df76e1)]:
+  - @livekit/agents@1.10.2
+
 ## 1.10.1
 
 ### Patch Changes
