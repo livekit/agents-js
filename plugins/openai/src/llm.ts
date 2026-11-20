@@ -35,6 +35,12 @@ export interface LLMOptions {
   store?: boolean;
   reasoningEffort?: ReasoningEffort;
   strictToolSchema?: boolean;
+  /**
+   * Additional Chat Completions request options, shallowly merged with per-call `extraKwargs`.
+   * Per-call values override these defaults; typed options are applied afterward.
+   * Nested objects are replaced, not merged. The existing `extra_body` precedence is preserved.
+   */
+  modelOptions?: Record<string, unknown>;
 }
 
 const defaultLLMOptions: LLMOptions = {
@@ -68,7 +74,11 @@ export class LLM extends llm.LLM {
   ) {
     super();
 
-    this.#opts = { ...defaultLLMOptions, ...opts };
+    this.#opts = {
+      ...defaultLLMOptions,
+      ...opts,
+      modelOptions: { ...opts.modelOptions },
+    };
     this.#opts.reasoningEffort ??= defaultReasoningEffort(this.#opts.model);
     this.#providerFmt = providerFmt;
     if (this.#opts.apiKey === undefined && !this.#opts.client) {
@@ -131,6 +141,7 @@ export class LLM extends llm.LLM {
       baseURL?: string;
       user?: string;
       temperature?: number;
+      modelOptions?: Record<string, unknown>;
     } = defaultAzureLLMOptions,
   ): LLM {
     opts = { ...defaultAzureLLMOptions, ...opts };
@@ -138,10 +149,12 @@ export class LLM extends llm.LLM {
       throw new Error('Azure API key is required, whether as an argument or as $AZURE_API_KEY');
     }
 
+    const { modelOptions, ...clientOptions } = opts;
     return new LLM({
+      modelOptions,
       temperature: opts.temperature,
       user: opts.user,
-      client: new AzureOpenAI({ ...opts, maxRetries: 0 }),
+      client: new AzureOpenAI({ ...clientOptions, maxRetries: 0 }),
     });
   }
 
@@ -159,6 +172,7 @@ export class LLM extends llm.LLM {
       baseURL?: string;
       user?: string;
       temperature?: number;
+      modelOptions?: Record<string, unknown>;
       client: OpenAI;
     }> = {},
   ): LLM {
@@ -212,6 +226,7 @@ export class LLM extends llm.LLM {
       baseURL?: string;
       user?: string;
       temperature?: number;
+      modelOptions?: Record<string, unknown>;
       client: OpenAI;
     }> = {},
   ): LLM {
@@ -241,6 +256,7 @@ export class LLM extends llm.LLM {
       baseURL?: string;
       user?: string;
       temperature?: number;
+      modelOptions?: Record<string, unknown>;
       client: OpenAI;
     }> = {},
   ): LLM {
@@ -270,6 +286,7 @@ export class LLM extends llm.LLM {
       baseURL?: string;
       user?: string;
       temperature?: number;
+      modelOptions?: Record<string, unknown>;
       client: OpenAI;
     }> = {},
   ): LLM {
@@ -301,6 +318,7 @@ export class LLM extends llm.LLM {
       baseURL?: string;
       user?: string;
       temperature?: number;
+      modelOptions?: Record<string, unknown>;
       client: OpenAI;
     }> = {},
   ): LLM {
@@ -322,6 +340,7 @@ export class LLM extends llm.LLM {
       model: string;
       baseURL?: string;
       temperature?: number;
+      modelOptions?: Record<string, unknown>;
       client: OpenAI;
     }> = {},
   ): LLM {
@@ -347,6 +366,7 @@ export class LLM extends llm.LLM {
       baseURL?: string;
       user?: string;
       temperature?: number;
+      modelOptions?: Record<string, unknown>;
       client: OpenAI;
     }> = {},
   ): LLM {
@@ -378,6 +398,7 @@ export class LLM extends llm.LLM {
       baseURL?: string;
       user?: string;
       temperature?: number;
+      modelOptions?: Record<string, unknown>;
       client: OpenAI;
     }> = {},
   ): LLM {
@@ -409,6 +430,7 @@ export class LLM extends llm.LLM {
       baseURL?: string;
       user?: string;
       temperature?: number;
+      modelOptions?: Record<string, unknown>;
       client: OpenAI;
     }> = {},
   ): LLM {
@@ -438,6 +460,7 @@ export class LLM extends llm.LLM {
       client?: OpenAI;
       model?: string | MetaChatModels;
       temperature?: number;
+      modelOptions?: Record<string, unknown>;
       user?: string;
     }> = {},
   ): LLM {
@@ -492,7 +515,7 @@ export class LLM extends llm.LLM {
     extraKwargs?: Record<string, unknown>;
   }): LLMStream {
     const toolCtx = llm.toToolContext(toolCtxInput);
-    const extras: Record<string, unknown> = { ...extraKwargs };
+    const extras: Record<string, unknown> = { ...this.#opts.modelOptions, ...extraKwargs };
 
     if (this.#opts.metadata) {
       extras.metadata = this.#opts.metadata;
