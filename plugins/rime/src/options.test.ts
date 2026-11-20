@@ -2,7 +2,13 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { afterEach, expect, it, vi } from 'vitest';
-import { endpointIdentity, getSampleRate, resolveOptions, validateEndpoint } from './options.js';
+import {
+  endpointIdentity,
+  fetchPayload,
+  getSampleRate,
+  resolveOptions,
+  validateEndpoint,
+} from './options.js';
 import { TTS } from './tts.js';
 
 afterEach(() => vi.restoreAllMocks());
@@ -191,4 +197,40 @@ it.each(['status', 'fetch', 'body'])('sanitizes HTTP %s failures', async (mode) 
   expect(String(errors[0])).not.toContain(secret);
   expect(errors[0]!.cause).toBeUndefined();
   await value.close();
+});
+
+it('copies Coda HTTP lexicons and rejects unsupported transports', () => {
+  const lexicon = [{ spelling: 'Rime', pronunciation: '" r\\ aI m' }];
+  const options = resolveOptions({ apiKey: 'test', customLexicon: lexicon });
+  lexicon[0]!.pronunciation = 'changed';
+  expect(options.customLexicon).toEqual([{ spelling: 'Rime', pronunciation: '" r\\ aI m' }]);
+  expect(fetchPayload(options, 'hi').customLexicon).toEqual([
+    { spelling: 'Rime', pronunciation: '" r\\ aI m' },
+  ]);
+  expect(() =>
+    resolveOptions({ apiKey: 'test', modelId: 'mistv3', customLexicon: lexicon }),
+  ).toThrow('coda');
+  expect(() =>
+    resolveOptions({ apiKey: 'test', useWebsocket: true, customLexicon: lexicon }),
+  ).toThrow('HTTP or WebSocket v1');
+});
+
+it('clears an empty Coda lexicon so the model can change', () => {
+  const lexicon = [{ spelling: 'Rime', pronunciation: '" r\\ aI m' }];
+  const withLexicon = resolveOptions({ apiKey: 'test', customLexicon: lexicon });
+  // A saved lexicon still pins the model until it is cleared.
+  expect(() => resolveOptions({ modelId: 'arcana' }, withLexicon)).toThrow('coda');
+  const cleared = resolveOptions({ customLexicon: [] }, withLexicon);
+  expect(cleared.customLexicon).toBeUndefined();
+  expect(fetchPayload(cleared, 'hi')).not.toHaveProperty('customLexicon');
+  expect(resolveOptions({ modelId: 'arcana' }, cleared).modelId).toBe('arcana');
+  expect(resolveOptions({ modelId: 'arcana', customLexicon: [] }, withLexicon).modelId).toBe(
+    'arcana',
+  );
+  expect(
+    resolveOptions({ apiKey: 'test', useWebsocket: true, customLexicon: [] }).customLexicon,
+  ).toBeUndefined();
+  expect(() =>
+    resolveOptions({ apiKey: 'test', customLexicon: 'bad' as unknown as typeof lexicon }),
+  ).toThrow('spelling and pronunciation');
 });
