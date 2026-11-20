@@ -1,0 +1,25 @@
+plugins/elevenlabs/src/stt.test.ts
+  s_e322e6441f1ee2::t_187da8cf103e0c 1125-1143,1147-1171,1175-1176,1179-1188,1193-1204
+  s_e322e6441f1ee2::t_c11c180281af42 1144-1146,1172-1174,1177-1178,1189-1192
+  s_e322e6441f1ee2::t_593bbf3ca4c778 1124
+.changeset/silly-cats-listen.md
+  s_e322e6441f1ee2::t_aae17f54d6ac38 8-9
+plugins/elevenlabs/src/stt.ts
+  s_e322e6441f1ee2::t_aae17f54d6ac38 774-775
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "919679b3d3dfa194c50d3fa9249fb69fa3983615",
+  "prompts": {},
+  "sessions": {
+    "s_e322e6441f1ee2": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1f393-ad48-7a53-9682-e48cbcea3f9b",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
