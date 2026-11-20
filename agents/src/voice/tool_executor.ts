@@ -22,6 +22,7 @@ import {
 import { log } from '../log.js';
 import { Future, Task, waitUntilAborted } from '../utils.js';
 import type { AgentSession } from './agent_session.js';
+import { AgentSessionEventTypes, createFunctionToolsExecutedEvent } from './events.js';
 import type { PromptTemplate, RunContext, UpdatePromptArgs } from './run_context.js';
 import { isStopResponse } from './stop_response.js';
 
@@ -447,6 +448,16 @@ export class ToolExecutor {
     items: [FunctionCall, FunctionCallOutput],
     { silent = false, toolChoice }: { silent?: boolean; toolChoice?: ToolChoice } = {},
   ): Promise<void> {
+    // like an inline result, a deferred pair is announced before it is committed, so a
+    // listener's cancelToolReply() applies to it
+    ctx.session.emit(
+      AgentSessionEventTypes.FunctionToolsExecuted,
+      createFunctionToolsExecutedEvent({
+        functionCalls: [items[0]],
+        functionCallOutputs: [items[1]],
+      }),
+    );
+
     const target = this.owningActivity?.agent ?? getCurrentAgent(ctx.session);
     const chatCtx = target.chatCtx.copy();
     chatCtx.insert(items);

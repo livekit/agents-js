@@ -8,6 +8,7 @@ import { ToolError, ToolFlag, tool } from '../llm/tool_context.js';
 import { Future } from '../utils.js';
 import { Agent, StopResponse } from './agent.js';
 import { AgentSession } from './agent_session.js';
+import { AgentSessionEventTypes, type FunctionToolsExecutedEvent } from './events.js';
 import { RunContext } from './run_context.js';
 import { SpeechHandle } from './speech_handle.js';
 import { FakeLLM } from './testing/fake_llm.js';
@@ -34,6 +35,7 @@ describe('ToolExecutor', () => {
     const session = {
       userData: {},
       history,
+      emit: vi.fn(),
       currentAgent: agent,
       _globalRunState: undefined,
       async waitForIdle() {
@@ -98,6 +100,34 @@ describe('ToolExecutor', () => {
 
     expect(history.items.some((item) => item.type === 'function_call_output')).toBe(true);
     expect(agent.chatCtx.items.some((item) => item.type === 'function_call_output')).toBe(true);
+  });
+
+  it('announces a deferred result like an inline one', async () => {
+    const executor = new ToolExecutor();
+    const { runCtx, history } = buildRunContext('async_lookup');
+    const lookup = tool({
+      name: 'async_lookup',
+      description: 'Async lookup',
+      parameters: z.object({ query: z.string() }),
+      execute: async ({ query }, { ctx }) => {
+        await ctx.update(`started:${query}`);
+        return `final:${query}`;
+      },
+    });
+
+    await executor.execute({ tool: lookup, runCtx, rawArguments: { query: 'flights' } });
+    await executor.waitForAll();
+
+    const announced = vi
+      .mocked(runCtx.session.emit)
+      .mock.calls.filter(([type]) => type === AgentSessionEventTypes.FunctionToolsExecuted)
+      .flatMap(([, ev]) => (ev as FunctionToolsExecutedEvent).functionCallOutputs)
+      .map((out) => [out.callId, out.output]);
+    const inHistory = history.items
+      .filter((item) => item.type === 'function_call_output')
+      .map((out) => [out.callId, out.output]);
+    expect(announced).toEqual(inHistory);
+    expect(announced).toContainEqual(['call_async_lookup_final', 'final:flights']);
   });
 
   it.each([null, undefined, ''])(
