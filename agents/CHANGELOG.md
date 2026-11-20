@@ -1,5 +1,17 @@
 # @livekit/agents
 
+## 1.10.2
+
+### Patch Changes
+
+- Keep Gemini Live's server turn detection enabled when using LiveKit Inference. - [#3003](https://github.com/livekit/agents-js/pull/3003) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Fix `VADStream.endInput()` so it closes input after buffered frames instead of leaving a rejected promise. - [#3029](https://github.com/livekit/agents-js/pull/3029) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Coordinate LiveKit Inference STT, TTS, and realtime handoffs when the gateway drains. - [#2973](https://github.com/livekit/agents-js/pull/2973) ([@shawnfeldman](https://github.com/shawnfeldman))
+
+- Avoid cancelling a released TTS text reader during synthesis cleanup. - [#3032](https://github.com/livekit/agents-js/pull/3032) ([@chenghao-mou](https://github.com/chenghao-mou))
+
 ## 1.10.1
 
 ### Patch Changes
