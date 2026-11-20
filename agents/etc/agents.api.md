@@ -2887,10 +2887,10 @@ export type DecisionMetrics = {
     metadata?: MetricsMetadata;
 };
 
-// Warning: (ae-forgotten-export) The symbol "DecisionModelEventEmitter" needs to be exported by the entry point index.d.ts
+// Warning: (ae-forgotten-export) The symbol "DecisionModel_base" needs to be exported by the entry point index.d.ts
 //
 // @public
-export abstract class DecisionModel<Callbacks extends DecisionModelCallbacks = DecisionModelCallbacks> extends DecisionModelEventEmitter<Callbacks> {
+export abstract class DecisionModel extends DecisionModel_base {
     constructor(input: {
         capabilities: DecisionCapabilities;
     });
@@ -2918,14 +2918,6 @@ export abstract class DecisionModel<Callbacks extends DecisionModelCallbacks = D
     get provider(): string;
 }
 
-declare namespace decisionModel {
-    export {
-        DecisionModels,
-        DecisionModelOptions,
-        DecisionModel_2 as DecisionModel
-    }
-}
-
 // @public
 class DecisionModel_2 extends DecisionModel {
     constructor(input?: DecisionModelOptions);
@@ -2948,7 +2940,7 @@ export type DecisionModelCallbacks = {
 };
 
 // @public
-export class DecisionModelFallbackAdapter extends DecisionModel<DecisionModelFallbackCallbacks> {
+export class DecisionModelFallbackAdapter extends DecisionModel {
     constructor(input: DecisionModelFallbackAdapterOptions);
     // (undocumented)
     aclose(): Promise<void>;
@@ -2969,6 +2961,10 @@ export class DecisionModelFallbackAdapter extends DecisionModel<DecisionModelFal
     get model(): string;
     // (undocumented)
     readonly models: DecisionModel[];
+    // (undocumented)
+    off<Event extends keyof DecisionModelFallbackCallbacks>(event: Event, listener: DecisionModelFallbackCallbacks[Event]): this;
+    // (undocumented)
+    on<Event extends keyof DecisionModelFallbackCallbacks>(event: Event, listener: DecisionModelFallbackCallbacks[Event]): this;
     // (undocumented)
     get provider(): string;
     // (undocumented)
@@ -4498,7 +4494,6 @@ declare namespace inference {
         TTSOptions,
         XaiTTSModels,
         XaiTTSOptions,
-        decisionModel,
         duplex,
         llm_3 as llm,
         realtime,

@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { trace } from '@opentelemetry/api';
+import { EventEmitter } from 'node:events';
 import { APIConnectionError, APIError } from '../_exceptions.js';
 import { log } from '../log.js';
 import { traceTypes, tracer } from '../telemetry/index.js';
@@ -52,7 +53,7 @@ function name(model: DecisionModel): string {
  * Models are tried in order. A failed model is skipped until a background copy of a request
  * succeeds on it. Partial decision errors are returned without falling back.
  */
-export class DecisionModelFallbackAdapter extends DecisionModel<DecisionModelFallbackCallbacks> {
+export class DecisionModelFallbackAdapter extends DecisionModel {
   readonly models: DecisionModel[];
   readonly attemptTimeoutMs: number;
   readonly maxRetryPerModel: number;
@@ -105,6 +106,22 @@ export class DecisionModelFallbackAdapter extends DecisionModel<DecisionModelFal
 
   override get provider(): string {
     return this.nextInstance().provider;
+  }
+
+  override on<Event extends keyof DecisionModelFallbackCallbacks>(
+    event: Event,
+    listener: DecisionModelFallbackCallbacks[Event],
+  ): this {
+    EventEmitter.prototype.on.call(this, event, listener);
+    return this;
+  }
+
+  override off<Event extends keyof DecisionModelFallbackCallbacks>(
+    event: Event,
+    listener: DecisionModelFallbackCallbacks[Event],
+  ): this {
+    EventEmitter.prototype.off.call(this, event, listener);
+    return this;
   }
 
   override async evaluate({
@@ -192,7 +209,7 @@ export class DecisionModelFallbackAdapter extends DecisionModel<DecisionModelFal
   private setAvailable(model: DecisionModel, status: ModelStatus, available: boolean): void {
     if (status.available === available) return;
     status.available = available;
-    this.emit('decision_availability_changed', { model, available });
+    EventEmitter.prototype.emit.call(this, 'decision_availability_changed', { model, available });
   }
 
   private tryRecovery(
