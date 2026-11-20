@@ -90,6 +90,12 @@ export class SimulationContext {
     return this._dispatch.jobId;
   }
 
+  /** Knob to the option this job runs, from `lk agent simulate --compare`; empty
+   * when the run is not comparing. See `simulation.choose`. */
+  get choices(): Readonly<Record<string, string>> {
+    return this._dispatch.choices;
+  }
+
   /** The run, or `undefined` before the simulation ends.
    *
    * Carries only its `id` today, so every other field reads as its protobuf
