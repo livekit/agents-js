@@ -922,7 +922,10 @@ export class AgentActivity implements RecognitionHooks {
     this.agent._agentActivity = this;
 
     try {
-      await this._startSessionImpl({ startSpan, parentContext, runOnEnter, reuseResources });
+      // Session-long tasks must not inherit the onEnter marker of whoever started this activity.
+      await onEnterStorage.exit(() =>
+        this._startSessionImpl({ startSpan, parentContext, runOnEnter, reuseResources }),
+      );
     } catch (error) {
       recordException(startSpan, error instanceof Error ? error : new Error(String(error)));
       throw error;
@@ -933,6 +936,7 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
+  /** Hook up the models and start the scheduling and audio-recognition tasks. */
   private async _startSessionImpl({
     startSpan,
     parentContext,
