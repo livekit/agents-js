@@ -496,13 +496,14 @@ export class STT extends stt.STT {
 
     try {
       const fetchFn = this.#session.fetch ?? fetch;
+      const requestTimeout = AbortSignal.timeout(30_000);
       const response = await fetchFn(
         `${this.#opts.baseURL}/speech-to-text?enable_logging=${String(this.#opts.enableLogging).toLowerCase()}`,
         {
           method: 'POST',
           headers: { [AUTHORIZATION_HEADER]: this.#opts.apiKey },
           body: form,
-          signal: abortSignal ?? null,
+          signal: abortSignal ? AbortSignal.any([abortSignal, requestTimeout]) : requestTimeout,
         },
       );
       if (response.status !== 200) {
