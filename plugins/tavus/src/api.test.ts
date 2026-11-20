@@ -101,13 +101,13 @@ describe('Tavus TavusAPI.createConversation', () => {
     expect(body).not.toHaveProperty('face_id');
   });
 
-  it('defaults to the stock pal and face when neither is provided', async () => {
+  it('defaults to the stock pal and its own face when neither is provided', async () => {
     const f = mockFetchOk({ conversation_id: 'c5' });
     await new TavusAPI({ apiKey: 'k' }).createConversation();
     expect(f).toHaveBeenCalledTimes(1); // no /v2/pals call
     const body = sentBody(f);
     expect(body.pal_id).toBe('pb87e71797da');
-    expect(body.face_id).toBe('r4067604db72');
+    expect(body).not.toHaveProperty('face_id'); // the stock pal's own default face is used
   });
 
   it("keeps an extraPayload pal's own face", async () => {
@@ -120,7 +120,7 @@ describe('Tavus TavusAPI.createConversation', () => {
     expect(body).not.toHaveProperty('face_id');
   });
 
-  it('prefers the environment face over the default face', async () => {
+  it("overrides the stock pal's face with the environment face", async () => {
     process.env.TAVUS_FACE_ID = 'envf';
     const f = mockFetchOk({ conversation_id: 'c7' });
     await new TavusAPI({ apiKey: 'k' }).createConversation();
