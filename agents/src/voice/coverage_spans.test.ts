@@ -791,9 +791,9 @@ describe.sequential('coverage spans', () => {
     const chatCtx = ChatContext.empty();
     chatCtx.addMessage({ role: 'user', content: 'hi' });
     let text = '';
-    // the stream ends and the failure is reported on the adapter's error event
+    // the failure ends the caller's iteration, and is also reported on the adapter's error event
     const failure = new Promise<Error>((resolve) => adapter.on('error', (e) => resolve(e.error)));
-    await tracer.startActiveSpan(
+    const consumed = tracer.startActiveSpan(
       async () => {
         const stream = adapter.chat({ chatCtx });
         for await (const chunk of stream) {
@@ -802,6 +802,7 @@ describe.sequential('coverage spans', () => {
       },
       { name: 'caller' },
     );
+    await expect(consumed).rejects.toBeInstanceOf(APIConnectionError);
     expect(text).toBe('Hel');
     await expect(failure).resolves.toBeInstanceOf(APIConnectionError);
 

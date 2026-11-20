@@ -83,6 +83,33 @@ class MockLLM extends LLM {
   }
 }
 
+/** One LLM instance serving several requests; the request made with `failingCtx` fails. */
+class SharedLLM extends LLM {
+  constructor(private readonly failingCtx: ChatContext) {
+    super();
+  }
+
+  label(): string {
+    return 'shared';
+  }
+
+  chat(opts: { chatCtx: ChatContext; toolCtx?: ToolContextLike; connOptions?: APIConnectOptions }) {
+    return new MockLLMStream(
+      this,
+      { chatCtx: opts.chatCtx, toolCtx: opts.toolCtx, connOptions: opts.connOptions! },
+      opts.chatCtx === this.failingCtx,
+    );
+  }
+}
+
+async function drain(stream: AsyncIterable<ChatChunk>): Promise<ChatChunk[]> {
+  const chunks: ChatChunk[] = [];
+  for await (const chunk of stream) {
+    chunks.push(chunk);
+  }
+  return chunks;
+}
+
 describe('FallbackAdapter', () => {
   beforeAll(() => {
     initializeLogger({ pretty: false });
@@ -154,10 +181,8 @@ describe('FallbackAdapter', () => {
       adapter.on('error', (e) => resolve(e.error));
     });
 
-    for await (const _ of stream) {
-      // consume
-    }
-
+    // the failure ends the iteration, and is still reported on the adapter's error event
+    await expect(drain(stream)).rejects.toBeInstanceOf(APIConnectionError);
     const error = await errorPromise;
     expect(error).toBeInstanceOf(APIConnectionError);
   });
@@ -180,10 +205,7 @@ describe('FallbackAdapter', () => {
       adapter.on('error', (e) => resolve(e.error));
     });
 
-    for await (const _ of stream) {
-      // consume
-    }
-
+    await expect(drain(stream)).rejects.toBeInstanceOf(APIError);
     const error = await errorPromise;
     expect(error).toBeInstanceOf(APIError);
   });
@@ -229,15 +251,34 @@ describe('FallbackAdapter', () => {
       adapter.on('error', (e) => resolve(e.error));
     });
 
-    for await (const _ of stream) {
-      // consume
-    }
-
+    await expect(drain(stream)).rejects.toBeInstanceOf(APIError);
     const error = await errorPromise;
     expect(error).toBeInstanceOf(APIError);
     expect(adapter._status[0]!.available).toBe(false);
     // tryRecovery must have been called despite the throw -- recoveringTask is in flight
     expect(adapter._status[0]!.recoveringTask).not.toBeNull();
+  });
+
+  it('does not fail a request because another request on the same LLM instance failed', async () => {
+    // the failing request's error is also emitted on the shared instance's `error` event,
+    // while the healthy request is still streaming from the same instance
+    const healthyCtx = {} as ChatContext;
+    const failingCtx = {} as ChatContext;
+    const shared = new SharedLLM(failingCtx);
+    const healthyAdapter = new FallbackAdapter({ llms: [shared] });
+    const failingAdapter = new FallbackAdapter({ llms: [shared] });
+    const healthyErrors: Error[] = [];
+    healthyAdapter.on('error', (e) => healthyErrors.push(e.error));
+    failingAdapter.on('error', () => {});
+    const connOptions = { maxRetry: 0, retryIntervalMs: 0, timeoutMs: 1000 };
+
+    const healthy = drain(healthyAdapter.chat({ chatCtx: healthyCtx, connOptions }));
+    const failing = drain(failingAdapter.chat({ chatCtx: failingCtx, connOptions }));
+
+    expect(await healthy).toHaveLength(3);
+    expect(healthyErrors).toEqual([]);
+    expect(healthyAdapter._status[0]!.available).toBe(true);
+    await expect(failing).rejects.toBeInstanceOf(APIConnectionError);
   });
 
   it('should emit availability changed events', async () => {

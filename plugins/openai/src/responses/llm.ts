@@ -417,7 +417,13 @@ export class LLM extends llm.LLM {
     // Forward events from the inner delegate so consumers listening on this
     // wrapper instance (e.g. AgentActivity) receive them.
     this.#llm.on('metrics_collected', (metrics) => this.emit('metrics_collected', metrics));
-    this.#llm.on('error', (error) => this.emit('error', error));
+    // An `error` nobody listens to here would throw out of the delegate's retry loop (as under a
+    // FallbackAdapter). The failure still reaches the caller: iterating the stream throws it.
+    this.#llm.on('error', (error) => {
+      if (this.listenerCount('error') > 0) {
+        this.emit('error', error);
+      }
+    });
   }
 
   override label(): string {
