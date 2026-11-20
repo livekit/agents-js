@@ -3423,8 +3423,8 @@ export class AgentActivity implements RecognitionHooks {
     // When the audio recognition detects the end of a user turn:
     //  - check if realtime model server-side turn detection is enabled
     //  - check if there is no current generation happening
-    //  - cancel the current generation if it allows interruptions (otherwise skip this current
-    //  turn)
+    //  - cancel the current generation if it allows interruptions (otherwise skip the reply
+    //  but keep the user message)
     //  - generate a reply to the user input
 
     if (this.llm instanceof RealtimeModel) {
@@ -3457,8 +3457,15 @@ export class AgentActivity implements RecognitionHooks {
     if (activeSpeech && !activeSpeech.allowInterruptions) {
       this.logger.warn(
         { 'lk.pii.user_input': info.newTranscript },
-        'skipping user input, current speech generation cannot be interrupted',
+        'skipping reply to user input, current speech generation cannot be interrupted',
       );
+      const discardAudioIfUninterruptible =
+        this.agent.turnHandling?.interruption?.discardAudioIfUninterruptible ??
+        this.agentSession.sessionOptions.turnHandling.interruption.discardAudioIfUninterruptible;
+      // Only the reply is skipped: keep retained STT input, but not a realtime transcript copy.
+      if (!discardAudioIfUninterruptible && !(this.llm instanceof RealtimeModel)) {
+        this.commitSkippedUserTurn(info);
+      }
       return;
     }
 
