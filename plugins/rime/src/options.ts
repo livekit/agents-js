@@ -4,7 +4,7 @@
 import type { tokenize } from '@livekit/agents';
 import { log } from '@livekit/agents';
 import { isIP } from 'node:net';
-import type { DefaultLanguages, TTSModels } from './models.js';
+import type { CustomLexiconEntry, DefaultLanguages, TTSModels } from './models.js';
 
 export type WebSocketProtocol = 'binary' | 'json';
 export type RimeAudioFormat =
@@ -123,6 +123,12 @@ export function resolveOptions(opts: Partial<TTSOptions>, previous?: TTSOptions)
     v1 ||
     Boolean(opts.useWebsocket ?? previous?.useWebsocket) ||
     Boolean(opts.baseURL?.startsWith('ws'));
+  if (opts.customLexicon !== undefined && model !== 'coda')
+    throw new Error('customLexicon requires the coda model');
+  if (opts.customLexicon !== undefined && useWebsocket && !v1)
+    throw new Error(
+      'customLexicon is not supported by the legacy Rime WebSocket interface; use websocketURL or HTTP',
+    );
   if (previous && previous.useWebsocket !== useWebsocket)
     throw new Error('Cannot change Rime transport');
   const resolved: TTSOptions = {
@@ -136,6 +142,9 @@ export function resolveOptions(opts: Partial<TTSOptions>, previous?: TTSOptions)
     baseURL:
       opts.baseURL ?? previous?.baseURL ?? (useWebsocket && !v1 ? RIME_WS_BASE_URL : RIME_BASE_URL),
   };
+  if (opts.customLexicon !== undefined) {
+    resolved.customLexicon = opts.customLexicon.map((entry) => ({ ...entry }));
+  }
   if (!previous && opts.speaker === undefined) {
     resolved.speaker = v1
       ? model.includes('mist')
@@ -197,6 +206,8 @@ export interface TTSOptions {
   temperature?: number;
   top_p?: number;
   max_tokens?: number;
+  /** Per-request Coda pronunciation overrides in X-SAMPA. */
+  customLexicon?: CustomLexiconEntry[];
   samplingRate?: number;
   timeScaleFactor?: number;
   speedAlpha?: number;
@@ -207,7 +218,13 @@ export interface TTSOptions {
   noTextNormalization?: boolean;
   saveOovs?: boolean;
   /** Additional Rime API parameters */
-  [key: string]: string | number | boolean | tokenize.SentenceTokenizer | undefined;
+  [key: string]:
+    | string
+    | number
+    | boolean
+    | CustomLexiconEntry[]
+    | tokenize.SentenceTokenizer
+    | undefined;
 }
 
 const defaultTTSOptions: TTSOptions = {
@@ -260,6 +277,9 @@ export function fetchPayload(opts: TTSOptions, text: string): Record<string, unk
   };
 
   payload.samplingRate = getSampleRate(opts);
+  if (opts.modelId === 'coda' && opts.customLexicon?.length) {
+    payload.customLexicon = opts.customLexicon;
+  }
   if (opts.modelId === 'mistv2' && opts.reduceLatency !== undefined) {
     payload.reduceLatency = opts.reduceLatency;
   }
@@ -284,6 +304,7 @@ export function fetchPayload(opts: TTSOptions, text: string): Record<string, unk
         'temperature',
         'top_p',
         'max_tokens',
+        'customLexicon',
         'samplingRate',
         'timeScaleFactor',
         'speedAlpha',

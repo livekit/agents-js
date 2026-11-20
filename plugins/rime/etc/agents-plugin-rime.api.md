@@ -23,6 +23,14 @@ export class ChunkedStream extends tts.ChunkedStream {
     protected run(): Promise<void>;
 }
 
+// Warning: (ae-missing-release-tag) "CustomLexiconEntry" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export interface CustomLexiconEntry {
+    pronunciation: string;
+    spelling: string;
+}
+
 // Warning: (ae-missing-release-tag) "DefaultLanguages" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
@@ -88,7 +96,7 @@ export type TTSModels = 'coda' | 'mistv2' | 'mistv3';
 //
 // @public
 export interface TTSOptions {
-    [key: string]: string | number | boolean | tokenize.SentenceTokenizer | undefined;
+    [key: string]: string | number | boolean | CustomLexiconEntry[] | tokenize.SentenceTokenizer | undefined;
     allowCustomEndpoint?: boolean;
     // (undocumented)
     apiKey?: string;
@@ -96,6 +104,7 @@ export interface TTSOptions {
     audioFormat?: RimeAudioFormat;
     // (undocumented)
     baseURL?: string;
+    customLexicon?: CustomLexiconEntry[];
     // (undocumented)
     inlineSpeedAlpha?: string;
     // (undocumented)

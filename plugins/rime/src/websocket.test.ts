@@ -31,6 +31,10 @@ const options: APIConnectOptions = { maxRetry: 0, retryIntervalMs: 0, timeoutMs:
 const clients: TTS[] = [];
 const servers: WebSocketServer[] = [];
 const secret = 'private text Bearer secret-key https://user:password@host/?token=secret';
+const lexicon = [
+  { spelling: 'expedite', pronunciation: '" E k . s p @ . % d aI t' },
+  { spelling: 'kubectl', pronunciation: '" k u b . k @ n . % t r\\ oU l' },
+];
 
 afterEach(async () => {
   vi.restoreAllMocks();
@@ -194,6 +198,32 @@ async function collect(stream: tts.SynthesizeStream, onFrame?: () => void) {
 }
 
 describe.each(['binary', 'json'] as const)('Rime v1 %s', (protocol) => {
+  it('sends Coda custom lexicon in the start request', async () => {
+    const peer = await server();
+    const { value } = client(peer.url, protocol, { customLexicon: lexicon });
+    const stream = value.stream({ connOptions: options });
+    stream.pushText('expedite it');
+    stream.endInput();
+    await collect(stream);
+
+    expect(peer.requests[0]!.payload.value).toMatchObject({ customLexicon: lexicon });
+  });
+
+  it('keeps the stream lexicon after the caller mutates an entry', async () => {
+    const entry = { spelling: 'Acme', pronunciation: '" { k . m i' };
+    const peer = await server();
+    const { value } = client(peer.url, protocol, { customLexicon: [entry] });
+    const stream = value.stream({ connOptions: options });
+    entry.pronunciation = '" A k . m i';
+    stream.pushText('Acme');
+    stream.endInput();
+    await collect(stream);
+
+    expect(peer.requests[0]!.payload.value).toMatchObject({
+      customLexicon: [{ spelling: 'Acme', pronunciation: '" { k . m i' }],
+    });
+  });
+
   it('connects to the supplied custom path', async () => {
     const peer = await server();
     const { value, errors } = client(peer.url + '?deployment=custom', protocol);

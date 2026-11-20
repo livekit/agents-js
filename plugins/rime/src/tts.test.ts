@@ -10,6 +10,10 @@ import { TTS } from './tts.js';
 initializeLogger({ pretty: false, level: 'silent' });
 
 const hasRimeConfig = Boolean(process.env.RIME_API_KEY && process.env.OPENAI_API_KEY);
+const lexicon = [
+  { spelling: 'expedite', pronunciation: '" E k . s p @ . % d aI t' },
+  { spelling: 'kubectl', pronunciation: '" k u b . k @ n . % t r\\ oU l' },
+];
 
 function pcmChunk(byteLength: number): Uint8Array {
   const chunk = new Uint8Array(byteLength);
@@ -239,6 +243,21 @@ describe('Rime TTS streaming', () => {
 
     const doneResult = await stream.next();
     expect(doneResult.done).toBe(true);
+  });
+
+  it('sends and clears Coda custom lexicon', async () => {
+    const fetch = vi
+      .spyOn(globalThis, 'fetch')
+      .mockImplementation(async () => new Response(Buffer.from(pcmChunk(4800))));
+    const value = new TTS({ apiKey: 'test-key', modelId: 'coda', customLexicon: lexicon });
+
+    for await (const frame of value.synthesize('expedite it')) void frame;
+    value.updateOptions({ customLexicon: [] });
+    for await (const frame of value.synthesize('expedite it')) void frame;
+
+    expect(JSON.parse(fetch.mock.calls[0]![1]!.body as string).customLexicon).toEqual(lexicon);
+    expect(JSON.parse(fetch.mock.calls[1]![1]!.body as string)).not.toHaveProperty('customLexicon');
+    await value.close();
   });
 });
 
