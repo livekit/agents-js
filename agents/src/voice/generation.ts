@@ -950,8 +950,10 @@ export function performTTSInference(
   };
   let startTime: number | undefined;
   const textReader = text.getReader();
+  let textReaderReleased = false;
   let inputCancellation: Promise<void> | undefined;
   const cancelInput = () => {
+    if (textReaderReleased) return;
     inputCancellation ??= textReader.cancel().catch((error) => {
       logger.debug({ error }, 'failed to cancel TTS text reader');
     });
@@ -994,6 +996,7 @@ export function performTTSInference(
     } finally {
       await inputCancellation;
       textReader.releaseLock();
+      textReaderReleased = true;
     }
   })();
   void inputTask.catch((error) => logger.debug({ error }, 'TTS text forwarding failed'));

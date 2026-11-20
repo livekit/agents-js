@@ -57,4 +57,49 @@ describe('Tavus AvatarSession', () => {
       destination_identities: ['tavus-1'],
     });
   });
+
+  describe('aclose', () => {
+    function mockFetch(status: number) {
+      const f = vi.fn().mockResolvedValue({
+        ok: status < 400,
+        status,
+        text: async () => `status ${status}`,
+      } as Response);
+      global.fetch = f as unknown as typeof fetch;
+      return f;
+    }
+
+    it('ends the conversation once, even when called twice', async () => {
+      // the replica keeps running until its conversation ends, not when the agent leaves
+      const f = mockFetch(200);
+      const avatar = new AvatarSession({ apiKey: 'k', apiUrl: 'http://tavus.test' });
+      avatar.conversationId = 'c1';
+
+      await avatar.aclose();
+      await avatar.aclose();
+
+      expect(f).toHaveBeenCalledTimes(1);
+      expect(f.mock.calls[0]![0]).toBe('http://tavus.test/conversations/c1/end');
+      expect(avatar.conversationId).toBeNull();
+    });
+
+    it('does not throw when ending the conversation fails', async () => {
+      // ending is best effort: a failure must not break the job's shutdown
+      const f = mockFetch(401);
+      const avatar = new AvatarSession({ apiKey: 'k', apiUrl: 'http://tavus.test' });
+      avatar.conversationId = 'c1';
+
+      await expect(avatar.aclose()).resolves.toBeUndefined();
+      expect(f).toHaveBeenCalledTimes(1);
+    });
+
+    it('sends nothing before start', async () => {
+      const f = mockFetch(200);
+      const avatar = new AvatarSession({ apiKey: 'k' });
+
+      await avatar.aclose();
+
+      expect(f).not.toHaveBeenCalled();
+    });
+  });
 });

@@ -42,6 +42,7 @@ import { z } from 'zod';
 // @public
 export class AvatarSession extends voice.AvatarSession {
     constructor(options?: AvatarSessionOptions);
+    aclose(): Promise<void>;
     // (undocumented)
     get avatarIdentity(): string;
     // (undocumented)
@@ -119,6 +120,7 @@ export class TavusAPI {
     createPal(options: CreatePalOptions): Promise<string>;
     // @deprecated (undocumented)
     createPersona(options?: CreatePersonaOptions): Promise<string>;
+    endConversation(conversationId: string): Promise<void>;
 }
 
 // @public (undocumented)

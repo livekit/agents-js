@@ -29,10 +29,15 @@ export class ChunkedStream extends tts.ChunkedStream {
     protected run(): Promise<void>;
 }
 
+// Warning: (ae-missing-release-tag) "CommitStrategy" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
+//
+// @public
+export type CommitStrategy = 'manual' | 'vad' | 'turn_prediction';
+
 // Warning: (ae-missing-release-tag) "ElevenLabsSTTModels" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public (undocumented)
-export type ElevenLabsSTTModels = 'scribe_v1' | 'scribe_v2' | 'scribe_v2_realtime';
+export type ElevenLabsSTTModels = 'scribe_v1' | 'scribe_v2' | 'scribe_v2_realtime' | 'scribe_v3' | 'scribe_v3_live';
 
 // Warning: (ae-missing-release-tag) "isDialogueModel" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -64,6 +69,7 @@ export class SpeechStream extends stt.SpeechStream {
     // (undocumented)
     updateOptions(opts: {
         serverVad?: VADOptions | null;
+        commitStrategy?: CommitStrategy;
         noVerbatim?: boolean;
         keyterms?: string[];
         secondaryLanguages?: string[];
@@ -98,6 +104,7 @@ export class STT extends stt.STT {
     updateOptions(opts: {
         tagAudioEvents?: boolean;
         serverVad?: VADOptions | null;
+        commitStrategy?: CommitStrategy;
         keyterms?: string[];
         secondaryLanguages?: string[];
         noVerbatim?: boolean;
@@ -127,6 +134,7 @@ export interface STTOptions {
     audioChunkDuration?: number;
     // (undocumented)
     baseURL?: string;
+    commitStrategy?: CommitStrategy;
     // (undocumented)
     enableLogging?: boolean;
     // (undocumented)
@@ -152,6 +160,8 @@ export interface STTOptions {
     tagAudioEvents?: boolean;
     // (undocumented)
     useRealtime?: boolean;
+    // Warning: (ae-forgotten-export) The symbol "VAD" needs to be exported by the entry point index.d.ts
+    vad?: VAD;
 }
 
 // Warning: (ae-missing-release-tag) "STTRealtimeSampleRates" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)

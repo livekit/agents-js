@@ -3,8 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import { type AudioFrame } from '@livekit/rtc-node';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
-import type { WebSocket } from 'ws';
-import { APIStatusError } from '../_exceptions.js';
+import type { RawData, WebSocket } from 'ws';
+import { APIConnectionError, APIStatusError } from '../_exceptions.js';
 import { AudioByteStream } from '../audio.js';
 import { type LanguageCode, areLanguagesEquivalent, normalizeLanguage } from '../language.js';
 import { ChatMessage } from '../llm/index.js';
@@ -36,6 +36,11 @@ import {
   getDefaultInferenceUrl,
 } from './utils.js';
 import { VAD as InferenceVAD } from './vad.js';
+
+type STTWriterControl =
+  | { kind: 'update'; send: () => void }
+  | { kind: 'handoff'; id: string }
+  | { kind: 'finalize' };
 
 export type DeepgramModels =
   | 'deepgram/nova-3'
@@ -507,6 +512,24 @@ export interface InferenceSTTOptions<TModel extends STTModels> {
   connOptions?: APIConnectOptions;
 }
 
+type STTOptionUpdate<TModel extends STTModels> = Partial<
+  Pick<InferenceSTTOptions<TModel>, 'model' | 'language' | 'modelOptions'>
+>;
+
+function mergeSTTOptions<TModel extends STTModels>(
+  current: InferenceSTTOptions<TModel>,
+  update: STTOptionUpdate<TModel>,
+): InferenceSTTOptions<TModel> {
+  return {
+    ...current,
+    ...update,
+    language: update.language !== undefined ? normalizeLanguage(update.language) : current.language,
+    modelOptions: update.modelOptions
+      ? ({ ...current.modelOptions, ...update.modelOptions } as STTOptions<TModel>)
+      : current.modelOptions,
+  };
+}
+
 /**
  * Livekit Cloud Inference STT
  */
@@ -791,60 +814,69 @@ export class STT<TModel extends STTModels> extends BaseSTT {
     );
   }
 
-  async connectWs(timeout: number, extraHeaders: Record<string, string> = {}): Promise<WebSocket> {
+  async connectWs(
+    timeout: number,
+    opts: InferenceSTTOptions<TModel> = this.opts,
+    sessionKeyterms: string[] = this._sessionKeyterms,
+    handoffProbeId?: string,
+    extraHeaders: Record<string, string> = {},
+  ): Promise<WebSocket> {
     // a copy of the caller's options: the hint is gated on this frame, never cleared from them
     const extra = {
-      ...this.opts.modelOptions,
-      ...(keytermsExtraForModel(this.opts.model, {
-        extraKwargs: this.opts.modelOptions as Record<string, unknown>,
-        sessionKeyterms: this._sessionKeyterms,
+      ...opts.modelOptions,
+      ...(keytermsExtraForModel(opts.model, {
+        extraKwargs: opts.modelOptions as Record<string, unknown>,
+        sessionKeyterms,
       }) ?? {}),
     } as Record<string, unknown>;
 
-    if (dropUnsupportedLanguageHint(this.opts.model, this.opts.language, extra)) {
-      this._warnLanguageHintIgnored(this.opts.model, this.opts.language);
+    if (dropUnsupportedLanguageHint(opts.model, opts.language, extra)) {
+      this._warnLanguageHintIgnored(opts.model, opts.language);
     }
 
     const params = {
+      handoff_protocol: 2,
       settings: {
-        sample_rate: String(this.opts.sampleRate),
-        encoding: this.opts.encoding,
+        sample_rate: String(opts.sampleRate),
+        encoding: opts.encoding,
         // the framework session keyterms into the user's extra_kwargs keyterm key)
         extra,
       },
     } as Record<string, unknown>;
 
-    if (this.opts.model && this.opts.model !== 'auto') {
-      params.model = this.opts.model;
+    if (handoffProbeId !== undefined) params.handoff_probe = { handoff_id: handoffProbeId };
+
+    if (opts.model && opts.model !== 'auto') {
+      params.model = opts.model;
     }
 
-    if (this.opts.language) {
-      (params.settings as Record<string, unknown>).language = this.opts.language;
+    if (opts.language) {
+      (params.settings as Record<string, unknown>).language = opts.language;
     }
 
-    if (this.opts.fallback?.length) {
+    if (opts.fallback?.length) {
       params.fallback = {
-        models: this.opts.fallback.map((m) => ({
+        models: opts.fallback.map((m) => ({
           model: m.model,
           extra: m.extraKwargs ?? {},
         })),
       };
     }
 
-    if (this.opts.connOptions) {
+    if (opts.connOptions) {
       params.connection = {
-        timeout: this.opts.connOptions.timeoutMs / 1000,
-        retries: this.opts.connOptions.maxRetry,
+        timeout: opts.connOptions.timeoutMs / 1000,
+        retries: opts.connOptions.maxRetry,
       };
     }
 
-    let baseURL = this.opts.baseURL;
+    let baseURL = opts.baseURL;
     if (baseURL.startsWith('http://') || baseURL.startsWith('https://')) {
       baseURL = baseURL.replace('http', 'ws');
     }
 
-    const token = await createAccessToken(this.opts.apiKey, this.opts.apiSecret);
-    const url = `${baseURL}/stt?model=${encodeURIComponent(this.model)}`;
+    const token = await createAccessToken(opts.apiKey, opts.apiSecret);
+    const url = `${baseURL}/stt?model=${encodeURIComponent(opts.model ?? 'auto')}`;
     const headers: Record<string, string> = {
       ...extraHeaders,
       ...buildMetadataHeaders(),
@@ -869,9 +901,73 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
   _pendingExtra?: Record<string, unknown>;
   private speechDuration = 0;
   private stt: STT<TModel>;
+  private readonly vad: Promise<VAD | undefined>;
   private connOptions: APIConnectOptions;
   private extraHeaders: Record<string, string>;
   private activeWs?: WebSocket;
+  private requestedHandoffId?: string;
+  private handoffId?: string;
+  private handoffWrites: { encoded: string; onSent?: () => void; discardOnRetry?: boolean }[] = [];
+  private abortHandoff?: () => void;
+  private connectedOptions?: InferenceSTTOptions<TModel>;
+  private pendingUpdates: STTOptionUpdate<TModel>[] = [];
+  private updateUncertain = false;
+  private handoffAudioOffsetInS = 0;
+  private connectionAudioDurationInS = 0;
+  private retryHandoffOpts?: InferenceSTTOptions<TModel>;
+
+  // Queued updates must follow the audio ahead of them after reconnecting.
+  private consumedOptions(): InferenceSTTOptions<TModel> | undefined {
+    if (!this.connectedOptions) return undefined;
+    return this.pendingUpdates.reduce<InferenceSTTOptions<TModel>>(
+      (options, update) => mergeSTTOptions(options, update),
+      this.connectedOptions,
+    );
+  }
+
+  private sendOrBuffer(message: unknown, onSent?: () => void, discardOnRetry = false): void {
+    const encoded = JSON.stringify(message);
+    if (this.handoffId !== undefined) {
+      if (this.handoffWrites.length < 1024) {
+        this.handoffWrites.push({ encoded, onSent, discardOnRetry });
+        return;
+      }
+      try {
+        this.abortHandoff?.();
+      } catch {
+        throw new APIConnectionError({ message: 'STT handoff could not resume' });
+      }
+    }
+    if (!this.activeWs || this.activeWs.readyState !== 1) {
+      throw new APIConnectionError({ message: 'STT WebSocket is closed' });
+    }
+    try {
+      this.activeWs.send(encoded);
+    } catch {
+      throw new APIConnectionError({ message: 'STT WebSocket write failed' });
+    }
+    onSent?.();
+  }
+
+  /**
+   * Replays writes buffered during a handoff to `socket`. The queue empties only after every
+   * write is sent: a failed write leaves it whole, because the retry dials a fresh session that
+   * needs the full replay. `onSent` callbacks run once, after the last write.
+   */
+  private releaseHandoffWrites(socket: WebSocket): void {
+    const writes = this.handoffWrites;
+    for (const next of writes) {
+      if (socket.readyState !== 1)
+        throw new APIConnectionError({ message: 'STT WebSocket is closed' });
+      try {
+        socket.send(next.encoded);
+      } catch {
+        throw new APIConnectionError({ message: 'STT WebSocket write failed' });
+      }
+    }
+    this.handoffWrites = [];
+    for (const next of writes) next.onSent?.();
+  }
 
   #logger = log();
 
@@ -884,8 +980,14 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
     super(sttImpl, opts.sampleRate, connOptions);
     this.opts = opts;
     this.stt = sttImpl;
+    this.vad = sttImpl.vadPromise;
     this.connOptions = connOptions;
     this.extraHeaders = { ...extraHeaders };
+    const keyterms = keytermsExtraForModel(opts.model, {
+      extraKwargs: opts.modelOptions as Record<string, unknown>,
+      sessionKeyterms: sttImpl._sessionKeyterms,
+    });
+    this.connectedOptions = mergeSTTOptions(opts, { modelOptions: keyterms as STTOptions<TModel> });
   }
 
   get label(): string {
@@ -900,56 +1002,57 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
   updateOptions(
     opts: Partial<Pick<InferenceSTTOptions<TModel>, 'model' | 'language' | 'modelOptions'>>,
   ): void {
-    const mergedModelOptions = opts.modelOptions
-      ? ({ ...this.opts.modelOptions, ...opts.modelOptions } as STTOptions<TModel>)
-      : this.opts.modelOptions;
-
-    this.opts = {
-      ...this.opts,
-      ...opts,
-      language: opts.language !== undefined ? normalizeLanguage(opts.language) : this.opts.language,
-      modelOptions: mergedModelOptions,
+    // The running session keeps its original model and client VAD.
+    const model = opts.model;
+    const sameProvider =
+      model === undefined || model.split('/')[0] === this.opts.model?.split('/')[0];
+    const update = {
+      language: opts.language,
+      modelOptions: sameProvider ? opts.modelOptions : undefined,
     };
+    this.opts = mergeSTTOptions(this.opts, update);
 
-    if (opts.modelOptions !== undefined) {
+    if (update.modelOptions !== undefined) {
       this._pendingExtra = undefined;
     }
 
-    // When the WebSocket is live, send a mid-stream session.update so providers
-    // that support it (e.g. AssemblyAI, Deepgram Flux) apply changes without
-    // reconnecting. Unsupported providers ignore the message.
-    if (this.activeWs && this.activeWs.readyState === 1) {
-      const settings: Record<string, unknown> = {};
-      // the hint the model and language can carry right now, if the caller configured one
-      const hint = languageHintSendable(this.opts.model, this.opts.language)
-        ? (this.opts.modelOptions as Record<string, unknown>).language_hint
-        : undefined;
-      if (opts.model !== undefined) settings.model = opts.model;
-      if (opts.language !== undefined) settings.language = normalizeLanguage(opts.language);
-      if (opts.modelOptions !== undefined) {
-        // judged against the language this.opts already merged, so an update that sets `multi`
-        // keeps a hint supplied in the same call
-        const extra = { ...opts.modelOptions } as Record<string, unknown>;
-        if (dropUnsupportedLanguageHint(this.opts.model, this.opts.language, extra)) {
-          this.stt._warnLanguageHintIgnored(this.opts.model, this.opts.language);
-        }
-        // this frame carries the caller's keys alone, so a configured hint that no earlier frame
-        // could send is added to it, and only that key
-        if (hint !== undefined) extra.language_hint = hint;
-        settings.extra = extra;
-      } else if (opts.language !== undefined || opts.model !== undefined) {
-        // A language or model change decides whether the configured hint can go on the wire, and
-        // no frame carried it while it could not: send it now that it can.
-        if (hint !== undefined) {
-          settings.extra = { language_hint: hint };
-        }
+    const settings: Record<string, unknown> = {};
+    // the hint the model and language can carry right now, if the caller configured one
+    const hint = languageHintSendable(this.opts.model, this.opts.language)
+      ? (this.opts.modelOptions as Record<string, unknown>).language_hint
+      : undefined;
+    if (model !== undefined) settings.model = model;
+    if (update.language !== undefined) settings.language = normalizeLanguage(update.language);
+    if (update.modelOptions !== undefined) {
+      // judged against the language this.opts already merged, so an update that sets `multi`
+      // keeps a hint supplied in the same call
+      const extra = { ...update.modelOptions } as Record<string, unknown>;
+      if (dropUnsupportedLanguageHint(this.opts.model, this.opts.language, extra)) {
+        this.stt._warnLanguageHintIgnored(this.opts.model, this.opts.language);
       }
-      if (Object.keys(settings).length > 0) {
-        try {
-          this.activeWs.send(JSON.stringify({ type: 'session.update', settings }));
-        } catch (e) {
-          this.#logger.debug({ err: e }, 'failed to send session.update, ws may be closing');
-        }
+      // this frame carries the caller's keys alone, so a configured hint that no earlier frame
+      // could send is added to it, and only that key
+      if (hint !== undefined) extra.language_hint = hint;
+      settings.extra = extra;
+    } else if (update.language !== undefined) {
+      // A language or model change decides whether the configured hint can go on the wire, and
+      // no frame carried it while it could not: send it now that it can.
+      if (hint !== undefined) {
+        settings.extra = { language_hint: hint };
+      }
+    }
+    if (Object.keys(settings).length > 0) {
+      try {
+        const send = () =>
+          this.sendOrBuffer({ type: 'session.update', settings }, () => {
+            this.pendingUpdates.push(update);
+          });
+        (this.input as unknown as { put(value: STTWriterControl): void }).put({
+          kind: 'update',
+          send,
+        });
+      } catch (e) {
+        this.#logger.debug({ err: e }, 'failed to send session.update, ws may be closing');
       }
     }
   }
@@ -962,8 +1065,10 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
   }
 
   protected async run(): Promise<void> {
+    this.handoffAudioOffsetInS = 0;
+    this.connectionAudioDurationInS = 0;
+    const vad = await this.vad;
     while (true) {
-      const vad = await this.stt.vadPromise;
       // Create fresh resources for each connection attempt
       let ws: WebSocket | null = null;
       let inputEnded = false;
@@ -974,8 +1079,19 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
       let sessionCloseSent = false;
       let finalizationTimeout: ReturnType<typeof setTimeout> | undefined;
       let vadStream: VADStream | null = null;
+      let replacementWs: WebSocket | undefined;
+      let replacementPreparation: AbortController | undefined;
+      let replacementMessageMonitor: (() => void) | undefined;
+      let attachSocket: ((socket: WebSocket) => void) | undefined;
+      let handoffOpts: InferenceSTTOptions<TModel> | undefined;
+      let audioStream: AudioByteStream | undefined;
+      let handoffTimer: ReturnType<typeof setTimeout> | undefined;
+      let handoffDeadline = 0;
+      let waitingForUpdateAcks = false;
+      let handoffCompleting = false;
 
       const eventChannel = createStreamChannel<SttServerEvent>();
+      const eventSources = new WeakMap<object, WebSocket>();
 
       const sendSessionClose = (socket: WebSocket) => {
         if (sessionCloseSent || sessionClosedReceived || socket.readyState !== 1) return;
@@ -987,14 +1103,44 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
         socket.send(JSON.stringify({ type: 'session.close' }));
       };
 
-      const sendSessionFinalize = (socket: WebSocket) => {
-        socket.send(JSON.stringify({ type: 'session.finalize' }));
+      const sendSessionFinalize = (onSent?: () => void) => {
+        this.sendOrBuffer({ type: 'session.finalize' }, onSent, onSent !== undefined);
+      };
+
+      const closeReplacement = () => {
+        replacementPreparation?.abort();
+        replacementPreparation = undefined;
+        replacementMessageMonitor = undefined;
+        const candidate = replacementWs;
+        replacementWs = undefined;
+        candidate?.close();
       };
 
       const resourceCleanup = () => {
         if (cleanedUp) return;
         cleanedUp = true;
+        if (this.requestedHandoffId !== undefined || this.handoffWrites.length > 0) {
+          this.retryHandoffOpts ??= this.consumedOptions();
+          if (audioStream && this.retryHandoffOpts !== undefined) {
+            for (const frame of audioStream.flush()) {
+              const audio = Buffer.from(frame.data.buffer).toString('base64');
+              this.handoffWrites.push({
+                encoded: JSON.stringify({ type: 'input_audio', audio }),
+                onSent: () => {
+                  this.speechDuration += frame.samplesPerChannel / frame.sampleRate;
+                  this.connectionAudioDurationInS += frame.samplesPerChannel / frame.sampleRate;
+                },
+              });
+            }
+          }
+          this.requestedHandoffId = undefined;
+          this.handoffId = undefined;
+          this.abortHandoff = undefined;
+          this.handoffWrites = this.handoffWrites.filter((entry) => !entry.discardOnRetry);
+        }
         if (finalizationTimeout) clearTimeout(finalizationTimeout);
+        if (handoffTimer) clearTimeout(handoffTimer);
+        closeReplacement();
         void eventChannel.close().catch((error) => {
           this.#logger.debug({ error }, 'Failed to close STT event channel');
         });
@@ -1033,6 +1179,14 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
         finalizationTimeout = setTimeout(finishFinalization, timeout);
       };
 
+      const abortOrTerminate = () => {
+        try {
+          this.abortHandoff?.();
+        } catch {
+          this.activeWs?.terminate();
+        }
+      };
+
       const createWsListener = async (ws: WebSocket, signal: AbortSignal) => {
         return new ThrowsPromise<void, Error | APIStatusError>((resolve, reject) => {
           const onAbort = () => {
@@ -1042,54 +1196,69 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
 
           signal.addEventListener('abort', onAbort, { once: true });
 
-          ws.on('message', (data) => {
-            const json = JSON.parse(data.toString()) as SttServerEvent;
-            if (json.type === 'final_transcript') {
-              finalTranscriptReceived = true;
-            }
-            // a transcript keeps the finalization wait open; an interim with no text is not one
-            // (xai/stt-1 sends an empty interim every second after session.finalized, for as
-            // long as the socket is open, and the stream would never end)
-            const transcriptText = (json as { transcript?: string }).transcript;
-            if (
-              json.type === 'final_transcript' ||
-              json.type === 'preflight_transcript' ||
-              (json.type === 'interim_transcript' && Boolean(transcriptText))
-            ) {
-              scheduleFinalizationTimeout();
-            }
-            void eventChannel.write(json).catch((error) => {
-              this.#logger.debug({ error }, 'Failed to queue STT server event');
+          attachSocket = (socket: WebSocket) => {
+            socket.on('message', (data) => {
+              if (socket !== this.activeWs) return;
+              const json = JSON.parse(data.toString()) as SttServerEvent;
+              if (typeof json === 'object' && json !== null) eventSources.set(json, socket);
+              if (json.type === 'final_transcript') {
+                finalTranscriptReceived = true;
+              }
+              // a transcript keeps the finalization wait open; an interim with no text is not one
+              // (xai/stt-1 sends an empty interim every second after session.finalized, for as
+              // long as the socket is open, and the stream would never end)
+              const transcriptText = (json as { transcript?: string }).transcript;
+              if (
+                json.type === 'final_transcript' ||
+                json.type === 'preflight_transcript' ||
+                (json.type === 'interim_transcript' && Boolean(transcriptText))
+              ) {
+                scheduleFinalizationTimeout();
+              }
+              void eventChannel.write(json).catch((error) => {
+                this.#logger.debug({ error }, 'Failed to queue STT server event');
+              });
             });
-          });
 
-          ws.on('error', (e) => {
-            this.#logger.error({ error: e }, 'WebSocket error');
-            resourceCleanup();
-            reject(e);
-          });
+            socket.on('error', (e) => {
+              if (socket !== this.activeWs) return;
+              this.#logger.error({ error: e }, 'WebSocket error');
+              resourceCleanup();
+              reject(e);
+            });
 
-          ws.on('close', (code: number) => {
-            const expectedClose =
-              signal.aborted || inputEnded || finalizationComplete || sessionCloseSent;
-            resourceCleanup();
+            socket.on('close', (code: number) => {
+              if (socket !== this.activeWs) return;
+              const expectedClose =
+                signal.aborted || inputEnded || finalizationComplete || sessionCloseSent;
+              resourceCleanup();
 
-            if (expectedClose) return resolve();
+              if (expectedClose) return resolve();
 
-            this.#logger.error('WebSocket closed unexpectedly');
+              this.#logger.error('WebSocket closed unexpectedly');
 
-            reject(
-              new APIStatusError({
-                message: 'LiveKit STT connection closed unexpectedly',
-                options: { statusCode: code, retryable: !inputEnded },
-              }),
-            );
-          });
+              reject(
+                new APIStatusError({
+                  message: 'LiveKit STT connection closed unexpectedly',
+                  options: { statusCode: code, retryable: !inputEnded },
+                }),
+              );
+            });
+          };
+          attachSocket(ws);
         });
       };
 
-      const send = async (socket: WebSocket, signal: AbortSignal) => {
-        const audioStream = new AudioByteStream(
+      const sendAudioFrame = (frame: AudioFrame) => {
+        const base64 = Buffer.from(frame.data.buffer).toString('base64');
+        this.sendOrBuffer({ type: 'input_audio', audio: base64 }, () => {
+          this.speechDuration += frame.samplesPerChannel / frame.sampleRate;
+          this.connectionAudioDurationInS += frame.samplesPerChannel / frame.sampleRate;
+        });
+      };
+
+      const send = async (signal: AbortSignal) => {
+        audioStream = new AudioByteStream(
           this.opts.sampleRate,
           1,
           Math.floor(this.opts.sampleRate / 20), // 50ms
@@ -1112,6 +1281,29 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
           if (result.done) break;
           const ev = result.value;
 
+          if (typeof ev === 'object' && ev !== null && 'kind' in ev) {
+            const control = ev as unknown as STTWriterControl;
+            if (control.kind === 'update') {
+              for (const frame of audioStream.flush()) sendAudioFrame(frame);
+              control.send();
+            } else if (control.kind === 'finalize') {
+              for (const frame of audioStream.flush()) sendAudioFrame(frame);
+              sendSessionFinalize();
+            } else if (
+              control.kind === 'handoff' &&
+              control.id === this.requestedHandoffId &&
+              this.activeWs
+            ) {
+              for (const frame of audioStream.flush()) sendAudioFrame(frame);
+              this.handoffId = control.id;
+              await eventChannel.write({
+                type: 'session.handoff.barrier',
+                handoff_id: control.id,
+              } as SttServerEvent);
+            }
+            continue;
+          }
+
           let frames: AudioFrame[];
           if (ev === SpeechStream.FLUSH_SENTINEL) {
             frames = audioStream.flush();
@@ -1122,20 +1314,20 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
           }
 
           for (const frame of frames) {
-            this.speechDuration += frame.samplesPerChannel / frame.sampleRate;
-            const base64 = Buffer.from(frame.data.buffer).toString('base64');
-            const msg = { type: 'input_audio', audio: base64 };
-            socket.send(JSON.stringify(msg));
+            sendAudioFrame(frame);
           }
         }
 
-        inputEnded = true;
         vadStream?.endInput();
-        sendSessionFinalize(socket);
-        scheduleFinalizationTimeout();
+        // A close in response to the final write is normal once it reaches the active socket.
+        if (this.handoffId === undefined) inputEnded = true;
+        sendSessionFinalize(() => {
+          inputEnded = true;
+          scheduleFinalizationTimeout();
+        });
       };
 
-      const processVAD = async (stream: VADStream, socket: WebSocket, signal: AbortSignal) => {
+      const processVAD = async (stream: VADStream, signal: AbortSignal) => {
         // VADStream.next() does not support cancellation.
         const iterator = stream[Symbol.asyncIterator]();
         while (true) {
@@ -1143,8 +1335,83 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
           if (isAborted) return;
           if (result.done) break;
           if (result.value.type !== VADEventType.END_OF_SPEECH) continue;
-          if (socket.readyState !== 1) return;
-          sendSessionFinalize(socket);
+          if (this.activeWs?.readyState !== 1) return;
+          try {
+            (this.input as unknown as { put(value: STTWriterControl): void }).put({
+              kind: 'finalize',
+            });
+          } catch {
+            return;
+          }
+        }
+      };
+
+      const prepareReplacement = async (old: WebSocket, id: string, signal: AbortSignal) => {
+        const probeTimeout = () =>
+          Math.min(this.connOptions.timeoutMs, Math.max(1, handoffDeadline - Date.now()));
+        try {
+          old.send(JSON.stringify({ type: 'session.handoff.pause', handoff_id: id }));
+          const candidate = await this.stt.connectWs(
+            probeTimeout(),
+            handoffOpts,
+            [],
+            id,
+            this.extraHeaders,
+          );
+          if (signal.aborted) {
+            candidate.close();
+            return;
+          }
+          replacementWs = candidate;
+
+          const replacementFailed = () => {
+            if (replacementWs === candidate) abortOrTerminate();
+          };
+          const created = await new Promise<boolean>((resolve) => {
+            let sawCreated = false;
+            const timer = setTimeout(() => finish(false), probeTimeout());
+            const finish = (ok: boolean) => {
+              clearTimeout(timer);
+              signal.removeEventListener('abort', onClose);
+              candidate.off('message', onMessage);
+              candidate.off('close', onClose);
+              candidate.off('error', onClose);
+              // Watch immediately for failures in the same batch as the ready event.
+              if (ok) {
+                candidate.on('error', replacementFailed);
+                candidate.on('close', replacementFailed);
+                candidate.on('message', replacementFailed);
+                replacementMessageMonitor = replacementFailed;
+              }
+              resolve(ok);
+            };
+            const onMessage = (raw: RawData) => {
+              try {
+                const event = JSON.parse(raw.toString()) as { type: string; handoff_id?: string };
+                if (event.type === 'session.created') {
+                  sawCreated = true;
+                  return;
+                }
+                if (event.type === 'session.handoff.ready' && event.handoff_id !== id) return;
+                finish(sawCreated && event.type === 'session.handoff.ready');
+              } catch {
+                finish(false);
+              }
+            };
+            const onClose = () => finish(false);
+            signal.addEventListener('abort', onClose, { once: true });
+            candidate.on('message', onMessage);
+            candidate.once('close', onClose);
+            candidate.once('error', onClose);
+          });
+          if (signal.aborted) return;
+          if (!created) {
+            abortOrTerminate();
+            return;
+          }
+          old.send(JSON.stringify({ type: 'session.handoff.prepared', handoff_id: id }));
+        } catch {
+          if (!signal.aborted) abortOrTerminate();
         }
       };
 
@@ -1157,6 +1424,180 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
             const result = await reader.read();
             if (signal.aborted) return;
             if (result.done) return;
+            // a retired socket's events queued behind the handoff acceptance
+            const source = eventSources.get(result.value);
+            if (source !== undefined && source !== this.activeWs) continue;
+
+            const handoff = result.value as { type: string; handoff_id?: unknown };
+            if (handoff.type === 'session.updated') {
+              const ack = result.value as { success?: unknown };
+              const update = this.pendingUpdates.shift();
+              if (ack.success === true && update && this.connectedOptions) {
+                this.connectedOptions = mergeSTTOptions(this.connectedOptions, update);
+              } else {
+                this.updateUncertain = true;
+              }
+              if (waitingForUpdateAcks && this.pendingUpdates.length === 0 && this.handoffId) {
+                waitingForUpdateAcks = false;
+                void eventChannel
+                  .write({
+                    type: 'session.handoff.barrier',
+                    handoff_id: this.handoffId,
+                  } as SttServerEvent)
+                  .catch(abortOrTerminate);
+              }
+              continue;
+            }
+            if (
+              handoff.type === 'session.handoff.request' &&
+              typeof handoff.handoff_id === 'string' &&
+              handoff.handoff_id &&
+              this.requestedHandoffId === undefined &&
+              !this.input.closed &&
+              this.activeWs
+            ) {
+              if (this._pendingExtra !== undefined) {
+                this.activeWs.send(
+                  JSON.stringify({ type: 'session.handoff.abort', handoff_id: handoff.handoff_id }),
+                );
+                continue;
+              }
+              this.requestedHandoffId = handoff.handoff_id;
+              handoffCompleting = false;
+              handoffDeadline = Date.now() + 10_000;
+              this.abortHandoff = () => {
+                if (this.requestedHandoffId === undefined || !this.activeWs) return;
+                if (handoffTimer) clearTimeout(handoffTimer);
+                waitingForUpdateAcks = false;
+                const socket = this.activeWs;
+                try {
+                  socket.send(
+                    JSON.stringify({
+                      type: 'session.handoff.abort',
+                      handoff_id: this.requestedHandoffId,
+                    }),
+                  );
+                } catch (error) {
+                  socket.terminate();
+                  throw error;
+                }
+                this.abortHandoff = undefined;
+                this.requestedHandoffId = undefined;
+                this.handoffId = undefined;
+                closeReplacement();
+                this.releaseHandoffWrites(this.activeWs);
+                this.retryHandoffOpts = undefined;
+              };
+              handoffTimer = setTimeout(abortOrTerminate, 10_000);
+              try {
+                (this.input as unknown as { put(value: STTWriterControl): void }).put({
+                  kind: 'handoff',
+                  id: handoff.handoff_id,
+                });
+              } catch {
+                this.abortHandoff();
+              }
+              continue;
+            }
+            if (
+              handoff.type === 'session.handoff.abort' &&
+              handoff.handoff_id === this.requestedHandoffId
+            ) {
+              if (handoffTimer) clearTimeout(handoffTimer);
+              this.abortHandoff = undefined;
+              this.requestedHandoffId = undefined;
+              this.handoffId = undefined;
+              waitingForUpdateAcks = false;
+              closeReplacement();
+              if (this.activeWs) {
+                this.releaseHandoffWrites(this.activeWs);
+                this.retryHandoffOpts = undefined;
+              }
+              continue;
+            }
+            if (
+              handoff.type === 'session.handoff.barrier' &&
+              this.handoffId !== undefined &&
+              handoff.handoff_id === this.handoffId &&
+              !replacementPreparation &&
+              this.activeWs
+            ) {
+              if (this.pendingUpdates.length > 0) {
+                waitingForUpdateAcks = true;
+                continue;
+              }
+              if (this.updateUncertain) {
+                this.abortHandoff?.();
+                continue;
+              }
+              const requestedId = this.handoffId;
+              handoffOpts = this.connectedOptions;
+              this.retryHandoffOpts = handoffOpts;
+              replacementPreparation = new AbortController();
+              void prepareReplacement(this.activeWs, requestedId, replacementPreparation.signal);
+              continue;
+            }
+            if (
+              handoff.type === 'session.handoff.drained' &&
+              !handoffCompleting &&
+              handoff.handoff_id === this.handoffId &&
+              this.activeWs
+            ) {
+              if (!replacementMessageMonitor || replacementWs?.readyState !== 1) {
+                this.abortHandoff?.();
+                continue;
+              }
+              this.activeWs.send(
+                JSON.stringify({ type: 'session.handoff.complete', handoff_id: this.handoffId }),
+              );
+              handoffCompleting = true;
+              continue;
+            }
+            if (
+              handoff.type === 'session.handoff.accepted' &&
+              handoffCompleting &&
+              handoff.handoff_id === this.handoffId &&
+              replacementWs &&
+              this.activeWs
+            ) {
+              if (replacementWs.readyState !== 1) {
+                this.abortHandoff?.();
+                continue;
+              }
+              const old = this.activeWs;
+              if (replacementMessageMonitor) {
+                replacementWs.off('message', replacementMessageMonitor);
+                replacementWs.off('close', replacementMessageMonitor);
+                replacementWs.off('error', replacementMessageMonitor);
+                replacementMessageMonitor = undefined;
+              }
+              try {
+                old.send(
+                  JSON.stringify({ type: 'session.handoff.switched', handoff_id: this.handoffId }),
+                );
+              } catch {
+                // The replacement is ready even if the old socket closes before the metric acknowledgment.
+              }
+              this.activeWs = replacementWs;
+              this.connectedOptions = handoffOpts;
+              ws = replacementWs;
+              replacementWs = undefined;
+              replacementPreparation = undefined;
+              attachSocket?.(this.activeWs);
+              this.handoffAudioOffsetInS += this.connectionAudioDurationInS;
+              this.connectionAudioDurationInS = 0;
+              if (handoffTimer) clearTimeout(handoffTimer);
+              this.abortHandoff = undefined;
+              this.requestedHandoffId = undefined;
+              this.handoffId = undefined;
+              try {
+                this.releaseHandoffWrites(this.activeWs);
+              } finally {
+                old.close();
+              }
+              this.retryHandoffOpts = undefined;
+              continue;
+            }
 
             // Parse broadly first; warn only on genuinely malformed messages.
             const parseResult = await sttServerEventSchema.safeParseAsync(result.value);
@@ -1238,12 +1679,33 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
         }
       };
 
+      const consumedOptions = this.consumedOptions();
+      let dialOptions = this.retryHandoffOpts ?? consumedOptions ?? this.opts;
+      const pendingExtra = this.retryHandoffOpts ? undefined : this._pendingExtra;
+      if (pendingExtra !== undefined) {
+        const update = { modelOptions: pendingExtra as STTOptions<TModel> };
+        this.opts = mergeSTTOptions(this.opts, update);
+        dialOptions = mergeSTTOptions(dialOptions, update);
+      }
       try {
-        ws = await this.stt.connectWs(this.connOptions.timeoutMs, this.extraHeaders);
-        // An abort that landed during connectWs has no listener yet: the socket would
-        // otherwise idle until the finalization timeout, holding a gateway concurrency slot.
+        ws = await this.stt.connectWs(
+          this.connOptions.timeoutMs,
+          dialOptions,
+          [],
+          undefined,
+          this.extraHeaders,
+        );
+        // An abort that landed during connectWs has no listener yet: close the socket in cleanup.
         if (this.abortController.signal.aborted) break;
         this.activeWs = ws;
+        this.connectedOptions = dialOptions;
+        if (this._pendingExtra === pendingExtra) this._pendingExtra = undefined;
+        this.pendingUpdates = [];
+        this.updateUncertain = false;
+        if (this.retryHandoffOpts) {
+          this.releaseHandoffWrites(ws);
+          this.retryHandoffOpts = undefined;
+        }
         vadStream = vad?.stream() ?? null;
 
         // Use a per-connection controller so reconnect loops don't inherit a permanently-aborted signal.
@@ -1251,7 +1713,7 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
         const onStreamAbort = () => connController.abort();
         this.abortController.signal.addEventListener('abort', onStreamAbort);
 
-        const sendTask = Task.from(({ signal }) => send(ws!, signal), connController);
+        const sendTask = Task.from(({ signal }) => send(signal), connController);
         const wsListenerTask = Task.from(
           ({ signal }) => createWsListener(ws!, signal),
           connController,
@@ -1259,7 +1721,7 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
         const recvTask = Task.from(({ signal }) => recv(signal), connController);
         const activeVADStream = vadStream;
         const vadTask = activeVADStream
-          ? Task.from(({ signal }) => processVAD(activeVADStream, ws!, signal), connController)
+          ? Task.from(({ signal }) => processVAD(activeVADStream, signal), connController)
           : undefined;
 
         try {
@@ -1326,8 +1788,8 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
 
       const speechData: SpeechData = {
         language,
-        startTime: this.startTimeOffset + data.start,
-        endTime: this.startTimeOffset + data.start + data.duration,
+        startTime: this.startTimeOffset + this.handoffAudioOffsetInS + data.start,
+        endTime: this.startTimeOffset + this.handoffAudioOffsetInS + data.start + data.duration,
         confidence: data.confidence,
         text,
         speakerId: data.speaker_id ?? undefined,
@@ -1335,9 +1797,9 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
           (word): TimedString =>
             createTimedString({
               text: word.word,
-              startTime: word.start + this.startTimeOffset,
-              endTime: word.end + this.startTimeOffset,
-              startTimeOffset: this.startTimeOffset,
+              startTime: word.start + this.startTimeOffset + this.handoffAudioOffsetInS,
+              endTime: word.end + this.startTimeOffset + this.handoffAudioOffsetInS,
+              startTimeOffset: this.startTimeOffset + this.handoffAudioOffsetInS,
               confidence: word.confidence,
               speakerId: word.speaker_id ?? undefined,
             }),
