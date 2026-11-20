@@ -2849,7 +2849,7 @@ export interface DataStreamAudioOutputOptions {
 // @public (undocumented)
 export type Decision = Probability | Choice | Score;
 
-// @public (undocumented)
+// @public
 export interface DecisionAvailabilityChangedEvent {
     // (undocumented)
     available: boolean;
@@ -2960,7 +2960,7 @@ export class DecisionModelFallbackAdapter extends DecisionModel {
     // (undocumented)
     get model(): string;
     // (undocumented)
-    readonly models: DecisionModel[];
+    readonly models: readonly DecisionModel[];
     // (undocumented)
     off<Event extends keyof DecisionModelFallbackCallbacks>(event: Event, listener: DecisionModelFallbackCallbacks[Event]): this;
     // (undocumented)
@@ -2971,12 +2971,11 @@ export class DecisionModelFallbackAdapter extends DecisionModel {
     readonly retryIntervalMs: number;
 }
 
-// @public (undocumented)
+// @public
 export interface DecisionModelFallbackAdapterOptions {
     attemptTimeoutMs?: number;
     maxRetryPerModel?: number;
-    // (undocumented)
-    models: DecisionModel[];
+    models: readonly DecisionModel[];
     retryIntervalMs?: number;
 }
 
@@ -2985,7 +2984,7 @@ export type DecisionModelFallbackCallbacks = DecisionModelCallbacks & {
     decision_availability_changed: (event: DecisionAvailabilityChangedEvent) => void;
 };
 
-// @public (undocumented)
+// @public
 interface DecisionModelOptions {
     // (undocumented)
     apiKey?: string;

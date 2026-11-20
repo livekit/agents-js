@@ -1,12 +1,14 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { z } from 'zod';
 import { APIConnectionError, APIError, APIStatusError } from '../_exceptions.js';
 import {
   DecisionModel as BaseDecisionModel,
   ChoiceResult,
   type Decision,
   DecisionResponse,
+  type DecisionResult,
   ProbabilityResult,
   ScoreResult,
 } from '../llm/decisions.js';
@@ -30,6 +32,7 @@ export type DecisionModels =
   | 'microsoft-eu/decision-1'
   | AnyString;
 
+/** Options for sending decision requests to the LiveKit Inference gateway. */
 export interface DecisionModelOptions {
   model?: DecisionModels;
   /** Gateway models tried in order. An empty list disables the gateway default. */
@@ -40,12 +43,32 @@ export interface DecisionModelOptions {
   fetch?: typeof globalThis.fetch;
 }
 
-type GatewayResponse = {
-  id?: string;
-  model?: string;
-  answers?: Record<string, unknown>;
-  usage?: { input_tokens?: number; output_tokens?: number };
-};
+const wireObject = z.custom<Record<string, unknown>>((value) => object(value) !== undefined);
+const wireUsageCount = z.number().int().nonnegative().nullish();
+const gatewayResponseSchema = z.object({
+  id: z.string().optional(),
+  model: z.string().optional(),
+  answers: wireObject,
+  usage: z.object({ input_tokens: wireUsageCount, output_tokens: wireUsageCount }).optional(),
+});
+
+const answerSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('noul'), noul: z.number() }),
+  z.object({
+    type: z.literal('choice'),
+    choice: z.string(),
+    probabilities: wireObject,
+    confidence: z.number().nullish(),
+  }),
+  z.object({
+    type: z.literal('score'),
+    score: z.number(),
+    probabilities: wireObject,
+    legend: z.union([z.array(z.string()), wireObject]),
+    confidence: z.number().nullish(),
+  }),
+  z.object({ type: z.literal('refusal') }),
+]);
 
 function encodeDecision(decision: Decision): Record<string, unknown> {
   if (decision.kind === 'probability') {
@@ -63,61 +86,78 @@ function object(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
+function parseGatewayResponse(text: string) {
+  try {
+    return gatewayResponseSchema.parse(JSON.parse(text));
+  } catch (cause) {
+    const error = new APIError('invalid inference decision response', { retryable: false });
+    error.cause = cause;
+    throw error;
+  }
+}
+
+function byLevelIndex(values: Record<string, unknown> | string[]): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(values).map(([key, value]) => {
+      const index = Number(key);
+      if (!key.trim() || !Number.isSafeInteger(index)) {
+        throw new Error('invalid level index');
+      }
+      return [index, value];
+    }),
+  );
+}
+
+function decodeAnswer(raw: unknown): DecisionResult {
+  const answer = answerSchema.parse(raw);
+  if (answer.type === 'refusal') {
+    throw new APIError('the model declined this decision', { retryable: false });
+  }
+  if (answer.type === 'noul') {
+    return new ProbabilityResult({ value: answer.noul });
+  }
+  const providerData = { confidence: answer.confidence ?? null };
+  if (answer.type === 'choice') {
+    return new ChoiceResult({
+      value: answer.choice,
+      probabilities: answer.probabilities as Record<string, number>,
+      providerData,
+    });
+  }
+
+  const probabilities = byLevelIndex(answer.probabilities);
+  const legend = byLevelIndex(answer.legend);
+  const indices = Object.keys(probabilities);
+  if (
+    indices.length !== Object.keys(legend).length ||
+    indices.some((key) => !Object.hasOwn(legend, key))
+  ) {
+    throw new APIError('score legend does not match distribution', { retryable: false });
+  }
+  const levels = indices
+    .sort((left, right) => Number(left) - Number(right))
+    .map((key) => legend[key]);
+  if (!levels.every((level) => typeof level === 'string')) {
+    throw new Error('invalid score legend');
+  }
+  return new ScoreResult({
+    value: answer.score,
+    probabilities: probabilities as Record<number, number>,
+    levels,
+    providerData,
+  });
+}
+
 function decodeAnswers(
   answers: Record<string, unknown>,
-): [Record<string, ProbabilityResult | ChoiceResult | ScoreResult>, Record<string, string>] {
-  const results: Record<string, ProbabilityResult | ChoiceResult | ScoreResult> = {};
-  const errors: Record<string, string> = {};
+): [Record<string, DecisionResult>, Record<string, string>] {
+  const results: Record<string, DecisionResult> = Object.create(null);
+  const errors: Record<string, string> = Object.create(null);
   for (const [name, raw] of Object.entries(answers)) {
     try {
-      const answer = object(raw);
-      if (!answer) throw new Error('malformed answer');
-      if (answer.type === 'refusal') {
-        errors[name] = 'provider declined to answer';
-      } else if (answer.type === 'noul' && typeof answer.noul === 'number') {
-        results[name] = new ProbabilityResult({
-          value: answer.noul,
-          providerData: object(answer.provider_data) ?? {},
-        });
-      } else if (answer.type === 'choice' && typeof answer.choice === 'string') {
-        const probabilities = object(answer.probabilities);
-        results[name] = new ChoiceResult({
-          value: answer.choice,
-          probabilities: probabilities as Record<string, number> | undefined,
-          providerData: {
-            ...(object(answer.provider_data) ?? {}),
-            ...(answer.confidence !== undefined ? { confidence: answer.confidence } : {}),
-          },
-        });
-      } else if (answer.type === 'score' && typeof answer.score === 'number') {
-        const probabilities = object(answer.probabilities);
-        const legend = Array.isArray(answer.legend)
-          ? answer.legend
-          : Object.entries(object(answer.legend) ?? {})
-              .sort(([left], [right]) => Number(left) - Number(right))
-              .map(([, level]) => level);
-        if (!probabilities || !legend.every((level) => typeof level === 'string')) {
-          throw new Error('malformed score answer');
-        }
-        results[name] = new ScoreResult({
-          value: answer.score,
-          probabilities: Object.fromEntries(
-            Object.entries(probabilities).map(([index, probability]) => [
-              Number(index),
-              probability,
-            ]),
-          ) as Record<number, number>,
-          levels: legend as string[],
-          providerData: {
-            ...(object(answer.provider_data) ?? {}),
-            ...(answer.confidence !== undefined ? { confidence: answer.confidence } : {}),
-          },
-        });
-      } else {
-        throw new Error('malformed answer');
-      }
+      results[name] = decodeAnswer(raw);
     } catch (error) {
-      errors[name] = error instanceof Error ? error.message : 'malformed answer';
+      errors[name] = error instanceof APIError ? error.message : 'invalid decision answer';
     }
   }
   return [results, errors];
@@ -182,6 +222,7 @@ export class DecisionModel extends BaseDecisionModel {
     }
 
     let response: Response;
+    let text: string;
     try {
       response = await this.fetch(`${this.baseURL.replace(/\/$/, '')}/decisions`, {
         method: 'POST',
@@ -193,14 +234,16 @@ export class DecisionModel extends BaseDecisionModel {
         body: JSON.stringify(body),
         signal: abortSignal,
       });
-    } catch (error) {
-      if (abortSignal.aborted) throw abortSignal.reason;
-      throw new APIConnectionError({ message: 'inference gateway connection failed' });
+      text = await response.text();
+    } catch (cause) {
+      abortSignal.throwIfAborted();
+      const error = new APIConnectionError({ message: 'inference gateway connection failed' });
+      error.cause = cause;
+      throw error;
     }
 
     const requestId = response.headers.get(REQUEST_ID_HEADER) ?? undefined;
     if (!response.ok) {
-      const text = await response.text();
       let parsed: unknown = text;
       let detail = '';
       try {
@@ -219,14 +262,7 @@ export class DecisionModel extends BaseDecisionModel {
       });
     }
 
-    let parsed: GatewayResponse;
-    try {
-      parsed = (await response.json()) as GatewayResponse;
-      if (!object(parsed) || !object(parsed.answers)) throw new Error('invalid response');
-    } catch (error) {
-      throw new APIError('invalid inference decision response', { retryable: false });
-    }
-
+    const parsed = parseGatewayResponse(text);
     const fallbackModel = response.headers.get(DECISIONS_MODEL_FALLBACK_HEADER) ?? '';
     if (fallbackModel) {
       this.logger.warn(
@@ -234,15 +270,15 @@ export class DecisionModel extends BaseDecisionModel {
         'inference decision was served by a fallback model',
       );
     }
-    const [results, errors] = decodeAnswers(parsed.answers!);
+    const [results, errors] = decodeAnswers(parsed.answers);
     return new DecisionResponse({
       results,
       errors,
       model: parsed.model || fallbackModel,
       provider: this.provider,
-      requestId: requestId ?? parsed.id,
-      inputTokens: parsed.usage?.input_tokens,
-      outputTokens: parsed.usage?.output_tokens,
+      requestId: requestId || parsed.id,
+      inputTokens: parsed.usage?.input_tokens ?? undefined,
+      outputTokens: parsed.usage?.output_tokens ?? undefined,
     });
   }
 }

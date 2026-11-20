@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { APIConnectionError, APIStatusError, APITimeoutError } from '../_exceptions.js';
 import type { DecisionMetrics } from '../metrics/base.js';
 import type { APIConnectOptions } from '../types.js';
@@ -62,7 +62,9 @@ class StaticModel extends DecisionModel {
     ...rest: Array<DecisionResponse | Error | DecisionKind[]>
   ) {
     const hasKinds = Array.isArray(rest.at(-1));
-    const kinds = hasKinds ? (rest.pop() as DecisionKind[]) : ['probability', 'choice', 'score'];
+    const kinds: DecisionKind[] = hasKinds
+      ? (rest.pop() as DecisionKind[])
+      : ['probability', 'choice', 'score'];
     super({ capabilities: { decisionKinds: kinds } });
     this.outcomes = Array.isArray(outcomesOrFirst)
       ? outcomesOrFirst
@@ -147,7 +149,7 @@ describe('DecisionModel', () => {
     expect(Object.keys(response.results)).toEqual(Object.keys(QUESTIONS));
     expect(response.errors).toEqual({});
     expect([response.model, response.provider]).toEqual(['resolved-model', 'test-provider']);
-    const [[, definitions]] = model.requests;
+    const [, definitions] = model.requests[0]!;
     expect(definitions).toEqual(QUESTIONS);
     const [metrics] = collected;
     expect(metrics?.type).toBe('decision_metrics');
@@ -167,7 +169,7 @@ describe('DecisionModel', () => {
   it('copies definitions before passing them to the provider', async () => {
     const model = new StaticModel(new DecisionResponse({ results: validResults() }));
     await evaluate(model);
-    const [[, definitions]] = model.requests;
+    const [, definitions] = model.requests[0]!;
     expect(definitions).not.toBe(QUESTIONS);
     expect((definitions?.intent as Choice).options).not.toBe((QUESTIONS.intent as Choice).options);
   });
@@ -614,6 +616,35 @@ describe('DecisionModelFallbackAdapter', () => {
     await adapter.aclose();
   });
 
+  it('checks recovery again after a model throws synchronously', async () => {
+    const primary = new SwitchModel('primary');
+    const evaluatePrimary = primary.evaluate.bind(primary);
+    const down = new APIConnectionError({ message: 'down' });
+    const requests = vi
+      .spyOn(primary, 'evaluate')
+      .mockImplementationOnce(() => {
+        throw down;
+      })
+      .mockImplementationOnce(() => {
+        throw down;
+      })
+      .mockImplementation(evaluatePrimary);
+    const [adapter, events] = fallback([primary, new SwitchModel('secondary')]);
+
+    expect((await evaluate(adapter, { decisions: CHECK })).model).toBe('secondary');
+    expect(requests).toHaveBeenCalledTimes(2);
+    expect(events).toEqual([['primary', false]]);
+    expect((await evaluate(adapter, { decisions: CHECK })).model).toBe('secondary');
+    await vi.waitFor(() =>
+      expect(events).toEqual([
+        ['primary', false],
+        ['primary', true],
+      ]),
+    );
+    expect((await evaluate(adapter, { decisions: CHECK })).model).toBe('primary');
+    await adapter.aclose();
+  });
+
   it.each([
     new APIStatusError({ message: 'unauthorized', options: { statusCode: 401 } }),
     new Error('boom'),
@@ -627,17 +658,21 @@ describe('DecisionModelFallbackAdapter', () => {
     await adapter.aclose();
   });
 
-  it.each([1000, 50])('applies its own %i ms timeout to each model', async (attemptTimeoutMs) => {
-    const [adapter] = fallback([new SwitchModel('primary', 'hang'), new SwitchModel('secondary')], {
-      attemptTimeoutMs,
-    });
+  it.each([
+    [1000, {}],
+    [50, { attemptTimeoutMs: 50 }],
+  ] as const)('applies its own %i ms timeout to each model', async (expectedTimeout, options) => {
+    const [adapter] = fallback(
+      [new SwitchModel('primary', 'hang'), new SwitchModel('secondary')],
+      options,
+    );
     const started = performance.now();
     const response = await evaluate(adapter, {
       decisions: CHECK,
       connOptions: { maxRetry: 3, retryIntervalMs: 0, timeoutMs: 10_000 },
     });
     expect(response.model).toBe('secondary');
-    expect(performance.now() - started).toBeGreaterThanOrEqual(attemptTimeoutMs - 10);
+    expect(performance.now() - started).toBeGreaterThanOrEqual(expectedTimeout - 10);
     await adapter.aclose();
   });
 
@@ -667,6 +702,23 @@ describe('DecisionModelFallbackAdapter', () => {
     expect((await request).model).toBe('secondary');
     await new Promise((resolve) => setTimeout(resolve, 75));
     expect(primary.requests).toHaveLength(1);
+  });
+
+  it('cancels an in-flight recovery check on close', async () => {
+    const primary = new SwitchModel('primary', 'hang');
+    const requests = vi
+      .spyOn(primary, 'evaluate')
+      .mockRejectedValueOnce(new APIConnectionError({ message: 'down' }));
+    const [adapter, events] = fallback([primary, new SwitchModel('secondary')]);
+
+    expect((await evaluate(adapter, { decisions: CHECK })).model).toBe('secondary');
+    expect(requests).toHaveBeenCalledTimes(2);
+    const recoverySignal = requests.mock.calls[1]?.[0].abortSignal;
+    expect(recoverySignal?.aborted).toBe(false);
+
+    await adapter.aclose();
+    expect(recoverySignal?.aborted).toBe(true);
+    expect(events).toEqual([['primary', false]]);
   });
 
   it('retries every model once all are unavailable', async () => {
@@ -709,12 +761,41 @@ describe('DecisionModelFallbackAdapter', () => {
     expect(collected[0]?.metadata?.modelName).toBe('primary');
   });
 
+  it('forwards metrics once per model instance and unsubscribes on close', async () => {
+    const primary = new SwitchModel('primary');
+    const [adapter] = fallback([primary, primary]);
+    const collected = vi.fn();
+    adapter.on('metrics_collected', collected);
+
+    await evaluate(adapter, { decisions: CHECK });
+    expect(collected).toHaveBeenCalledTimes(1);
+
+    await adapter.aclose();
+    await evaluate(primary, { decisions: CHECK });
+    expect(collected).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the configured model order when callers mutate the input array', async () => {
+    const primary = new SwitchModel('primary');
+    const secondary = new SwitchModel('secondary');
+    const models = [primary, secondary];
+    const [adapter] = fallback(models);
+    models.reverse();
+
+    expect(adapter.models).toEqual([primary, secondary]);
+    expect(() => Array.prototype.pop.call(adapter.models)).toThrow(TypeError);
+    expect((await evaluate(adapter, { decisions: CHECK })).model).toBe('primary');
+    await adapter.aclose();
+  });
+
   it('does not bring a model back for an empty batch', async () => {
     const primary = new SwitchModel('primary', new APIConnectionError({ message: 'down' }));
     const [adapter, events] = fallback([primary, new SwitchModel('secondary')]);
     await evaluate(adapter, { decisions: CHECK });
     await new Promise((resolve) => setTimeout(resolve, 10));
-    expect((await evaluate(adapter, { decisions: {} })).results).toEqual({});
+    const response = await evaluate(adapter, { decisions: {} });
+    expect(response).toBeInstanceOf(DecisionResponse);
+    expect(response).toMatchObject({ results: {}, errors: {}, model: 'secondary' });
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(events).toEqual([['primary', false]]);
     await adapter.aclose();

@@ -12,12 +12,13 @@ import {
   type Decision,
   DecisionModel,
   type DecisionModelCallbacks,
-  type DecisionResponse,
+  DecisionResponse,
   copyDecisions,
   formatTranscript,
   validateDecisions,
 } from './decisions.js';
 
+/** Emitted when a decision model becomes unavailable or recovers. */
 export interface DecisionAvailabilityChangedEvent {
   model: DecisionModel;
   available: boolean;
@@ -27,8 +28,10 @@ export type DecisionModelFallbackCallbacks = DecisionModelCallbacks & {
   decision_availability_changed: (event: DecisionAvailabilityChangedEvent) => void;
 };
 
+/** Configures the decision model order and retry policy for each model. */
 export interface DecisionModelFallbackAdapterOptions {
-  models: DecisionModel[];
+  /** Models in priority order. Each model must support the decisions sent to the adapter. */
+  models: readonly DecisionModel[];
   /** Timeout for each model attempt in milliseconds. Defaults to 1000. */
   attemptTimeoutMs?: number;
   /** Retries on one model before moving to the next. Defaults to 0. */
@@ -54,17 +57,15 @@ function name(model: DecisionModel): string {
  * succeeds on it. Partial decision errors are returned without falling back.
  */
 export class DecisionModelFallbackAdapter extends DecisionModel {
-  readonly models: DecisionModel[];
+  readonly models: readonly DecisionModel[];
   readonly attemptTimeoutMs: number;
   readonly maxRetryPerModel: number;
   readonly retryIntervalMs: number;
 
   private readonly status: ModelStatus[];
   private readonly logger = log();
-  private readonly metricsHandlers = new Map<
-    DecisionModel,
-    DecisionModelCallbacks['metrics_collected']
-  >();
+  private readonly forwardMetrics: DecisionModelCallbacks['metrics_collected'] = (metrics) =>
+    this.emit('metrics_collected', metrics);
   private closed = false;
 
   constructor({
@@ -81,17 +82,14 @@ export class DecisionModelFallbackAdapter extends DecisionModel {
     if (kinds.length === 0) throw new Error('the decision models share no decision kind');
     super({ capabilities: { decisionKinds: kinds } });
 
-    this.models = [...models];
+    this.models = Object.freeze([...models]);
     this.attemptTimeoutMs = attemptTimeoutMs;
     this.maxRetryPerModel = maxRetryPerModel;
     this.retryIntervalMs = retryIntervalMs;
-    this.status = models.map(() => ({ available: true }));
+    this.status = this.models.map(() => ({ available: true }));
 
-    for (const model of this.models) {
-      const handler: DecisionModelCallbacks['metrics_collected'] = (metrics) =>
-        this.emit('metrics_collected', metrics);
-      this.metricsHandlers.set(model, handler);
-      model.on('metrics_collected', handler);
+    for (const model of new Set(this.models)) {
+      model.on('metrics_collected', this.forwardMetrics);
     }
   }
 
@@ -138,7 +136,7 @@ export class DecisionModelFallbackAdapter extends DecisionModel {
     const definitions = copyDecisions(decisions);
     validateDecisions(definitions, this.capabilities);
     if (Object.keys(definitions).length === 0) {
-      return { results: {}, errors: {}, model: this.model, provider: this.provider, requestId: '' };
+      return new DecisionResponse({ results: {}, model: this.model, provider: this.provider });
     }
 
     const text = typeof input === 'string' ? input : formatTranscript(input);
@@ -222,37 +220,46 @@ export class DecisionModelFallbackAdapter extends DecisionModel {
     if (this.closed || status.recoveringTask) return;
     const controller = new AbortController();
     status.recoveryController = controller;
-    status.recoveringTask = tracer.startActiveSpan(
-      async () => {
-        try {
-          await model.evaluate({ input, decisions, connOptions, abortSignal: controller.signal });
-          if (!this.closed) {
-            this.logger.info({ model: name(model) }, 'decision model recovered');
-            this.setAvailable(model, status, true);
-          }
-        } catch (error) {
-          if (!controller.signal.aborted) {
-            this.logger.debug({ model: name(model), error }, 'decision model recovery failed');
-          }
-        } finally {
-          status.recoveringTask = undefined;
-          status.recoveryController = undefined;
-        }
-      },
-      {
-        name: 'decision_fallback_adapter.recovery',
-        attributes: { [traceTypes.ATTR_FALLBACK_RECOVERY]: true },
-      },
-    );
+    status.recoveringTask = Promise.resolve()
+      .then(() =>
+        tracer.startActiveSpan(
+          async () => {
+            if (controller.signal.aborted) return;
+            try {
+              await model.evaluate({
+                input,
+                decisions,
+                connOptions,
+                abortSignal: controller.signal,
+              });
+              if (!this.closed) {
+                this.logger.info({ model: name(model) }, 'decision model recovered');
+                this.setAvailable(model, status, true);
+              }
+            } catch (error) {
+              if (!controller.signal.aborted) {
+                this.logger.debug({ model: name(model), error }, 'decision model recovery failed');
+              }
+            }
+          },
+          {
+            name: 'decision_fallback_adapter.recovery',
+            attributes: { [traceTypes.ATTR_FALLBACK_RECOVERY]: true },
+          },
+        ),
+      )
+      .finally(() => {
+        status.recoveringTask = undefined;
+        status.recoveryController = undefined;
+      });
   }
 
   override async aclose(): Promise<void> {
     this.closed = true;
     for (const status of this.status) status.recoveryController?.abort();
     await Promise.allSettled(this.status.flatMap((status) => status.recoveringTask ?? []));
-    for (const model of this.models) {
-      const handler = this.metricsHandlers.get(model);
-      if (handler) model.off('metrics_collected', handler);
+    for (const model of new Set(this.models)) {
+      model.off('metrics_collected', this.forwardMetrics);
     }
   }
 }
