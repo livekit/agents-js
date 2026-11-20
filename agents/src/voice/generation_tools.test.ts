@@ -5,7 +5,7 @@ import { ReadableStream as NodeReadableStream } from 'stream/web';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { FunctionCall, ToolContext, ToolError, handoff, tool } from '../llm/index.js';
-import { initializeLogger } from '../log.js';
+import { initializeLogger, log } from '../log.js';
 import type { Task } from '../utils.js';
 import { cancelAndWait, delay } from '../utils.js';
 import { Agent, AgentTask, StopResponse } from './agent.js';
@@ -605,6 +605,51 @@ describe('Generation + Tool Execution', () => {
     expect(output).not.toContain('postgres');
     // Raw exception is still preserved server-side for observability.
     expect(out?.rawException?.message).toContain('hunter2');
+  });
+
+  it('does not log StopResponse as a tool exception', async () => {
+    const error = vi.spyOn(log(), 'error');
+    const stop = tool({
+      name: 'stop',
+      description: 'stop',
+      parameters: z.object({}),
+      execute: async () => {
+        throw new StopResponse();
+      },
+    });
+    const fail = tool({
+      name: 'fail',
+      description: 'fail',
+      parameters: z.object({}),
+      execute: async () => {
+        throw new Error('boom');
+      },
+    });
+    const toolCallStream = createFunctionCallStreamFromArray([
+      FunctionCall.create({ callId: 'call_stop', name: 'stop', args: '{}' }),
+      FunctionCall.create({ callId: 'call_fail', name: 'fail', args: '{}' }),
+    ]);
+
+    try {
+      const [execTask, toolOutput] = performToolExecutions({
+        session: {} as any,
+        speechHandle: { id: 'speech_stop_response', _itemAdded: () => {} } as any,
+        toolCtx: new ToolContext([stop, fail]) as any,
+        toolCallStream,
+        controller: new AbortController(),
+      });
+      await execTask.result;
+
+      expect(toolOutput.output.length).toBe(2);
+      const toolErrors = error.mock.calls.filter(
+        ([, message]) => message === 'exception occurred while executing tool',
+      );
+      expect(toolErrors.map(([fields]) => (fields as { function: string }).function)).toEqual([
+        'fail',
+      ]);
+    } finally {
+      error.mockRestore();
+    }
   });
 
   it('should forward ToolError messages to the LLM verbatim (escape hatch)', async () => {
