@@ -1122,6 +1122,87 @@ describe('ElevenLabs STT', () => {
   );
 
   it.each([
+    ['options', false],
+    ['providerError', false],
+    ['options', true],
+  ] as const)(
+    'keeps turn boundaries balanced on %s reconnect with the old final delivered=%s',
+    async (reconnectCause, finalDelivered) => {
+      const { wss, baseURL } = await startWebSocketServer();
+      const sockets: WebSocket[] = [];
+      wss.on('connection', (socket) => {
+        sockets.push(socket);
+        const firstConnection = sockets.length === 1;
+        socket.once('message', () => {
+          if (!firstConnection) {
+            socket.send(JSON.stringify(partialTranscript('new partial')));
+            return;
+          }
+          socket.send(JSON.stringify(partialTranscript('old partial')));
+          socket.send(JSON.stringify(committedTranscript('old partial')));
+          if (finalDelivered) {
+            socket.send(
+              JSON.stringify(committedTranscript('old partial', { withTimestamps: true })),
+            );
+          } else {
+            // The repeated text is emitted only once the plain commit resets partial deduplication.
+            socket.send(JSON.stringify(partialTranscript('old partial')));
+          }
+        });
+      });
+      const instance = new STT({
+        apiKey: 'test-key',
+        baseURL,
+        model: 'scribe_v3_live',
+        commitStrategy: 'turn_prediction',
+        vad: new TestVAD(),
+        serverVad: { vadSilenceThresholdSecs: 0.5 },
+        includeTimestamps: true,
+        includeLanguageDetection: false,
+      });
+      const stream = instance.stream({
+        connOptions: { maxRetry: 2, retryIntervalMs: 0, timeoutMs: 1000 },
+      });
+      const { events } = collectAllEvents(stream);
+      const { START_OF_SPEECH, INTERIM_TRANSCRIPT, FINAL_TRANSCRIPT, END_OF_SPEECH } =
+        sttLib.SpeechEventType;
+      try {
+        stream.pushFrame(makeFrame());
+        await waitUntil(() =>
+          finalDelivered
+            ? events.some((event) => event.type === END_OF_SPEECH)
+            : events.length === 3,
+        );
+        if (reconnectCause === 'options') instance.updateOptions({ keyterms: ['LiveKit'] });
+        else
+          sockets[0]!.send(JSON.stringify({ message_type: 'transcriber_error', message: 'retry' }));
+
+        await waitUntil(() => sockets.length === 2, 2000);
+        expect(turnEvents(events).map((event) => event.type)).toEqual([
+          START_OF_SPEECH,
+          ...(finalDelivered ? [FINAL_TRANSCRIPT] : []),
+          END_OF_SPEECH,
+        ]);
+
+        const beforeNewPartial = events.length;
+        stream.pushFrame(makeFrame());
+        await waitUntil(
+          () => events.slice(beforeNewPartial).some((event) => event.type === END_OF_SPEECH),
+          2000,
+        );
+        expect(events.slice(beforeNewPartial).map((event) => event.type)).toEqual([
+          START_OF_SPEECH,
+          INTERIM_TRANSCRIPT,
+          END_OF_SPEECH,
+        ]);
+      } finally {
+        stream.close();
+        await closeWebSocketServer(wss);
+      }
+    },
+  );
+
+  it.each([
     ['strategy', 'frame'],
     ['strategy', 'flush'],
     ['providerError', 'frame'],

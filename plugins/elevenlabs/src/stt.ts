@@ -771,9 +771,10 @@ export class SpeechStream extends stt.SpeechStream {
       const tasks: Task<void>[] = [];
 
       try {
+        // A replacement socket cannot deliver the previous connection's pending final.
+        this.#emitEndOfSpeech();
         ws = await this.#connectWs();
         await this.#turnDetection.start();
-        this.#finalAlternatives = [];
 
         const keepaliveTask = Task.from(async (controller) => {
           while (!controller.signal.aborted) {
