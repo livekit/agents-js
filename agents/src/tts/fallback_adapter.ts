@@ -67,6 +67,16 @@ const DEFAULT_FALLBACK_API_CONNECT_OPTIONS: APIConnectOptions = {
   retryIntervalMs: DEFAULT_API_CONNECT_OPTIONS.retryIntervalMs,
 };
 
+/**
+ * The options of the adapter's own stream. Its `maxRetry` is forced to 0: the adapter fails over
+ * between instances itself, and each instance retries on its own `maxRetryPerTTS`, so a caller's
+ * `maxRetry` (3 in an `AgentSession`) would rerun the whole failover and try every instance
+ * `maxRetry + 1` times per request.
+ */
+function adapterConnOptions(connOptions?: APIConnectOptions): APIConnectOptions {
+  return { ...(connOptions ?? DEFAULT_FALLBACK_API_CONNECT_OPTIONS), maxRetry: 0 };
+}
+
 const FORWARD_POLL_MS = 10;
 
 /**
@@ -456,12 +466,7 @@ export class FallbackAdapter extends TTS {
     connOptions?: APIConnectOptions,
     abortSignal?: AbortSignal,
   ): ChunkedStream {
-    return new FallbackChunkedStream(
-      this,
-      text,
-      connOptions ?? DEFAULT_FALLBACK_API_CONNECT_OPTIONS,
-      abortSignal,
-    );
+    return new FallbackChunkedStream(this, text, adapterConnOptions(connOptions), abortSignal);
   }
 
   /**
@@ -470,10 +475,7 @@ export class FallbackAdapter extends TTS {
    * @param options - Optional configuration including connection options
    */
   stream(options?: { connOptions?: APIConnectOptions }): SynthesizeStream {
-    return new FallbackSynthesizeStream(
-      this,
-      options?.connOptions ?? DEFAULT_FALLBACK_API_CONNECT_OPTIONS,
-    );
+    return new FallbackSynthesizeStream(this, adapterConnOptions(options?.connOptions));
   }
 
   /**

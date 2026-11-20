@@ -316,8 +316,8 @@ class FrameThenHangTTS extends MockTTS {
   }
 }
 
-function streamText(tts: TTS, text: string): SynthesizeStream {
-  const stream = tts.stream();
+function streamText(tts: TTS, text: string, connOptions?: APIConnectOptions): SynthesizeStream {
+  const stream = tts.stream({ connOptions });
   stream.updateInputStream(
     new ReadableStream<string>({
       start(controller) {
@@ -336,8 +336,12 @@ async function request(
   adapter: TTS,
   mode: Mode,
   text = 'hello world.',
+  connOptions?: APIConnectOptions,
 ): Promise<{ frames: number; ended: boolean }> {
-  const stream = mode === 'chunked' ? adapter.synthesize(text) : streamText(adapter, text);
+  const stream =
+    mode === 'chunked'
+      ? adapter.synthesize(text, connOptions)
+      : streamText(adapter, text, connOptions);
   let frames = 0;
   let ended = false;
   try {
@@ -1724,6 +1728,43 @@ describe('TTS FallbackAdapter', () => {
         expect(adapterErrors).toHaveLength(1);
         expect(adapterErrors[0]).toMatchObject({ recoverable: false });
         expect(adapterErrors[0]!.error.message).toContain('all TTS instances failed');
+
+        await adapter.close();
+      },
+    );
+
+    it.each(['chunked', 'streaming'] as const)(
+      "does not rerun the instances on the caller's maxRetry: each is tried once per request (%s)",
+      async (mode) => {
+        const method = mode === 'chunked' ? 'synthesize' : 'stream';
+        const primary = new MockTTS('primary');
+        primary.shouldFail = true;
+        const secondary = new MockTTS('secondary');
+        secondary.shouldFail = true;
+        const adapter = new FallbackAdapter({
+          ttsInstances: [primary, secondary],
+          maxRetryPerTTS: 0,
+          recoveryDelayMs: 60_000,
+        });
+        // probes are not under test, and a probe of a failed instance would count as an attempt
+        vi.spyOn(adapter, 'tryRecovery').mockImplementation(() => {});
+        const adapterErrors: TTSError[] = [];
+        adapter.on('error', (error) => adapterErrors.push(error));
+        const attempts = [primary, secondary].map((tts) => vi.spyOn(tts, method));
+        // an AgentSession passes maxRetry 3
+        const connOptions: APIConnectOptions = {
+          maxRetry: 3,
+          retryIntervalMs: 0,
+          timeoutMs: 5_000,
+        };
+
+        for (let n = 1; n <= 2; n++) {
+          expect((await request(adapter, mode, 'hello world.', connOptions)).frames).toBe(0);
+          expect(attempts.map((spy) => spy.mock.calls.length)).toEqual([n, n]);
+          expect(adapterErrors).toHaveLength(n);
+        }
+        expect(adapterErrors.at(-1)).toMatchObject({ recoverable: false });
+        expect(adapterErrors.at(-1)!.error.message).toContain('all TTS instances failed');
 
         await adapter.close();
       },
