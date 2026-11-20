@@ -302,6 +302,67 @@ describe('ToolExecutor', () => {
     });
 
     expect(String(duplicate)).toContain('Same tool `dedupe_lookup` is already running');
+    expect(String(duplicate)).toContain('lk_agents_cancel_task');
+
+    neverFinish.resolve();
+    await executor.waitForAll();
+  });
+
+  it('omits cancel from duplicate rejection when the running tool is not cancellable', async () => {
+    const executor = new ToolExecutor();
+    const first = buildRunContext('dedupe_lookup');
+    const second = buildRunContext('dedupe_lookup');
+    const neverFinish = new Future<void>();
+    const lookup = tool({
+      name: 'dedupe_lookup',
+      description: 'Dedupe lookup',
+      onDuplicate: 'reject',
+      execute: async (_, { ctx }) => {
+        await ctx.update('started');
+        await neverFinish.await;
+        return 'done';
+      },
+    });
+
+    await executor.execute({ tool: lookup, runCtx: first.runCtx, rawArguments: {} });
+    const duplicate = await executor.execute({
+      tool: lookup,
+      runCtx: second.runCtx,
+      rawArguments: {},
+    });
+
+    expect(String(duplicate)).toContain('Same tool `dedupe_lookup` is already running');
+    expect(String(duplicate)).not.toContain('lk_agents_cancel_task');
+
+    neverFinish.resolve();
+    await executor.waitForAll();
+  });
+
+  it('omits cancel from duplicate confirmation when the running tool is not cancellable', async () => {
+    const executor = new ToolExecutor();
+    const first = buildRunContext('dedupe_lookup');
+    const second = buildRunContext('dedupe_lookup');
+    const neverFinish = new Future<void>();
+    const lookup = tool({
+      name: 'dedupe_lookup',
+      description: 'Dedupe lookup',
+      onDuplicate: 'confirm',
+      execute: async (_, { ctx }) => {
+        await ctx.update('started');
+        await neverFinish.await;
+        return 'done';
+      },
+    });
+
+    await executor.execute({ tool: lookup, runCtx: first.runCtx, rawArguments: {} });
+    const duplicate = await executor.execute({
+      tool: lookup,
+      runCtx: second.runCtx,
+      rawArguments: {},
+    });
+
+    expect(String(duplicate).toLowerCase()).toContain('confirm duplicate');
+    expect(String(duplicate)).not.toContain('lk_agents_cancel_task');
 
     neverFinish.resolve();
     await executor.waitForAll();
