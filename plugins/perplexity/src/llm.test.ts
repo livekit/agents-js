@@ -2,10 +2,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type OpenAI from 'openai';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LLM, PERPLEXITY_BASE_URL } from './llm.js';
 
 const originalPerplexityApiKey = process.env.PERPLEXITY_API_KEY;
+let warnSpy: ReturnType<typeof vi.spyOn>;
 
 interface LLMInternals {
   _client: OpenAI;
@@ -17,7 +18,12 @@ interface OpenAIInternals {
   };
 }
 
+beforeEach(() => {
+  warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+});
+
 afterEach(() => {
+  warnSpy.mockRestore();
   if (originalPerplexityApiKey === undefined) {
     delete process.env.PERPLEXITY_API_KEY;
   } else {
@@ -26,6 +32,14 @@ afterEach(() => {
 });
 
 describe('Perplexity LLM', () => {
+  it('warns with the Agent API migration path', () => {
+    process.env.PERPLEXITY_API_KEY = 'test-key';
+
+    new LLM();
+
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('responses.LLM'));
+  });
+
   it('defaults to sonar-pro and Perplexity base URL', () => {
     process.env.PERPLEXITY_API_KEY = 'test-key';
 
