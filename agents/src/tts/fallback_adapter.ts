@@ -99,9 +99,11 @@ const RECOVERY_PROBE_TIMEOUT_MS = 10_000;
  * A failed provider is marked unavailable and probed in the background by the next requests that
  * skip or fail over it, and restored once a probe succeeds or it serves a request with audio.
  * A request never fails while a provider remains untried: when every provider it tried has failed,
- * it tries the ones it skipped as unavailable, in priority order, as a last resort. Once every
- * provider is down none is skipped, so each is tried in turn; one that fails is probed, and the
- * one that serves is restored. A provider that fails after its audio started ends the utterance
+ * it tries the ones it skipped as unavailable, in priority order, as a last resort. This holds
+ * when every provider is down too: each is skipped and probed, then tried in turn, and the one
+ * that serves is restored. The adapter reruns no provider on the caller's `maxRetry`: each is tried
+ * once per request, with its own `maxRetryPerTTS` retries. A provider that fails after its audio
+ * started ends the utterance
  * (another provider would replay it) and is marked unavailable too; the adapter then emits an
  * `error` event, recoverable when the adapter has another provider to serve the next utterance and
  * unrecoverable when it has only one.
@@ -384,10 +386,10 @@ export class FallbackAdapter extends TTS {
 
   /**
    * Marks an instance available again, after a probe succeeded or a request it served succeeded.
-   * Serving counts because an instance that serves as a last resort, or once every instance is
-   * unavailable, is not probed first: it would otherwise stay unavailable for good. A request
-   * served by the instance counts only if audio reached the caller, so a request that made no
-   * provider call (blank input) or produced no frame proves nothing. Emits
+   * Serving counts because the probe a skip starts may not restore the instance: `recoveryDelayMs`
+   * can rate-limit it, or it can lose the race to a request that serves the instance as a last
+   * resort. A request served by the instance counts only if audio reached the caller, so a
+   * request that made no provider call (blank input) or produced no frame proves nothing. Emits
    * `tts_availability_changed` if it was unavailable.
    * @internal
    */
@@ -607,19 +609,15 @@ class FallbackChunkedStream extends ChunkedStream {
   protected async run(): Promise<Throws<void, APIConnectionError>> {
     if (this.abortSignal.aborted || this.inputText.trim().length === 0) return;
 
-    const allTTSFailed = this.adapter.status.every((s) => !s.available);
     let lastRequestId: string = '';
     let lastSegmentId: string = '';
-    if (allTTSFailed) {
-      this._logger.warn('All fallback TTS instances failed, retrying from first...');
-    }
     // instances skipped as unavailable: tried again, as a last resort, after the others failed
     const skipped: number[] = [];
     for (const i of attemptOrder(this.adapter.ttsInstances.length, skipped)) {
       if (this.abortSignal.aborted) return;
       const tts = this.adapter.ttsInstances[i]!;
       const status = this.adapter.status[i]!;
-      if (!status.available && !allTTSFailed && !skipped.includes(i)) {
+      if (!status.available && !skipped.includes(i)) {
         this.adapter.tryRecovery(i);
         skipped.push(i);
         continue;
@@ -787,10 +785,6 @@ class FallbackSynthesizeStream extends SynthesizeStream {
    */
   protected async run(): Promise<Throws<void, APIConnectionError>> {
     if (this.abortSignal.aborted) return;
-    const allTTSFailed = this.adapter.status.every((s) => !s.available);
-    if (allTTSFailed) {
-      this._logger.warn('All fallback TTS instances failed, retrying from first...');
-    }
     let textReceived = false;
     let inputEnded = false;
     const readInputLLMStream = (async () => {
@@ -818,7 +812,7 @@ class FallbackSynthesizeStream extends SynthesizeStream {
       let lastRequestId: string = '';
       let lastSegmentId: string = '';
 
-      if (!status.available && !allTTSFailed && !skipped.includes(i)) {
+      if (!status.available && !skipped.includes(i)) {
         this.adapter.tryRecovery(i);
         skipped.push(i);
         continue;

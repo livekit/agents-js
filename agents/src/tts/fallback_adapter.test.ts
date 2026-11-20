@@ -358,6 +358,14 @@ async function request(
   return { frames, ended };
 }
 
+/** The labels of the instances a request tried, in the order it tried them. */
+function attemptOrderOf(attempts: [TTS, { mock: { invocationCallOrder: number[] } }][]): string[] {
+  return attempts
+    .flatMap(([tts, spy]) => spy.mock.invocationCallOrder.map((order) => ({ order, tts })))
+    .sort((a, b) => a.order - b.order)
+    .map(({ tts }) => tts.label);
+}
+
 describe('TTS FallbackAdapter', () => {
   const unhandledRejections: unknown[] = [];
 
@@ -1632,8 +1640,9 @@ describe('TTS FallbackAdapter', () => {
         expect((await request(adapter, mode)).frames).toBe(0);
         expect(adapter.status.map((status) => status.available)).toEqual([false, false]);
 
-        // every instance is down, so none is skipped and none is probed: all are retried, and the
-        // secondary is the one that serves
+        // every instance is down, so the request skips both: their probes are rate-limited by
+        // recoveryDelayMs. It then tries both as a last resort, and the secondary is the one that
+        // serves, so serving is what restores it
         secondary.shouldFail = false;
         expect((await request(adapter, mode)).frames).toBeGreaterThan(0);
         expect(adapter.status.map((status) => status.available)).toEqual([false, true]);
@@ -1712,22 +1721,55 @@ describe('TTS FallbackAdapter', () => {
         adapter.markUnAvailable(1);
         const adapterErrors: TTSError[] = [];
         adapter.on('error', (error) => adapterErrors.push(error));
-        const attempts = [primary, secondary, third].map((tts) => vi.spyOn(tts, method));
-        const order: string[] = [];
-        attempts.forEach((spy, i) =>
-          spy.mockImplementation(function (this: TTS, ...args: []) {
-            order.push(['primary', 'secondary', 'third'][i]!);
-            return TTS.prototype[method].apply(this, args as never);
-          }),
+        const attempts = [primary, secondary, third].map(
+          (tts) => [tts, vi.spyOn(tts, method)] as [TTS, ReturnType<typeof vi.spyOn>],
         );
 
         expect((await request(adapter, mode)).frames).toBe(0);
 
         // the available ones first, then the skipped one
-        expect(order).toEqual(['primary', 'third', 'secondary']);
+        expect(attemptOrderOf(attempts)).toEqual(['primary', 'third', 'secondary']);
         expect(adapterErrors).toHaveLength(1);
         expect(adapterErrors[0]).toMatchObject({ recoverable: false });
         expect(adapterErrors[0]!.error.message).toContain('all TTS instances failed');
+
+        await adapter.close();
+      },
+    );
+
+    it.each(['chunked', 'streaming'] as const)(
+      'probes every instance after a total outage, so all are available again once they recover (%s)',
+      async (mode) => {
+        const primary = new MockTTS('primary');
+        primary.shouldFail = true;
+        const secondary = new MockTTS('secondary');
+        secondary.shouldFail = true;
+        const adapter = new FallbackAdapter({
+          ttsInstances: [primary, secondary],
+          maxRetryPerTTS: 0,
+          recoveryDelayMs: 0,
+        });
+        adapter.on('error', () => {});
+
+        // a total outage; the probes the failures started fail too
+        expect((await request(adapter, mode)).frames).toBe(0);
+        expect(adapter.status.map((status) => status.available)).toEqual([false, false]);
+        await vi.waitFor(() =>
+          expect(adapter.status.every((status) => status.recoveringTask!.done)).toBe(true),
+        );
+
+        // both recover. The next request skips both, probes both and serves from the primary as a
+        // last resort. Without that, the primary serves every request and the secondary is never
+        // reached, so it would stay unavailable
+        primary.shouldFail = false;
+        secondary.shouldFail = false;
+        for (let i = 0; i < 20; i++) {
+          expect((await request(adapter, mode)).frames).toBeGreaterThan(0);
+        }
+
+        await vi.waitFor(() =>
+          expect(adapter.status.map((status) => status.available)).toEqual([true, true]),
+        );
 
         await adapter.close();
       },
@@ -1771,6 +1813,76 @@ describe('TTS FallbackAdapter', () => {
     );
 
     it.each(['chunked', 'streaming'] as const)(
+      'tries the available instances in priority order, then the skipped ones in priority order (%s)',
+      async (mode) => {
+        const method = mode === 'chunked' ? 'synthesize' : 'stream';
+        const ttsInstances = ['a', 'b', 'c', 'd'].map((label) => {
+          const tts = new MockTTS(label);
+          tts.shouldFail = true;
+          return tts;
+        });
+        const adapter = new FallbackAdapter({
+          ttsInstances,
+          maxRetryPerTTS: 0,
+          recoveryDelayMs: 60_000,
+        });
+        vi.spyOn(adapter, 'tryRecovery').mockImplementation(() => {});
+        adapter.on('error', () => {});
+        // a and c are unavailable: the request skips them and tries them last
+        adapter.markUnAvailable(0);
+        adapter.markUnAvailable(2);
+        const attempts = ttsInstances.map(
+          (tts) => [tts, vi.spyOn(tts, method)] as [TTS, ReturnType<typeof vi.spyOn>],
+        );
+
+        expect((await request(adapter, mode)).frames).toBe(0);
+
+        expect(attemptOrderOf(attempts)).toEqual(['b', 'd', 'a', 'c']);
+
+        await adapter.close();
+      },
+    );
+
+    it.each(['chunked', 'streaming'] as const)(
+      'serves a last resort while its own probe runs, and reports it available once (%s)',
+      async (mode) => {
+        const primary = new MockTTS('primary');
+        primary.shouldFail = true;
+        const secondary = new MockTTS('secondary');
+        // slow enough that the probe the skip starts is still running when the request is served
+        secondary.sendDelayMs = 50;
+        const adapter = new FallbackAdapter({
+          ttsInstances: [primary, secondary],
+          maxRetryPerTTS: 0,
+          recoveryDelayMs: 0,
+        });
+        const adapterErrors: TTSError[] = [];
+        adapter.on('error', (error) => adapterErrors.push(error));
+        const availability: AvailabilityChangedEvent[] = [];
+        adapter.on('tts_availability_changed', (event) => availability.push(event));
+        adapter.markUnAvailable(1);
+        availability.length = 0;
+
+        // the primary fails, the skip of the secondary starts a real probe, and the request then
+        // tries the secondary as a last resort, next to that probe
+        expect((await request(adapter, mode)).frames).toBeGreaterThan(0);
+        const probe = adapter.status[1]!.recoveringTask;
+        expect(probe).not.toBeNull();
+        await probe!.result;
+
+        expect(adapter.status.map((status) => status.available)).toEqual([false, true]);
+        expect(availability).toEqual([
+          { tts: primary, available: false },
+          { tts: secondary, available: true },
+        ]);
+        expect(adapterErrors).toEqual([]);
+        expect(unhandledRejections).toEqual([]);
+
+        await adapter.close();
+      },
+    );
+
+    it.each(['chunked', 'streaming'] as const)(
       'does not count a request that no frame reached the caller as served (%s)',
       async (mode) => {
         // the provider's frames all vanish in a resampler that is still buffering, so nothing
@@ -1786,12 +1898,15 @@ describe('TTS FallbackAdapter', () => {
         vi.spyOn(adapter, 'createResamplerForTTS').mockImplementation((index) =>
           index === 0 ? (buffering as unknown as AudioResampler) : null,
         );
+        // an unavailable instance is probed when a request skips it, and a probe would restore it
+        vi.spyOn(adapter, 'tryRecovery').mockImplementation(() => {});
         adapter.markUnAvailable(0);
         adapter.markUnAvailable(1);
         const availability: AvailabilityChangedEvent[] = [];
         adapter.on('tts_availability_changed', (event) => availability.push(event));
 
-        // every instance is down, so the primary is tried and its request ends with no audio
+        // every instance is down: the request skips both, then tries them as a last resort, and
+        // the primary's request ends with no audio
         expect((await request(adapter, mode)).frames).toBe(0);
 
         expect(adapter.status.map((status) => status.available)).toEqual([false, false]);
@@ -1810,6 +1925,8 @@ describe('TTS FallbackAdapter', () => {
         maxRetryPerTTS: 0,
         recoveryDelayMs: 60_000,
       });
+      // a probe (a provider call) would restore the instance
+      vi.spyOn(adapter, 'tryRecovery').mockImplementation(() => {});
       adapter.markUnAvailable(0);
       const attempts = vi.spyOn(primary, 'synthesize');
 
@@ -2207,7 +2324,8 @@ describe('TTS FallbackAdapter', () => {
         expect(first.frames).toBe(0);
         expect(adapter.status[0]!.available).toBe(false);
 
-        // everything is down, so the primary is retried, with its probe still in flight
+        // everything is down, so the request skips the primary and then tries it as a last
+        // resort, with its probe still in flight
         const probe = adapter.status[0]!.recoveringTask!;
         expect(probe.done).toBe(false);
         const second = adapter.stream();
