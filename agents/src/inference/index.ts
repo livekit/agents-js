@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2025 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import * as decisionModel from './decision_model.js';
 import * as duplex from './duplex.js';
 import * as eot from './eot/index.js';
 import * as llm from './llm.js';
@@ -9,6 +10,8 @@ import * as stt from './stt.js';
 import * as tts from './tts.js';
 
 export { eot };
+
+export { DecisionModel, type DecisionModelOptions, type DecisionModels } from './decision_model.js';
 export {
   TurnDetector,
   TurnDetectorStreamImpl,
@@ -104,4 +107,4 @@ export {
   type XaiTTSOptions,
 } from './tts.js';
 
-export { duplex, llm, realtime, stt, tts };
+export { decisionModel, duplex, llm, realtime, stt, tts };
