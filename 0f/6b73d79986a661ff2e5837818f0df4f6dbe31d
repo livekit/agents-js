@@ -1,0 +1,35 @@
+agents/src/inference/decision_model.test.ts
+  s_a5482a5a3c06d1::t_f2ed45eeab5544 206-208,239
+  s_a5482a5a3c06d1::t_a34c19a92146f4 209-238
+  s_a5482a5a3c06d1::t_9ce5132cf79aa2 205
+agents/src/llm/decisions.test.ts
+  s_a5482a5a3c06d1::t_a34c19a92146f4 709-711,715-717,719-728
+  s_a5482a5a3c06d1::t_f2ed45eeab5544 4-6,10,665-708,712-714,718,729-737,864,866,868
+agents/src/llm/decision_fallback_adapter.type.test.ts
+  s_a5482a5a3c06d1::t_3deb3495e53c3f 1-24
+agents/src/llm/decisions.ts
+  s_a5482a5a3c06d1::t_e853c839ed1f83 358-361,368-370,495
+agents/src/llm/decision_fallback_adapter.ts
+  s_a5482a5a3c06d1::t_a34c19a92146f4 130-134
+  s_a5482a5a3c06d1::t_e853c839ed1f83 7,58,63,84,88,90,95-99,102,125-129,135-151,170,172,175,177,190-197,202,214-223,274
+agents/src/inference/decision_model.ts
+  s_a5482a5a3c06d1::t_e853c839ed1f83 102-107
+agents/etc/agents.api.md
+  s_a5482a5a3c06d1::t_441e0fd498331c 2890,2893,2943,2962
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0f6b73d79986a661ff2e5837818f0df4f6dbe31d",
+  "prompts": {},
+  "sessions": {
+    "s_a5482a5a3c06d1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1f991-a413-7920-8bdb-334a908aabb1",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
