@@ -25,6 +25,8 @@
     "DID_API_URL",
     "DID_AGENT_ID",
     "ELEVEN_API_KEY",
+    "FINESSE_API_KEY",
+    "FINESSE_VOICE_ID",
     "FIREWORKS_API_KEY",
     "FISH_API_KEY",
     "GROQ_API_KEY",
