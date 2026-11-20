@@ -75,6 +75,7 @@ export const wsResponseCompletedEventSchema = z.object({
           input_tokens_details: z
             .object({
               cached_tokens: z.number(),
+              cache_write_tokens: z.number(),
             })
             .passthrough(),
         })
