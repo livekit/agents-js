@@ -1,0 +1,31 @@
+agents/etc/agents.api.md
+  s_c6b6b93b5d9302::t_ce2142c2aef71a 525-526,595-600,933-934,7622-7623,10149-10151
+agents/src/voice/agent_activity.ts
+  s_c6b6b93b5d9302::t_835a6363477796 3066
+agents/src/voice/agent_session.ts
+  s_c6b6b93b5d9302::t_28236165b53e08 1264-1278,1469-1476
+agents/src/voice/amd/detector.ts
+  s_c6b6b93b5d9302::t_d6cea66e812750 164-181,297-298,324-328,395-396,421-429,470-471,548-554,692,827-831,981-989,1449-1490,1495-1497
+agents/src/voice/amd/detector_lifecycle.test.ts
+  s_c6b6b93b5d9302::t_85d5d3604ed493 42-44,130-133,728-952
+agents/src/voice/amd/realtime.test.ts
+  s_c6b6b93b5d9302::t_18398b823db1d6 435,437,471,531-539
+agents/src/voice/speech_handle.ts
+  s_c6b6b93b5d9302::t_99c3f1e9ed5853 165-167
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ef82b0f41fd9df9ed7fed013d5492f0fb4d61bbf",
+  "prompts": {},
+  "sessions": {
+    "s_c6b6b93b5d9302": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_c6b6b93b5d9302",
+        "model": "unknown"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
