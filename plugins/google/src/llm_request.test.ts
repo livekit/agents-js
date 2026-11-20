@@ -10,7 +10,7 @@ import {
 } from '@google/genai';
 import { llm } from '@livekit/agents';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { LLM } from './llm.js';
+import { LLM, LONG_DECODE_HTTP_TIMEOUT_MS } from './llm.js';
 import { GoogleSearch } from './tools.js';
 
 const { generateContentStreamMock } = vi.hoisted(() => ({
@@ -123,6 +123,36 @@ function hasFunctionDeclarations(config: types.GenerateContentConfig): boolean {
 function serverSideEnabled(config: types.GenerateContentConfig): boolean {
   return Boolean(config.toolConfig?.includeServerSideToolInvocations);
 }
+
+describe('Google request timeout construction', () => {
+  beforeEach(() => {
+    generateContentStreamMock.mockReset();
+  });
+
+  it('uses the connection timeout for read silence, not the whole request deadline', async () => {
+    const google = new LLM({ model: 'gemini-2.5-flash', apiKey: 'test' });
+    const config = await captureConfig(google, {
+      connOptions: { maxRetry: 0, retryIntervalMs: 0, timeoutMs: 5500 },
+    });
+
+    expect(config.httpOptions?.headers?.['X-LiveKit-Agents-Read-Timeout-Ms']).toBe('5500');
+    expect(config.httpOptions?.headers?.['X-Server-Timeout']).toBe(
+      String(LONG_DECODE_HTTP_TIMEOUT_MS / 1000),
+    );
+  });
+
+  it('leaves the server deadline untouched for a user-provided HTTP timeout', async () => {
+    const google = new LLM({
+      model: 'gemini-2.5-flash',
+      apiKey: 'test',
+      httpOptions: { timeout: 30_000 },
+    });
+    const config = await captureConfig(google);
+
+    expect(config.httpOptions?.timeout).toBe(30_000);
+    expect(config.httpOptions?.headers).not.toHaveProperty('X-Server-Timeout');
+  });
+});
 
 describe('Google mixed tools request construction', () => {
   beforeEach(() => {
