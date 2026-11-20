@@ -6,11 +6,7 @@ import { AudioResampler } from '@livekit/rtc-node';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import type { Span } from '@opentelemetry/api';
 import { context as otelContext } from '@opentelemetry/api';
-import {
-  ReadableStream,
-  type ReadableStreamDefaultReader,
-  type ReadableStreamReadResult,
-} from 'stream/web';
+import type { ReadableStream, ReadableStreamDefaultReader } from 'stream/web';
 import type { Instructions } from '../llm/chat_context.js';
 import {
   type ChatContext,
@@ -48,8 +44,10 @@ import {
   Future,
   IdleTimeoutError,
   Task,
+  readStream,
   shortuuid,
   toError,
+  toStream,
   waitForAbort,
   waitUntilTimeout,
 } from '../utils.js';
@@ -1136,62 +1134,21 @@ export function alignedTranscriptOrText(
   text: ReadableStream<string>,
   signal: AbortSignal,
 ): ReadableStream<string | TimedString> {
-  let reader: ReadableStreamDefaultReader<TimedString | string> | undefined;
-  let aligned = false;
-  let fellBack = false;
-  const release = () => {
-    // A read pending on the released reader rejects, which pull() treats as the end.
-    reader?.releaseLock();
-    reader = undefined;
-  };
-  const onAbort = () => release();
-
-  return new ReadableStream<string | TimedString>({
-    start() {
-      reader = timedTexts.getReader();
-      signal.addEventListener('abort', onAbort, { once: true });
-      if (signal.aborted) release();
-    },
-    async pull(controller) {
-      const finish = () => {
-        signal.removeEventListener('abort', onAbort);
-        release();
-        controller.close();
-      };
-      while (true) {
-        if (signal.aborted || !reader) return finish();
-        let result: ReadableStreamReadResult<TimedString | string>;
-        try {
-          result = await reader.read();
-        } catch (error) {
-          // Released by an abort while reading.
-          if (signal.aborted || !reader) return finish();
-          signal.removeEventListener('abort', onAbort);
-          release();
-          controller.error(error);
-          return;
-        }
-        if (signal.aborted) return finish();
-        if (!result.done) {
-          if (!fellBack) aligned = true;
-          controller.enqueue(result.value);
-          return;
-        }
-        if (aligned || fellBack) return finish();
-        fellBack = true;
-        log().warn(
-          'no aligned transcript was returned from tts, ' +
-            'forwarding the generated text without word timings',
-        );
-        release();
-        reader = text.getReader();
+  return toStream(
+    (async function* () {
+      let aligned = false;
+      for await (const timedText of readStream(timedTexts, signal)) {
+        aligned = true;
+        yield timedText;
       }
-    },
-    cancel() {
-      signal.removeEventListener('abort', onAbort);
-      release();
-    },
-  });
+      if (aligned || signal.aborted) return;
+      log().warn(
+        'no aligned transcript was returned from tts, ' +
+          'forwarding the generated text without word timings',
+      );
+      yield* readStream(text, signal);
+    })(),
+  );
 }
 
 export interface _TextOut {
