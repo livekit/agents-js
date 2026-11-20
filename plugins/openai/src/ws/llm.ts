@@ -12,7 +12,7 @@ import {
   stream,
   toError,
 } from '@livekit/agents';
-import type OpenAI from 'openai';
+import { isDeepStrictEqual } from 'node:util';
 import { WebSocket } from 'ws';
 import type { ChatModels, Reasoning } from '../models.js';
 import { defaultReasoningEffort } from '../models.js';
@@ -33,6 +33,9 @@ const OPENAI_RESPONSES_WS_URL = 'wss://api.openai.com/v1/responses';
 
 // OpenAI enforces a 60-minute maximum duration on Responses WebSocket connections.
 const WS_MAX_SESSION_DURATION = 3_600_000;
+
+type WireItem = Record<string, unknown>;
+type PreviousResponse = [responseId: string, items: WireItem[]];
 
 /**
  * Build the Responses-API WebSocket URL.
@@ -194,9 +197,10 @@ const defaultLLMOptions: WSLLMOptions = {
 export class WSLLM extends llm.LLM {
   #opts: WSLLMOptions;
   #pool: ConnectionPool<ResponsesWebSocket>;
+  #activeStreams = 0;
+  #parallelGeneration = false;
   #prevResponseId = '';
-  #prevChatCtx: llm.ChatContext | null = null;
-  #pendingToolCalls = new Set<string>();
+  #prevResponseItems: WireItem[] | null = null;
 
   /**
    * Create a new instance of the OpenAI Responses API WebSocket LLM.
@@ -257,15 +261,25 @@ export class WSLLM extends llm.LLM {
     await this.close();
   }
 
-  /** Called by LLMStream once response.completed fires to atomically persist both the
-   *  response ID and its corresponding chat context for the next turn's diff. */
-  _onResponseCompleted(responseId: string, chatCtx: llm.ChatContext): void {
-    this.#prevResponseId = responseId;
-    this.#prevChatCtx = chatCtx;
+  _onStreamStart(): void {
+    if (this.#activeStreams > 0) {
+      this.#parallelGeneration = true;
+    }
+    this.#activeStreams++;
   }
 
-  _setPendingToolCalls(callIds: Set<string>): void {
-    this.#pendingToolCalls = callIds;
+  _onStreamEnd(): void {
+    this.#activeStreams--;
+    if (this.#activeStreams === 0 && this.#parallelGeneration) {
+      this.#prevResponseId = '';
+      this.#prevResponseItems = null;
+      this.#parallelGeneration = false;
+    }
+  }
+
+  _onResponseCompleted(responseId: string, items: WireItem[]): void {
+    this.#prevResponseId = responseId;
+    this.#prevResponseItems = items;
   }
 
   chat({
@@ -326,57 +340,29 @@ export class WSLLM extends llm.LLM {
       modelOptions.reasoning = this.#opts.reasoning;
     }
 
-    let inputChatCtx = chatCtx;
-    let prevResponseId: string | undefined;
+    let previousResponse: PreviousResponse | undefined;
     const canUseStoredResponse = modelOptions.store !== false;
 
-    if (canUseStoredResponse && this.#prevChatCtx && this.#prevResponseId) {
-      const diff = llm.computeChatCtxDiff(this.#prevChatCtx, chatCtx);
-      const lastPrevItemId = this.#prevChatCtx.items.at(-1)?.id ?? null;
-
-      if (
-        diff.toRemove.length === 0 &&
-        diff.toUpdate.length === 0 &&
-        diff.toCreate.length > 0 &&
-        diff.toCreate[0]![0] === lastPrevItemId
-      ) {
-        // All new items are appended after the tail of the previous context —
-        // safe to send only the incremental input with previous_response_id,
-        // but only if all pending tool calls from the previous response have
-        // their corresponding function_call_output in the new items.
-        const newItemIds = new Set(diff.toCreate.map(([, id]) => id));
-        const newItems = chatCtx.items.filter((item: llm.ChatItem) => newItemIds.has(item.id));
-        const pendingToolCallsCompleted = this.#pendingToolCallsCompleted(newItems);
-        if (pendingToolCallsCompleted) {
-          inputChatCtx = new llm.ChatContext(newItems);
-          prevResponseId = this.#prevResponseId;
-        }
-      }
-      // Otherwise: items were removed or inserted mid-history — fall back to
-      // sending the full context with no previous_response_id.
+    // Snapshot now: another stream may complete before this one is serialized.
+    if (
+      canUseStoredResponse &&
+      this.#activeStreams === 0 &&
+      this.#prevResponseItems &&
+      this.#prevResponseId
+    ) {
+      previousResponse = [this.#prevResponseId, this.#prevResponseItems];
     }
 
     return new WSLLMStream(this, {
       pool: this.#pool,
       model: this.#opts.model,
-      chatCtx: inputChatCtx,
-      fullChatCtx: chatCtx,
+      chatCtx,
       toolCtx,
       connOptions,
       modelOptions,
-      prevResponseId,
+      previousResponse,
       strictToolSchema: this.#opts.strictToolSchema ?? true,
     });
-  }
-
-  #pendingToolCallsCompleted(items: llm.ChatItem[]): boolean {
-    if (this.#pendingToolCalls.size === 0) return true;
-    const completedCallIds = new Set(
-      items
-        .filter((item): item is llm.FunctionCallOutput => item.type === 'function_call_output')
-        .map((item) => item.callId),
-    );
-    return [...this.#pendingToolCalls].every((callId) => completedCallIds.has(callId));
   }
 }
 
@@ -390,11 +376,9 @@ export class WSLLMStream extends llm.LLMStream {
   #model: string | ChatModels;
   #modelOptions: Record<string, unknown>;
   #strictToolSchema: boolean;
-  #prevResponseId?: string;
-  /** Full chat context — used as fallback when previous_response_id is stale. */
-  #fullChatCtx: llm.ChatContext;
+  #previousResponse?: PreviousResponse;
+  #inputItems: WireItem[] = [];
   #responseId = '';
-  #pendingToolCalls = new Set<string>();
   /**
    * Whether this attempt may still be retried. Cleared once generation reaches the
    * caller, which a retry would duplicate. Held on the instance because the loop
@@ -408,21 +392,19 @@ export class WSLLMStream extends llm.LLMStream {
       pool,
       model,
       chatCtx,
-      fullChatCtx,
       toolCtx,
       connOptions,
       modelOptions,
-      prevResponseId,
+      previousResponse,
       strictToolSchema,
     }: {
       pool: ConnectionPool<ResponsesWebSocket>;
       model: string | ChatModels;
       chatCtx: llm.ChatContext;
-      fullChatCtx: llm.ChatContext;
       toolCtx?: llm.ToolContext;
       connOptions: APIConnectOptions;
       modelOptions: Record<string, unknown>;
-      prevResponseId?: string;
+      previousResponse?: PreviousResponse;
       strictToolSchema: boolean;
     },
   ) {
@@ -432,17 +414,40 @@ export class WSLLMStream extends llm.LLMStream {
     this.#model = model;
     this.#modelOptions = modelOptions;
     this.#strictToolSchema = strictToolSchema;
-    this.#prevResponseId = prevResponseId;
-    this.#fullChatCtx = fullChatCtx;
+    this.#previousResponse = previousResponse;
   }
 
   protected async run(): Promise<void> {
+    this.#llm._onStreamStart();
+    try {
+      await this.#runImpl();
+    } finally {
+      this.#llm._onStreamEnd();
+    }
+  }
+
+  async #runImpl(): Promise<void> {
     this.#retryable = true;
     let responseError: APIStatusError | undefined;
 
+    const messages = (await this.chatCtx.toProviderFormat('openai.responses')) as WireItem[];
+    this.#inputItems = messages.map(({ phase: _phase, ...item }) => item);
+
+    let input = messages;
+    let previousResponseId: string | undefined;
+    if (this.#previousResponse) {
+      const [responseId, previousItems] = this.#previousResponse;
+      // The server already holds these items. Any difference, such as an interrupted reply,
+      // resends the full context without previous_response_id.
+      if (isDeepStrictEqual(this.#inputItems.slice(0, previousItems.length), previousItems)) {
+        input = messages.slice(previousItems.length);
+        previousResponseId = responseId;
+      }
+    }
+
     try {
       await this.#pool.withConnection(async (conn: ResponsesWebSocket) => {
-        const result = await this.#runWithConn(conn, this.chatCtx, this.#prevResponseId);
+        const result = await this.#runWithConn(conn, input, previousResponseId);
 
         if (result instanceof APIStatusError) {
           responseError = result;
@@ -453,7 +458,7 @@ export class WSLLMStream extends llm.LLMStream {
           // previous_response_id was evicted from the server-side cache.
           // Retry once on the same connection with the full context and no ID.
           this.#retryable = true;
-          const retryResult = await this.#runWithConn(conn, this.#fullChatCtx, undefined);
+          const retryResult = await this.#runWithConn(conn, messages, undefined, true);
           if (retryResult instanceof APIStatusError) {
             responseError = retryResult;
           }
@@ -482,18 +487,18 @@ export class WSLLMStream extends llm.LLMStream {
    */
   async #runWithConn(
     conn: ResponsesWebSocket,
-    chatCtx: llm.ChatContext,
+    messages: WireItem[],
     prevResponseId: string | undefined,
+    omitPreviousResponseId = false,
   ): Promise<boolean | APIStatusError> {
-    const messages = (await chatCtx.toProviderFormat(
-      'openai.responses',
-    )) as OpenAI.Responses.ResponseInputItem[];
-
     const tools = this.toolCtx ? toResponsesTools(this.toolCtx, this.#strictToolSchema) : undefined;
 
     const requestOptions: Record<string, unknown> = { ...this.#modelOptions };
     if (!tools) {
       delete requestOptions.tool_choice;
+    }
+    if (omitPreviousResponseId) {
+      delete requestOptions.previous_response_id;
     }
 
     const payload: WsResponseCreateEvent = {
@@ -501,8 +506,8 @@ export class WSLLMStream extends llm.LLMStream {
       model: this.#model as string,
       input: messages as unknown[],
       tools: (tools ?? []) as unknown[],
-      ...(prevResponseId ? { previous_response_id: prevResponseId } : {}),
       ...requestOptions,
+      ...(prevResponseId ? { previous_response_id: prevResponseId } : {}),
     };
 
     let channel: stream.StreamChannel<WsServerEvent>;
@@ -606,7 +611,6 @@ export class WSLLMStream extends llm.LLMStream {
 
   #handleOutputItemDone(event: WsOutputItemDoneEvent): llm.ChatChunk | undefined {
     if (event.item.type === 'function_call') {
-      this.#pendingToolCalls.add(event.item.call_id);
       return {
         id: this.#responseId,
         delta: {
@@ -645,8 +649,40 @@ export class WSLLMStream extends llm.LLMStream {
   }
 
   #handleResponseCompleted(event: WsResponseCompletedEvent): llm.ChatChunk | undefined {
-    this.#llm._onResponseCompleted(event.response.id, this.#fullChatCtx);
-    this.#llm._setPendingToolCalls(this.#pendingToolCalls);
+    const output = Array.isArray(event.response.output) ? event.response.output : [];
+    let text = '';
+    const functionCalls: WireItem[] = [];
+    for (const item of output) {
+      if (!item || typeof item !== 'object') continue;
+      const wireItem = item as WireItem;
+      if (wireItem.type === 'message' && Array.isArray(wireItem.content)) {
+        for (const part of wireItem.content) {
+          if (
+            part &&
+            typeof part === 'object' &&
+            (part as WireItem).type === 'output_text' &&
+            typeof (part as WireItem).text === 'string'
+          ) {
+            text += (part as WireItem).text;
+          }
+        }
+      } else if (
+        wireItem.type === 'function_call' &&
+        typeof wireItem.call_id === 'string' &&
+        typeof wireItem.name === 'string' &&
+        typeof wireItem.arguments === 'string'
+      ) {
+        functionCalls.push({
+          call_id: wireItem.call_id,
+          type: 'function_call',
+          name: wireItem.name,
+          arguments: wireItem.arguments,
+        });
+      }
+    }
+    const outputItems: WireItem[] = text ? [{ role: 'assistant', content: text }] : [];
+    outputItems.push(...functionCalls);
+    this.#llm._onResponseCompleted(event.response.id, [...this.#inputItems, ...outputItems]);
 
     if (event.response.usage) {
       return {

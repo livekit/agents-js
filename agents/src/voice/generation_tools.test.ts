@@ -457,7 +457,7 @@ describe('Generation + Tool Execution', () => {
     await task1.result;
   }, 20_000);
 
-  it('normalizes and commits an unknown tool call before its error output', async () => {
+  it('commits an unknown tool call without rewriting its arguments', async () => {
     const events: string[] = [];
     const fc = FunctionCall.create({
       callId: 'call_unknown',
@@ -477,7 +477,7 @@ describe('Generation + Tool Execution', () => {
     await execTask.result;
 
     expect(events).toEqual(['call:call_unknown', 'output:call_unknown']);
-    expect(fc.args).toBe('{}');
+    expect(fc.args).toBe('definitely not json');
     expect(toolOutput.firstToolStartedFuture.done).toBe(true);
     expect(toolOutput.output[0]?.toolCallOutput).toMatchObject({
       callId: 'call_unknown',
@@ -555,7 +555,7 @@ describe('Generation + Tool Execution', () => {
     });
 
     await execTask.result;
-    expect(fc.args).toBe('{}');
+    expect(fc.args).toBe('definitely not json');
     expect(toolOutput.output.length).toBe(1);
     const out = toolOutput.output[0];
     expect(out?.toolCallOutput?.isError).toBe(true);
