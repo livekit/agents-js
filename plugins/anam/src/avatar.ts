@@ -42,10 +42,12 @@ export async function mintAvatarJoinToken({
 
 const AVATAR_IDENTITY = 'anam-avatar-agent';
 const _AVATAR_NAME = 'anam-avatar-agent';
+const SAMPLE_RATE = 24000;
 
 /** @public */
 export class AvatarSession extends voice.AvatarSession {
   private sessionId?: string;
+  private apiKey: string;
 
   constructor(
     private opts: {
@@ -59,6 +61,9 @@ export class AvatarSession extends voice.AvatarSession {
     },
   ) {
     super();
+    const apiKey = opts.apiKey ?? process.env.ANAM_API_KEY;
+    if (!apiKey) throw new AnamException('ANAM_API_KEY is required');
+    this.apiKey = apiKey;
   }
 
   override get avatarIdentity(): string {
@@ -81,9 +86,6 @@ export class AvatarSession extends voice.AvatarSession {
     await super.start(agentSession, room);
 
     const logger = log().child({ module: 'AnamAvatar' });
-    const apiKey = this.opts.apiKey ?? process.env.ANAM_API_KEY;
-    if (!apiKey) throw new AnamException('ANAM_API_KEY is required');
-
     const apiUrl = this.opts.apiUrl ?? process.env.ANAM_API_URL;
     const livekitUrl = params?.livekitUrl ?? process.env.LIVEKIT_URL;
     const lkKey = params?.livekitApiKey ?? process.env.LIVEKIT_API_KEY;
@@ -116,7 +118,7 @@ export class AvatarSession extends voice.AvatarSession {
       apiSecret: lkSecret,
     });
 
-    const anam = new AnamAPI(apiKey, apiUrl, this.opts.connOptions);
+    const anam = new AnamAPI(this.apiKey, apiUrl, this.opts.connOptions);
     logger.debug({ livekitUrl }, 'starting Anam engine session');
 
     const started = await anam.startSession({
@@ -130,7 +132,9 @@ export class AvatarSession extends voice.AvatarSession {
     agentSession.output.audio = new voice.DataStreamAudioOutput({
       room,
       destinationIdentity: this.avatarIdentity,
+      sampleRate: SAMPLE_RATE,
       waitRemoteTrack: TrackKind.KIND_VIDEO,
+      waitPlaybackStart: true,
     });
   }
 }
