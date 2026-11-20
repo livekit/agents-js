@@ -3,7 +3,14 @@
 // SPDX-License-Identifier: Apache-2.0
 import { type PreTrainedTokenizer } from '@huggingface/transformers';
 import type { ipc, llm } from '@livekit/agents';
-import { Future, InferenceRunner, getBaseLanguage, getJobContext, log } from '@livekit/agents';
+import {
+  Future,
+  InferenceRunner,
+  getBaseLanguage,
+  getJobContext,
+  log,
+  waitUntilTimeout,
+} from '@livekit/agents';
 import { readFileSync } from 'node:fs';
 import os from 'node:os';
 import { InferenceSession, Tensor } from 'onnxruntime-node';
@@ -243,11 +250,8 @@ export abstract class EOUModel {
     return (await this.unlikelyThreshold(language)) !== undefined;
   }
 
-  // `_timeoutMs` is part of the unified `_TurnDetector` contract (milliseconds,
-  // matching the audio EOT detector). Text-based inference is bounded by the IPC
-  // executor itself, so this detector does not use the value.
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  async predictEndOfTurn(chatCtx: llm.ChatContext, _timeoutMs?: number): Promise<number> {
+  // our EOU model inference should be fast, 3 seconds is more than enough
+  async predictEndOfTurn(chatCtx: llm.ChatContext, timeoutMs = 3000): Promise<number> {
     let messages: RawChatItem[] = [];
 
     for (const message of chatCtx.items) {
@@ -267,7 +271,10 @@ export abstract class EOUModel {
 
     messages = messages.slice(-MAX_HISTORY_TURNS);
 
-    const result = await this.executor.doInference(this.inferenceMethod(), messages);
+    const result = await waitUntilTimeout(
+      this.executor.doInference(this.inferenceMethod(), messages),
+      timeoutMs,
+    );
     if (result === undefined) {
       throw new Error('EOU inference should always returns a result');
     }
