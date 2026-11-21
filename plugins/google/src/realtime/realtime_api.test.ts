@@ -604,6 +604,141 @@ describe('Google Realtime model text parts', () => {
   });
 });
 
+type GenerateReplySessionInternals = {
+  _realtimeModel: { capabilities: { midSessionChatCtxUpdate: boolean } };
+  options: {
+    model: string;
+    realtimeInputConfig: { automaticActivityDetection: { disabled: boolean } };
+  };
+  inUserActivity: boolean;
+  pendingToolCallIds: Set<string>;
+  pendingGenerationFut?: { resolve(event: llm.GenerationCreatedEvent): void };
+  sendClientEvent: ReturnType<typeof vi.fn>;
+  generateReply(instructions?: string): Promise<llm.GenerationCreatedEvent>;
+};
+
+function createManualActivitySession({
+  inUserActivity,
+}: {
+  inUserActivity: boolean;
+}): GenerateReplySessionInternals {
+  const session = Object.create(RealtimeSession.prototype) as GenerateReplySessionInternals;
+  session._realtimeModel = { capabilities: { midSessionChatCtxUpdate: true } };
+  session.options = {
+    model: 'gemini-3.8-live',
+    realtimeInputConfig: { automaticActivityDetection: { disabled: true } },
+  };
+  session.inUserActivity = inUserActivity;
+  session.pendingToolCallIds = new Set();
+  session.sendClientEvent = vi.fn();
+  return session;
+}
+
+async function requestReply(
+  session: GenerateReplySessionInternals,
+  instructions?: string,
+): Promise<void> {
+  const reply = session.generateReply(instructions);
+  session.pendingGenerationFut?.resolve({} as llm.GenerationCreatedEvent);
+  await reply;
+}
+
+describe('Google Realtime reply after a manual user activity', () => {
+  it('ends an open user activity without requesting a second reply', async () => {
+    const session = createManualActivitySession({ inUserActivity: true });
+
+    await requestReply(session);
+
+    expect(session.sendClientEvent.mock.calls).toEqual([
+      [{ type: 'realtime_input', value: { activityEnd: {} } }],
+    ]);
+    expect(session.inUserActivity).toBe(false);
+  });
+
+  it('still sends instructions after ending an open user activity', async () => {
+    const session = createManualActivitySession({ inUserActivity: true });
+
+    await requestReply(session, 'Answer in one sentence.');
+
+    expect(session.sendClientEvent.mock.calls).toEqual([
+      [{ type: 'realtime_input', value: { activityEnd: {} } }],
+      [
+        {
+          type: 'content',
+          value: {
+            turns: replyTurns('gemini-3.8-live', 'Answer in one sentence.'),
+            turnComplete: true,
+          },
+        },
+      ],
+    ]);
+  });
+
+  it('requests a reply when a blocking tool call holds back the activity end', async () => {
+    const closeActiveSession = vi
+      .spyOn(
+        RealtimeSession.prototype as unknown as { closeActiveSession(): Promise<void> },
+        'closeActiveSession',
+      )
+      .mockReturnValue(new Promise<void>(() => {}));
+    const session = new RealtimeModel({
+      model: 'gemini-3.8-live',
+      apiKey: 'fake-key',
+      realtimeInputConfig: { automaticActivityDetection: { disabled: true } },
+    }).session();
+    closeActiveSession.mockRestore();
+    const liveSession = {
+      close: vi.fn(async () => {}),
+      sendClientContent: vi.fn(),
+      sendRealtimeInput: vi.fn(),
+      sendToolResponse: vi.fn(),
+    };
+    const internals = session as unknown as {
+      activeSession: typeof liveSession;
+      currentGeneration: { functionChannel: { closed: boolean; write: ReturnType<typeof vi.fn> } };
+      markCurrentGenerationDone: ReturnType<typeof vi.fn>;
+      messageChannel: { put(event: unknown): void };
+      sessionShouldClose: { set(): void };
+      pendingGenerationFut?: { resolve(event: llm.GenerationCreatedEvent): void };
+      handleToolCall(toolCall: { functionCalls: Array<{ id: string; name: string }> }): void;
+      sendTask(session: typeof liveSession, controller: AbortController): Promise<void>;
+    };
+    internals.activeSession = liveSession;
+    internals.currentGeneration = { functionChannel: { closed: false, write: vi.fn() } };
+    internals.markCurrentGenerationDone = vi.fn();
+
+    const sendTask = internals.sendTask(liveSession, new AbortController());
+
+    // The user starts speaking, then a tool call from the previous reply arrives.
+    session.startUserActivity();
+    await vi.waitFor(() => expect(liveSession.sendRealtimeInput).toHaveBeenCalled());
+    internals.handleToolCall({ functionCalls: [{ id: 'call_123', name: 'getWeather' }] });
+
+    const reply = session.generateReply();
+    await vi.waitFor(() => expect(liveSession.sendClientContent).toHaveBeenCalled());
+
+    expect(liveSession.sendRealtimeInput.mock.calls).toEqual([[{ activityStart: {} }]]);
+    expect(liveSession.sendClientContent.mock.calls).toEqual([[{ turnComplete: true }]]);
+
+    internals.pendingGenerationFut?.resolve({} as llm.GenerationCreatedEvent);
+    await reply;
+    internals.sessionShouldClose.set();
+    internals.messageChannel.put({ type: 'content', value: { turnComplete: true } });
+    await sendTask;
+    await session.close();
+  });
+
+  it('requests a reply with turnComplete when no user activity is open', async () => {
+    const session = createManualActivitySession({ inUserActivity: false });
+
+    await requestReply(session);
+
+    expect(session.sendClientEvent.mock.calls).toEqual([
+      [{ type: 'content', value: { turns: [], turnComplete: true } }],
+    ]);
+  });
+});
+
 type UsageMetadataSessionInternals = {
   currentGeneration: {
     responseId: string;
