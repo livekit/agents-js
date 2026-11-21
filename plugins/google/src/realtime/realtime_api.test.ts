@@ -510,6 +510,60 @@ describe('Google Realtime non-blocking tool scheduling', () => {
   });
 });
 
+describe('Google Realtime user turn after an interrupt', () => {
+  it('sends a turn carrying an image as content', async () => {
+    const session = createSessionForTest(FunctionResponseScheduling.WHEN_IDLE);
+    session.pendingInterruptText = true;
+
+    const ctx = session._chatCtx.copy();
+    ctx.addMessage({
+      role: 'user',
+      content: [
+        'What is in this photo?',
+        llm.createImageContent({ image: 'data:image/png;base64,iVBORw0KGgo=' }),
+      ],
+    });
+
+    await session.updateChatCtx(ctx);
+
+    expect(session.sendClientEvent.mock.calls).toEqual([
+      [
+        {
+          type: 'content',
+          value: {
+            turns: [
+              {
+                role: 'user',
+                parts: [
+                  { text: 'What is in this photo?' },
+                  { inlineData: { data: 'iVBORw0KGgo=', mimeType: 'image/png' } },
+                ],
+              },
+            ],
+            turnComplete: false,
+          },
+        },
+      ],
+    ]);
+  });
+
+  it('still sends a text-only turn as realtime text', async () => {
+    const session = createSessionForTest(FunctionResponseScheduling.WHEN_IDLE);
+    session.pendingInterruptText = true;
+
+    const ctx = session._chatCtx.copy();
+    ctx.addMessage({ role: 'user', content: 'Wait, I meant the second one.' });
+
+    await session.updateChatCtx(ctx);
+
+    expect(session.sendClientEvent).toHaveBeenCalledWith({
+      type: 'realtime_input',
+      value: { text: 'Wait, I meant the second one.' },
+    });
+    expect(session.pendingInterruptText).toBe(false);
+  });
+});
+
 describe('Google Realtime Vertex scheduling', () => {
   it('warns when tool response scheduling is configured for Vertex AI', () => {
     const warn = vi.spyOn(log(), 'warn').mockImplementation(() => undefined);
