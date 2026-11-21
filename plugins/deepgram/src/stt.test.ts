@@ -429,6 +429,114 @@ describe('Deepgram streaming language hints', () => {
   });
 });
 
+describe('Deepgram usage tags', () => {
+  function stubPrerecordedFetch() {
+    return vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          metadata: { request_id: 'req' },
+          results: { channels: [{ alternatives: [] }] },
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+  }
+
+  it('sends each tag as a repeated tag param on the streaming connection', async () => {
+    const { wss, baseUrl } = await startWebSocketServer();
+    const urls: string[] = [];
+    wss.on('connection', (_socket, request) => urls.push(request.url ?? ''));
+
+    const stream = new STT({ apiKey: 'test-key', baseUrl, tags: ['voice-agent', 'prod'] }).stream();
+    try {
+      await waitUntil(() => urls.length > 0);
+      expect(urls[0]).toContain('tag=voice-agent&tag=prod');
+      const url = new URL(urls[0]!, 'ws://127.0.0.1');
+      expect(url.searchParams.getAll('tag')).toEqual(['voice-agent', 'prod']);
+      expect(url.searchParams.has('tags')).toBe(false);
+    } finally {
+      stream.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it.each([{ tags: undefined }, { tags: [] }])(
+    'sends no tag param on the streaming connection when tags is $tags',
+    async ({ tags }) => {
+      const { wss, baseUrl } = await startWebSocketServer();
+      const urls: string[] = [];
+      wss.on('connection', (_socket, request) => urls.push(request.url ?? ''));
+
+      const stream = new STT({ apiKey: 'test-key', baseUrl, tags }).stream();
+      try {
+        await waitUntil(() => urls.length > 0);
+        expect(new URL(urls[0]!, 'ws://127.0.0.1').searchParams.has('tag')).toBe(false);
+      } finally {
+        stream.close();
+        await closeWebSocketServer(wss);
+      }
+    },
+  );
+
+  it('sends each tag as a repeated tag param on the prerecorded request', async () => {
+    const fetchSpy = stubPrerecordedFetch();
+    const deepgram = new STT({ apiKey: 'test-key', tags: ['voice-agent', 'prod'] });
+
+    await deepgram._recognize([makeFrame(1600)]);
+
+    const url = new URL(String(fetchSpy.mock.calls[0]![0]));
+    expect(url.pathname).toBe('/v1/listen');
+    expect(url.search).toContain('tag=voice-agent&tag=prod');
+    expect(url.searchParams.getAll('tag')).toEqual(['voice-agent', 'prod']);
+  });
+
+  it.each([{ tags: undefined }, { tags: [] }])(
+    'sends no tag param on the prerecorded request when tags is $tags',
+    async ({ tags }) => {
+      const fetchSpy = stubPrerecordedFetch();
+      const deepgram = new STT({ apiKey: 'test-key', tags });
+
+      await deepgram._recognize([makeFrame(1600)]);
+
+      const url = new URL(String(fetchSpy.mock.calls[0]![0]));
+      expect(url.searchParams.has('tag')).toBe(false);
+    },
+  );
+
+  it('uses tags set through updateOptions on the next request', async () => {
+    const fetchSpy = stubPrerecordedFetch();
+    const deepgram = new STT({ apiKey: 'test-key' });
+    deepgram.updateOptions({ tags: ['staging'] });
+
+    await deepgram._recognize([makeFrame(1600)]);
+
+    const url = new URL(String(fetchSpy.mock.calls[0]![0]));
+    expect(url.searchParams.getAll('tag')).toEqual(['staging']);
+  });
+
+  it('rejects a tag longer than 128 characters', () => {
+    const longTag = 'a'.repeat(129);
+    expect(() => new STT({ apiKey: 'test-key', tags: [longTag] })).toThrow(
+      'tag must be no more than 128 characters',
+    );
+    expect(() => new STT({ apiKey: 'test-key', tags: ['a'.repeat(128)] })).not.toThrow();
+
+    const deepgram = new STT({ apiKey: 'test-key' });
+    expect(() => deepgram.updateOptions({ tags: [longTag] })).toThrow(
+      'tag must be no more than 128 characters',
+    );
+
+    const stream = deepgram.stream();
+    try {
+      expect(() => stream.updateOptions({ tags: [longTag] })).toThrow(
+        'tag must be no more than 128 characters',
+      );
+    } finally {
+      stream.close();
+    }
+  });
+});
+
 if (hasDeepgramApiKey) {
   describe('Deepgram', async () => {
     await stt(new STT(), await VAD.load(), { nonStreaming: false });
