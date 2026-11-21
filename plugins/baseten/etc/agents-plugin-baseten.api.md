@@ -9,7 +9,6 @@ import { AgentSession as AgentSession_2 } from '@livekit/protocol';
 import { AudioFrame } from '@livekit/rtc-node';
 import { AudioResampler } from '@livekit/rtc-node';
 import { Context } from '@opentelemetry/api';
-import { default as default_2 } from 'ws';
 import { EventEmitter } from 'events';
 import { EventEmitter as EventEmitter_2 } from 'node:events';
 import type { EventMap } from '@livekit/typed-emitter';
@@ -149,6 +148,7 @@ export class STT extends stt_2.STT {
     //
     // (undocumented)
     stream(options?: {
+        language?: string;
         connOptions?: APIConnectOptions;
     }): SpeechStream_3;
     // (undocumented)
