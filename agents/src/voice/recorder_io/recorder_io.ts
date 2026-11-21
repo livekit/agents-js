@@ -794,7 +794,7 @@ class RecorderAudioOutput extends AudioOutput {
     this.onPlayed(startedAt, new AudioFrame(chunk, sampleRate, channels, chunk.length / channels));
   }
 
-  async captureFrame(frame: AudioFrame): Promise<void> {
+  async captureFrame(frame: AudioFrame, options?: { signal?: AbortSignal }): Promise<void> {
     // Register our own segment BEFORE handing the frame downstream. A downstream output may
     // park this frame (ParticipantAudioOutput holds frames at its pause gate) and emit an
     // interrupted finish while it is parked. If we had not counted the segment yet, that
@@ -834,7 +834,7 @@ class RecorderAudioOutput extends AudioOutput {
     try {
       await capture;
       if (this.nextInChain) {
-        await this.nextInChain.captureFrame(frame);
+        await this.nextInChain.captureFrame(frame, options);
         if (this.nextInChain.capturedPlayoutSegments > downstreamCapturedBefore) {
           segment.acceptedDownstream = true;
         }

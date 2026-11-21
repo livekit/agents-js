@@ -172,8 +172,13 @@ export abstract class AudioOutput extends EventEmitter {
 
   /**
    * Capture an audio frame for playback, frames can be pushed faster than real-time
+   *
+   * `options.signal` is aborted when the caller stops forwarding the segment, e.g. because its
+   * speech was interrupted, and the caller then flushes. An output that holds a frame here (for
+   * example while paused) should stop waiting and return without playing it, and finish the
+   * segment as interrupted. Outputs that wrap another output should pass the signal on.
    */
-  async captureFrame(_frame: AudioFrame): Promise<void> {
+  async captureFrame(_frame: AudioFrame, _options?: { signal?: AbortSignal }): Promise<void> {
     if (!this._capturing) {
       this._capturing = true;
       this.playbackSegmentsCount++;

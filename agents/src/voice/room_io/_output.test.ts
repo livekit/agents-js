@@ -353,6 +353,20 @@ describe('ParticipantAudioOutput captureFrame segment accounting', () => {
     expect(await output.waitForPlayout()).toEqual({ playbackPosition: 0, interrupted: true });
   });
 
+  it('releases a frame held while paused when its signal aborts', async () => {
+    const output = makeOutput({ paused: true });
+    const controller = new AbortController();
+
+    const capture = output.captureFrame(frame(), { signal: controller.signal });
+    controller.abort();
+    await capture;
+    // The caller flushes once it stops forwarding, before an interruption clears the output.
+    output.flush();
+
+    expect(output.audioSource.captureFrame).not.toHaveBeenCalled();
+    expect(await output.waitForPlayout()).toEqual({ playbackPosition: 0, interrupted: true });
+  });
+
   it('drops a frame interrupted while waiting for subscription', async () => {
     const output = makeOutput({ paused: false });
     output.startedFuture = new Future<void>();
@@ -360,6 +374,19 @@ describe('ParticipantAudioOutput captureFrame segment accounting', () => {
     const capture = output.captureFrame(frame());
     output.clearBuffer();
     output.startedFuture.resolve();
+    await capture;
+
+    expect(output.playbackSegmentsCount).toBe(0);
+    expect(output.audioSource.captureFrame).not.toHaveBeenCalled();
+  });
+
+  it('drops a frame waiting for subscription when its signal aborts', async () => {
+    const output = makeOutput({ paused: false });
+    output.startedFuture = new Future<void>();
+    const controller = new AbortController();
+
+    const capture = output.captureFrame(frame(), { signal: controller.signal });
+    controller.abort();
     await capture;
 
     expect(output.playbackSegmentsCount).toBe(0);

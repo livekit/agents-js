@@ -794,7 +794,7 @@ class SyncedAudioOutput extends AudioOutput {
     }
   }
 
-  async captureFrame(frame: AudioFrame): Promise<void> {
+  async captureFrame(frame: AudioFrame, options?: { signal?: AbortSignal }): Promise<void> {
     // using barrier() on capture should be sufficient, flush() must not be called if
     // capture_frame isn't completed
     await this.synchronizer.barrier();
@@ -805,7 +805,7 @@ class SyncedAudioOutput extends AudioOutput {
     }
     const downstreamCapturedBefore = this.nextInChainAudio.capturedPlayoutSegments;
     await super.captureFrame(frame);
-    await this.nextInChainAudio.captureFrame(frame); // passthrough audio
+    await this.nextInChainAudio.captureFrame(frame, options); // passthrough audio
     if (this.nextInChainAudio.capturedPlayoutSegments > downstreamCapturedBefore) {
       this.segmentAccepted = true;
     }

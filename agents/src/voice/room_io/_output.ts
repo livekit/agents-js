@@ -651,11 +651,12 @@ export class ParticipantAudioOutput extends AudioOutput {
     );
   }
 
-  async captureFrame(frame: AudioFrame): Promise<void> {
+  async captureFrame(frame: AudioFrame, options?: { signal?: AbortSignal }): Promise<void> {
+    const signal = options?.signal;
     const interruptionGeneration = this.interruptionGeneration;
     if (!this.startedFuture.done) {
-      await this.startedFuture.await;
-      if (interruptionGeneration !== this.interruptionGeneration) {
+      await this.waitUnlessAborted([this.startedFuture.await], signal);
+      if (signal?.aborted || interruptionGeneration !== this.interruptionGeneration) {
         return;
       }
     }
@@ -692,7 +693,17 @@ export class ParticipantAudioOutput extends AudioOutput {
           resumesAt: this.sourcePushedDuration * 1000,
         });
         this.audioSource.clearQueue();
-        await Promise.race([this.playbackEnabledFuture.await, interruptionFuture.await]);
+        await this.waitUnlessAborted(
+          [this.playbackEnabledFuture.await, interruptionFuture.await],
+          signal,
+        );
+        if (signal?.aborted) {
+          // The caller stopped forwarding while this frame was held, and flushes next. The paused
+          // queue is already gone, so mark the segment interrupted now: with nothing left queued,
+          // that flush would otherwise finish it as played before clearBuffer() could.
+          interruptionFuture.resolve();
+          return;
+        }
         if (interruptionGeneration !== this.interruptionGeneration || interruptionFuture.done) {
           return;
         }
@@ -716,6 +727,18 @@ export class ParticipantAudioOutput extends AudioOutput {
       if (this.forwardingCount === 0) {
         this.forwardingIdleFuture.resolve();
       }
+    }
+  }
+
+  private async waitUnlessAborted(waits: Promise<void>[], signal?: AbortSignal) {
+    if (signal?.aborted) return;
+    const aborted = new Future<void>();
+    const onAbort = () => aborted.resolve();
+    signal?.addEventListener('abort', onAbort, { once: true });
+    try {
+      await Promise.race([...waits, aborted.await]);
+    } finally {
+      signal?.removeEventListener('abort', onAbort);
     }
   }
 
