@@ -609,6 +609,10 @@ export class RealtimeSession extends llm.RealtimeSession {
   private toolCallStatuses = new Map<string, ToolCallStatus>();
   private toolResponseCallIds = new WeakMap<types.FunctionResponse, string>();
   private generationPendingTurnComplete?: ResponseGeneration;
+  // Input transcription that arrived while a blocking tool call was pending, and when the
+  // turn it belongs to began.
+  private heldInputTranscription = '';
+  private heldInputTurnStartedAt?: number;
 
   #client: GoogleGenAI;
   #task: Promise<void>;
@@ -693,6 +697,8 @@ export class RealtimeSession extends llm.RealtimeSession {
 
     this.pendingToolCallIds.clear();
     this.awaitingToolReply = false;
+    // The held turn goes into the chat context the next socket replays, instead of being lost.
+    this.flushHeldInputTranscription();
     this.syntheticCallIds.clear();
     this.toolCallStatuses.clear();
     if (this.generationPendingTurnComplete) {
@@ -1393,6 +1399,9 @@ export class RealtimeSession extends llm.RealtimeSession {
               } finally {
                 this.clearPendingToolCallIdsForResponses(functionResponses);
               }
+              if (this.pendingToolCallIds.size === 0) {
+                this.flushHeldInputTranscription();
+              }
             }
             break;
           case 'realtime_input':
@@ -1496,6 +1505,10 @@ export class RealtimeSession extends llm.RealtimeSession {
             this.#logger.debug('ignoring empty server content');
           }
         }
+      }
+
+      if (this.holdsInputTranscription(response)) {
+        response.serverContent = undefined;
       }
 
       // start new generation for serverContent or for standalone toolCalls
@@ -1754,6 +1767,7 @@ export class RealtimeSession extends llm.RealtimeSession {
 
   private startNewGeneration(): void {
     this.awaitingToolReply = false;
+    this.flushHeldInputTranscription();
     const previousGen = this.currentGeneration;
     const previousHadOpenFunctionChannel = previousGen && !previousGen.functionChannel.closed;
 
@@ -2029,6 +2043,9 @@ export class RealtimeSession extends llm.RealtimeSession {
         this.toolCallStatuses.set(id, status);
       }
     }
+    if (this.pendingToolCallIds.size === 0) {
+      this.flushHeldInputTranscription();
+    }
   }
 
   private clearPendingToolCallIdsForResponses(functionResponses: types.FunctionResponse[]): void {
@@ -2197,6 +2214,63 @@ export class RealtimeSession extends llm.RealtimeSession {
     } else {
       yield frame;
     }
+  }
+
+  /**
+   * Holds input transcription that arrives on its own while a blocking tool call is pending.
+   *
+   * No user audio reaches Gemini while a blocking call is pending, so this text is the tail of
+   * the turn that made the call. A generation started for it would hold the tool result back
+   * until it played, and it plays nothing until the result is in.
+   */
+  private holdsInputTranscription(response: types.LiveServerMessage): boolean {
+    const content = response.serverContent;
+    if (
+      !content?.inputTranscription ||
+      response.toolCall ||
+      this.pendingGenerationFut ||
+      !this.shouldBlockRealtimeInputForPendingTools() ||
+      content.modelTurn ||
+      content.outputTranscription != null ||
+      content.generationComplete != null ||
+      content.turnComplete != null ||
+      content.interrupted
+    ) {
+      return false;
+    }
+    this.heldInputTranscription += content.inputTranscription.text ?? '';
+    this.heldInputTurnStartedAt ??= this.currentGeneration?._createdTimestamp;
+    this.#logger.debug('holding input transcription until the pending tool call is answered');
+    return true;
+  }
+
+  /**
+   * Hands held input transcription to the agent as the user's turn.
+   */
+  private flushHeldInputTranscription(): void {
+    const transcript = this.heldInputTranscription.trim();
+    const turnStartedAt = this.heldInputTurnStartedAt;
+    this.heldInputTranscription = '';
+    this.heldInputTurnStartedAt = undefined;
+    if (!transcript) {
+      return;
+    }
+
+    const itemId = shortuuid('GI_');
+    this.emit('input_audio_transcription_completed', {
+      itemId,
+      transcript,
+      isFinal: true,
+      turnStartedAt,
+    } as llm.InputTranscriptionCompleted);
+    // The agent files the turn by when it began; this copy must sort the same way, or the next
+    // chat context diff sends the turn to Gemini again.
+    this._chatCtx.addMessage({
+      role: 'user',
+      content: transcript,
+      id: itemId,
+      createdAt: turnStartedAt,
+    });
   }
 
   private isNewGeneration(response: types.LiveServerMessage) {
