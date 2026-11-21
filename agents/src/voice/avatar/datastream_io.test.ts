@@ -58,7 +58,7 @@ function nextTick(): Promise<void> {
 describe('DataStreamAudioOutput.clearBuffer', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    DataStreamAudioOutput._playbackFinishedRpcRegistered = false;
+    DataStreamAudioOutput._playbackFinishedRpcRooms = new WeakSet();
     DataStreamAudioOutput._playbackFinishedHandlers = {};
   });
 
@@ -144,5 +144,53 @@ describe('DataStreamAudioOutput.clearBuffer', () => {
       { playbackPosition: 0, interrupted: true },
       { playbackPosition: 0, interrupted: true },
     ]);
+  });
+});
+
+describe('DataStreamAudioOutput RPC registration', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    DataStreamAudioOutput._playbackFinishedRpcRooms = new WeakSet();
+    DataStreamAudioOutput._playbackFinishedHandlers = {};
+    DataStreamAudioOutput._playbackStartedRpcRooms = new WeakSet();
+    DataStreamAudioOutput._playbackStartedHandlers = {};
+  });
+
+  function registeredMethods(room: Room): string[] {
+    return vi.mocked(room.localParticipant!.registerRpcMethod).mock.calls.map(([method]) => method);
+  }
+
+  it('registers the playback finished RPC on every room', async () => {
+    const { room: first } = createRoom(() => Promise.resolve(''));
+    const { room: second } = createRoom(() => Promise.resolve(''));
+
+    new DataStreamAudioOutput({ room: first, destinationIdentity: 'avatar' });
+    new DataStreamAudioOutput({ room: second, destinationIdentity: 'avatar' });
+
+    await vi.waitFor(() => {
+      expect(registeredMethods(first)).toEqual(['lk.playback_finished']);
+      expect(registeredMethods(second)).toEqual(['lk.playback_finished']);
+    });
+  });
+
+  it('registers the playback started RPC on every room when waiting for playback start', async () => {
+    const { room: first } = createRoom(() => Promise.resolve(''));
+    const { room: second } = createRoom(() => Promise.resolve(''));
+
+    new DataStreamAudioOutput({
+      room: first,
+      destinationIdentity: 'avatar',
+      waitPlaybackStart: true,
+    });
+    new DataStreamAudioOutput({
+      room: second,
+      destinationIdentity: 'avatar',
+      waitPlaybackStart: true,
+    });
+
+    await vi.waitFor(() => {
+      expect(registeredMethods(first)).toEqual(['lk.playback_finished', 'lk.playback_started']);
+      expect(registeredMethods(second)).toEqual(['lk.playback_finished', 'lk.playback_started']);
+    });
   });
 });
