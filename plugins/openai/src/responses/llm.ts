@@ -196,6 +196,7 @@ class ResponsesHttpLLMStream extends llm.LLMStream {
 
   protected async run(): Promise<void> {
     let retryable = true;
+    let responseCompleted = false;
 
     try {
       const messages = (await this.chatCtx.toProviderFormat(
@@ -242,6 +243,7 @@ class ResponsesHttpLLMStream extends llm.LLMStream {
             chunk = this.handleResponseOutputTextDelta(event);
             break;
           case 'response.completed':
+            responseCompleted = true;
             chunk = this.handleResponseCompleted(event);
             break;
           case 'response.failed':
@@ -260,6 +262,11 @@ class ResponsesHttpLLMStream extends llm.LLMStream {
             retryable = false;
           }
         }
+      }
+
+      if (!responseCompleted) {
+        // The body ended without response.completed/failed/incomplete.
+        throw new APIConnectionError({ options: { retryable } });
       }
     } catch (error) {
       if (
