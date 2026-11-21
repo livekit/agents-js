@@ -62,6 +62,38 @@ describe('Interruption Detection - Word Counting', () => {
       const wordCount = splitWords(text, true).length;
       expect(wordCount).toBe(2);
     });
+
+    it('should count each CJK or Thai character as a word with splitCharacter', () => {
+      // a Chinese "wait, I have a question", which has no spaces
+      expect(splitWords('等一下，我有问题', true).length).toBe(1);
+      expect(splitWords('等一下，我有问题', true, true).map(([w]) => w)).toEqual([
+        '等',
+        '一',
+        '下',
+        '我',
+        '有',
+        '问',
+        '题',
+      ]);
+      expect(splitWords('ちょっと待って', true, true).length).toBe(7);
+      expect(splitWords('รอก่อน', true, true).length).toBe(6);
+    });
+
+    it('should keep spaced words whole and track offsets with splitCharacter', () => {
+      expect(splitWords('hello 世界 world!', true, true)).toEqual([
+        ['hello', 0, 5],
+        ['世', 6, 7],
+        ['界', 7, 8],
+        ['world', 9, 15],
+      ]);
+      expect(splitWords('OK好的', true, true)).toEqual([
+        ['OK', 0, 2],
+        ['好', 2, 3],
+        ['的', 3, 4],
+      ]);
+      // Hangul is written with spaces, so it is not split per character
+      expect(splitWords('잠깐만요 질문', true, true).length).toBe(2);
+    });
   });
 
   describe('Integration: Full Interruption Check Logic', () => {
