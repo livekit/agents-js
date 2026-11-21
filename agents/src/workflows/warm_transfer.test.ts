@@ -3,10 +3,12 @@
 // SPDX-License-Identifier: Apache-2.0
 import { SIPParticipantInfo } from '@livekit/protocol';
 import { DisconnectReason, ParticipantKind, Room, RoomEvent } from '@livekit/rtc-node';
-import { AccessToken, RoomServiceClient, SipClient } from 'livekit-server-sdk';
+import { AccessToken, RoomServiceClient, SipClient, TokenVerifier } from 'livekit-server-sdk';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { InferenceExecutor } from '../ipc/inference_executor.js';
 import * as job from '../job.js';
-import type { JobContext } from '../job.js';
+import { JobContext, type JobProcess, type RunningJobInfo } from '../job.js';
+import { JobTokenClient } from '../job_token.js';
 import { ChatContext, type FunctionTool } from '../llm/index.js';
 import { log } from '../log.js';
 import { AgentTask } from '../voice/agent.js';
@@ -24,6 +26,7 @@ import {
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
 });
 
 const createFakeTask = () => {
@@ -122,7 +125,8 @@ const setupTransfer = (abortSignal: AbortSignal) => {
       apiKey: 'api-key',
       apiSecret: 'api-secret',
     },
-  } as JobContext);
+    createParticipantToken: async () => 'token',
+  } as unknown as JobContext);
   const fakeTask = createFakeTask();
   createWarmTransferTask({
     abortSignal,
@@ -599,7 +603,8 @@ describe('createWarmTransferTask', () => {
     const jobContext = {
       room: callerRoom,
       info: { url: 'wss://example.livekit.cloud' },
-    } as JobContext;
+      createParticipantToken: async () => 'token',
+    } as unknown as JobContext;
 
     const onEnter = job.runWithJobContextAsync(jobContext, () => task.onEnter());
     await vi.waitFor(() => expect(createSipParticipant).toHaveBeenCalledOnce());
@@ -617,6 +622,98 @@ describe('createWarmTransferTask', () => {
       expect.objectContaining({ waitUntilAnswered: true }),
       undefined,
     );
+  });
+});
+
+describe('human agent room token', () => {
+  const secret = 'secret'.repeat(6);
+  const humanAgentRoomGrant = {
+    roomJoin: true,
+    room: 'caller-room-human-agent',
+    canUpdateOwnMetadata: true,
+    canPublish: true,
+    canSubscribe: true,
+  };
+
+  function createJobContext(info: Partial<RunningJobInfo>) {
+    return new JobContext(
+      {} as unknown as JobProcess,
+      {
+        job: { id: 'job-id', room: { name: 'caller-room' } },
+        url: 'ws://localhost:7880',
+        ...info,
+      } as unknown as RunningJobInfo,
+      createCallerRoom(),
+      vi.fn(),
+      vi.fn(),
+      {} as unknown as InferenceExecutor,
+    );
+  }
+
+  /** Dials the human agent; returns the token the human agent room is joined with. */
+  async function dialHumanAgent(ctx: JobContext): Promise<string> {
+    const connect = vi.spyOn(Room.prototype, 'connect').mockResolvedValue();
+    vi.spyOn(AgentSession.prototype, 'start').mockResolvedValue();
+    const task = createWarmTransferTask({
+      sipCallTo: '+15551234567',
+      sipTrunkId: 'ST_dummy',
+      holdAudio: null,
+    });
+    task._agentActivity = { agentSession: new AgentSession() } as never;
+    const complete = vi.spyOn(task, 'complete').mockImplementation(() => {});
+
+    await job.runWithJobContextAsync(ctx, () => task.onEnter());
+
+    expect(complete).not.toHaveBeenCalled();
+    expect(connect).toHaveBeenCalledOnce();
+    expect(connect.mock.calls[0]![0]).toBe('ws://localhost:7880');
+    return connect.mock.calls[0]![1];
+  }
+
+  it('comes from CreateJobToken in token mode, as do the API calls', async () => {
+    // there is no API key or secret to read
+    vi.stubEnv('LIVEKIT_API_KEY', '');
+    vi.stubEnv('LIVEKIT_API_SECRET', '');
+    const toJwt = vi.spyOn(AccessToken.prototype, 'toJwt');
+    const createJobToken = vi.fn(async () => ({ token: 'job-token', expiresAt: Date.now() + 1e6 }));
+    const fetch = vi.fn(async () => new Response('{}'));
+    vi.stubGlobal('fetch', fetch);
+    const ctx = createJobContext({});
+    ctx._jobTokens = new JobTokenClient(createJobToken);
+
+    const token = await dialHumanAgent(ctx);
+
+    expect(token).toBe('job-token');
+    expect(createJobToken.mock.calls.map(([claims]) => JSON.parse(claims))).toEqual([
+      { identity: 'transfer-agent', kind: 'agent', video: humanAgentRoomGrant },
+      { video: {}, sip: { call: true } },
+    ]);
+    // the SIP participant is created with the job token
+    expect(fetch).toHaveBeenCalledOnce();
+    const [url, init] = fetch.mock.calls[0]! as unknown as [URL, RequestInit];
+    expect(url.pathname).toBe('/twirp/livekit.SIP/CreateSIPParticipant');
+    expect((init.headers as Record<string, string>).Authorization).toBe('Bearer job-token');
+    expect(toJwt).not.toHaveBeenCalled();
+  });
+
+  it("is signed here with the worker's credentials in key mode", async () => {
+    vi.spyOn(SipClient.prototype, 'createSipParticipant').mockResolvedValue(
+      new SIPParticipantInfo(),
+    );
+    const ctx = createJobContext({ apiKey: 'devkey', apiSecret: secret });
+
+    const token = await dialHumanAgent(ctx);
+
+    const claims = await new TokenVerifier('devkey', secret).verify(token);
+    expect(claims).toMatchObject({
+      iss: 'devkey',
+      sub: 'transfer-agent',
+      kind: 'agent',
+      video: humanAgentRoomGrant,
+    });
+    expect(claims.video).toEqual(humanAgentRoomGrant);
+    expect(claims).not.toHaveProperty('name');
+    expect(claims.exp! - claims.nbf!).toBe(6 * 3600); // the AccessToken default
   });
 });
 

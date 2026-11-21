@@ -12,12 +12,11 @@ import {
   TrackKind,
 } from '@livekit/rtc-node';
 import {
-  AccessToken,
+  type ClientOptions,
   ConnectTwilioCallRequest_TwilioCallDirection,
   ConnectorClient,
   RoomServiceClient,
   SipClient,
-  type VideoGrant,
 } from 'livekit-server-sdk';
 import { z } from 'zod';
 import type { LLMModels, STTModelString, TTSModelString } from '../inference/index.js';
@@ -369,7 +368,12 @@ export function createWarmTransferTask({
     } finally {
       if (room?.name && jobCtx) {
         const info = jobCtx.info;
-        const rooms = new RoomServiceClient(info.url, info.apiKey, info.apiSecret);
+        const rooms = new RoomServiceClient(
+          info.url,
+          info.apiKey,
+          info.apiSecret,
+          apiClientOptions(jobCtx),
+        );
         const removal = await waitUntilAborted(
           rooms.removeParticipant(room.name, humanAgentIdentity),
           AbortSignal.timeout(CALLER_HANGUP_CLEANUP_TIMEOUT_MS),
@@ -491,8 +495,14 @@ export function createWarmTransferTask({
       'moving human agent to caller room',
     );
 
-    const info = (jobCtx ?? getJobContext()).info;
-    const rooms = new RoomServiceClient(info.url, info.apiKey, info.apiSecret);
+    const ctx = jobCtx ?? getJobContext();
+    const info = ctx.info;
+    const rooms = new RoomServiceClient(
+      info.url,
+      info.apiKey,
+      info.apiSecret,
+      apiClientOptions(ctx),
+    );
     await rooms.moveParticipant(humanAgentRoom.name, humanAgentIdentity, callerRoom.name);
   };
 
@@ -513,7 +523,6 @@ export function createWarmTransferTask({
     }
 
     const ctx = jobCtx ?? getJobContext();
-    if (ctx._jobTokens) throw new Error('warm transfer needs an API key and secret (token mode)');
     const humanAgentRoomName = resolveHumanAgentRoomName(callerRoom.name, rawRoomName);
     const room = new Room();
     const transferAgent = new Agent({
@@ -532,18 +541,19 @@ export function createWarmTransferTask({
     let completed = false;
 
     try {
-      const token = new AccessToken(undefined, undefined, { identity: localIdentity });
-      token.kind = 'agent';
-      token.addGrant({
-        roomJoin: true,
-        room: humanAgentRoomName,
-        canUpdateOwnMetadata: true,
-        canPublish: true,
-        canSubscribe: true,
-      } as VideoGrant);
+      const jwt = await ctx.createParticipantToken({
+        identity: localIdentity,
+        kind: 'agent',
+        grant: {
+          roomJoin: true,
+          room: humanAgentRoomName,
+          canUpdateOwnMetadata: true,
+          canPublish: true,
+          canSubscribe: true,
+        },
+      });
 
       logger.debug({ wsUrl: ctx.info.url, humanAgentRoomName }, 'connecting to human agent room');
-      const jwt = await token.toJwt();
 
       room.on(RoomEvent.Disconnected, onHumanAgentRoomClose);
 
@@ -779,6 +789,11 @@ export class WarmTransferTask extends AgentTask<WarmTransferResult> {
   }
 }
 
+// token mode: the server issues the token for each API call
+function apiClientOptions(ctx: JobContext): ClientOptions | undefined {
+  return ctx._jobTokens ? { tokenProvider: ctx._jobTokens.tokenProvider } : undefined;
+}
+
 /**
  * Build the default origination: validates the SIP options eagerly and dials
  * the human agent with `createSipParticipant`, resolving once they answer.
@@ -813,7 +828,7 @@ function createSipOriginateHumanAgent(options: {
   }
 
   return async ({ roomName, identity, jobCtx }) => {
-    const sip = new SipClient(jobCtx.info.url);
+    const sip = new SipClient(jobCtx.info.url, undefined, undefined, apiClientOptions(jobCtx));
     await sip.createSipParticipant(
       sipTrunkId ?? '',
       sipCallTo,
@@ -931,7 +946,12 @@ export function createTwilioConnectorWarmTransferTask(
     originateHumanAgent: async ({ roomName, identity, room, jobCtx, signal }) => {
       signal.throwIfAborted();
       const info = jobCtx.info;
-      const connector = new ConnectorClient(info.url, info.apiKey, info.apiSecret);
+      const connector = new ConnectorClient(
+        info.url,
+        info.apiKey,
+        info.apiSecret,
+        apiClientOptions(jobCtx),
+      );
       const { connectUrl } = await connector.connectTwilioCall({
         twilioCallDirection: ConnectTwilioCallRequest_TwilioCallDirection.OUTBOUND,
         roomName,
