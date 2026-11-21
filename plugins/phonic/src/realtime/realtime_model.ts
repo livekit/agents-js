@@ -75,6 +75,7 @@ export interface RealtimeModelOptions {
   configsForTools?: PhonicToolConfig[];
   /** @deprecated Use `configsForTools` with `forbid_speech_after_tool_call` per tool instead. */
   forbidSpeechAfterToolCall?: string[];
+  modalities: ('text' | 'audio')[];
   onConversationCreated?: (conversationId: string) => void;
   /** Set by `updateInstructions` via `voice.Agent` rather than the RealtimeModel constructor */
   instructions?: string;
@@ -89,7 +90,7 @@ export interface RealtimeModelOptions {
 export type PhonicConfig = Partial<
   Omit<
     RealtimeModelOptions,
-    'apiKey' | 'model' | 'connOptions' | 'baseUrl' | 'externalId' | 'instructions'
+    'apiKey' | 'model' | 'connOptions' | 'baseUrl' | 'externalId' | 'instructions' | 'modalities'
   >
 >;
 
@@ -326,6 +327,12 @@ export class RealtimeModel extends llm.RealtimeModel {
        */
       forbidSpeechAfterToolCall?: string[];
       /**
+       * `['text', 'audio']` (the default) for a voice conversation, or `['text']` for a text
+       * conversation: user turns arrive as typed text and the agent replies in text only, with no
+       * audio in either direction.
+       */
+      modalities?: ('text' | 'audio')[];
+      /**
        * Called with the Phonic conversation ID once the conversation is created
        */
       onConversationCreated?: (conversationId: string) => void;
@@ -336,13 +343,14 @@ export class RealtimeModel extends llm.RealtimeModel {
       baseUrl?: string;
     } = {},
   ) {
+    const modalities = options.modalities ?? ['text', 'audio'];
     super({
       messageTruncation: false,
       turnDetection: true,
-      userTranscription: true,
+      userTranscription: modalities.includes('audio'),
       autoToolReplyGeneration: true,
       manualFunctionCalls: false,
-      audioOutput: true,
+      audioOutput: modalities.includes('audio'),
       midSessionChatCtxUpdate: true,
       midSessionInstructionsUpdate: true,
       midSessionToolsUpdate: true,
@@ -408,6 +416,7 @@ export class RealtimeModel extends llm.RealtimeModel {
       externalId: options.externalId,
       configsForTools: options.configsForTools,
       forbidSpeechAfterToolCall: options.forbidSpeechAfterToolCall,
+      modalities,
       onConversationCreated: options.onConversationCreated,
       connOptions: options.connOptions ?? DEFAULT_API_CONNECT_OPTIONS,
       model: options.model ?? DEFAULT_MODEL,
@@ -837,7 +846,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   pushAudio(frame: AudioFrame): void {
-    if (this.closed || !this.readyToStart.done) {
+    if (!this.phonicModel.capabilities.audioOutput || this.closed || !this.readyToStart.done) {
       return;
     }
 
@@ -917,7 +926,11 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
 
     let systemMessage = instructions;
-    if (this.pendingUserText) {
+    let userMessage: string | undefined;
+    if (this.pendingUserText && !this.phonicModel.capabilities.audioOutput) {
+      userMessage = this.pendingUserText;
+      this.pendingUserText = undefined;
+    } else if (this.pendingUserText) {
       const userTextInstruction =
         `The user sent the following text message: "${this.pendingUserText}". ` +
         'Please respond to their message.';
@@ -927,7 +940,11 @@ export class RealtimeSession extends llm.RealtimeSession {
       this.pendingUserText = undefined;
     }
 
-    this.socket.sendGenerateReply({ type: 'generate_reply', system_message: systemMessage });
+    this.socket.sendGenerateReply({
+      type: 'generate_reply',
+      system_message: systemMessage,
+      user_message: userMessage,
+    });
   }
 
   async commitAudio(): Promise<void> {
@@ -1131,6 +1148,10 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   private handleInputText(message: Phonic.InputTextPayload): void {
+    if (!this.phonicModel.capabilities.audioOutput) {
+      // A text conversation's only input text echoes a typed message already in the chat context.
+      return;
+    }
     const itemId = shortuuid('PI_');
     this.emit('input_audio_transcription_completed', {
       itemId,
@@ -1199,11 +1220,16 @@ export class RealtimeSession extends llm.RealtimeSession {
     const functionChannel = stream.createStreamChannel<llm.FunctionCall>();
     const messageChannel = stream.createStreamChannel<llm.MessageGeneration>();
 
+    const audioOutput = this.phonicModel.capabilities.audioOutput;
+    if (!audioOutput) {
+      void audioChannel.close();
+    }
+
     messageChannel.write({
       messageId: responseId,
       textStream: textChannel.stream(),
       audioStream: audioChannel.stream(),
-      modalities: Promise.resolve(['audio', 'text']),
+      modalities: Promise.resolve(audioOutput ? ['audio', 'text'] : ['text']),
     });
 
     this.currentGeneration = {
@@ -1327,6 +1353,10 @@ export class RealtimeSession extends llm.RealtimeSession {
       observability_integrations: this.options.observabilityIntegrations,
       configuration_endpoint: this.options.configurationEndpoint,
       additional_params: this.options.additionalParams,
+      ...(!this.phonicModel.capabilities.audioOutput && {
+        input_modality: 'text',
+        output_modality: 'text',
+      }),
       external_id: this.options.externalId,
       stream_ahead_of_real_time: true,
     };

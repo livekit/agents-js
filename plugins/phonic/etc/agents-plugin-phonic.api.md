@@ -37,7 +37,7 @@ import { z } from 'zod';
 // Warning: (ae-missing-release-tag) "PhonicConfig" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
-type PhonicConfig = Partial<Omit<RealtimeModelOptions, 'apiKey' | 'model' | 'connOptions' | 'baseUrl' | 'externalId' | 'instructions'>>;
+type PhonicConfig = Partial<Omit<RealtimeModelOptions, 'apiKey' | 'model' | 'connOptions' | 'baseUrl' | 'externalId' | 'instructions' | 'modalities'>>;
 
 // Warning: (ae-missing-release-tag) "PhonicToolConfig" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -116,6 +116,7 @@ class RealtimeModel extends llm.RealtimeModel {
         externalId?: string;
         configsForTools?: PhonicToolConfig[];
         forbidSpeechAfterToolCall?: string[];
+        modalities?: ('text' | 'audio')[];
         onConversationCreated?: (conversationId: string) => void;
         connOptions?: APIConnectOptions;
         baseUrl?: string;
@@ -188,6 +189,8 @@ interface RealtimeModelOptions {
     // (undocumented)
     minWordsToInterrupt?: number;
     // (undocumented)
+    modalities: ('text' | 'audio')[];
+    // (undocumented)
     model: string;
     // (undocumented)
     multilingualMode?: 'auto' | 'request';
@@ -241,7 +244,7 @@ type Voice = 'sabrina' | 'grant' | 'virginia' | 'landon' | 'eleanor' | 'shelby' 
 
 // Warnings were encountered during analysis:
 //
-// src/realtime/realtime_model.ts:335:7 - (ae-forgotten-export) The symbol "APIConnectOptions" needs to be exported by the entry point index.d.ts
+// src/realtime/realtime_model.ts:342:7 - (ae-forgotten-export) The symbol "APIConnectOptions" needs to be exported by the entry point index.d.ts
 
 // (No @packageDocumentation comment for this package)
 
