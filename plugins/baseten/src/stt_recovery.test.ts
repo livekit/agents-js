@@ -31,11 +31,11 @@ async function startServer(options: ws.ServerOptions = {}) {
   if (address === null || typeof address === 'string') throw new Error('expected TCP address');
   endpoint.url = `ws://127.0.0.1:${address.port}`;
 }
-function startStream(maxRetry = 0) {
+function startStream(maxRetry = 0, language?: string) {
   const provider = new STT({ apiKey: 'test', modelEndpoint: endpoint.url });
   const onError = vi.fn();
   provider.on('error', onError);
-  stream = provider.stream({ connOptions: { ...connOptions, maxRetry } });
+  stream = provider.stream({ language, connOptions: { ...connOptions, maxRetry } });
   return { provider, stream, onError };
 }
 async function drain(value: stt.SpeechStream) {
@@ -61,6 +61,18 @@ afterEach(async () => {
 });
 
 describe('baseten STT recovery', () => {
+  it('uses the stream language instead of the configured language', async () => {
+    await startServer();
+    let metadata: { streaming_whisper_params: { audio_language: string } } | undefined;
+    server.on('connection', (socket) => {
+      socket.once('message', (raw) => {
+        metadata = JSON.parse(raw.toString());
+      });
+    });
+    startStream(0, 'de');
+    await vi.waitFor(() => expect(metadata?.streaming_whisper_params.audio_language).toBe('de'));
+  });
+
   it.each([1000, 1006, 1011])(
     'preserves an API error after unexpected closure %i',
     async (code) => {
