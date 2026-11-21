@@ -5,6 +5,8 @@ import { AudioFrame } from '@livekit/rtc-node';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import { ReadableStream } from 'node:stream/web';
+import v8 from 'node:v8';
+import vm from 'node:vm';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { WebSocket, WebSocketServer } from 'ws';
 import { APIStatusError } from '../src/_exceptions.js';
@@ -18,6 +20,7 @@ import {
   dedent,
   delay,
   isPending,
+  readStream,
   resampleStream,
   toStream,
   waitForWebSocketOpen,
@@ -1200,5 +1203,184 @@ describe('AsyncIterableQueue.next with a signal', () => {
 
     await expect(queue.next()).resolves.toEqual({ value: 1, done: false });
     await expect(queue.next()).resolves.toEqual({ value: 2, done: false });
+  });
+});
+
+describe('readStream', () => {
+  it('yields all items without a signal and releases the reader lock', async () => {
+    const stream = new ReadableStream<number>({
+      start(controller) {
+        controller.enqueue(1);
+        controller.enqueue(2);
+        controller.enqueue(3);
+        controller.close();
+      },
+    });
+
+    const items: number[] = [];
+    for await (const item of readStream(stream)) {
+      items.push(item);
+    }
+
+    expect(items).toEqual([1, 2, 3]);
+    expect(stream.locked).toBe(false);
+  });
+
+  it('exits immediately without locking the stream if the signal is already aborted', async () => {
+    let pulled = false;
+    const stream = new ReadableStream<number>(
+      {
+        pull(controller) {
+          pulled = true;
+          controller.enqueue(1);
+        },
+      },
+      { highWaterMark: 0 },
+    );
+    const getReaderSpy = vi.spyOn(stream, 'getReader');
+    const controller = new AbortController();
+    controller.abort();
+
+    const items: number[] = [];
+    for await (const item of readStream(stream, controller.signal)) {
+      items.push(item);
+    }
+
+    expect(items).toEqual([]);
+    expect(pulled).toBe(false);
+    expect(getReaderSpy).not.toHaveBeenCalled();
+    expect(stream.locked).toBe(false);
+  });
+
+  it('yields items with a signal using a single abort listener and removes it on completion', async () => {
+    let index = 0;
+    const total = 1000;
+    const stream = new ReadableStream<number>({
+      pull(controller) {
+        if (index < total) {
+          controller.enqueue(index++);
+        } else {
+          controller.close();
+        }
+      },
+    });
+
+    const controller = new AbortController();
+    const added = vi.spyOn(controller.signal, 'addEventListener');
+    const removed = vi.spyOn(controller.signal, 'removeEventListener');
+
+    const items: number[] = [];
+    for await (const item of readStream(stream, controller.signal)) {
+      items.push(item);
+    }
+
+    expect(items).toHaveLength(total);
+    expect(added).toHaveBeenCalledTimes(1);
+    expect(removed).toHaveBeenCalledTimes(1);
+    expect(stream.locked).toBe(false);
+  });
+
+  it('wakes a pending read immediately when the signal aborts mid-stream and releases the reader lock', async () => {
+    const stream = new ReadableStream<number>({
+      start(controller) {
+        controller.enqueue(1);
+        controller.enqueue(2);
+        // Leave stream open so the third read stays pending
+      },
+    });
+
+    const controller = new AbortController();
+    const items: number[] = [];
+
+    const consumer = (async () => {
+      for await (const item of readStream(stream, controller.signal)) {
+        items.push(item);
+        if (items.length === 2) {
+          setTimeout(() => controller.abort(), 5);
+        }
+      }
+    })();
+
+    await consumer;
+
+    expect(items).toEqual([1, 2]);
+    expect(stream.locked).toBe(false);
+  });
+
+  it('propagates stream errors when the signal is not aborted', async () => {
+    const expectedError = new Error('stream failure');
+    let count = 0;
+    const stream = new ReadableStream<number>({
+      pull(controller) {
+        if (count++ === 0) {
+          controller.enqueue(1);
+        } else {
+          controller.error(expectedError);
+        }
+      },
+    });
+
+    const controller = new AbortController();
+    const items: number[] = [];
+
+    await expect(
+      (async () => {
+        for await (const item of readStream(stream, controller.signal)) {
+          items.push(item);
+        }
+      })(),
+    ).rejects.toThrow(expectedError);
+
+    expect(items).toEqual([1]);
+    expect(stream.locked).toBe(false);
+  });
+
+  it('does not retain yielded items while the abort signal remains un-aborted', async () => {
+    v8.setFlagsFromString('--expose-gc');
+    const gc = vm.runInNewContext('gc') as () => void;
+
+    const total = 50;
+    let index = 0;
+    let resolveGate!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      resolveGate = resolve;
+    });
+
+    const refs: WeakRef<{ payload: Uint8Array }>[] = [];
+    const stream = new ReadableStream<{ payload: Uint8Array }>({
+      async pull(controller) {
+        if (index < total) {
+          index += 1;
+          const item = { payload: new Uint8Array(1024) };
+          refs.push(new WeakRef(item));
+          controller.enqueue(item);
+          return;
+        }
+        await gate;
+        controller.close();
+      },
+    });
+
+    const controller = new AbortController();
+    let consumed = 0;
+
+    for await (const item of readStream(stream, controller.signal)) {
+      expect(item.payload.byteLength).toBe(1024);
+      consumed += 1;
+      if (consumed === total) {
+        // Yield a macrotask turn and trigger GC while readStream is still active and signal is un-aborted.
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        gc();
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        gc();
+
+        const retainedCount = refs.filter((ref) => ref.deref() !== undefined).length;
+        // At most the current loop frame's `item` binding may still be live.
+        expect(retainedCount).toBeLessThanOrEqual(1);
+        resolveGate();
+      }
+    }
+
+    expect(consumed).toBe(total);
   });
 });
