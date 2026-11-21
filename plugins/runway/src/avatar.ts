@@ -6,6 +6,7 @@ import {
   APIConnectionError,
   APIStatusError,
   DEFAULT_API_CONNECT_OPTIONS,
+  getJobContext,
   intervalForRetry,
   voice,
 } from '@livekit/agents';
@@ -125,7 +126,9 @@ export class AvatarSession extends voice.AvatarSession {
     const livekitApiKey = options.livekitApiKey || process.env.LIVEKIT_API_KEY;
     const livekitApiSecret = options.livekitApiSecret || process.env.LIVEKIT_API_SECRET;
 
-    if (!livekitUrl || !livekitApiKey || !livekitApiSecret) {
+    // in a job, a missing key and secret are left to createParticipantToken (token mode)
+    const jobCtx = getJobContext(false);
+    if (!livekitUrl || (!jobCtx && (!livekitApiKey || !livekitApiSecret))) {
       throw new RunwayException(
         'livekitUrl, livekitApiKey, and livekitApiSecret must be set ' +
           'by arguments or environment variables',
@@ -139,15 +142,28 @@ export class AvatarSession extends voice.AvatarSession {
     }
     const localParticipantIdentity = room.localParticipant.identity;
 
-    const at = new AccessToken(livekitApiKey, livekitApiSecret, {
-      identity: this.avatarParticipantIdentity,
-      name: this.avatarParticipantName,
-    });
-    at.kind = 'agent';
-    at.addGrant({ roomJoin: true, room: room.name } as VideoGrant);
-    at.attributes = { [ATTRIBUTE_PUBLISH_ON_BEHALF]: localParticipantIdentity };
+    let livekitToken: string;
+    if (jobCtx) {
+      livekitToken = await jobCtx.createParticipantToken({
+        identity: this.avatarParticipantIdentity,
+        name: this.avatarParticipantName,
+        kind: 'agent',
+        grant: { roomJoin: true, room: room.name },
+        attributes: { [ATTRIBUTE_PUBLISH_ON_BEHALF]: localParticipantIdentity },
+        apiKey: livekitApiKey,
+        apiSecret: livekitApiSecret,
+      });
+    } else {
+      const at = new AccessToken(livekitApiKey, livekitApiSecret, {
+        identity: this.avatarParticipantIdentity,
+        name: this.avatarParticipantName,
+      });
+      at.kind = 'agent';
+      at.addGrant({ roomJoin: true, room: room.name } as VideoGrant);
+      at.attributes = { [ATTRIBUTE_PUBLISH_ON_BEHALF]: localParticipantIdentity };
 
-    const livekitToken = await at.toJwt();
+      livekitToken = await at.toJwt();
+    }
 
     this.#logger.debug('starting Runway avatar session');
     await this.createSession(livekitUrl, livekitToken, room.name || '', localParticipantIdentity);

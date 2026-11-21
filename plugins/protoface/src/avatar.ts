@@ -106,7 +106,8 @@ export class AvatarSession extends voice.AvatarSession {
     const livekitUrl = options.livekitUrl ?? process.env.LIVEKIT_URL;
     const livekitApiKey = options.livekitApiKey ?? process.env.LIVEKIT_API_KEY;
     const livekitApiSecret = options.livekitApiSecret ?? process.env.LIVEKIT_API_SECRET;
-    if (!livekitUrl || !livekitApiKey || !livekitApiSecret) {
+    // in a job, a missing key and secret are left to createParticipantToken (token mode)
+    if (!livekitUrl || (!getJobContext(false) && (!livekitApiKey || !livekitApiSecret))) {
       throw new ProtofaceException(
         'livekitUrl, livekitApiKey, and livekitApiSecret must be set by arguments or environment variables',
       );
@@ -166,15 +167,14 @@ export class AvatarSession extends voice.AvatarSession {
     livekitApiSecret,
   }: {
     room: Room;
-    livekitApiKey: string;
-    livekitApiSecret: string;
+    livekitApiKey?: string;
+    livekitApiSecret?: string;
   }): Promise<string> {
     let localParticipantIdentity = '';
-    try {
-      const jobCtx = getJobContext();
+    // Falls back to the connected room below when no job context is available.
+    const jobCtx = getJobContext(false);
+    if (jobCtx) {
       localParticipantIdentity = jobCtx.agent?.identity || '';
-    } catch {
-      // Fall back to the connected room below when no job context is available.
     }
 
     if (!localParticipantIdentity && room.isConnected && room.localParticipant) {
@@ -183,6 +183,24 @@ export class AvatarSession extends voice.AvatarSession {
 
     if (!localParticipantIdentity) {
       throw new ProtofaceException('failed to get local participant identity');
+    }
+
+    if (jobCtx) {
+      return jobCtx.createParticipantToken({
+        identity: this.avatarParticipantIdentity,
+        name: this.avatarParticipantName,
+        kind: 'agent',
+        attributes: { [ATTRIBUTE_PUBLISH_ON_BEHALF]: localParticipantIdentity },
+        grant: {
+          roomJoin: true,
+          room: room.name,
+          canPublish: true,
+          canSubscribe: true,
+          canPublishData: true,
+        },
+        apiKey: livekitApiKey,
+        apiSecret: livekitApiSecret,
+      });
     }
 
     const token = new AccessToken(livekitApiKey, livekitApiSecret, {

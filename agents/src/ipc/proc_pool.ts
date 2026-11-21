@@ -5,6 +5,7 @@ import { MultiMutex, Mutex } from '@livekit/mutex';
 import type { JobJoinTiming } from '@livekit/protocol';
 import { type Throws, ThrowsPromise } from '@livekit/throws-transformer/throws';
 import type { RunningJobInfo } from '../job.js';
+import type { JobToken } from '../job_token.js';
 import { Queue } from '../utils.js';
 import type { InferenceExecutor } from './inference_executor.js';
 import type { JobExecutor } from './job_executor.js';
@@ -22,6 +23,8 @@ type ProcPoolOptions = {
   memoryLimitMB: number;
   /** A job was launched, connected (with its join instants) or ended: report its status. */
   onJobUpdate?: (proc: JobExecutor, joinTiming?: JobJoinTiming) => void;
+  /** Asks the server for a token for a running job (token mode). */
+  createJobToken?: (jobId: string, claims: string) => Promise<JobToken>;
 };
 
 export class ProcPool {
@@ -42,6 +45,7 @@ export class ProcPool {
   memoryWarnMB: number;
   memoryLimitMB: number;
   onJobUpdate?: (proc: JobExecutor, joinTiming?: JobJoinTiming) => void;
+  createJobToken?: (jobId: string, claims: string) => Promise<JobToken>;
 
   constructor({
     agent,
@@ -53,6 +57,7 @@ export class ProcPool {
     memoryWarnMB,
     memoryLimitMB,
     onJobUpdate,
+    createJobToken,
   }: ProcPoolOptions) {
     this.agent = agent;
     if (numIdleProcesses > 0) {
@@ -65,6 +70,7 @@ export class ProcPool {
     this.memoryWarnMB = memoryWarnMB;
     this.memoryLimitMB = memoryLimitMB;
     this.onJobUpdate = onJobUpdate;
+    this.createJobToken = createJobToken;
   }
 
   get processes(): JobExecutor[] {
@@ -97,6 +103,7 @@ export class ProcPool {
         pingTimeout: 60000,
         highPingThreshold: 500,
         onJoinTiming: (timing) => this.onJobUpdate?.(proc, timing),
+        createJobToken: this.createJobToken,
       });
       this.executors.push(proc);
       await proc.start();
@@ -123,6 +130,7 @@ export class ProcPool {
       pingTimeout: 60000,
       highPingThreshold: 500,
       onJoinTiming: (timing) => this.onJobUpdate?.(proc, timing),
+      createJobToken: this.createJobToken,
     });
 
     try {

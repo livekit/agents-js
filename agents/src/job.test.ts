@@ -3,9 +3,11 @@
 // SPDX-License-Identifier: Apache-2.0
 import { ConnectionState, RoomEvent } from '@livekit/rtc-node';
 import type { Room } from '@livekit/rtc-node';
+import { AccessToken, TokenVerifier } from 'livekit-server-sdk';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { InferenceExecutor } from './ipc/inference_executor.js';
 import { JobContext, type JobProcess, type RunningJobInfo } from './job.js';
+import { JobTokenClient } from './job_token.js';
 import { log } from './log.js';
 import { SimulationContext, parseSimulationDispatch } from './simulation.js';
 import * as rpcTracing from './telemetry/rpc.js';
@@ -18,7 +20,8 @@ const { deleteRoomMock, roomServiceClientMock, setupCloudTracerMock } = vi.hoist
   setupCloudTracerMock: vi.fn(async () => {}),
 }));
 
-vi.mock('livekit-server-sdk', () => ({
+vi.mock('livekit-server-sdk', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
   RoomServiceClient: roomServiceClientMock,
 }));
 
@@ -100,6 +103,103 @@ describe('JobContext.deleteRoom', () => {
     await ctx.deleteRoom('other-room');
 
     expect(deleteRoomMock).toHaveBeenCalledWith('other-room');
+  });
+});
+
+describe('JobContext.createParticipantToken', () => {
+  const secret = 'secret'.repeat(6);
+  const avatar = {
+    identity: 'avatar',
+    name: 'Avatar',
+    kind: 'agent',
+    attributes: { 'lk.publish_on_behalf': 'agent' },
+  };
+
+  function decode(token: string) {
+    return JSON.parse(Buffer.from(token.split('.')[1]!, 'base64url').toString());
+  }
+
+  it("signs with the worker's credentials, for the job's room by default", async () => {
+    const ctx = createJobContext({ apiKey: 'devkey', apiSecret: secret });
+
+    const token = await ctx.createParticipantToken(avatar);
+    const short = await ctx.createParticipantToken({ identity: 'avatar', ttl: '5m' });
+
+    const claims = await new TokenVerifier('devkey', secret).verify(token);
+    expect(claims).toMatchObject({
+      iss: 'devkey',
+      sub: 'avatar',
+      name: 'Avatar',
+      kind: 'agent',
+      attributes: { 'lk.publish_on_behalf': 'agent' },
+      video: { roomJoin: true, room: 'assigned-room' },
+    });
+    expect(claims.exp! - claims.nbf!).toBe(6 * 3600); // the AccessToken default
+    const shortClaims = decode(short);
+    expect(shortClaims.exp - shortClaims.nbf).toBe(300);
+  });
+
+  it('gets the token from CreateJobToken in token mode', async () => {
+    const createJobToken = vi.fn(async () => ({ token: 'job-token', expiresAt: Date.now() + 1e6 }));
+    const ctx = createJobContext();
+    ctx._jobTokens = new JobTokenClient(createJobToken);
+
+    const token = await ctx.createParticipantToken({
+      ...avatar,
+      grant: { roomJoin: true, room: 'assigned-room', canSubscribe: false },
+      ttl: '4h', // the server sets the lifetime
+    });
+
+    expect(token).toBe('job-token');
+    expect(JSON.parse(createJobToken.mock.calls[0]![0])).toEqual({
+      identity: 'avatar',
+      name: 'Avatar',
+      kind: 'agent',
+      attributes: { 'lk.publish_on_behalf': 'agent' },
+      video: { roomJoin: true, room: 'assigned-room', canSubscribe: false },
+    });
+  });
+
+  it('signs with a given key and secret in token mode', async () => {
+    const createJobToken = vi.fn();
+    const ctx = createJobContext();
+    ctx._jobTokens = new JobTokenClient(createJobToken);
+
+    const token = await ctx.createParticipantToken({
+      identity: 'avatar',
+      apiKey: 'otherkey',
+      apiSecret: secret,
+    });
+
+    expect(decode(token).iss).toBe('otherkey');
+    expect(createJobToken).not.toHaveBeenCalled();
+  });
+
+  it('throws without credentials outside token mode', async () => {
+    vi.stubEnv('LIVEKIT_API_KEY', '');
+    vi.stubEnv('LIVEKIT_API_SECRET', '');
+    try {
+      await expect(
+        createJobContext().createParticipantToken({ identity: 'avatar' }),
+      ).rejects.toThrow('apiKey and apiSecret are required');
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+});
+
+describe('JobContext.localParticipantIdentity', () => {
+  it("is the identity in the job's token", async () => {
+    const token = await new AccessToken('devkey', 'secret'.repeat(6), {
+      identity: 'agent-AJ_1',
+    }).toJwt();
+    expect(createJobContext({ token }).localParticipantIdentity).toBe('agent-AJ_1');
+  });
+
+  it("falls back to the room's local participant", () => {
+    const ctx = createJobContext({ token: '' });
+    Object.assign(ctx.room, { localParticipant: { identity: 'local' } });
+    expect(ctx.localParticipantIdentity).toBe('local');
   });
 });
 

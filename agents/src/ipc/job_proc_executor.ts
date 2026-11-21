@@ -6,6 +6,7 @@ import type { ChildProcess } from 'node:child_process';
 import { fork } from 'node:child_process';
 import { extname } from 'node:path';
 import type { RunningJobInfo } from '../job.js';
+import type { JobToken } from '../job_token.js';
 import { log } from '../log.js';
 import type { InferenceExecutor } from './inference_executor.js';
 import type { JobExecutor } from './job_executor.js';
@@ -23,21 +24,26 @@ export class JobProcExecutor extends SupervisedProc implements JobExecutor {
   #inferenceExecutor?: InferenceExecutor;
   #inferenceTasks: Promise<void>[] = [];
   #onJoinTiming?: (timing: JobJoinTiming) => void;
+  #createJobToken?: (jobId: string, claims: string) => Promise<JobToken>;
 
   constructor({
     agent,
     inferenceExecutor,
     onJoinTiming,
+    createJobToken,
     ...opts
   }: ProcOpts & {
     agent: string;
     inferenceExecutor?: InferenceExecutor;
     onJoinTiming?: (timing: JobJoinTiming) => void;
+    /** Asks the server for a token for a job this worker runs (token mode). */
+    createJobToken?: (jobId: string, claims: string) => Promise<JobToken>;
   }) {
     super(opts);
     this.#agent = agent;
     this.#inferenceExecutor = inferenceExecutor;
     this.#onJoinTiming = onJoinTiming;
+    this.#createJobToken = createJobToken;
   }
 
   get status(): JobStatus {
@@ -82,8 +88,38 @@ export class JobProcExecutor extends SupervisedProc implements JobExecutor {
           break;
         case 'joinTiming':
           this.#onJoinTiming?.(JobJoinTiming.fromJson(msg.value));
+          break;
+        case 'createJobTokenRequest':
+          this.#doCreateJobToken(proc, msg.value).catch((error) =>
+            this.logger.warn({ error }, 'failed to answer the job token request'),
+          );
       }
     });
+  }
+
+  async #doCreateJobToken(proc: ChildProcess, req: { requestId: string; claims: string }) {
+    let response: IPCMessage;
+    try {
+      // the token is for the job this process runs, whatever the process asks
+      const jobId = this.#runningJob?.job.id;
+      if (!jobId || !this.#createJobToken) {
+        throw new Error('job tokens are not available: no running job');
+      }
+      const { token, expiresAt } = await this.#createJobToken(jobId, req.claims);
+      response = {
+        case: 'createJobTokenResponse',
+        value: { requestId: req.requestId, token, expiresAt },
+      };
+    } catch (error) {
+      response = {
+        case: 'createJobTokenResponse',
+        value: {
+          requestId: req.requestId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      };
+    }
+    proc.send(response);
   }
 
   async #doInferenceTask(

@@ -5,10 +5,12 @@ import { Job } from '@livekit/protocol';
 import { DisconnectReason } from '@livekit/rtc-node';
 import { fork } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { JobToken } from '../job_token.js';
 import { initializeLogger } from '../log.js';
 import { JobStatus } from './job_executor.js';
 import { JobProcExecutor } from './job_proc_executor.js';
+import type { IPCMessage } from './message.js';
 
 initializeLogger({ pretty: false, level: 'silent' });
 
@@ -156,4 +158,176 @@ describe('job entrypoint failures', () => {
     },
     15_000,
   );
+});
+
+describe('job API tokens', () => {
+  const originalEnv = { ...process.env };
+
+  afterEach(() => {
+    process.env = { ...originalEnv };
+  });
+
+  /** Runs the 'job api' scenario: the job deletes its room twice, through the server API. */
+  const runJobApi = async (opts: {
+    createJobToken: (jobId: string, claims: string) => Promise<JobToken>;
+    apiKey?: string;
+    apiSecret?: string;
+  }) => {
+    const proc = new TestJobProcExecutor({
+      agent: 'unused',
+      initializeTimeout: 10_000,
+      closeTimeout: 1000,
+      memoryWarnMB: 0,
+      memoryLimitMB: 0,
+      pingInterval: 2500,
+      pingTimeout: 60_000,
+      highPingThreshold: 500,
+      createJobToken: opts.createJobToken,
+    });
+    const authorizations: (string | null)[] = [];
+    const tokenResponses: IPCMessage[] = [];
+    try {
+      await proc.start();
+      proc.proc!.on('message', (message: { case: string; authorization?: string | null }) => {
+        if (message.case === 'testFetch') authorizations.push(message.authorization ?? null);
+      });
+      const send = proc.proc!.send.bind(proc.proc!);
+      proc.proc!.send = ((message: IPCMessage, ...args: never[]) => {
+        if (message.case === 'createJobTokenResponse') tokenResponses.push(message);
+        return send(message, ...args);
+      }) as typeof proc.proc.send;
+      await proc.initialize({ sessionEndTimeout: 1000 });
+      await proc.launchJob({
+        acceptArguments: { name: 'n', identity: 'i', metadata: '' },
+        job: new Job({ id: 'AJ_api', metadata: 'job api' }),
+        url: 'wss://example.com',
+        token: 'token',
+        workerId: 'W_1',
+        apiKey: opts.apiKey,
+        apiSecret: opts.apiSecret,
+      });
+      await proc.join();
+      expect(proc.status).toBe(JobStatus.SUCCESS);
+    } finally {
+      await proc.close();
+    }
+    return { authorizations, tokenResponses };
+  };
+
+  const tokenModeEnv = () => {
+    delete process.env.LIVEKIT_API_KEY;
+    delete process.env.LIVEKIT_API_SECRET;
+    process.env.LIVEKIT_TOKEN = 'worker-token';
+  };
+
+  it('in token mode, asks the worker for each call token, and caches it', async () => {
+    tokenModeEnv();
+    const createJobToken = vi.fn(async (_jobId: string, _claims: string) => ({
+      token: 'job-token',
+      expiresAt: Date.now() + 600_000,
+    }));
+
+    const { authorizations } = await runJobApi({ createJobToken });
+
+    expect(authorizations).toEqual(['Bearer job-token', 'Bearer job-token']);
+    const apiCalls = createJobToken.mock.calls.filter(([, claims]) => claims.includes('video'));
+    expect(apiCalls).toHaveLength(1);
+    const [jobId, claims] = apiCalls[0]!;
+    expect(jobId).toBe('AJ_api');
+    expect(JSON.parse(claims)).toEqual({ video: { roomCreate: true } });
+  }, 20_000);
+
+  it('in token mode, carries the server error back to the job', async () => {
+    tokenModeEnv();
+    // the job's own tokens (inference, observability) are given; the server API call's are not
+    const createJobToken = vi.fn(async (_jobId: string, claims: string) => {
+      if (!claims.includes('video')) return { token: 't', expiresAt: Date.now() + 600_000 };
+      throw new Error('the LiveKit server refused CreateJobToken: claim not allowed');
+    });
+
+    const { authorizations, tokenResponses } = await runJobApi({ createJobToken });
+
+    // each call asks again: a refusal is not cached
+    expect(createJobToken).toHaveBeenCalledTimes(4);
+    expect(authorizations).toEqual([]);
+    expect(tokenResponses.slice(2).map((m) => m.value)).toEqual([
+      expect.objectContaining({
+        error: 'the LiveKit server refused CreateJobToken: claim not allowed',
+      }),
+      expect.objectContaining({
+        error: 'the LiveKit server refused CreateJobToken: claim not allowed',
+      }),
+    ]);
+  }, 20_000);
+
+  it('with an API key and secret, signs each call token itself', async () => {
+    process.env.LIVEKIT_TOKEN = 'worker-token';
+    const createJobToken = vi.fn();
+
+    const { authorizations } = await runJobApi({
+      createJobToken,
+      apiKey: 'devkey',
+      apiSecret: 'secretsecretsecretsecretsecretsecret',
+    });
+
+    expect(createJobToken).not.toHaveBeenCalled();
+    expect(authorizations).toHaveLength(2);
+    const claims = JSON.parse(
+      Buffer.from(authorizations[0]!.split('.')[1]!, 'base64url').toString(),
+    );
+    expect(claims).toMatchObject({ iss: 'devkey', video: { roomCreate: true } });
+  }, 20_000);
+
+  it('in token mode, gets the inference and observability tokens before the entrypoint', async () => {
+    tokenModeEnv();
+    const createJobToken = vi.fn(async (_jobId: string, claims: string) => ({
+      token: `token for ${claims}`,
+      expiresAt: Date.now() + 600_000,
+    }));
+    const proc = new TestJobProcExecutor({
+      agent: 'unused',
+      initializeTimeout: 10_000,
+      closeTimeout: 1000,
+      memoryWarnMB: 0,
+      memoryLimitMB: 0,
+      pingInterval: 2500,
+      pingTimeout: 60_000,
+      highPingThreshold: 500,
+      createJobToken,
+    });
+    const reports: unknown[] = [];
+    try {
+      await proc.start();
+      proc.proc!.on('message', (message: { case: string }) => {
+        if (message.case === 'testJobTokens') reports.push(message);
+      });
+      await proc.initialize({ sessionEndTimeout: 1000 });
+      await proc.launchJob({
+        acceptArguments: { name: 'n', identity: 'i', metadata: '' },
+        job: new Job({ id: 'AJ_tokens', metadata: 'job tokens' }),
+        url: 'wss://example.com',
+        token: 'token',
+        workerId: 'W_1',
+      });
+      await proc.join();
+      expect(proc.status).toBe(JobStatus.SUCCESS);
+    } finally {
+      await proc.close();
+    }
+
+    const inference = JSON.stringify({ identity: 'agent', inference: { perform: true } });
+    const observability = JSON.stringify({ observability: { write: true } });
+    expect(createJobToken.mock.calls).toEqual([
+      ['AJ_tokens', inference],
+      ['AJ_tokens', observability],
+    ]);
+    // never the worker token
+    expect(reports).toEqual([
+      {
+        case: 'testJobTokens',
+        inference: `token for ${inference}`,
+        observability: `token for ${observability}`,
+      },
+    ]);
+  }, 20_000);
 });

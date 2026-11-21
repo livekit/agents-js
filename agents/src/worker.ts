@@ -36,6 +36,7 @@ import { ProcPool } from './ipc/proc_pool.js';
 import type { JobAcceptArguments, JobProcess, RunningJobInfo } from './job.js';
 import { JobRequest } from './job.js';
 import { DEFAULT_SESSION_END_TIMEOUT, validateSessionEndTimeout } from './job_lifecycle.js';
+import { CreateJobTokenRequests } from './job_token.js';
 import { log } from './log.js';
 import {
   type EventLoopMonitor,
@@ -61,6 +62,9 @@ const PROJECT_TYPE = 'nodejs';
 // the /worker endpoint to decide whether the SDK supports agent deployments; a
 // worker that omits it is treated as legacy and registered without its deployment.
 const WORKER_PROTOCOL_VERSION = 1;
+// The first agent protocol (ServerInfo.agent_protocol) whose servers handle CreateJobToken. An
+// older server closes the worker connection on that message, so token mode needs at least this.
+const TOKEN_MODE_AGENT_PROTOCOL = 2;
 
 let localEotRunnerRegistered = false;
 /**
@@ -246,6 +250,8 @@ export class ServerOptions {
   wsURL: string;
   apiKey?: string;
   apiSecret?: string;
+  /** Token mode: a pre-minted worker token, used in place of `apiKey` and `apiSecret`. */
+  token?: string;
   workerToken?: string;
   host: string;
   port: number;
@@ -274,6 +280,7 @@ export class ServerOptions {
     wsURL = 'ws://localhost:7880',
     apiKey = undefined,
     apiSecret = undefined,
+    token = undefined,
     workerToken = undefined,
     host = '0.0.0.0',
     port = undefined,
@@ -322,6 +329,14 @@ export class ServerOptions {
     wsURL?: string;
     apiKey?: string;
     apiSecret?: string;
+    /**
+     * A pre-minted worker token, for an agent that holds no API key or secret. Used only when
+     * neither an API key nor an API secret is set. The worker registers with it, uses it for its
+     * own calls, and asks the server for each token a job needs.
+     *
+     * By default it uses `LIVEKIT_TOKEN` from environment.
+     */
+    token?: string;
     workerToken?: string;
     host?: string;
     port?: number;
@@ -366,6 +381,7 @@ export class ServerOptions {
     this.wsURL = wsURL;
     this.apiKey = apiKey;
     this.apiSecret = apiSecret;
+    this.token = token;
     this.workerToken = workerToken;
     this.host = host;
     this.port = port || Default.port(production);
@@ -417,25 +433,42 @@ export class AgentServer {
   #logger = log().child({ version });
   #inferenceExecutor?: InferenceProcExecutor;
   #loopMonitor?: EventLoopMonitor;
+  // token mode: no API key or secret, a pre-minted worker token instead
+  #tokenMode: boolean;
+  // sent now or not at all: a request that waits for a connection could outlive its job
+  #jobTokens = new CreateJobTokenRequests((msg) => {
+    if (this.#registeredWS?.readyState !== WebSocket.OPEN) return false;
+    this.#registeredWS.send(msg.toBinary());
+    return true;
+  });
+  // the server cannot serve this worker: set once, ends the run without retrying
+  #fatalError?: WorkerError;
 
   /* @throws {@link MissingCredentialsError} if URL, API key or API secret are missing */
   constructor(opts: ServerOptions) {
     opts.wsURL = opts.wsURL || process.env.LIVEKIT_URL || '';
     opts.apiKey = opts.apiKey || process.env.LIVEKIT_API_KEY || '';
     opts.apiSecret = opts.apiSecret || process.env.LIVEKIT_API_SECRET || '';
+    opts.token = opts.token || process.env.LIVEKIT_TOKEN || '';
+    this.#tokenMode = opts.apiKey === '' && opts.apiSecret === '' && opts.token !== '';
 
     if (opts.wsURL === '')
       throw new MissingCredentialsError(
         'URL is required: Set LIVEKIT_URL, run with --url, or pass wsURL in ServerOptions',
       );
-    if (opts.apiKey === '')
+    if (opts.apiKey === '' && !this.#tokenMode)
       throw new MissingCredentialsError(
         'API Key is required: Set LIVEKIT_API_KEY, run with --api-key, or pass apiKey in ServerOptions',
       );
-    if (opts.apiSecret === '')
+    if (opts.apiSecret === '' && !this.#tokenMode)
       throw new MissingCredentialsError(
         'API Secret is required: Set LIVEKIT_API_SECRET, run with --api-secret, or pass apiSecret in ServerOptions',
       );
+
+    if (this.#tokenMode) {
+      // Exported so forked job processes inherit it, as the token mode marker.
+      process.env.LIVEKIT_TOKEN = opts.token;
+    }
 
     if (opts.workerToken) {
       // Re-export into the environment so forked subprocesses inherit it (fork()
@@ -478,6 +511,7 @@ export class AgentServer {
       memoryWarnMB: opts.jobMemoryWarnMB,
       memoryLimitMB: opts.jobMemoryLimitMB,
       onJobUpdate: (proc, joinTiming) => this.#updateJobStatus(proc, joinTiming),
+      createJobToken: (jobId, claims) => this.#jobTokens.request(jobId, claims),
     });
 
     this.#opts = opts;
@@ -543,9 +577,15 @@ export class AgentServer {
         this.#connecting = true;
         const url = new URL(this.#opts.wsURL);
         url.protocol = url.protocol.replace('http', 'ws');
-        const token = new AccessToken(this.#opts.apiKey, this.#opts.apiSecret);
-        token.addGrant({ agent: true });
-        const jwt = await token.toJwt();
+        let jwt: string;
+        if (this.#tokenMode) {
+          // the worker token is the bearer, as is
+          jwt = this.#opts.token!;
+        } else {
+          const token = new AccessToken(this.#opts.apiKey, this.#opts.apiSecret);
+          token.addGrant({ agent: true });
+          jwt = await token.toJwt();
+        }
         const wsUrl = new URL(url + 'agent');
         if (this.#opts.workerToken) {
           wsUrl.searchParams.append('worker_token', this.#opts.workerToken);
@@ -565,6 +605,7 @@ export class AgentServer {
           await this.#runWS(this.#session);
         } catch (e: unknown) {
           if (this.#closed) return;
+          if (this.#fatalError) throw this.#fatalError;
           if (!this.#connecting) retries = 0;
           if (retries >= this.#opts.maxRetry) {
             throw new WorkerError(
@@ -608,6 +649,26 @@ export class AgentServer {
     return this.#procPool.processes
       .filter((proc) => proc.runningJob)
       .map((proc) => proc.runningJob!);
+  }
+
+  /**
+   * Replaces the worker token (token mode), given by `lk agent dev` over its dev channel: the
+   * next connection registers with it.
+   *
+   * @internal
+   */
+  _updateWorkerToken(token: string) {
+    if (!this.#tokenMode) {
+      this.#logger.warn('ignoring a worker token: the worker runs with an API key and secret');
+      return;
+    }
+    if (!token) {
+      this.#logger.warn('ignoring an empty worker token');
+      return;
+    }
+    this.#opts.token = token;
+    // jobs use it only as the token mode marker
+    process.env.LIVEKIT_TOKEN = token;
   }
 
   #updateJobStatus(proc: JobExecutor, joinTiming?: JobJoinTiming) {
@@ -703,6 +764,7 @@ export class AgentServer {
   }
 
   async simulateJob(roomName: string, participantIdentity?: string) {
+    if (this.#tokenMode) throw new WorkerError('simulateJob needs an API key and secret');
     const client = new RoomServiceClient(this.#opts.wsURL, this.#opts.apiKey, this.#opts.apiSecret);
     const room = await client.createRoom({ name: roomName });
     let participant: ParticipantInfo | undefined = undefined;
@@ -773,10 +835,14 @@ export class AgentServer {
       ws.terminate();
     }, WORKER_REGISTRATION_TIMEOUT);
 
-    const close = new ThrowsPromise<void, APIStatusError>((resolve, reject) => {
+    const close = new ThrowsPromise<void, APIStatusError | WorkerError>((resolve, reject) => {
       ws.addEventListener('close', (event) => {
         closingWS = true;
         if (this.#registeredWS === ws) this.#registeredWS = undefined;
+        if (this.#fatalError) {
+          reject(this.#fatalError);
+          return;
+        }
         if (!this.#closed) {
           reject(
             new APIStatusError({
@@ -834,6 +900,18 @@ export class AgentServer {
       switch (msg.message.case) {
         case 'register': {
           clearTimeout(registerTimeout);
+          const agentProtocol = msg.message.value.serverInfo?.agentProtocol ?? 0;
+          if (this.#tokenMode && agentProtocol < TOKEN_MODE_AGENT_PROTOCOL) {
+            // checked before the connection is used: such a server must never get CreateJobToken
+            this.#fatalError = new WorkerError(
+              `the LiveKit server does not support token mode (LIVEKIT_TOKEN): it reports agent ` +
+                `protocol ${agentProtocol}, and token mode needs ${TOKEN_MODE_AGENT_PROTOCOL}. ` +
+                'Upgrade the server, or run the agent with LIVEKIT_API_KEY and LIVEKIT_API_SECRET',
+            );
+            this.#logger.error(this.#fatalError.message);
+            ws.close();
+            return;
+          }
           this.#id = msg.message.value.workerId;
           this.#logger
             .child({
@@ -884,6 +962,14 @@ export class AgentServer {
             task?.resolve(msg.message.value);
           } else {
             this.#logger.child({ job }).warn('received assignment for unknown job ' + job.id);
+          }
+          break;
+        }
+        case 'createJobToken': {
+          if (!this.#jobTokens.handleResponse(msg.message.value)) {
+            this.#logger
+              .child({ requestId: msg.message.value.requestId })
+              .warn('received job token for unknown request');
           }
           break;
         }
