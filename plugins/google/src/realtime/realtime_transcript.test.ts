@@ -8,7 +8,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { RealtimeModel } from './realtime_api.js';
 
 /** The fields of a server message the session reads — `LiveServerMessage` itself is a class. */
-type ServerFrame = Pick<genai.LiveServerMessage, 'serverContent' | 'toolCall'>;
+type ServerFrame = Pick<genai.LiveServerMessage, 'serverContent' | 'toolCall' | 'usageMetadata'>;
 
 type ServerCallbacks = {
   onopen: () => void;
@@ -67,6 +67,7 @@ async function openSession(options: SessionOptions = {}) {
   await vi.waitFor(() => expect(internals.activeSession).toBeDefined());
 
   return {
+    session,
     generations,
     serverSends: (message: ServerFrame) => live.callbacks!.onmessage(message),
   };
@@ -138,6 +139,48 @@ describe('Gemini realtime transcript', () => {
       audioFrames: 0,
       functionCalls: ['getWeather'],
     });
+  });
+
+  // Gemini closes a tool call's turn with frames that carry no content, after the call's
+  // generation is done.
+  it.each<[string, genai.LiveServerContent[]]>([
+    ['a bare generationComplete', [{ generationComplete: true }]],
+    [
+      'transcriptions without text',
+      [{ outputTranscription: {} }, { inputTranscription: { text: '' } }],
+    ],
+  ])('keeps the tool call turn through %s', async (_, trailing) => {
+    const { session, generations, serverSends } = await openSession();
+    serverSends({ serverContent: { modelTurn: { parts: [AUDIO_PART] } } });
+    await vi.waitFor(() => expect(generations).toHaveLength(1));
+    const speechStarted = vi.fn();
+    const usageFor: string[] = [];
+    session.on('input_speech_started', speechStarted);
+    session.on('metrics_collected', (m: { requestId: string }) => usageFor.push(m.requestId));
+
+    serverSends({ toolCall: { functionCalls: [{ id: 'fc-1', name: 'getWeather', args: {} }] } });
+    for (const serverContent of trailing) {
+      serverSends({ serverContent });
+    }
+    serverSends({ serverContent: { turnComplete: true }, usageMetadata: { totalTokenCount: 1 } });
+
+    // the usage on the last frame marks every frame handled
+    await vi.waitFor(() => expect(usageFor).toHaveLength(1));
+    // A new generation's input_speech_started would interrupt the speech that owns the call,
+    // and the call's result would never be sent.
+    expect(generations).toHaveLength(1);
+    expect(speechStarted).not.toHaveBeenCalled();
+    expect(usageFor).toEqual([generations[0]!.responseId]);
+  });
+
+  it('still opens the generation a generateReply() waits on for a bare turnComplete', async () => {
+    const { session, generations, serverSends } = await openSession();
+
+    const reply = session.generateReply();
+    serverSends({ serverContent: { turnComplete: true } });
+
+    await expect(reply).resolves.toMatchObject({ userInitiated: true });
+    expect(generations).toHaveLength(1);
   });
 
   it('keeps forwarding model text in text modality', async () => {
