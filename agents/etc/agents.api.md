@@ -3177,6 +3177,7 @@ interface DuplexModelOptions<TModel extends DuplexModels | AnyString> {
     maxSessionDuration?: number | null;
     model: TModel;
     modelOptions?: DuplexOptions<TModel>;
+    // @deprecated (undocumented)
     provider?: string;
     voice?: string;
 }
@@ -4431,7 +4432,7 @@ interface InferenceLLMOptions {
     model: LLMModels;
     // (undocumented)
     modelOptions: ChatCompletionOptions;
-    // (undocumented)
+    // @deprecated (undocumented)
     provider?: string;
     // (undocumented)
     strictToolSchema?: boolean;
@@ -6378,6 +6379,7 @@ interface RealtimeModelOptions {
     modalities?: api_proto.Modality[];
     // (undocumented)
     model: RealtimeModels | AnyString;
+    // @deprecated (undocumented)
     provider?: string;
     // (undocumented)
     reasoning?: api_proto.Reasoning;
