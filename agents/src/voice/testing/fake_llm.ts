@@ -135,7 +135,7 @@ class FakeLLMStream extends BaseLLMStream {
 
     const last = items[items.length - 1]!;
     if (last.type === 'message') {
-      return last.role === 'user' ? last.textContent ?? '' : undefined;
+      return last.role === 'user' || last.role === 'system' ? last.textContent ?? '' : undefined;
     }
     if (last.type === 'function_call_output') return last.output;
     if (
