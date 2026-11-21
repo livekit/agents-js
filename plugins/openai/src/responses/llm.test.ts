@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { APIStatusError, ChatContext, initializeLogger } from '@livekit/agents';
+import { APIConnectionError, APIStatusError, ChatContext, initializeLogger } from '@livekit/agents';
 import { llm, llmStrict } from '@livekit/agents-plugins-test';
 import type OpenAI from 'openai';
 import { describe, expect, it } from 'vitest';
@@ -114,6 +114,52 @@ describe('OpenAI Responses HTTP retry eligibility', () => {
   it('does not retry once generated text has reached the caller', async () => {
     expect(await attemptsUntilStall([RESPONSE_CREATED, TEXT_DELTA], 2)).toBe(1);
   });
+
+  it.each([
+    [[RESPONSE_CREATED], 3, ''],
+    [[RESPONSE_CREATED, TEXT_DELTA], 1, 'hello'],
+  ] as const)(
+    'treats a stream ending before a terminal event as an error',
+    async (events, expectedAttempts, expectedText) => {
+      let attempts = 0;
+      const client = {
+        responses: {
+          create: async () => {
+            attempts++;
+            return {
+              async *[Symbol.asyncIterator]() {
+                for (const event of events) yield event;
+              },
+            };
+          },
+        },
+      };
+      const model = new LLM({
+        model: 'gpt-4.1',
+        apiKey: 'test-key',
+        useWebSocket: false,
+        client: client as unknown as OpenAI,
+      });
+      const errors: Error[] = [];
+      model.on('error', (event) => errors.push(event.error));
+      const chatCtx = ChatContext.empty();
+      chatCtx.addMessage({ role: 'user', content: 'hi' });
+
+      let text = '';
+      const stream = model.chat({
+        chatCtx,
+        connOptions: { maxRetry: 2, retryIntervalMs: 0, timeoutMs: 5000 },
+      });
+      for await (const chunk of stream) {
+        text += chunk.delta?.content ?? '';
+      }
+
+      expect(errors.at(-1)).toBeInstanceOf(APIConnectionError);
+      expect(attempts).toBe(expectedAttempts);
+      expect(text).toBe(expectedText);
+      await model.aclose();
+    },
+  );
 });
 
 describe('OpenAI Responses HTTP incomplete handling', () => {
