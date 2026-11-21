@@ -26,6 +26,14 @@ const REQUEST_ID_HEADER = 'cartesia-request-id';
 const API_VERSION = '2026-03-01';
 const DRAIN_TIMEOUT_MS = 5000;
 const KEEPALIVE_INTERVAL_MS = 30000;
+const HEARTBEAT_INTERVAL_MS = 5000;
+const PONG_TIMEOUT_MS = 5000;
+// A dead socket is noticed one heartbeat interval plus the pong timeout after it stops answering,
+// so it can swallow that much audio. The margin covers the redial.
+const REPLAY_MARGIN_MS = 2000;
+const REPLAY_REACH_IN_S = (HEARTBEAT_INTERVAL_MS + PONG_TIMEOUT_MS + REPLAY_MARGIN_MS) / 1000;
+// A turn in progress is replayed whole, since its partial transcript is not committed when its socket drops.
+const REPLAY_TURN_REACH_IN_S = 60;
 
 const sanitizedErrorName = (error: Error): string => {
   if (error instanceof SyntaxError) return 'SyntaxError';
@@ -278,11 +286,23 @@ export class SpeechStream extends stt.SpeechStream {
   #speechDuration = 0;
   #closingWs = false;
   #connectTimeout: number;
+  #reconnectError: APIConnectionError | undefined;
+  /**
+   * Audio sent since the last finished turn, as PCM with its duration: what a socket that died
+   * silently swallowed, for the next one. Ink reports no audio timing, so a turn's end clears it.
+   */
+  #replay: { data: Int16Array; durationInS: number }[] = [];
+  #replayDurationInS = 0;
+  /** A turn started and has not ended, even if its socket dropped and `#speaking` was reset with it. */
+  #turnUnfinished = false;
+  #audioBstream: AudioByteStream;
 
   constructor(sttInstance: STT, opts: STTOptions, connOptions?: APIConnectOptions) {
     super(sttInstance, opts.sampleRate, connOptions);
     this.#opts = { ...opts };
     this.#connectTimeout = connOptions?.timeoutMs ?? DEFAULT_API_CONNECT_OPTIONS.timeoutMs;
+    const samplesPerChunk = Math.floor((opts.sampleRate * opts.audioChunkDurationMS) / 1000);
+    this.#audioBstream = new AudioByteStream(opts.sampleRate, 1, samplesPerChunk);
   }
 
   override get label(): string {
@@ -297,10 +317,12 @@ export class SpeechStream extends stt.SpeechStream {
 
     this.#speaking = false;
     this.#currentTranscript = '';
-    this.#speechDuration = 0;
     this.#closingWs = false;
+    this.#reconnectError = undefined;
 
     let keepaliveInterval: NodeJS.Timeout | undefined;
+    let heartbeatInterval: NodeJS.Timeout | undefined;
+    let pongDeadline: NodeJS.Timeout | undefined;
     const abortController = new AbortController();
 
     try {
@@ -398,6 +420,29 @@ export class SpeechStream extends stt.SpeechStream {
           // ignore
         }
       }, KEEPALIVE_INTERVAL_MS);
+
+      const clearPongDeadline = () => {
+        if (pongDeadline) clearTimeout(pongDeadline);
+        pongDeadline = undefined;
+      };
+      ws.on('pong', clearPongDeadline);
+      heartbeatInterval = setInterval(() => {
+        if (ws.readyState !== WebSocket.OPEN || pongDeadline) return;
+        try {
+          ws.ping();
+        } catch (error) {
+          this.#requestReconnect(ws, 'heartbeat write failed', asError(error));
+          return;
+        }
+        pongDeadline = setTimeout(() => {
+          pongDeadline = undefined;
+          this.#requestReconnect(
+            ws,
+            'heartbeat timed out',
+            new Error(`No PONG received after ${PONG_TIMEOUT_MS} milliseconds`),
+          );
+        }, PONG_TIMEOUT_MS);
+      }, HEARTBEAT_INTERVAL_MS);
       await Promise.all([sendPromise, recvPromise]);
       if (firstError !== undefined) throw firstError;
     } catch (error) {
@@ -406,6 +451,8 @@ export class SpeechStream extends stt.SpeechStream {
     } finally {
       abortController.abort();
       if (keepaliveInterval) clearInterval(keepaliveInterval);
+      if (heartbeatInterval) clearInterval(heartbeatInterval);
+      if (pongDeadline) clearTimeout(pongDeadline);
       if (this.#ws?.readyState === WebSocket.OPEN) {
         this.#ws.close();
       }
@@ -415,12 +462,18 @@ export class SpeechStream extends stt.SpeechStream {
   }
 
   async #sendTask(ws: WebSocket, abortSignal: AbortSignal) {
-    const samplesPerChunk = Math.floor(
-      (this.#opts.sampleRate * this.#opts.audioChunkDurationMS) / 1000,
-    );
-    const audioBstream = new AudioByteStream(this.#opts.sampleRate, 1, samplesPerChunk);
-
     let hasEnded = false;
+    const sendAudio = (data: Int16Array) => {
+      if (ws.readyState !== WebSocket.OPEN) return;
+      try {
+        ws.send(data, (error) => {
+          if (error) this.#requestReconnect(ws, 'audio write failed', error);
+        });
+      } catch (error) {
+        this.#requestReconnect(ws, 'audio write failed', asError(error));
+      }
+    };
+    for (const entry of this.#replay) sendAudio(entry.data);
     const nextInput = async () => {
       try {
         return await this.input.next({ signal: abortSignal });
@@ -441,19 +494,18 @@ export class SpeechStream extends stt.SpeechStream {
         const frames: AudioFrame[] = [];
 
         if (data === SpeechStream.FLUSH_SENTINEL) {
-          frames.push(...audioBstream.flush());
+          frames.push(...this.#audioBstream.flush());
         } else {
           // Pass the typed array directly so AudioByteStream uses byteOffset/
           // byteLength — `.buffer` would include foreign bytes when rtc-node
           // hands us a view over a pooled allocator.
-          frames.push(...audioBstream.write(data.data));
+          frames.push(...this.#audioBstream.write(data.data));
         }
 
         for (const frame of frames) {
           this.#speechDuration += calculateAudioDurationSeconds(frame);
-          if (ws.readyState === WebSocket.OPEN) {
-            ws.send(frame.data);
-          }
+          this.#remember(frame);
+          sendAudio(frame.data);
         }
       }
 
@@ -531,8 +583,9 @@ export class SpeechStream extends stt.SpeechStream {
         // If a turn was in progress, close it out so consumers see a balanced
         // START_OF_SPEECH/END_OF_SPEECH pair and don't carry stale turn state
         // into the next reconnect.
+        const willRecover = !this.#closingWs && !this.closed;
         if (this.#speaking) {
-          if (this.#currentTranscript) {
+          if (this.#currentTranscript && !willRecover) {
             this.#sendTranscriptEvent(
               stt.SpeechEventType.FINAL_TRANSCRIPT,
               this.#currentTranscript,
@@ -556,6 +609,10 @@ export class SpeechStream extends stt.SpeechStream {
           this.#currentTranscript = '';
         }
 
+        if (this.#reconnectError) {
+          settle(this.#reconnectError);
+          return;
+        }
         if (pendingError) {
           settle(pendingError);
           return;
@@ -583,6 +640,35 @@ export class SpeechStream extends stt.SpeechStream {
     });
   }
 
+  #remember(frame: AudioFrame) {
+    const durationInS = calculateAudioDurationSeconds(frame);
+    this.#replay.push({ data: frame.data, durationInS });
+    this.#replayDurationInS += durationInS;
+    const reachInS = this.#turnUnfinished ? REPLAY_TURN_REACH_IN_S : REPLAY_REACH_IN_S;
+    while (
+      this.#replay.length > 1 &&
+      this.#replayDurationInS - this.#replay[0]!.durationInS >= reachInS
+    ) {
+      this.#replayDurationInS -= this.#replay.shift()!.durationInS;
+    }
+  }
+
+  #requestReconnect(ws: WebSocket, reason: string, error: Error) {
+    if (this.#reconnectError || ws.readyState === WebSocket.CLOSED) return;
+    this.#reconnectError = new APIConnectionError({
+      message: `Cartesia STT WebSocket ${reason}: ${error.message}`,
+      options: { retryable: true },
+    });
+    this.#logger.warn({ err: error }, `Cartesia STT WebSocket ${reason}; requesting reconnect`);
+    ws.terminate();
+  }
+
+  #forgetReplay() {
+    this.#turnUnfinished = false;
+    this.#replay = [];
+    this.#replayDurationInS = 0;
+  }
+
   #processStreamEvent(data: Exclude<STTEventMessage, { type: 'error' }>) {
     if (data.request_id) {
       this.#requestId = data.request_id;
@@ -595,6 +681,7 @@ export class SpeechStream extends stt.SpeechStream {
       case 'turn.start': {
         if (this.#speaking) return;
         this.#speaking = true;
+        this.#turnUnfinished = true;
         this.#currentTranscript = '';
         if (!this.queue.closed)
           this.queue.put({
@@ -635,6 +722,7 @@ export class SpeechStream extends stt.SpeechStream {
 
       case 'turn.end': {
         if (!this.#speaking) return;
+        this.#forgetReplay();
         const transcript = data.transcript || this.#currentTranscript;
 
         this.#sendTranscriptEvent(stt.SpeechEventType.FINAL_TRANSCRIPT, transcript);
