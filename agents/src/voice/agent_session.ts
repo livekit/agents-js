@@ -1236,6 +1236,7 @@ export class AgentSession<
     this.activity.commitUserTurn();
   }
 
+  /** Discard uncommitted user transcription and input audio. */
   clearUserTurn() {
     if (!this.activity) {
       throw new Error('AgentSession is not running');
