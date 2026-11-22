@@ -9,8 +9,9 @@ import { Future } from '../utils.js';
 import { Agent } from './agent.js';
 import { AgentSession } from './agent_session.js';
 import { AgentSessionEventTypes, type ConversationItemAddedEvent } from './events.js';
-import { AudioOutput, TextOutput } from './io.js';
+import { AudioOutput, TextOutput, type TimedString, isTimedString } from './io.js';
 import { FakeLLM } from './testing/fake_llm.js';
+import { TranscriptionSynchronizer } from './transcription/synchronizer.js';
 
 function frame(durationMs = 20, sampleRate = 24000): AudioFrame {
   const samples = Math.floor((sampleRate * durationMs) / 1000);
@@ -364,6 +365,58 @@ describe('AgentActivity interrupted-speech commit', () => {
         expect(assistantEvents).toEqual(expected);
       } finally {
         await session.close();
+      }
+    },
+  );
+
+  it.each(['say', 'generateReply'] as const)(
+    'keeps the first synchronized caption when %s is interrupted as it is sent',
+    async (source) => {
+      const greeting = 'Hello, how can I help you today?';
+      const session = new AgentSession({ llm: new FakeLLM([{ input: 'Hi', content: greeting }]) });
+      const agent = new FrameAgent();
+      const audioOut = new DeferredStartOutput();
+      audioOut.onFirstFrameCaptured = () => audioOut.notifyPlaybackStarted();
+      const firstCaption = new Future<string>();
+      const captions = new (class extends TextOutput {
+        async captureText(text: string | TimedString) {
+          if (firstCaption.done) return;
+          firstCaption.resolve(isTimedString(text) ? text.text : text);
+          audioOut.playbackPosition = 0.2;
+          session.interrupt({ force: true });
+        }
+        flush() {}
+      })();
+      const synchronizer = new TranscriptionSynchronizer(audioOut, captions);
+      session.output.audio = synchronizer.audioOutput;
+      session.output.transcription = synchronizer.textOutput;
+
+      await session.start({ agent });
+      try {
+        const speech =
+          source === 'say'
+            ? session.say(greeting, {
+                audio: new ReadableStream<AudioFrame>({
+                  start(controller) {
+                    controller.enqueue(frame(1000));
+                    controller.close();
+                  },
+                }),
+              })
+            : session.generateReply({ userInput: 'Hi' });
+        expect(await firstCaption.await).toBe('Hello,');
+        await speech.waitForPlayout();
+        await session.close();
+
+        for (const chatCtx of [agent.chatCtx, session.history]) {
+          const messages = chatCtx.items.filter(
+            (item) => item.type === 'message' && item.role === 'assistant',
+          );
+          expect(messages).toMatchObject([{ textContent: 'Hello,', interrupted: true }]);
+        }
+      } finally {
+        await session.close();
+        await synchronizer.close();
       }
     },
   );

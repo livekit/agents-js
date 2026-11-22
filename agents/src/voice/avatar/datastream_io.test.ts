@@ -9,6 +9,7 @@ import { DataStreamAudioOutput } from './datastream_io.js';
 const { logger } = vi.hoisted(() => ({
   logger: {
     debug: vi.fn(),
+    info: vi.fn(),
     warn: vi.fn(),
   },
 }));
@@ -31,20 +32,21 @@ function createRoom(performRpcImpl: () => Promise<string>) {
   const avatar = { identity: 'avatar' };
   const room = new Room();
   const performRpc = vi.fn(performRpcImpl);
+  const registerRpcMethod = vi.fn<NonNullable<Room['localParticipant']>['registerRpcMethod']>();
 
   Object.defineProperties(room, {
     isConnected: { value: true },
     localParticipant: {
       value: {
         performRpc,
-        registerRpcMethod: vi.fn(),
+        registerRpcMethod,
         streamBytes: vi.fn(async () => createByteStreamWriter()),
       },
     },
     remoteParticipants: { value: new Map([[avatar.identity, avatar]]) },
   });
 
-  return { room, performRpc };
+  return { room, performRpc, registerRpcMethod };
 }
 
 function createFrame(): AudioFrame {
@@ -55,7 +57,7 @@ function nextTick(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve));
 }
 
-describe('DataStreamAudioOutput.clearBuffer', () => {
+describe('DataStreamAudioOutput', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     DataStreamAudioOutput._playbackFinishedRpcRegistered = false;
@@ -75,6 +77,33 @@ describe('DataStreamAudioOutput.clearBuffer', () => {
       waitPlaybackStart: options.waitPlaybackStart,
     });
     expect(output._playbackStartIsEstimated).toBe(options.estimated);
+  });
+
+  it.each([
+    { position: 0.02, payload: { playback_position: 0.02, interrupted: true } },
+    { position: 0, payload: { interrupted: true } },
+  ])('reports playback position $position from the finish RPC', async ({ position, payload }) => {
+    const { room, registerRpcMethod } = createRoom(async () => 'ok');
+    const output = new DataStreamAudioOutput({ room, destinationIdentity: 'avatar' });
+    await output.captureFrame(createFrame());
+    output.flush();
+
+    const method = 'lk.playback_finished';
+    const handler = registerRpcMethod.mock.calls.find(([name]) => name === method)?.[1];
+    expect(handler).toBeDefined();
+    await expect(
+      handler!({
+        method,
+        requestId: 'test',
+        callerIdentity: 'avatar',
+        payload: JSON.stringify(payload),
+        responseTimeout: 1000,
+      }),
+    ).resolves.toBe('ok');
+    await expect(output.waitForPlayout()).resolves.toMatchObject({
+      playbackPosition: position,
+      interrupted: true,
+    });
   });
 
   it('settles pending playout when the clear-buffer RPC rejects', async () => {
