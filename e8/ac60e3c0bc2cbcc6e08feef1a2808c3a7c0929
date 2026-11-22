@@ -1,0 +1,19 @@
+.changeset/say-interrupted-playout.md
+  s_9087a294f502ce::t_a236a5b81c37db 5
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e8ac60e3c0bc2cbcc6e08feef1a2808c3a7c0929",
+  "prompts": {},
+  "sessions": {
+    "s_9087a294f502ce": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1fa00-ebe3-7d60-9223-21015e792fb8",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
