@@ -60,6 +60,21 @@ describe('DataStreamAudioOutput.clearBuffer', () => {
     vi.clearAllMocks();
     DataStreamAudioOutput._playbackFinishedRpcRegistered = false;
     DataStreamAudioOutput._playbackFinishedHandlers = {};
+    DataStreamAudioOutput._playbackStartedRpcRegistered = false;
+    DataStreamAudioOutput._playbackStartedHandlers = {};
+  });
+
+  it.each([
+    { waitPlaybackStart: undefined, estimated: true },
+    { waitPlaybackStart: true, estimated: false },
+  ])('reports whether playback start is estimated ($waitPlaybackStart)', (options) => {
+    const { room } = createRoom(async () => 'ok');
+    const output = new DataStreamAudioOutput({
+      room,
+      destinationIdentity: 'avatar',
+      waitPlaybackStart: options.waitPlaybackStart,
+    });
+    expect(output._playbackStartIsEstimated).toBe(options.estimated);
   });
 
   it('settles pending playout when the clear-buffer RPC rejects', async () => {

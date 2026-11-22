@@ -3877,8 +3877,10 @@ export class AgentActivity implements RecognitionHooks {
             .getSpan(speechHandle._agentTurnContext ?? otelContext.active())
             ?.setAttribute(traceTypes.ATTR_PLAYOUT_POSITION, interruptedPlayback.playbackPosition);
           played =
-            (audioOut.firstFrameFut.done && !audioOut.firstFrameFut.rejected) ||
-            interruptedPlayback.playbackPosition > 0;
+            interruptedPlayback.playbackPosition > 0 ||
+            (!audioOutput._playbackStartIsEstimated &&
+              audioOut.firstFrameFut.done &&
+              !audioOut.firstFrameFut.rejected);
         }
         forwardedText = played ? interruptedPlayback.synchronizedTranscript ?? forwardedText : '';
       }

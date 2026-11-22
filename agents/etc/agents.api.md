@@ -1744,6 +1744,8 @@ export abstract class AudioOutput extends EventEmitter_2 {
     pause(): void;
     // @internal
     get pendingPlayoutSegments(): number;
+    // @internal
+    get _playbackStartIsEstimated(): boolean;
     resume(): void;
     // (undocumented)
     sampleRate?: number | undefined;
@@ -2816,6 +2818,8 @@ export class DataStreamAudioOutput extends AudioOutput {
     static _playbackStartedHandlers: Record<string, (data: RpcInvocationData) => string>;
     // (undocumented)
     static _playbackStartedRpcRegistered: boolean;
+    // @internal (undocumented)
+    get _playbackStartIsEstimated(): boolean;
     // (undocumented)
     static registerPlaybackFinishedRpc(input: {
         room: Room;

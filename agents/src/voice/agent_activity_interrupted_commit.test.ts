@@ -255,6 +255,22 @@ describe('AgentActivity interrupted-speech commit', () => {
     { name: 'only the previous speech played', capture: false, expected: [] },
     { name: 'audio was buffered but never played', capture: true, expected: [] },
     {
+      name: 'an estimated start is followed by zero playout',
+      capture: true,
+      started: true,
+      estimated: true,
+      expected: [],
+    },
+    {
+      name: 'an estimated start is followed by positive playout',
+      capture: true,
+      started: true,
+      estimated: true,
+      playbackPosition: 0.02,
+      transcript: 'Hi,',
+      expected: ['Hi,'],
+    },
+    {
       name: 'only the playback position confirms playout',
       capture: true,
       playbackPosition: 0.02,
@@ -283,10 +299,11 @@ describe('AgentActivity interrupted-speech commit', () => {
     },
   ])(
     'commits the interrupted say transcript when $name',
-    async ({ capture, started, playbackPosition = 0, transcript, expected }) => {
+    async ({ capture, started, estimated, playbackPosition = 0, transcript, expected }) => {
       const session = new AgentSession();
       const agent = new Agent({ instructions: 'test' });
       const audioOut = new DeferredStartOutput();
+      if (estimated) vi.spyOn(audioOut, '_playbackStartIsEstimated', 'get').mockReturnValue(true);
       if (!capture) {
         // Leave a completed segment whose position and transcript belong to earlier speech.
         await audioOut.captureFrame(frame());
