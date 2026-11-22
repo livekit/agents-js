@@ -1212,6 +1212,9 @@ const ATTR_FALLBACK_INDEX = "lk.fallback.index";
 // @public
 const ATTR_FALLBACK_LABEL = "lk.fallback.label";
 
+// @public (undocumented)
+const ATTR_FALLBACK_RECOVERY = "lk.fallback.recovery";
+
 // @public
 const ATTR_FIRST_FRAME_DELAY = "lk.first_frame_delay";
 
@@ -2846,6 +2849,14 @@ export interface DataStreamAudioOutputOptions {
 // @public (undocumented)
 export type Decision = Probability | Choice | Score;
 
+// @public
+export interface DecisionAvailabilityChangedEvent {
+    // (undocumented)
+    available: boolean;
+    // (undocumented)
+    model: DecisionModel;
+}
+
 // @public (undocumented)
 export interface DecisionCapabilities {
     decisionKinds: DecisionKind[];
@@ -2876,10 +2887,10 @@ export type DecisionMetrics = {
     metadata?: MetricsMetadata;
 };
 
-// Warning: (ae-forgotten-export) The symbol "DecisionModel_base" needs to be exported by the entry point index.d.ts
+// Warning: (ae-forgotten-export) The symbol "DecisionModelEventEmitter" needs to be exported by the entry point index.d.ts
 //
 // @public
-export abstract class DecisionModel extends DecisionModel_base {
+export abstract class DecisionModel<Callbacks extends DecisionModelCallbacks = DecisionModelCallbacks> extends DecisionModelEventEmitter<Callbacks> {
     constructor(input: {
         capabilities: DecisionCapabilities;
     });
@@ -2907,10 +2918,86 @@ export abstract class DecisionModel extends DecisionModel_base {
     get provider(): string;
 }
 
+// @public
+class DecisionModel_2 extends DecisionModel {
+    constructor(input?: DecisionModelOptions);
+    // (undocumented)
+    protected _evaluateImpl(input: {
+        input: string;
+        decisions: Readonly<Record<string, Decision>>;
+        connOptions: APIConnectOptions;
+        abortSignal: AbortSignal;
+    }): Promise<DecisionResponse>;
+    // (undocumented)
+    get model(): string;
+    // (undocumented)
+    get provider(): string;
+}
+
 // @public (undocumented)
 export type DecisionModelCallbacks = {
     ['metrics_collected']: (metrics: DecisionMetrics) => void;
 };
+
+// @public
+export class DecisionModelFallbackAdapter extends DecisionModel<DecisionModelFallbackCallbacks> {
+    constructor(input: DecisionModelFallbackAdapterOptions);
+    // (undocumented)
+    aclose(): Promise<void>;
+    // (undocumented)
+    readonly attemptTimeoutMs: number;
+    // (undocumented)
+    evaluate(input: {
+        input: string | ChatContext;
+        decisions: Readonly<Record<string, Decision>>;
+        connOptions?: APIConnectOptions;
+        abortSignal?: AbortSignal;
+    }): Promise<DecisionResponse>;
+    // (undocumented)
+    protected _evaluateImpl(): Promise<DecisionResponse>;
+    // (undocumented)
+    readonly maxRetryPerModel: number;
+    // (undocumented)
+    get model(): string;
+    get models(): readonly DecisionModel[];
+    // (undocumented)
+    get provider(): string;
+    // (undocumented)
+    readonly retryIntervalMs: number;
+}
+
+// @public
+export interface DecisionModelFallbackAdapterOptions {
+    attemptTimeoutMs?: number;
+    maxRetryPerModel?: number;
+    models: readonly DecisionModel[];
+    retryIntervalMs?: number;
+}
+
+// @public (undocumented)
+export type DecisionModelFallbackCallbacks = DecisionModelCallbacks & {
+    decision_availability_changed: (event: DecisionAvailabilityChangedEvent) => void;
+};
+
+// @public
+interface DecisionModelOptions {
+    // (undocumented)
+    apiKey?: string;
+    // (undocumented)
+    apiSecret?: string;
+    // (undocumented)
+    baseURL?: string;
+    fallback?: DecisionModels | DecisionModels[];
+    // (undocumented)
+    fetch?: typeof globalThis.fetch;
+    // (undocumented)
+    model?: DecisionModels;
+}
+
+// Warning: (ae-forgotten-export) The symbol "AnyString" needs to be exported by the entry point index.d.ts
+//
+// @public (undocumented)
+type DecisionModels = 'openai/gpt-6-luna-decisions' | 'google/gemini-decision-1' | 'microsoft/decision-1' | 'microsoft-eu/decision-1' | AnyString;
 
 // @public (undocumented)
 export class DecisionResponse {
@@ -3184,8 +3271,6 @@ interface DuplexModelOptions<TModel extends DuplexModels | AnyString> {
 // @public
 type DuplexModels = OpenAIDuplexModels;
 
-// Warning: (ae-forgotten-export) The symbol "AnyString" needs to be exported by the entry point index.d.ts
-//
 // @public (undocumented)
 type DuplexOptions<TModel extends DuplexModels | AnyString> = TModel extends OpenAIDuplexModels ? OpenAIDuplexOptions : Record<string, unknown>;
 
@@ -4326,6 +4411,9 @@ export interface ImageContent {
 declare namespace inference {
     export {
         eot,
+        DecisionModel_2 as DecisionModel,
+        DecisionModelOptions,
+        DecisionModels,
         TurnDetector,
         TurnDetectorStreamImpl,
         LOCAL_LANGUAGES,
@@ -5095,6 +5183,10 @@ declare namespace llm {
         DecisionKind,
         DecisionModelCallbacks,
         DecisionResult,
+        DecisionModelFallbackAdapter,
+        DecisionAvailabilityChangedEvent,
+        DecisionModelFallbackAdapterOptions,
+        DecisionModelFallbackCallbacks,
         RealtimeError,
         RealtimeModel,
         RealtimeSession,
@@ -8859,6 +8951,7 @@ declare namespace traceTypes {
         ATTR_PREVIOUS_AGENT_LABEL,
         ATTR_FALLBACK_LABEL,
         ATTR_FALLBACK_INDEX,
+        ATTR_FALLBACK_RECOVERY,
         ATTR_IS_INTERRUPTION,
         ATTR_INTERRUPTION_PROBABILITY,
         ATTR_INTERRUPTION_TOTAL_DURATION,
