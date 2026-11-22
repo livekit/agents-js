@@ -2,4 +2,4 @@
 '@livekit/agents': patch
 ---
 
-Keep only the played transcript when a `say()` speech is interrupted, and add no assistant message when none of its audio played.
+Skip the assistant message when an interrupted `say()` speech never played. When playback started, use the synchronized transcript if available.
