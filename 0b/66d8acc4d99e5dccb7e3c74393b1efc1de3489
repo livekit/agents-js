@@ -1,0 +1,28 @@
+.changeset/say-interrupted-playout.md
+  s_9087a294f502ce::t_b5d28375bc9628 6-7
+agents/src/voice/agent_activity_interrupted_commit.test.ts
+  s_9087a294f502ce::t_d600dc24b433ea 12,14,393,410,420
+  s_9087a294f502ce::t_06644fc74724d6 372-392,394-409,411-419,421-422
+  s_9087a294f502ce::t_9a1cf8937776d4 423
+agents/src/voice/avatar/datastream_io.test.ts
+  s_9087a294f502ce::t_d23e26aab9d378 12,35,42,49,60,82-106
+  s_9087a294f502ce::t_3481c119ebd480 107-108
+agents/src/voice/transcription/synchronizer.ts
+  s_9087a294f502ce::t_b5d28375bc9628 161,401,413-414
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0b66d8acc4d99e5dccb7e3c74393b1efc1de3489",
+  "prompts": {},
+  "sessions": {
+    "s_9087a294f502ce": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1fa00-ebe3-7d60-9223-21015e792fb8",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
