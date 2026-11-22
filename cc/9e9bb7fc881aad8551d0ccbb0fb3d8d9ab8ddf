@@ -1,0 +1,22 @@
+agents/src/voice/transcription/synchronizer.test.ts
+  s_9087a294f502ce::t_a5722279763d8d 7,245-262,266-283
+  s_9087a294f502ce::t_1ab52aa6c78c5c 263-265
+agents/src/voice/transcription/synchronizer.ts
+  s_9087a294f502ce::t_2f9d55c955be86 401-403
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cc9e9bb7fc881aad8551d0ccbb0fb3d8d9ab8ddf",
+  "prompts": {},
+  "sessions": {
+    "s_9087a294f502ce": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1fa00-ebe3-7d60-9223-21015e792fb8",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
