@@ -1,0 +1,32 @@
+agents/src/voice/agent_activity.ts
+  s_9087a294f502ce::t_fd86928decf876 3880-3883
+agents/src/voice/avatar/datastream_io.ts
+  s_9087a294f502ce::t_a5a110072da045 163-167
+agents/src/voice/avatar/datastream_io.test.ts
+  s_9087a294f502ce::t_fd86928decf876 63-77
+agents/src/voice/session_host_lifecycle.test.ts
+  s_9087a294f502ce::t_a5a110072da045 332
+agents/src/voice/io.ts
+  s_9087a294f502ce::t_a5a110072da045 173-177
+agents/src/voice/agent_activity_interrupted_commit.test.ts
+  s_9087a294f502ce::t_a5a110072da045 257-272
+  s_9087a294f502ce::t_e51f6ada130165 302,306
+agents/etc/agents.api.md
+  s_9087a294f502ce::t_eb7b099f230186 1747-1748,2821-2822
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "338fa5e7df74b5d05186856007de137f44dcd66b",
+  "prompts": {},
+  "sessions": {
+    "s_9087a294f502ce": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1fa00-ebe3-7d60-9223-21015e792fb8",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
