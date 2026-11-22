@@ -9,7 +9,7 @@ import { Future } from '../utils.js';
 import { Agent } from './agent.js';
 import { AgentSession } from './agent_session.js';
 import { AgentSessionEventTypes, type ConversationItemAddedEvent } from './events.js';
-import { AudioOutput } from './io.js';
+import { AudioOutput, TextOutput } from './io.js';
 import { FakeLLM } from './testing/fake_llm.js';
 
 function frame(durationMs = 20, sampleRate = 24000): AudioFrame {
@@ -85,6 +85,7 @@ class SayTimestampOutput extends AudioOutput {
 class DeferredStartOutput extends AudioOutput {
   onFirstFrameCaptured?: () => void;
   playbackPosition = 0;
+  synchronizedTranscript?: string;
   private captured = false;
   constructor() {
     super(24000);
@@ -104,7 +105,13 @@ class DeferredStartOutput extends AudioOutput {
     super.flush();
   }
   clearBuffer(): void {
-    this.onPlaybackFinished({ playbackPosition: this.playbackPosition, interrupted: true });
+    if (this.pendingPlayoutSegments) {
+      this.onPlaybackFinished({
+        playbackPosition: this.playbackPosition,
+        interrupted: true,
+        synchronizedTranscript: this.synchronizedTranscript,
+      });
+    }
   }
 }
 
@@ -242,6 +249,107 @@ class NoFrameAgent extends Agent {
 
 describe('AgentActivity interrupted-speech commit', () => {
   initializeLogger({ pretty: false, level: 'silent' });
+
+  const opening = 'Hi, this is Alex from Acme Dental.';
+  it.each([
+    { name: 'only the previous speech played', capture: false, expected: [] },
+    { name: 'audio was buffered but never played', capture: true, expected: [] },
+    {
+      name: 'only the playback position confirms playout',
+      capture: true,
+      playbackPosition: 0.02,
+      transcript: 'Hi,',
+      expected: ['Hi,'],
+    },
+    {
+      name: 'only the playback start event confirms playout',
+      capture: true,
+      started: true,
+      transcript: 'Hi,',
+      expected: ['Hi,'],
+    },
+    {
+      name: 'the synchronized transcript is empty',
+      capture: true,
+      playbackPosition: 0.02,
+      transcript: '',
+      expected: [],
+    },
+    {
+      name: 'playout started without a synchronized transcript',
+      capture: true,
+      started: true,
+      expected: [opening],
+    },
+  ])(
+    'commits the interrupted say transcript when $name',
+    async ({ capture, started, playbackPosition = 0, transcript, expected }) => {
+      const session = new AgentSession();
+      const agent = new Agent({ instructions: 'test' });
+      const audioOut = new DeferredStartOutput();
+      if (!capture) {
+        // Leave a completed segment whose position and transcript belong to earlier speech.
+        await audioOut.captureFrame(frame());
+        audioOut.flush();
+        audioOut.onPlaybackFinished({
+          interrupted: false,
+          playbackPosition: 0.5,
+          synchronizedTranscript: 'Previous speech.',
+        });
+      }
+      audioOut.playbackPosition = playbackPosition;
+      audioOut.synchronizedTranscript = transcript;
+      const frameCaptured = new Future<void>();
+      audioOut.onFirstFrameCaptured = () => frameCaptured.resolve();
+      session.output.audio = audioOut;
+
+      const textForwarded = new Future<string>();
+      session.output.transcription = new (class extends TextOutput {
+        async captureText(text: string) {
+          textForwarded.resolve(text);
+        }
+        flush() {}
+      })();
+      const assistantEvents: (string | undefined)[] = [];
+      session.on(AgentSessionEventTypes.ConversationItemAdded, ({ item }) => {
+        if (item.type === 'message' && item.role === 'assistant') {
+          assistantEvents.push(item.textContent);
+        }
+      });
+
+      await session.start({ agent });
+      try {
+        const speech = session.say(opening, {
+          audio: new ReadableStream<AudioFrame>({
+            start(controller) {
+              if (capture) {
+                controller.enqueue(frame());
+                controller.close();
+              }
+            },
+          }),
+        });
+        expect(await textForwarded.await).toBe(opening);
+        if (capture) await frameCaptured.await;
+        if (started) audioOut.notifyPlaybackStarted();
+        speech.interrupt();
+        await speech.waitForPlayout();
+        await session.close();
+
+        for (const chatCtx of [agent.chatCtx, session.history]) {
+          const messages = chatCtx.items.flatMap((item) =>
+            item.type === 'message' && item.role === 'assistant'
+              ? [{ text: item.textContent, interrupted: item.interrupted }]
+              : [],
+          );
+          expect(messages).toEqual(expected.map((text) => ({ text, interrupted: true })));
+        }
+        expect(assistantEvents).toEqual(expected);
+      } finally {
+        await session.close();
+      }
+    },
+  );
 
   it('timestamps an interrupted say transcript at speech start', async () => {
     const session = new AgentSession({
