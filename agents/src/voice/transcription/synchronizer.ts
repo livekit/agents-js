@@ -398,7 +398,9 @@ class SegmentSynchronizerImpl {
     if (this.playbackCompleted) {
       return this.textData.pushedText;
     }
-    return this.captionedText;
+    // A caption can reach the sink before its pacing delay ends. A blocked sink can lag behind.
+    const pacedText = this.textData.forwardedText;
+    return this.captionedText.length > pacedText.length ? this.captionedText : pacedText;
   }
 
   private async captureTaskImpl() {
