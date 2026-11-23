@@ -808,7 +808,10 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
       item.textContent &&
       item.createdAt >= this.startedAt!
     ) {
-      this.chatCtx.addAgentReply(item.createdAt, item.textContent, { words: this.likelyHuman });
+      const words =
+        this.likelyHuman ||
+        (fsm.LIKELY_HUMAN_STAGES.has(this._state) && this.category === AMDCategory.UNCERTAIN);
+      this.chatCtx.addAgentReply(item.createdAt, item.textContent, { words });
     }
   };
 

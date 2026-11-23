@@ -1549,6 +1549,37 @@ describe('AMD lifecycle', () => {
     ]);
   });
 
+  it.each([
+    [AMDCategory.UNCERTAIN, 'Hi Sam, can you make it tomorrow?'],
+    [AMDCategory.WAIT, AGENT_REPLY],
+  ])('classifier sees the agent words after a %s turn in a menu', async (after, reply) => {
+    const { detector, session, classifier } = await running();
+    const amd = internals(detector);
+    await commit(detector, session, classifier);
+    classifier.prediction(1, AMDCategory.MACHINE_IVR);
+    await eventually(() => amd.turns.get(1)!.prediction !== null);
+    commitTurn(detector, endOfTurn('Sam.'));
+    await classifier.request();
+    classifier.prediction(2, after);
+    await eventually(() => amd.turns.get(2)!.prediction !== null);
+    session._conversationItemAdded(
+      ChatMessage.create({ role: 'assistant', content: ['Hi Sam, can you make it tomorrow?'] }),
+    );
+    commitTurn(detector, endOfTurn("Yes. That's confirmed."));
+    const request = await classifier.request();
+
+    const history = request.chatCtx.items
+      .filter((item): item is ChatMessage => item instanceof ChatMessage)
+      .slice(2)
+      .map((message) => [message.role, message.textContent]);
+    expect(history).toEqual([
+      ['user', 'hello'],
+      ['user', 'Sam.'],
+      ['assistant', reply],
+      ['user', "Yes. That's confirmed."],
+    ]);
+  });
+
   it('dtmf tool works without amd', async () => {
     const publishDtmf = vi.fn(async () => {});
     const result = await sendDtmf(['1'], publishDtmf);
