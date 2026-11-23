@@ -329,7 +329,7 @@ it.each(['resolve', 'reject'] as const)(
         session.history.items
           .filter((item) => item.type === 'message')
           .map((item) => item.textContent),
-      ).toEqual(['go', 'hello', 'fresh', 'new reply']);
+      ).toEqual(['go', 'fresh', 'new reply']);
     } finally {
       release.resolve();
       vi.useRealTimers();

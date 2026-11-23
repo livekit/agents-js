@@ -3867,19 +3867,25 @@ export class AgentActivity implements RecognitionHooks {
       }
 
       recordInterruption(speechHandle);
-      if (speechHandle.interrupted && audioOutput && audioOut && playbackEv) {
-        // waitForPlayout returns the previous segment's event when this speech never reached
-        // the output: only a segment of its own counts as played
-        const playedOwnFrame =
-          audioOutput.capturedPlayoutSegments > audioOut.capturedSegmentsBefore;
-        if (playedOwnFrame) {
+      let forwardedText = textOut?.text ?? '';
+      const interruptedPlayback = speechHandle.interrupted ? playbackEv : undefined;
+      if (audioOutput && interruptedPlayback) {
+        // If this speech supplied no frames, waitForPlayout returns the previous segment's event.
+        let played = false;
+        if (audioOut && audioOutput.capturedPlayoutSegments > audioOut.capturedSegmentsBefore) {
           trace
             .getSpan(speechHandle._agentTurnContext ?? otelContext.active())
-            ?.setAttribute(traceTypes.ATTR_PLAYOUT_POSITION, playbackEv.playbackPosition);
+            ?.setAttribute(traceTypes.ATTR_PLAYOUT_POSITION, interruptedPlayback.playbackPosition);
+          played =
+            interruptedPlayback.playbackPosition > 0 ||
+            (!audioOutput._playbackStartIsEstimated &&
+              audioOut.firstFrameFut.done &&
+              !audioOut.firstFrameFut.rejected);
         }
+        forwardedText = played ? interruptedPlayback.synchronizedTranscript ?? forwardedText : '';
       }
 
-      if (addToChatCtx) {
+      if (addToChatCtx && (!interruptedPlayback || forwardedText)) {
         const replyStoppedSpeakingAt = Date.now();
         const replyAssistantMetrics: MetricsReport = {};
         if (replyTtsGenData?.ttfb !== undefined) {
@@ -3897,7 +3903,7 @@ export class AgentActivity implements RecognitionHooks {
 
         const message = ChatMessage.create({
           role: 'assistant',
-          content: textOut?.text || '',
+          content: forwardedText,
           interrupted: speechHandle.interrupted,
           createdAt: replyStartedSpeakingAt ?? Date.now(),
           metrics: replyAssistantMetrics,
