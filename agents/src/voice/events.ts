@@ -12,6 +12,8 @@ import type {
   LLM,
   RealtimeModel,
   RealtimeModelError,
+  Toolset,
+  ToolsetError,
 } from '../llm/index.js';
 import type { LLMError } from '../llm/llm.js';
 import type { AgentMetrics } from '../metrics/base.js';
@@ -416,14 +418,26 @@ export const createUserTurnExceededEvent = ({
 
 export type ErrorEvent = {
   type: 'error';
-  error: RealtimeModelError | STTError | TTSError | LLMError | InterruptionDetectionError;
-  source?: LLM | STT | TTS | RealtimeModel;
+  error:
+    | RealtimeModelError
+    | STTError
+    | TTSError
+    | LLMError
+    | InterruptionDetectionError
+    | ToolsetError;
+  source?: LLM | STT | TTS | RealtimeModel | Toolset;
   createdAt: number;
 };
 
 export const createErrorEvent = (
-  error: RealtimeModelError | STTError | TTSError | LLMError | InterruptionDetectionError,
-  source?: LLM | STT | TTS | RealtimeModel,
+  error:
+    | RealtimeModelError
+    | STTError
+    | TTSError
+    | LLMError
+    | InterruptionDetectionError
+    | ToolsetError,
+  source?: LLM | STT | TTS | RealtimeModel | Toolset,
   createdAt: number = Date.now(),
 ): ErrorEvent => ({
   type: 'error',

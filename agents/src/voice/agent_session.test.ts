@@ -5,11 +5,20 @@ import { ParticipantKind, type RemoteParticipant } from '@livekit/rtc-node';
 import { describe, expect, it, vi } from 'vitest';
 import { APIConnectionError } from '../_exceptions.js';
 import { type JobContext, runWithJobContext } from '../job.js';
+import { Toolset, type ToolsetError } from '../llm/index.js';
 import type { STTError } from '../stt/stt.js';
 import { Future } from '../utils.js';
+import { Agent } from './agent.js';
 import { AgentSession, resolveRecordingOptions } from './agent_session.js';
-import { AgentSessionEventTypes, CloseReason, createUserInputTranscribedEvent } from './events.js';
+import {
+  AgentSessionEventTypes,
+  type CloseEvent,
+  CloseReason,
+  type ErrorEvent,
+  createUserInputTranscribedEvent,
+} from './events.js';
 import { SpeechHandle } from './speech_handle.js';
+import { FakeLLM } from './testing/fake_llm.js';
 
 type AgentSessionInternals = AgentSession & {
   _agentState: string;
@@ -205,6 +214,39 @@ describe('AgentSession.run', () => {
         inputModality: 'audio',
       });
     });
+  });
+});
+
+describe('AgentSession toolset setup errors', () => {
+  it('emits a recoverable error and does not close the session with an error', async () => {
+    const failure = new Error('server unreachable');
+    const toolset = Toolset.create({
+      id: 'unreachable',
+      tools: [],
+      setup: async () => {
+        throw failure;
+      },
+    });
+    const session = new AgentSession({ llm: new FakeLLM(), vad: null });
+    const errors: ErrorEvent[] = [];
+    const closes: CloseEvent[] = [];
+    session.on(AgentSessionEventTypes.Error, (event) => errors.push(event));
+    session.on(AgentSessionEventTypes.Close, (event) => closes.push(event));
+
+    await session.start({
+      agent: new Agent({ instructions: 'You are helpful.', tools: [toolset] }),
+    });
+    await session.close();
+
+    expect(errors).toHaveLength(1);
+    const [event] = errors;
+    expect(event!.error.type).toBe('toolset_error');
+    const error = event!.error as ToolsetError;
+    expect(error.label).toBe('unreachable');
+    expect(error.recoverable).toBe(true);
+    expect(error.error).toBe(failure);
+    expect(event!.source).toBe(toolset);
+    expect(closes.map((close) => close.error)).toEqual([null]);
   });
 });
 

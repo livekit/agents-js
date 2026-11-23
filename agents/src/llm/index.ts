@@ -30,6 +30,7 @@ export {
   type ToolOptions,
   type ToolsetContext,
   type ToolsetCreateOptions,
+  type ToolsetError,
   type ToolType,
 } from './tool_context.js';
 

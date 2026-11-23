@@ -2702,7 +2702,7 @@ export const createEotPredictionEvent: (input: {
 }) => EotPredictionEvent;
 
 // @public (undocumented)
-export const createErrorEvent: (error: RealtimeModelError | STTError | TTSError | LLMError | InterruptionDetectionError, source?: LLM | STT | TTS | RealtimeModel, createdAt?: number) => ErrorEvent_2;
+export const createErrorEvent: (error: RealtimeModelError | STTError | TTSError | LLMError | InterruptionDetectionError | ToolsetError, source?: LLM | STT | TTS | RealtimeModel | Toolset, createdAt?: number) => ErrorEvent_2;
 
 // @public (undocumented)
 export const createFunctionToolsExecutedEvent: (input: {
@@ -3509,8 +3509,8 @@ export type EOUMetrics = {
 // @public (undocumented)
 type ErrorEvent_2 = {
     type: 'error';
-    error: RealtimeModelError | STTError | TTSError | LLMError | InterruptionDetectionError;
-    source?: LLM | STT | TTS | RealtimeModel;
+    error: RealtimeModelError | STTError | TTSError | LLMError | InterruptionDetectionError | ToolsetError;
+    source?: LLM | STT | TTS | RealtimeModel | Toolset;
     createdAt: number;
 };
 export { ErrorEvent_2 as ErrorEvent }
@@ -5125,6 +5125,7 @@ declare namespace llm {
         ToolOptions,
         ToolsetContext,
         ToolsetCreateOptions,
+        ToolsetError,
         ToolType,
         AsyncToolset,
         AsyncToolsetCreateOptions,
@@ -8798,6 +8799,20 @@ export interface ToolsetCreateOptions {
     tools: readonly ToolContextEntry[];
 }
 
+// @public
+export interface ToolsetError {
+    // (undocumented)
+    error: Error;
+    // (undocumented)
+    label: string;
+    // (undocumented)
+    recoverable: boolean;
+    // (undocumented)
+    timestamp: number;
+    // (undocumented)
+    type: 'toolset_error';
+}
+
 // @public (undocumented)
 export type ToolType = 'function' | 'provider';
 
@@ -10084,8 +10099,8 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 // src/_exceptions.ts:128:5 - (ae-forgotten-export) The symbol "APIErrorOptions" needs to be exported by the entry point index.d.ts
 // src/inference/tts.ts:348:5 - (ae-forgotten-export) The symbol "TTSEncoding" needs to be exported by the entry point index.d.ts
 // src/llm/chat_context.ts:80:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "audio"
-// src/llm/tool_context.ts:709:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "ToolFlag" has more than one declaration; you need to add a TSDoc member reference selector
-// src/llm/tool_context.ts:756:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "ToolFlag" has more than one declaration; you need to add a TSDoc member reference selector
+// src/llm/tool_context.ts:718:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "ToolFlag" has more than one declaration; you need to add a TSDoc member reference selector
+// src/llm/tool_context.ts:765:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "ToolFlag" has more than one declaration; you need to add a TSDoc member reference selector
 // src/metrics/base.ts:226:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsInputTokenDetails" needs to be exported by the entry point index.d.ts
 // src/metrics/base.ts:230:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsOutputTokenDetails" needs to be exported by the entry point index.d.ts
 // src/stt/stt.ts:396:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "STT"
@@ -10099,7 +10114,7 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 // src/voice/amd.ts:318:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "gateListening"
 // src/voice/amd.ts:328:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "aclose"
 // src/voice/amd.ts:523:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "gateListening"
-// src/voice/events.ts:437:3 - (ae-forgotten-export) The symbol "InterruptionDetectionError" needs to be exported by the entry point index.d.ts
+// src/voice/events.ts:451:3 - (ae-forgotten-export) The symbol "InterruptionDetectionError" needs to be exported by the entry point index.d.ts
 // src/voice/room_io/_output.ts:183:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "segmentTags"
 // src/voice/testing/run_result.ts:94:5 - (ae-forgotten-export) The symbol "OutputSchema" needs to be exported by the entry point index.d.ts
 
