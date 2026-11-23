@@ -5,7 +5,7 @@ import { AudioFrame } from '@livekit/rtc-node';
 import { ReadableStream, TransformStream } from 'node:stream/web';
 import { beforeAll, expect, it, vi } from 'vitest';
 import { tool } from '../llm/tool_context.js';
-import { initializeLogger } from '../log.js';
+import { initializeLogger, log } from '../log.js';
 import { SynthesizeStream, TTS } from '../tts/tts.js';
 import { Future, Task } from '../utils.js';
 import { Agent } from './agent.js';
@@ -230,6 +230,7 @@ it.each(modes)('joins %s say consumers on interruption and retains partial text'
 it.each(modes)('preserves normal text and audio for %s say', async (mode) => {
   const f = fixture(mode);
   const source = textStream(true);
+  const debug = vi.spyOn(log(), 'debug');
   await f.session.start({ agent: f.agent });
   try {
     const speech = f.session.say(source.stream, f.options);
@@ -239,8 +240,10 @@ it.each(modes)('preserves normal text and audio for %s say', async (mode) => {
     expect(f.output.captured).toEqual(['early']);
     expect(f.audio.frames).toHaveLength(mode === 'text' ? 0 : 1);
     expect(f.ttsInput).toEqual(mode === 'generated audio' ? ['early'] : []);
+    expect(debug).not.toHaveBeenCalledWith(expect.anything(), 'failed to cancel TTS text reader');
   } finally {
     await f.session.close();
+    debug.mockRestore();
   }
 });
 

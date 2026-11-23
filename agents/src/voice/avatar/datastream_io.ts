@@ -160,6 +160,11 @@ export class DataStreamAudioOutput extends AudioOutput {
     }
   }
 
+  /** @internal */
+  override get _playbackStartIsEstimated(): boolean {
+    return !this.waitPlaybackStart;
+  }
+
   async captureFrame(frame: AudioFrame): Promise<void> {
     if (!this.startTask) {
       this.startTask = Task.from(({ signal }) => this._start(signal));

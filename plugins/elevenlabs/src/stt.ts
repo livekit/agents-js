@@ -12,6 +12,7 @@ import {
   DEFAULT_API_CONNECT_OPTIONS,
   Future,
   Task,
+  type VAD,
   calculateAudioDurationSeconds,
   createTimedString,
   delay,
@@ -25,6 +26,7 @@ import {
 } from '@livekit/agents';
 import { AudioFrame } from '@livekit/rtc-node';
 import { type RawData, WebSocket } from 'ws';
+import { TurnDetection, resolveCommitStrategy } from './_turn_detection.js';
 import { PeriodicCollector } from './_utils.js';
 import type { STTRealtimeSampleRates } from './models.js';
 
@@ -38,7 +40,26 @@ export interface VADOptions {
   minSilenceDurationMs?: number | null;
 }
 
-export type ElevenLabsSTTModels = 'scribe_v1' | 'scribe_v2' | 'scribe_v2_realtime';
+export type ElevenLabsSTTModels =
+  | 'scribe_v1'
+  | 'scribe_v2'
+  | 'scribe_v2_realtime'
+  | 'scribe_v3'
+  | 'scribe_v3_live';
+
+/**
+ * How a realtime session commits transcript segments.
+ *
+ * - `manual`: the client commits on `flush()`.
+ * - `vad`: the provider commits after server-side VAD detects silence.
+ * - `turn_prediction`: the provider commits when its turn model predicts the user is done.
+ *   Only supported by `scribe_v3_live`.
+ */
+export type CommitStrategy = 'manual' | 'vad' | 'turn_prediction';
+
+const REALTIME_MODELS = new Set(['scribe_v2_realtime', 'scribe_v3_live']);
+const sttVads = new WeakMap<STT, VAD>();
+const streamReconnectors = new WeakMap<SpeechStream, () => void>();
 
 export interface STTHTTPSession {
   fetch?: typeof fetch;
@@ -58,10 +79,18 @@ export interface STTOptions {
   /**
    * Duration of each outgoing realtime audio chunk in milliseconds. Must be a positive integer.
    * Defaults to 50. Larger chunks reduce message frequency but increase buffering latency.
-   * Flushes send any shorter remaining chunk before committing. Only used for Scribe v2 realtime.
+   * Flushes send any shorter remaining chunk before committing. Only used for realtime models.
    */
   audioChunkDuration?: number;
   serverVad?: VADOptions | null;
+  /**
+   * Realtime commit strategy. Defaults to `vad` when `serverVad` is set and `manual` otherwise.
+   * `turn_prediction` requires `scribe_v3_live`. Changing it with `updateOptions()` reconnects
+   * open streams.
+   */
+  commitStrategy?: CommitStrategy;
+  /** Optional local VAD that guards Scribe v3 Live forced commits and uncommitted partial turns. */
+  vad?: VAD;
   includeTimestamps?: boolean;
   httpSession?: STTHTTPSession;
   model?: ElevenLabsSTTModels | string;
@@ -76,13 +105,13 @@ export interface STTOptions {
   /**
    * Language codes to constrain speech prediction to in addition to `languageCode`. Useful for
    * bilingual applications where audio switches between a primary and a limited set of secondary
-   * languages. Only supported for Scribe v2 realtime. When omitted, the model predicts from its
-   * full set of supported languages.
+   * languages. Only supported for realtime models. When omitted, the model predicts from its full
+   * set of supported languages.
    */
   secondaryLanguages?: string[];
   /**
    * Whether committed transcripts report the detected language. Defaults to true when no
-   * `languageCode` is set and false otherwise. Only supported for Scribe v2 realtime.
+   * `languageCode` is set and false otherwise. Only supported for realtime models.
    */
   includeLanguageDetection?: boolean;
   noVerbatim?: boolean;
@@ -99,6 +128,7 @@ interface ResolvedSTTOptions {
   sampleRate: STTRealtimeSampleRates;
   audioChunkDuration: number;
   serverVad?: VADOptions | null;
+  commitStrategy?: CommitStrategy;
   keyterms?: string[];
   secondaryLanguages?: string[];
   includeLanguageDetection?: boolean;
@@ -136,6 +166,7 @@ interface ElevenLabsStreamEvent {
   session_id?: string;
   message?: string;
   details?: string;
+  turn_probability?: number;
 }
 
 function isAbortSignal(value: unknown): value is AbortSignal {
@@ -229,12 +260,32 @@ function parseStreamEvent(value: unknown): ElevenLabsStreamEvent {
     session_id: asString(record.session_id),
     message: asString(record.message),
     details: asString(record.details),
+    turn_probability: asNumber(record.turn_probability),
   };
+}
+
+function validateCommitStrategy(model: string, strategy?: CommitStrategy): void {
+  if (strategy === 'turn_prediction' && model !== 'scribe_v3_live') {
+    throw new Error('turn_prediction is only supported for scribe_v3_live');
+  }
+}
+
+function warnMissingTurnPredictionVad(
+  model: string,
+  strategy: CommitStrategy | undefined,
+  vad?: VAD,
+) {
+  if (model === 'scribe_v3_live' && strategy === 'turn_prediction' && !vad) {
+    log().warn(
+      "scribe_v3_live with turn_prediction can force-commit transcription segments after approximately 36 seconds of audio, ending the user's turn while they are still speaking. Pass a local VAD to elevenlabs.STT({ vad: ... }) to enable the forced-commit guard.",
+    );
+  }
 }
 
 export class STT extends stt.STT {
   #opts: ResolvedSTTOptions;
   #session: STTHTTPSession;
+  #vad?: VAD;
   #streams = new Set<WeakRef<SpeechStream>>();
   #logger = log();
 
@@ -270,33 +321,51 @@ export class STT extends stt.STT {
       }
     }
     const modelId = model ?? 'scribe_v1';
-    const useRealtime = modelId === 'scribe_v2_realtime';
+    const useRealtime = REALTIME_MODELS.has(modelId);
+    validateCommitStrategy(modelId, opts.commitStrategy);
+    warnMissingTurnPredictionVad(modelId, opts.commitStrategy, opts.vad);
 
     if (!useRealtime && opts.serverVad !== undefined) {
-      log().warn('Server-side VAD is only supported for Scribe v2 realtime model');
+      log().warn('Server-side VAD is only supported for realtime models');
     }
 
     let secondaryLanguages = opts.secondaryLanguages;
     if (!useRealtime && secondaryLanguages !== undefined) {
-      log().warn(
-        '`secondaryLanguages` is only supported for Scribe v2 realtime model and will be ignored',
-      );
+      log().warn('`secondaryLanguages` is only supported for realtime models and will be ignored');
       secondaryLanguages = undefined;
     }
 
     let includeLanguageDetection = opts.includeLanguageDetection;
     if (!useRealtime && includeLanguageDetection !== undefined) {
       log().warn(
-        '`includeLanguageDetection` is only supported for Scribe v2 realtime model and will be ignored',
+        '`includeLanguageDetection` is only supported for realtime models and will be ignored',
       );
       includeLanguageDetection = undefined;
     }
 
     const includeTimestamps = opts.includeTimestamps ?? false;
+    const resolvedOptions: ResolvedSTTOptions = {
+      apiKey: '',
+      baseURL: opts.baseURL ?? API_BASE_URL_V1,
+      languageCode: opts.languageCode ? normalizeLanguage(opts.languageCode) : undefined,
+      tagAudioEvents: opts.tagAudioEvents ?? true,
+      sampleRate: opts.sampleRate ?? 16000,
+      audioChunkDuration,
+      serverVad: opts.serverVad,
+      commitStrategy: opts.commitStrategy,
+      includeTimestamps,
+      modelId,
+      keyterms: opts.keyterms,
+      secondaryLanguages: secondaryLanguages?.map(normalizeLanguage),
+      includeLanguageDetection,
+      noVerbatim: opts.noVerbatim ?? false,
+      enableLogging: opts.enableLogging ?? true,
+    };
     super({
       streaming: useRealtime,
       interimResults: true,
       alignedTranscript: includeTimestamps && useRealtime ? 'word' : false,
+      manualFlush: useRealtime && resolveCommitStrategy(resolvedOptions) === 'manual',
     });
 
     const apiKey = opts.apiKey ?? process.env.ELEVEN_API_KEY;
@@ -306,23 +375,11 @@ export class STT extends stt.STT {
       );
     }
 
-    this.#opts = {
-      apiKey,
-      baseURL: opts.baseURL ?? API_BASE_URL_V1,
-      languageCode: opts.languageCode ? normalizeLanguage(opts.languageCode) : undefined,
-      tagAudioEvents: opts.tagAudioEvents ?? true,
-      sampleRate: opts.sampleRate ?? 16000,
-      audioChunkDuration,
-      serverVad: opts.serverVad,
-      includeTimestamps,
-      modelId,
-      keyterms: opts.keyterms,
-      secondaryLanguages: secondaryLanguages?.map(normalizeLanguage),
-      includeLanguageDetection,
-      noVerbatim: opts.noVerbatim ?? false,
-      enableLogging: opts.enableLogging ?? true,
-    };
+    resolvedOptions.apiKey = apiKey;
+    this.#opts = resolvedOptions;
     this.#session = opts.httpSession ?? {};
+    this.#vad = opts.vad;
+    if (opts.vad) sttVads.set(this, opts.vad);
   }
 
   get model(): string {
@@ -532,16 +589,32 @@ export class STT extends stt.STT {
   updateOptions(opts: {
     tagAudioEvents?: boolean;
     serverVad?: VADOptions | null;
+    commitStrategy?: CommitStrategy;
     keyterms?: string[];
     secondaryLanguages?: string[];
     noVerbatim?: boolean;
   }): void {
+    validateCommitStrategy(this.#opts.modelId, opts.commitStrategy);
+    if (
+      opts.commitStrategy !== undefined &&
+      opts.commitStrategy !== resolveCommitStrategy(this.#opts)
+    ) {
+      warnMissingTurnPredictionVad(this.#opts.modelId, opts.commitStrategy, this.#vad);
+    }
     if (opts.tagAudioEvents !== undefined) {
       this.#opts.tagAudioEvents = opts.tagAudioEvents;
     }
 
     if (opts.serverVad !== undefined) {
       this.#opts.serverVad = opts.serverVad;
+    }
+    if (opts.commitStrategy !== undefined) {
+      this.#opts.commitStrategy = opts.commitStrategy;
+    }
+    if (opts.serverVad !== undefined || opts.commitStrategy !== undefined) {
+      this.updateCapabilities({
+        manualFlush: this.capabilities.streaming && resolveCommitStrategy(this.#opts) === 'manual',
+      });
     }
 
     if (opts.keyterms !== undefined) {
@@ -550,11 +623,11 @@ export class STT extends stt.STT {
 
     let secondaryLanguages = opts.secondaryLanguages;
     if (secondaryLanguages !== undefined) {
-      if (this.#opts.modelId === 'scribe_v2_realtime') {
+      if (REALTIME_MODELS.has(this.#opts.modelId)) {
         this.#opts.secondaryLanguages = secondaryLanguages.map(normalizeLanguage);
       } else {
         this.#logger.warn(
-          '`secondaryLanguages` is only supported for Scribe v2 realtime model and will be ignored',
+          '`secondaryLanguages` is only supported for realtime models and will be ignored',
         );
         secondaryLanguages = undefined;
       }
@@ -573,6 +646,7 @@ export class STT extends stt.STT {
           keyterms: opts.keyterms,
           secondaryLanguages: secondaryLanguages?.map(normalizeLanguage),
         });
+        if (opts.commitStrategy !== undefined) streamReconnectors.get(stream)?.();
       } else {
         this.#streams.delete(ref);
       }
@@ -598,9 +672,11 @@ export class SpeechStream extends stt.SpeechStream {
   #opts: ResolvedSTTOptions;
   #language?: string;
   #session: STTHTTPSession;
+  #sttInstance: STT;
   #reconnectEvent = new Future<void>();
   #speaking = false;
-  #lastPartialText = '';
+  #finalAlternatives: stt.SpeechData[] = [];
+  #turnDetection: TurnDetection;
   #audioDurationCollector: PeriodicCollector<number>;
   #logger = log();
 
@@ -617,6 +693,15 @@ export class SpeechStream extends stt.SpeechStream {
     this.#opts = opts;
     this.#language = language;
     this.#session = httpSession;
+    this.#sttInstance = sttInstance;
+    this.#turnDetection = new TurnDetection({
+      options: opts,
+      vad: sttVads.get(sttInstance),
+      onEndOfSpeech: () => this.#emitEndOfSpeech(),
+    });
+    streamReconnectors.set(this, () => {
+      if (!this.#reconnectEvent.done) this.#reconnectEvent.resolve();
+    });
     this.#audioDurationCollector = new PeriodicCollector(
       (duration) => this.#onAudioDurationReport(duration),
       { duration: 5.0 },
@@ -625,10 +710,15 @@ export class SpeechStream extends stt.SpeechStream {
 
   updateOptions(opts: {
     serverVad?: VADOptions | null;
+    commitStrategy?: CommitStrategy;
     noVerbatim?: boolean;
     keyterms?: string[];
     secondaryLanguages?: string[];
   }): void {
+    if (opts.commitStrategy !== undefined) {
+      this.#sttInstance.updateOptions(opts);
+      return;
+    }
     if (opts.serverVad !== undefined) {
       this.#opts.serverVad = opts.serverVad;
       if (!this.#reconnectEvent.done) {
@@ -676,11 +766,15 @@ export class SpeechStream extends stt.SpeechStream {
     while (!this.closed && !this.input.closed) {
       let ws: WebSocket | null = null;
       let closingWs = false;
+      let detachRecvListeners = () => {};
       const sessionController = new AbortController();
+      const tasks: Task<void>[] = [];
 
       try {
+        // A replacement socket cannot deliver the previous connection's pending final.
+        this.#emitEndOfSpeech();
         ws = await this.#connectWs();
-        this.#lastPartialText = '';
+        await this.#turnDetection.start();
 
         const keepaliveTask = Task.from(async (controller) => {
           while (!controller.signal.aborted) {
@@ -702,8 +796,6 @@ export class SpeechStream extends stt.SpeechStream {
             (this.#opts.sampleRate * this.#opts.audioChunkDuration) / 1000,
           );
           const audioByteStream = new AudioByteStream(this.#opts.sampleRate, 1, samplesPerChunk);
-          const abortPromise = waitForAbort(controller.signal);
-          const streamAbortPromise = waitForAbort(this.abortSignal);
           // Scribe closes the session on a commit with less than 300ms of audio since the
           // previous commit or the connect
           const minCommitSamples = (this.#opts.sampleRate * 3) / 10;
@@ -712,12 +804,14 @@ export class SpeechStream extends stt.SpeechStream {
 
           try {
             while (!this.closed) {
-              const result = await Promise.race([
-                this.input.next(),
-                abortPromise,
-                streamAbortPromise,
-              ]);
-              if (result === undefined) return;
+              let result: IteratorResult<AudioFrame | typeof SpeechStream.FLUSH_SENTINEL>;
+              try {
+                // Cancel the read on teardown so a replacement sender receives the next input.
+                result = await this.input.next({ signal: controller.signal });
+              } catch (error) {
+                if (controller.signal.aborted) return;
+                throw error;
+              }
               if (result.done) break;
 
               const data = result.value;
@@ -735,6 +829,7 @@ export class SpeechStream extends stt.SpeechStream {
               }
 
               for (const frame of frames) {
+                await this.#turnDetection.pushFrame(frame);
                 this.#audioDurationCollector.push(frame.samplesPerChannel / frame.sampleRate);
                 const audioBase64 = Buffer.from(
                   frame.data.buffer,
@@ -753,6 +848,7 @@ export class SpeechStream extends stt.SpeechStream {
 
               if (hasEnded) {
                 this.#audioDurationCollector.flush();
+                this.#turnDetection.onCommitRequested();
                 ws?.send(
                   JSON.stringify({
                     message_type: 'input_audio_chunk',
@@ -765,6 +861,7 @@ export class SpeechStream extends stt.SpeechStream {
                 hasEnded = false;
               }
             }
+            await this.#turnDetection.endInput();
           } finally {
             closingWs = true;
           }
@@ -778,9 +875,21 @@ export class SpeechStream extends stt.SpeechStream {
                 return;
               }
               try {
-                this.#processStreamEvent(parseStreamEvent(JSON.parse(msg.toString())));
+                const parsed = parseStreamEvent(JSON.parse(msg.toString()));
+                this.#processStreamEvent(parsed);
+                if (
+                  parsed.message_type === 'partial_transcript' ||
+                  parsed.message_type === 'committed_transcript' ||
+                  parsed.message_type === 'committed_transcript_with_timestamps'
+                ) {
+                  this.markProviderProgress();
+                }
               } catch (error) {
-                this.#logger.error({ error }, 'failed to process ElevenLabs STT message');
+                if (error instanceof APIError) {
+                  reject(error);
+                } else {
+                  this.#logger.error({ error }, 'failed to process ElevenLabs STT message');
+                }
               }
             };
             const onClose = (code: number, reason: Buffer) => {
@@ -803,14 +912,29 @@ export class SpeechStream extends stt.SpeechStream {
               sessionController.abort();
               reject(new APIConnectionError({ message: error.message }));
             };
+            const detach = () => {
+              ws?.off('message', onMessage);
+              ws?.off('close', onClose);
+              ws?.off('error', onError);
+            };
+            detachRecvListeners = detach;
             ws?.on('message', onMessage);
             ws?.once('close', onClose);
             ws?.once('error', onError);
           });
 
-          await Promise.race([receiveMessages, waitForAbort(controller.signal)]);
+          try {
+            await Promise.race([receiveMessages, waitForAbort(controller.signal)]);
+          } finally {
+            detachRecvListeners();
+            detachRecvListeners = () => {};
+          }
         }, sessionController);
 
+        // VADStream.endInput() does not close its output iterator. Keep consuming VAD events for
+        // forced-commit classification, but do not make clean connection completion wait on it.
+        tasks.push(keepaliveTask, sendTask, recvTask);
+        void this.#turnDetection.runVad();
         const runResult = await Promise.race([
           Promise.all([keepaliveTask.result, sendTask.result, recvTask.result]).then(
             () => 'done' as const,
@@ -826,15 +950,23 @@ export class SpeechStream extends stt.SpeechStream {
         break;
       } finally {
         closingWs = true;
+        detachRecvListeners();
+        detachRecvListeners = () => {};
         sessionController.abort();
-        ws?.close();
+        try {
+          // The old sender must stop reading input before a reconnect starts a new one.
+          await Promise.allSettled(tasks.map((task) => task.result));
+          await this.#turnDetection.close();
+        } finally {
+          ws?.close();
+        }
       }
     }
   }
 
   async #connectWs(): Promise<WebSocket> {
     const serverVad = this.#opts.serverVad;
-    const commitStrategy = serverVad === undefined || serverVad === null ? 'manual' : 'vad';
+    const commitStrategy = resolveCommitStrategy(this.#opts);
     const params = [
       `model_id=${this.#opts.modelId}`,
       `audio_format=pcm_${this.#opts.sampleRate}`,
@@ -973,11 +1105,21 @@ export class SpeechStream extends stt.SpeechStream {
       );
     }
 
+    let isForcedCommit = false;
+    if (
+      messageType === 'committed_transcript' ||
+      messageType === 'committed_transcript_with_timestamps'
+    ) {
+      isForcedCommit = this.#turnDetection.onCommittedTranscript(data, this.#finalMessageType);
+    }
     if (messageType === 'partial_transcript') {
+      const textChanged = this.#turnDetection.onPartialTranscript(
+        data.turn_probability,
+        text,
+        !this.#speaking,
+      );
       this.#logger.debug({ 'lk.pii.data': data }, 'Received message type partial_transcript');
-      if (text && text !== this.#lastPartialText) {
-        this.#lastPartialText = text;
-
+      if (textChanged) {
         if (!this.#speaking) {
           this.queue.put({ type: stt.SpeechEventType.START_OF_SPEECH });
           this.#speaking = true;
@@ -988,8 +1130,6 @@ export class SpeechStream extends stt.SpeechStream {
         });
       }
     } else if (messageType === this.#finalMessageType) {
-      this.#lastPartialText = '';
-
       if (text) {
         if (!this.#speaking) {
           this.queue.put({ type: stt.SpeechEventType.START_OF_SPEECH });
@@ -999,13 +1139,10 @@ export class SpeechStream extends stt.SpeechStream {
           type: stt.SpeechEventType.FINAL_TRANSCRIPT,
           alternatives: [speechData],
         });
-        if (this.#opts.serverVad !== undefined && this.#opts.serverVad !== null) {
-          this.queue.put({ type: stt.SpeechEventType.END_OF_SPEECH });
-          this.#speaking = false;
-        }
-      } else if (this.#speaking) {
-        this.queue.put({ type: stt.SpeechEventType.END_OF_SPEECH });
-        this.#speaking = false;
+        this.#finalAlternatives = endTime > 0 ? [speechData] : [];
+      }
+      if (!isForcedCommit && (!text || resolveCommitStrategy(this.#opts) !== 'manual')) {
+        this.#turnDetection.endSpeech();
       }
     } else if (
       messageType === 'committed_transcript' ||
@@ -1021,10 +1158,13 @@ export class SpeechStream extends stt.SpeechStream {
       messageType === 'input_error' ||
       messageType === 'error'
     ) {
-      const errorMsg = data.message ?? 'Unknown error';
-      const detailsSuffix = data.details ? ` - ${data.details}` : '';
-      this.#logger.error(`ElevenLabs STT error [${messageType}]: ${errorMsg}${detailsSuffix}`);
-      throw new APIConnectionError({ message: `${messageType}: ${errorMsg}${detailsSuffix}` });
+      this.#logger.error({ 'lk.pii.data': data }, `ElevenLabs STT error [${messageType}]`);
+      throw new APIConnectionError({
+        message: `ElevenLabs STT error [${messageType}]`,
+        options: {
+          retryable: !['auth_error', 'quota_exceeded', 'input_error'].includes(messageType),
+        },
+      });
     } else {
       this.#logger.warn(
         {
@@ -1034,5 +1174,18 @@ export class SpeechStream extends stt.SpeechStream {
         'ElevenLabs STT returned an unknown message type',
       );
     }
+  }
+
+  #emitEndOfSpeech(): void {
+    const alternatives = this.#finalAlternatives as [stt.SpeechData, ...stt.SpeechData[]];
+    const speaking = this.#speaking;
+    this.#finalAlternatives = [];
+    this.#speaking = false;
+    // A deferred end of speech can fire during teardown after the event queue closes.
+    if (!speaking || this.queue.closed) return;
+    this.queue.put({
+      type: stt.SpeechEventType.END_OF_SPEECH,
+      ...(alternatives.length > 0 && { alternatives }),
+    });
   }
 }

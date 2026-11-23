@@ -10,7 +10,6 @@ import { Attributes } from '@opentelemetry/api';
 import { AudioFrame } from '@livekit/rtc-node';
 import { AudioResampler } from '@livekit/rtc-node';
 import { Context } from '@opentelemetry/api';
-import { default as default_2 } from 'ws';
 import type { E2EEOptions } from '@livekit/rtc-node';
 import { EventEmitter } from 'events';
 import { EventEmitter as EventEmitter_2 } from 'node:events';
@@ -1213,6 +1212,9 @@ const ATTR_FALLBACK_INDEX = "lk.fallback.index";
 // @public
 const ATTR_FALLBACK_LABEL = "lk.fallback.label";
 
+// @public (undocumented)
+const ATTR_FALLBACK_RECOVERY = "lk.fallback.recovery";
+
 // @public
 const ATTR_FIRST_FRAME_DELAY = "lk.first_frame_delay";
 
@@ -1745,6 +1747,8 @@ export abstract class AudioOutput extends EventEmitter_2 {
     pause(): void;
     // @internal
     get pendingPlayoutSegments(): number;
+    // @internal
+    get _playbackStartIsEstimated(): boolean;
     resume(): void;
     // (undocumented)
     sampleRate?: number | undefined;
@@ -2157,7 +2161,7 @@ interface ChatCompletionOptions extends Record<string, unknown> {
     // (undocumented)
     prompt_cache_retention?: 'in_memory' | '24h';
     // (undocumented)
-    reasoning_effort?: 'none' | 'minimal' | 'low' | 'medium' | 'high';
+    reasoning_effort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
     // Warning: (ae-forgotten-export) The symbol "ResponseFormat" needs to be exported by the entry point index.d.ts
     //
     // (undocumented)
@@ -2817,6 +2821,8 @@ export class DataStreamAudioOutput extends AudioOutput {
     static _playbackStartedHandlers: Record<string, (data: RpcInvocationData) => string>;
     // (undocumented)
     static _playbackStartedRpcRegistered: boolean;
+    // @internal (undocumented)
+    get _playbackStartIsEstimated(): boolean;
     // (undocumented)
     static registerPlaybackFinishedRpc(input: {
         room: Room;
@@ -2846,6 +2852,14 @@ export interface DataStreamAudioOutputOptions {
 
 // @public (undocumented)
 export type Decision = Probability | Choice | Score;
+
+// @public
+export interface DecisionAvailabilityChangedEvent {
+    // (undocumented)
+    available: boolean;
+    // (undocumented)
+    model: DecisionModel;
+}
 
 // @public (undocumented)
 export interface DecisionCapabilities {
@@ -2877,10 +2891,10 @@ export type DecisionMetrics = {
     metadata?: MetricsMetadata;
 };
 
-// Warning: (ae-forgotten-export) The symbol "DecisionModel_base" needs to be exported by the entry point index.d.ts
+// Warning: (ae-forgotten-export) The symbol "DecisionModelEventEmitter" needs to be exported by the entry point index.d.ts
 //
 // @public
-export abstract class DecisionModel extends DecisionModel_base {
+export abstract class DecisionModel<Callbacks extends DecisionModelCallbacks = DecisionModelCallbacks> extends DecisionModelEventEmitter<Callbacks> {
     constructor(input: {
         capabilities: DecisionCapabilities;
     });
@@ -2908,10 +2922,86 @@ export abstract class DecisionModel extends DecisionModel_base {
     get provider(): string;
 }
 
+// @public
+class DecisionModel_2 extends DecisionModel {
+    constructor(input?: DecisionModelOptions);
+    // (undocumented)
+    protected _evaluateImpl(input: {
+        input: string;
+        decisions: Readonly<Record<string, Decision>>;
+        connOptions: APIConnectOptions;
+        abortSignal: AbortSignal;
+    }): Promise<DecisionResponse>;
+    // (undocumented)
+    get model(): string;
+    // (undocumented)
+    get provider(): string;
+}
+
 // @public (undocumented)
 export type DecisionModelCallbacks = {
     ['metrics_collected']: (metrics: DecisionMetrics) => void;
 };
+
+// @public
+export class DecisionModelFallbackAdapter extends DecisionModel<DecisionModelFallbackCallbacks> {
+    constructor(input: DecisionModelFallbackAdapterOptions);
+    // (undocumented)
+    aclose(): Promise<void>;
+    // (undocumented)
+    readonly attemptTimeoutMs: number;
+    // (undocumented)
+    evaluate(input: {
+        input: string | ChatContext;
+        decisions: Readonly<Record<string, Decision>>;
+        connOptions?: APIConnectOptions;
+        abortSignal?: AbortSignal;
+    }): Promise<DecisionResponse>;
+    // (undocumented)
+    protected _evaluateImpl(): Promise<DecisionResponse>;
+    // (undocumented)
+    readonly maxRetryPerModel: number;
+    // (undocumented)
+    get model(): string;
+    get models(): readonly DecisionModel[];
+    // (undocumented)
+    get provider(): string;
+    // (undocumented)
+    readonly retryIntervalMs: number;
+}
+
+// @public
+export interface DecisionModelFallbackAdapterOptions {
+    attemptTimeoutMs?: number;
+    maxRetryPerModel?: number;
+    models: readonly DecisionModel[];
+    retryIntervalMs?: number;
+}
+
+// @public (undocumented)
+export type DecisionModelFallbackCallbacks = DecisionModelCallbacks & {
+    decision_availability_changed: (event: DecisionAvailabilityChangedEvent) => void;
+};
+
+// @public
+interface DecisionModelOptions {
+    // (undocumented)
+    apiKey?: string;
+    // (undocumented)
+    apiSecret?: string;
+    // (undocumented)
+    baseURL?: string;
+    fallback?: DecisionModels | DecisionModels[];
+    // (undocumented)
+    fetch?: typeof globalThis.fetch;
+    // (undocumented)
+    model?: DecisionModels;
+}
+
+// Warning: (ae-forgotten-export) The symbol "AnyString" needs to be exported by the entry point index.d.ts
+//
+// @public (undocumented)
+type DecisionModels = 'openai/gpt-6-luna-decisions' | 'google/gemini-decision-1' | 'microsoft/decision-1' | 'microsoft-eu/decision-1' | AnyString;
 
 // @public (undocumented)
 export class DecisionResponse {
@@ -3185,8 +3275,6 @@ interface DuplexModelOptions<TModel extends DuplexModels | AnyString> {
 // @public
 type DuplexModels = OpenAIDuplexModels;
 
-// Warning: (ae-forgotten-export) The symbol "AnyString" needs to be exported by the entry point index.d.ts
-//
 // @public (undocumented)
 type DuplexOptions<TModel extends DuplexModels | AnyString> = TModel extends OpenAIDuplexModels ? OpenAIDuplexOptions : Record<string, unknown>;
 
@@ -4267,7 +4355,7 @@ export function getLanguageRegion(language: string): string | undefined;
 function getMonitor(): EventLoopMonitor | undefined;
 
 // @public (undocumented)
-type GoogleModels = 'google/gemini-4-argon' | 'google/gemini-4-hydrogen' | 'google/gemini-3.1-pro' | 'google/gemini-3-flash' | 'google/gemini-3.1-flash-lite' | 'google/gemini-3.5-flash' | 'google/gemini-2.5-pro' | 'google/gemini-2.5-flash' | 'google/gemini-2.5-flash-lite';
+type GoogleModels = 'google/gemini-4-argon' | 'google/gemini-4-hydrogen' | 'google/gemini-4-neon' | 'google/gemini-3.1-pro' | 'google/gemini-3-flash' | 'google/gemini-3.1-flash-lite' | 'google/gemini-3.5-flash' | 'google/gemini-2.5-pro' | 'google/gemini-2.5-flash' | 'google/gemini-2.5-flash-lite';
 
 // @public (undocumented)
 type GoogleRealtimeModels = 'google/gemini-3.8-live' | 'google/gemini-3.8-live-extended-thinking' | 'google/gemini-live';
@@ -4327,6 +4415,9 @@ export interface ImageContent {
 declare namespace inference {
     export {
         eot,
+        DecisionModel_2 as DecisionModel,
+        DecisionModelOptions,
+        DecisionModels,
         TurnDetector,
         TurnDetectorStreamImpl,
         LOCAL_LANGUAGES,
@@ -5109,6 +5200,10 @@ declare namespace llm {
         DecisionKind,
         DecisionModelCallbacks,
         DecisionResult,
+        DecisionModelFallbackAdapter,
+        DecisionAvailabilityChangedEvent,
+        DecisionModelFallbackAdapterOptions,
+        DecisionModelFallbackCallbacks,
         RealtimeError,
         RealtimeModel,
         RealtimeSession,
@@ -6462,6 +6557,8 @@ export abstract class RealtimeSession extends EventEmitter {
 // @public (undocumented)
 class RealtimeSession_3 extends RealtimeSession_2 {
     constructor(realtimeModel: RealtimeModel_2, options?: llm_2.RealtimeSessionOptions);
+    // @internal (undocumented)
+    protected get acceptsEmptyDeleteAcknowledgement(): boolean;
     // (undocumented)
     close(): Promise<void>;
     // (undocumented)
@@ -6473,7 +6570,7 @@ class RealtimeSession_3 extends RealtimeSession_2 {
     // (undocumented)
     protected createToolsUpdateEvent(tools: ToolContext): api_proto.SessionUpdateEvent;
     // (undocumented)
-    protected createWsConn(): Promise<default_2>;
+    protected createWsConn(): Promise<WebSocket_2>;
     // (undocumented)
     protected handleConversationItemCreated(event: api_proto.ConversationItemCreatedEvent): void;
     // (undocumented)
@@ -6492,6 +6589,8 @@ class RealtimeSession_3 extends RealtimeSession_2 {
     protected isFatalError(error: unknown): boolean;
     // (undocumented)
     protected resetInputTurnState(): void;
+    // @internal (undocumented)
+    protected waitForSocketRecycle(ws: WebSocket_2, signal: AbortSignal): Promise<void>;
 }
 
 // @public
@@ -7970,7 +8069,7 @@ class STT_2<TModel extends STTModels> extends STT {
         vad?: VAD;
     });
     // (undocumented)
-    connectWs(timeout: number): Promise<WebSocket_2>;
+    connectWs(timeout: number, opts?: InferenceSTTOptions<TModel>, sessionKeyterms?: string[], handoffProbeId?: string): Promise<WebSocket_2>;
     // (undocumented)
     static fromModelString(modelString: string): STT_2<AnyString>;
     // (undocumented)
@@ -8869,6 +8968,7 @@ declare namespace traceTypes {
         ATTR_PREVIOUS_AGENT_LABEL,
         ATTR_FALLBACK_LABEL,
         ATTR_FALLBACK_INDEX,
+        ATTR_FALLBACK_RECOVERY,
         ATTR_IS_INTERRUPTION,
         ATTR_INTERRUPTION_PROBABILITY,
         ATTR_INTERRUPTION_TOTAL_DURATION,
@@ -9999,13 +10099,13 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 //
 // src/_exceptions.ts:90:5 - (ae-forgotten-export) The symbol "APIStatusErrorOptions" needs to be exported by the entry point index.d.ts
 // src/_exceptions.ts:128:5 - (ae-forgotten-export) The symbol "APIErrorOptions" needs to be exported by the entry point index.d.ts
-// src/inference/tts.ts:322:5 - (ae-forgotten-export) The symbol "TTSEncoding" needs to be exported by the entry point index.d.ts
+// src/inference/tts.ts:348:5 - (ae-forgotten-export) The symbol "TTSEncoding" needs to be exported by the entry point index.d.ts
 // src/llm/chat_context.ts:80:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "audio"
 // src/llm/tool_context.ts:709:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "ToolFlag" has more than one declaration; you need to add a TSDoc member reference selector
 // src/llm/tool_context.ts:756:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "ToolFlag" has more than one declaration; you need to add a TSDoc member reference selector
 // src/metrics/base.ts:226:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsInputTokenDetails" needs to be exported by the entry point index.d.ts
 // src/metrics/base.ts:230:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsOutputTokenDetails" needs to be exported by the entry point index.d.ts
-// src/stt/stt.ts:395:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "STT"
+// src/stt/stt.ts:396:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "STT"
 // src/utils.ts:468:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "cancelled"
 // src/voice/agent_session.ts:412:3 - (ae-unresolved-link) The @link reference could not be resolved: This type of declaration is not supported yet by the resolver
 // src/voice/agent_session.ts:1090:5 - (ae-forgotten-export) The symbol "RecordingOptions" needs to be exported by the entry point index.d.ts
