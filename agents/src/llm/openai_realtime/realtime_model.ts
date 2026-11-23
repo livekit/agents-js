@@ -515,6 +515,9 @@ export class RealtimeSession extends llm.RealtimeSession {
     // mutate the shared model._options before computing its diff, causing the
     // diff to always see "no change" and never send session.update.
     this._options = { ...realtimeModel._options };
+    if (this._options.turnDetection) {
+      this._options.turnDetection = { ...this._options.turnDetection };
+    }
     if (options?.turnDetectionDisabled) {
       this._options.turnDetection = null;
     }
@@ -897,11 +900,14 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   /**
-   * Update this session's options, retaining them across reconnects.
+   * Update this session's desired options, retaining them across reconnects.
    * Omitted properties are unchanged; an explicit `toolChoice: undefined` restores `auto`.
+   * Explicit speed and VAD settings are resent so provider-rejected updates can be retried.
+   * Change speed between model turns. Azure 2024-10-01-preview only supports server VAD
+   * threshold and timing updates; use GA for speed and VAD response controls.
    * To enable or disable turn detection, create a new session instead.
    * @param options - Speech speed, a non-null turn-detection configuration, or tool choice.
-   * @throws Error if the update would enable or disable turn detection.
+   * @throws Error if the update would enable/disable VAD or use unsupported Azure preview fields.
    */
   updateOptions(options: {
     toolChoice?: llm.ToolChoice;
@@ -916,6 +922,20 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
 
     const isLegacyAzure = this._options.isAzure && !!this._options.apiVersion;
+    if (
+      isLegacyAzure &&
+      this._options.apiVersion === '2024-10-01-preview' &&
+      (options.speed !== undefined ||
+        (options.turnDetection &&
+          (options.turnDetection.type !== 'server_vad' ||
+            options.turnDetection.create_response !== undefined ||
+            options.turnDetection.interrupt_response !== undefined)))
+    ) {
+      throw new Error(
+        'Azure 2024-10-01-preview only supports server VAD threshold and timing updates; use GA for speed and VAD response controls.',
+      );
+    }
+
     const changes: api_proto.SessionUpdateEvent['session'] = {};
     const audio: api_proto.RealtimeAudioConfig = {};
 
@@ -926,19 +946,17 @@ export class RealtimeSession extends llm.RealtimeSession {
       if (current !== next) changes.tool_choice = next;
     }
 
-    if (options.speed !== undefined && options.speed !== this._options.speed) {
+    if (options.speed !== undefined) {
       this._options.speed = options.speed;
       if (isLegacyAzure) changes.speed = options.speed;
       else audio.output = { speed: options.speed };
     }
 
-    if (
-      options.turnDetection !== undefined &&
-      options.turnDetection !== this._options.turnDetection
-    ) {
-      this._options.turnDetection = options.turnDetection;
-      if (isLegacyAzure) changes.turn_detection = options.turnDetection;
-      else audio.input = { turn_detection: options.turnDetection };
+    if (options.turnDetection !== undefined) {
+      const turnDetection = { ...options.turnDetection };
+      this._options.turnDetection = turnDetection;
+      if (isLegacyAzure) changes.turn_detection = turnDetection;
+      else audio.input = { turn_detection: turnDetection };
     }
 
     if (audio.input || audio.output) changes.audio = audio;

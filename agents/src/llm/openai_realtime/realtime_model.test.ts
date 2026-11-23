@@ -1308,6 +1308,62 @@ describe('RealtimeSession.updateOptions', () => {
     );
   });
 
+  it('snapshots initial and updated VAD settings, including queued events', () => {
+    stubTaskRuntime();
+    const initial: api_proto.TurnDetectionType = { type: 'server_vad', threshold: 0.5 };
+    const sent = vi.spyOn(RealtimeSession.prototype, 'sendEvent');
+    const session = new RealtimeModel({ apiKey: 'fake', turnDetection: initial }).session();
+    initial.threshold = 0.9;
+    expect(sent.mock.calls[0]![0]).toMatchObject({
+      session: { audio: { input: { turn_detection: { threshold: 0.5 } } } },
+    });
+
+    const config: api_proto.TurnDetectionType = { type: 'server_vad', create_response: true };
+    session.updateOptions({ turnDetection: config });
+    const queued = sent.mock.calls.at(-1)![0];
+    config.create_response = false;
+    expect(queued).toMatchObject({
+      session: { audio: { input: { turn_detection: { create_response: true } } } },
+    });
+    session.updateOptions({ turnDetection: config });
+    expect(sent).toHaveBeenCalledTimes(3);
+    expect(sent.mock.calls.at(-1)![0]).toMatchObject({
+      session: { audio: { input: { turn_detection: { create_response: false } } } },
+    });
+    config.create_response = true;
+    const reconnect = Reflect.apply(Reflect.get(session, 'createSessionUpdateEvent'), session, []);
+    expect(reconnect).toMatchObject({
+      session: { audio: { input: { turn_detection: { create_response: false } } } },
+    });
+  });
+
+  it.each([
+    { speed: 0.8 },
+    { turnDetection: { type: 'server_vad', create_response: false } },
+    { turnDetection: { type: 'server_vad', interrupt_response: false } },
+    { turnDetection: { type: 'semantic_vad' } },
+  ] as const)('rejects unsupported Azure 2024 preview options atomically (%j)', (options) => {
+    stubTaskRuntime();
+    const session = new RealtimeModel({
+      apiKey: 'fake',
+      baseURL: 'ws://127.0.0.1',
+      azureDeployment: 'test',
+      apiVersion: '2024-10-01-preview',
+      speed: 1,
+      toolChoice: 'required',
+      turnDetection: { type: 'server_vad', threshold: 0.5 },
+    }).session();
+    const sent = vi.spyOn(session, 'sendEvent');
+    expect(() => session.updateOptions({ toolChoice: 'none', ...options })).toThrow(
+      '2024-10-01-preview',
+    );
+    expect(sent).not.toHaveBeenCalled();
+    const reconnect = Reflect.apply(Reflect.get(session, 'createSessionUpdateEvent'), session, []);
+    expect(reconnect).toMatchObject({
+      session: { speed: 1, tool_choice: 'required', turn_detection: { threshold: 0.5 } },
+    });
+  });
+
   it.each(['model', 'session', 'update'] as const)(
     'rejects turn-detection enable/disable transitions before changing other options (%s)',
     (disabledAt) => {
@@ -1723,32 +1779,32 @@ it.each([
   'updates and restores session options across reconnects ($name)',
   async ({ azureDeployment, apiVersion }) => {
     const { server, connections, url } = await startFunctionCallServer('');
-    const original: api_proto.TurnDetectionType = {
-      type: 'server_vad',
-      create_response: true,
-      interrupt_response: true,
-    };
-    const paused: api_proto.TurnDetectionType = { ...original, create_response: false };
+    const legacy = apiVersion !== undefined;
+    const original: api_proto.TurnDetectionType = legacy
+      ? { type: 'server_vad', threshold: 0.5, silence_duration_ms: 200 }
+      : { type: 'server_vad', create_response: true, interrupt_response: true };
+    const paused: api_proto.TurnDetectionType = legacy
+      ? { ...original, threshold: 0.8 }
+      : { ...original, create_response: false };
     const model = new RealtimeModel({
       apiKey: 'fake',
       baseURL: url,
       azureDeployment,
       apiVersion,
       toolChoice: 'required',
-      speed: 1,
+      speed: legacy ? undefined : 1,
       turnDetection: original,
     });
     const session = model.session({ instructions: 'primary' });
     const sessions = [session];
-    const legacy = apiVersion !== undefined;
     const audioOptions = (speed: number, turnDetection: api_proto.TurnDetectionType) =>
       legacy
-        ? { speed, turn_detection: turnDetection }
+        ? { turn_detection: turnDetection }
         : { audio: { input: { turn_detection: turnDetection }, output: { speed } } };
     try {
       await vi.waitFor(() => expect(connections[0]?.updates).toHaveLength(1));
       const first = connections[0]!;
-      session.updateOptions({ speed: 0.8, turnDetection: paused });
+      session.updateOptions({ ...(legacy ? {} : { speed: 0.8 }), turnDetection: paused });
       await session.updateInstructions('updated');
       await vi.waitFor(() => expect(first.updates.at(-1)?.session.instructions).toBe('updated'));
       expect(first.updates.slice(1, -1).map((event) => event.session)).toEqual([
@@ -1756,7 +1812,6 @@ it.each([
       ]);
 
       const before = first.updates.length;
-      session.updateOptions({ speed: 0.8, turnDetection: paused });
       session.updateOptions({});
       await session.updateInstructions('unchanged');
       await vi.waitFor(() => expect(first.updates.at(-1)?.session.instructions).toBe('unchanged'));
@@ -1806,3 +1861,52 @@ it.each([
     }
   },
 );
+
+it('retries the same speed after an in-progress response rejects it', async () => {
+  const { server, connections, url } = await startFunctionCallServer('');
+  const session = new RealtimeModel({ apiKey: 'fake', baseURL: url, speed: 1 }).session();
+  try {
+    await vi.waitFor(() => expect(connections[0]?.updates).toHaveLength(1));
+    const connection = connections[0]!;
+    const response = { id: 'speed_test', status: 'in_progress', output: [] };
+    const started = once(session, 'generation_created');
+    connection.socket.send(JSON.stringify({ type: 'response.created', response }));
+    await started;
+    session.updateOptions({ speed: 0.8 });
+    await vi.waitFor(() => expect(connection.updates).toHaveLength(2));
+    const rejected = once(session, 'error');
+    connection.socket.send(
+      JSON.stringify({
+        type: 'error',
+        error: {
+          type: 'invalid_request_error',
+          code: 'invalid_parameter',
+          message: 'Cannot change speed during a response',
+          event_id: connection.updates[1]!.event_id,
+        },
+      }),
+    );
+    await rejected;
+    const finished = once(session, 'metrics_collected');
+    connection.socket.send(
+      JSON.stringify({
+        type: 'response.done',
+        response: { ...response, status: 'completed' },
+      }),
+    );
+    await finished;
+    session.updateOptions({ speed: 0.8 });
+    await session.updateInstructions('retried');
+    await vi.waitFor(() => expect(connection.updates.at(-1)?.session.instructions).toBe('retried'));
+    expect(connection.updates.slice(1, -1).map((event) => event.session)).toEqual([
+      { type: 'realtime', audio: { output: { speed: 0.8 } } },
+      { type: 'realtime', audio: { output: { speed: 0.8 } } },
+    ]);
+  } finally {
+    connections.forEach(({ socket }) => socket.terminate());
+    await session.close();
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => (error ? reject(error) : resolve()));
+    });
+  }
+});
