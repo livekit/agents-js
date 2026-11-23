@@ -439,7 +439,7 @@ class SpeechStreamv2 extends stt.SpeechStream {
     const samples50ms = Math.floor(this.#opts.sampleRate / 20);
     const audioBstream = new AudioByteStream(this.#opts.sampleRate, 1, samples50ms);
 
-    // Manual Iterator to allow racing against Reconnect Signal
+    // Manual iterator so a reconnect request can cancel the pending read
     const iterator = this.input[Symbol.asyncIterator]();
     const attempt = this.#attempt;
 
@@ -466,26 +466,31 @@ class SpeechStreamv2 extends stt.SpeechStream {
     let hasEnded = false;
     let inputEnded = false;
 
+    // A reconnect request cancels the pending read rather than being raced against it. Racing each
+    // read against a fresh `#reconnectEvent.wait()` parked one waiter per frame on the event, and
+    // each waiter kept its frame reachable until the next reconnect. A read that lost the race
+    // could also have taken a frame off the queue already. The queue hands a frame over only after
+    // re-checking the signal, so a cancelled read leaves its frame for the next connection.
+    const reconnect = new AbortController();
+    void this.#reconnectEvent.wait().then(() => reconnect.abort());
+    const readSignal = AbortSignal.any([attempt.signal, reconnect.signal]);
+
     while (true) {
-      const nextPromise = iterator.next({ signal: attempt.signal });
-      // If reconnect signal fires, abort the wait
-      const abortPromise = this.#reconnectEvent.wait().then(() => ({ abort: true }) as const);
-
-      const result = await Promise.race([nextPromise, abortPromise]);
-
-      // Check if we need to abort (Reconnect) or if stream is done
-      if ('abort' in result || result.done) {
-        if (!('abort' in result) && result.done) {
-          // Normal stream end
-          hasEnded = true;
-          inputEnded = true;
-        } else {
-          // Reconnect triggered - break loop immediately
-          break;
-        }
+      let result: IteratorResult<AudioFrame | typeof stt.SpeechStream.FLUSH_SENTINEL>;
+      try {
+        result = await iterator.next({ signal: readSignal });
+      } catch (e) {
+        // Reconnect triggered - break loop immediately
+        if (reconnect.signal.aborted && !attempt.signal.aborted) break;
+        throw e;
       }
 
-      // If we broke above, we don't process data. If not, 'result' is IteratorResult
+      if (result.done) {
+        // Normal stream end
+        hasEnded = true;
+        inputEnded = true;
+      }
+
       if (hasEnded && result.value === undefined) {
         // Process flush below
       } else if ('value' in result) {
