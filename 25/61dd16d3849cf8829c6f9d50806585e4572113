@@ -1,0 +1,23 @@
+agents/src/voice/amd/chat_context.ts
+  s_aaf78334cb7322::t_485a59d6a75cab 94-95
+agents/src/voice/amd/detector.ts
+  s_aaf78334cb7322::t_57af0b2b846503 811-814
+agents/src/voice/amd/detector_lifecycle.test.ts
+  s_aaf78334cb7322::t_68f3f8f63172e3 1552-1582
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2561dd16d3849cf8829c6f9d50806585e4572113",
+  "prompts": {},
+  "sessions": {
+    "s_aaf78334cb7322": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d2193486-0057-4a50-bb24-44082ff248d9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
