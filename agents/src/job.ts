@@ -230,6 +230,7 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
   /** @internal this job's log file, when LiveKit Cloud collects its logs */
   _hostedOutput?: {
     readonly decided: boolean;
+    undecidedChoice?: { logs: boolean; redaction: boolean };
     decide(choice: { logs: boolean; redaction: boolean }): void;
   };
 
@@ -772,10 +773,12 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
     );
     if (redactionEnabled && options.audio && !options.transcript) {
       this._rejectedRecording = { logs: options.logs, redaction: redactionEnabled };
+      if (this._hostedOutput) this._hostedOutput.undecidedChoice = this._rejectedRecording;
       throw new Error('audio upload requires transcript upload when redaction is enabled');
     }
     this._hostedOutput?.decide({ logs: options.logs, redaction: redactionEnabled });
-    this._redactionEnabled = redactionEnabled;
+    // never lowered: a later session without redaction must not expose an earlier session's data
+    this._redactionEnabled ||= redactionEnabled;
 
     const observabilityBaseUrl = observabilityUrl(this.#info.url);
     if (!observabilityBaseUrl) {

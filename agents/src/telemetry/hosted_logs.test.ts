@@ -25,6 +25,7 @@ import {
   HOSTED_LOGS_HANDOFF_FILE_ENV,
   HOSTED_LOGS_JOBS_DIR_ENV,
   JobOutput,
+  MAX_PARTIAL_LINE_LENGTH,
   handOffLogs,
   logsHandedOff,
   markProcessDone,
@@ -136,6 +137,7 @@ describe('job output', () => {
     const records = lines.map((l) => JSON.parse(l));
     expect(records.slice(0, 2).map((r) => r.msg)).toEqual(['line 3', 'line 4']);
     expect(records[2].dropped).toBe(3);
+    expect(records[2].job_id).toBe('AJ_1');
     expect(records).toHaveLength(3);
   });
 
@@ -155,6 +157,62 @@ describe('job output', () => {
     out.decide({ logs: true, redaction: false });
     out.close();
     expect(jobFiles()).toEqual(['job-AJ_1.private.log']);
+  });
+
+  it('writes held records with the undecided choice when the process ends first', () => {
+    const out = newOutput();
+    out.undecidedChoice = { logs: false, redaction: true };
+    out.write('stdout', record({ msg: 'held', 'lk.pii.secret': 's' }));
+    out.close();
+    const line = JSON.parse(readFileSync(join(jobsDir, 'job-AJ_1.private.log'), 'utf8'));
+    expect(line.msg).toBe('held');
+    expect(line['lk.pii.secret']).toBeUndefined();
+    expect(line['lk.redaction.enabled']).toBe(true);
+  });
+
+  it('holds an uncaught error as a record and redacts it when required', () => {
+    const out = newOutput();
+    out.writeUncaughtError(new TypeError('user said something private'));
+    expect(readFileSync(join(jobsDir, 'job-AJ_1.log'), 'utf8')).toBe('');
+    out.decide({ logs: true, redaction: true });
+    out.close();
+    const line = JSON.parse(readFileSync(join(jobsDir, 'job-AJ_1.export.log'), 'utf8'));
+    expect(line.msg).toBe('uncaught exception in job process');
+    expect(line.job_id).toBe('AJ_1');
+    expect(line.err).toEqual({ type: 'TypeError', message: 'exception details redacted' });
+  });
+
+  it('keeps the stack of an uncaught error when redaction is off', () => {
+    const out = newOutput();
+    out.writeUncaughtError(new Error('boom'));
+    out.decide({ logs: true, redaction: false });
+    out.close();
+    const line = JSON.parse(readFileSync(join(jobsDir, 'job-AJ_1.export.log'), 'utf8'));
+    expect(line.err.message).toBe('boom');
+    expect(line.err.stack).toContain('boom');
+  });
+
+  it('opens the decided file when the rename fails', () => {
+    const out = newOutput();
+    out.write('stdout', record({ msg: 'held' }));
+    rmSync(join(jobsDir, 'job-AJ_1.log'));
+    out.decide({ logs: true, redaction: false });
+    out.write('stdout', 'after\n');
+    out.close();
+    const lines = readFileSync(join(jobsDir, 'job-AJ_1.export.log'), 'utf8').trim().split('\n');
+    expect(JSON.parse(lines[0]!).msg).toBe('held');
+    expect(lines[1]).toBe('after');
+  });
+
+  it('writes output without a newline once it reaches the length limit', () => {
+    const out = newOutput();
+    out.write('stdout', 'x'.repeat(MAX_PARTIAL_LINE_LENGTH - 1));
+    expect(readFileSync(join(jobsDir, 'job-AJ_1.log'), 'utf8')).toBe('');
+    out.write('stdout', 'y');
+    expect(readFileSync(join(jobsDir, 'job-AJ_1.log'), 'utf8')).toHaveLength(
+      MAX_PARTIAL_LINE_LENGTH + 1,
+    );
+    out.close();
   });
 
   it('never writes records without a decision', () => {
@@ -228,7 +286,9 @@ describe('redirectJobOutput', () => {
     try {
       out = redirectJobOutput('AJ_1');
       process.stdout.write('from stdout\n');
-      process.stderr.write(Buffer.from('from stderr\n'));
+      const euro = Buffer.from('from stderr €\n');
+      process.stderr.write(euro.subarray(0, euro.length - 3));
+      process.stderr.write(euro.subarray(euro.length - 3));
     } finally {
       process.stdout.write = write.out;
       process.stderr.write = write.err;
@@ -236,7 +296,7 @@ describe('redirectJobOutput', () => {
     out!.decide({ logs: true, redaction: false });
     out!.close();
     expect(readFileSync(join(jobsDir, 'job-AJ_1.export.log'), 'utf8')).toBe(
-      'from stdout\nfrom stderr\n',
+      'from stdout\nfrom stderr €\n',
     );
   });
 

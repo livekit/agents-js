@@ -597,6 +597,22 @@ describe('JobContext hosted log decision', () => {
     expect(decide).toHaveBeenCalledWith({ logs: false, redaction: true });
   });
 
+  it('keeps redaction on when a later session does not ask for it', async () => {
+    const { ctx } = withOutput();
+    await ctx.initRecording(options);
+    expect(ctx._redactionEnabled).toBe(true);
+    await ctx.initRecording({ ...options, redaction: false });
+    expect(ctx._redactionEnabled).toBe(true);
+  });
+
+  it('keeps the rejected options for a process that ends before a decision', async () => {
+    const { ctx } = withOutput();
+    await expect(
+      ctx.initRecording({ ...options, audio: true, transcript: false }),
+    ).rejects.toThrow();
+    expect(ctx._hostedOutput?.undecidedChoice).toEqual({ logs: false, redaction: true });
+  });
+
   it('does not redact a simulation for project redaction alone', async () => {
     const dispatch = JSON.stringify({ simulationRunId: 'SR_1', simulationRunJobId: 'SRJ_1' });
     const { ctx } = createJobContextWithRoom(

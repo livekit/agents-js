@@ -11,6 +11,7 @@ import {
   writeSync,
 } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { StringDecoder } from 'node:string_decoder';
 import { version } from '../version.js';
 import { REDACTED_EXCEPTION_MESSAGE, isPIIAttribute } from './redaction.js';
 
@@ -25,6 +26,12 @@ export const HANDED_OFF_ENV = 'LIVEKIT_HOSTED_LOGS_HANDED_OFF';
  * need a limit. The newest records are kept.
  */
 export const MAX_HELD_RECORDS = 10_000;
+
+/** Output without a newline is written as one line once it reaches this length. */
+export const MAX_PARTIAL_LINE_LENGTH = 1 << 20;
+
+/** The logs and redaction choice of a session. */
+export type LogsChoice = { logs: boolean; redaction: boolean };
 
 const REDACTION_ATTRIBUTE = 'lk.redaction.enabled';
 
@@ -126,6 +133,11 @@ export class JobOutput {
   #dropped = 0;
   #partial = new Map<string, string>();
   redaction: boolean;
+  /**
+   * The choice used when the process ends before the session decides, so the held records of a
+   * job that crashed are not lost. Without it they are never written.
+   */
+  undecidedChoice: LogsChoice | undefined;
 
   constructor(
     path: string,
@@ -150,7 +162,12 @@ export class JobOutput {
     const pending = (this.#partial.get(stream) ?? '') + text;
     const end = pending.lastIndexOf('\n');
     if (end === -1) {
-      this.#partial.set(stream, pending);
+      if (pending.length < MAX_PARTIAL_LINE_LENGTH) {
+        this.#partial.set(stream, pending);
+        return;
+      }
+      this.#partial.set(stream, '');
+      this.#line(pending);
       return;
     }
     this.#partial.set(stream, pending.slice(end + 1));
@@ -159,17 +176,20 @@ export class JobOutput {
     }
   }
 
-  decide({ logs, redaction }: { logs: boolean; redaction: boolean }): void {
+  decide({ logs, redaction }: LogsChoice): void {
     if (this.#decided) return;
     this.#decided = true;
     this.redaction = this.redaction || redaction;
     const newPath = join(dirname(this.#path), `job-${this.#jobId}.${decision(logs)}.log`);
     try {
       renameSync(this.#path, newPath);
-      this.#path = newPath;
     } catch {
       this.#close();
+      try {
+        this.#fd = openSync(newPath, 'a', 0o644);
+      } catch {}
     }
+    this.#path = newPath;
     const held = this.#held ?? [];
     this.#held = undefined;
     for (const line of held) {
@@ -182,17 +202,42 @@ export class JobOutput {
           time: Date.now(),
           msg: 'dropped the oldest log records held before the session started',
           dropped: this.#dropped,
+          job_id: this.#jobId,
         }),
       );
     }
   }
 
-  /** Write any partial lines; records still held without a decision are never written. */
+  /** Hold an uncaught error as a log record, so it follows the session's logs and redaction. */
+  writeUncaughtError(error: unknown): void {
+    const err =
+      error instanceof Error
+        ? { type: error.constructor.name, message: error.message, stack: error.stack }
+        : { type: typeof error, message: String(error) };
+    this.#line(
+      JSON.stringify({
+        level: 60,
+        time: Date.now(),
+        pid: process.pid,
+        msg: 'uncaught exception in job process',
+        job_id: this.#jobId,
+        err,
+      }),
+    );
+  }
+
+  /**
+   * Write any partial lines. Records still held without a decision are written with
+   * `undecidedChoice`, and are never written without one.
+   */
   close(): void {
     for (const rest of this.#partial.values()) {
       if (rest) this.#line(rest);
     }
     this.#partial.clear();
+    if (!this.#decided && this.undecidedChoice !== undefined) {
+      this.decide(this.undecidedChoice);
+    }
     this.#close();
   }
 
@@ -232,8 +277,15 @@ export class JobOutput {
 }
 
 function replaceWrite(stream: NodeJS.WriteStream, write: (text: string) => void): void {
+  const decoder = new StringDecoder('utf8');
   stream.write = ((chunk: string | Uint8Array, ...rest: unknown[]): boolean => {
-    write(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString());
+    if (typeof chunk !== 'string') {
+      write(decoder.write(chunk));
+    } else {
+      const encoding = rest.find((arg) => typeof arg === 'string') as BufferEncoding | undefined;
+      const utf8 = encoding === undefined || encoding === 'utf8' || encoding === 'utf-8';
+      write(utf8 ? chunk : decoder.write(Buffer.from(chunk, encoding)));
+    }
     const callback = rest.find((arg) => typeof arg === 'function') as (() => void) | undefined;
     if (callback) process.nextTick(callback);
     return true;
@@ -253,8 +305,12 @@ function newJobFile(dir: string, jobId: string): string {
 /**
  * Send this job process's stdout and stderr, and so its log records, to the job's file. Records
  * are held until the session's decision, which also says whether they are redacted.
+ * `undecidedChoice` is used when the process ends before that decision.
  */
-export function redirectJobOutput(jobId: string): JobOutput | undefined {
+export function redirectJobOutput(
+  jobId: string,
+  undecidedChoice?: LogsChoice,
+): JobOutput | undefined {
   const dir = jobsDir();
   if (!logsHandedOff() || dir === undefined) return undefined;
   let path: string;
@@ -276,6 +332,7 @@ export function redirectJobOutput(jobId: string): JobOutput | undefined {
     return undefined;
   }
   const output = new JobOutput(path, jobId, fd, false);
+  output.undecidedChoice = undecidedChoice;
   replaceWrite(process.stdout, (text) => output.write('stdout', text));
   replaceWrite(process.stderr, (text) => output.write('stderr', text));
   process.once('exit', () => output.close());

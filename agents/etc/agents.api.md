@@ -4925,6 +4925,10 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
     // @internal
     _hostedOutput?: {
         readonly decided: boolean;
+        undecidedChoice?: {
+            logs: boolean;
+            redaction: boolean;
+        };
         decide(choice: {
             logs: boolean;
             redaction: boolean;
