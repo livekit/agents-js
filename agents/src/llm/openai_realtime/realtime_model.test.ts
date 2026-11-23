@@ -1295,6 +1295,48 @@ describe('RealtimeSession.updateOptions', () => {
     sessionB.updateOptions({ toolChoice: 'required' });
     expect(sendEventSpyB).toHaveBeenCalledTimes(1);
   });
+
+  it('still resets toolChoice to auto when undefined is explicitly provided', () => {
+    stubTaskRuntime();
+    const session = new RealtimeModel({ apiKey: 'fake', toolChoice: 'required' }).session();
+    const sent = vi.spyOn(session, 'sendEvent');
+
+    session.updateOptions({ toolChoice: undefined });
+
+    expect(sent).toHaveBeenCalledWith(
+      expect.objectContaining({ session: { type: 'realtime', tool_choice: 'auto' } }),
+    );
+  });
+
+  it.each(['model', 'session', 'update'] as const)(
+    'rejects turn-detection enable/disable transitions before changing other options (%s)',
+    (disabledAt) => {
+      stubTaskRuntime();
+      const model = new RealtimeModel({
+        apiKey: 'fake',
+        speed: 1,
+        toolChoice: 'required',
+        ...(disabledAt === 'model' ? { turnDetection: null } : {}),
+      });
+      const session = model.session({ turnDetectionDisabled: disabledAt === 'session' });
+      const sent = vi.spyOn(session, 'sendEvent');
+      expect(() =>
+        Reflect.apply(session.updateOptions, session, [
+          {
+            speed: 0.8,
+            turnDetection: disabledAt === 'update' ? null : { type: 'server_vad' },
+          },
+        ]),
+      ).toThrow('create a new session');
+      expect(sent).not.toHaveBeenCalled();
+      session.updateOptions({ speed: 0.8 });
+      expect(sent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          session: { type: 'realtime', audio: { output: { speed: 0.8 } } },
+        }),
+      );
+    },
+  );
 });
 
 describe('processBaseURL', () => {
@@ -1370,6 +1412,7 @@ describe('processBaseURL', () => {
 type FunctionCallServerConnection = {
   socket: WebSocket;
   created: api_proto.ItemResource[];
+  updates: api_proto.SessionUpdateEvent[];
 };
 
 async function startFunctionCallServer(
@@ -1385,13 +1428,14 @@ async function startFunctionCallServer(
 
   const connections: FunctionCallServerConnection[] = [];
   server.on('connection', (socket) => {
-    const connection: FunctionCallServerConnection = { socket, created: [] };
+    const connection: FunctionCallServerConnection = { socket, created: [], updates: [] };
     connections.push(connection);
     let previousItemId: string | null = null;
 
     socket.send(JSON.stringify({ type: 'session.created', event_id: 'ev_session', session: {} }));
     socket.on('message', (data) => {
       const event = JSON.parse(data.toString()) as api_proto.ClientEvent;
+      if (event.type === 'session.update') connection.updates.push(event);
       if (event.type === 'conversation.item.create') {
         const item = event.item as api_proto.ItemResource;
         connection.created.push(item);
@@ -1670,3 +1714,95 @@ it('retries a failed WebSocket handshake', async () => {
     });
   }
 });
+
+it.each([
+  { name: 'OpenAI GA', azureDeployment: undefined, apiVersion: undefined },
+  { name: 'Azure GA', azureDeployment: 'test', apiVersion: undefined },
+  { name: 'Azure preview', azureDeployment: 'test', apiVersion: '2024-10-01-preview' },
+])(
+  'updates and restores session options across reconnects ($name)',
+  async ({ azureDeployment, apiVersion }) => {
+    const { server, connections, url } = await startFunctionCallServer('');
+    const original: api_proto.TurnDetectionType = {
+      type: 'server_vad',
+      create_response: true,
+      interrupt_response: true,
+    };
+    const paused: api_proto.TurnDetectionType = { ...original, create_response: false };
+    const model = new RealtimeModel({
+      apiKey: 'fake',
+      baseURL: url,
+      azureDeployment,
+      apiVersion,
+      toolChoice: 'required',
+      speed: 1,
+      turnDetection: original,
+    });
+    const session = model.session({ instructions: 'primary' });
+    const sessions = [session];
+    const legacy = apiVersion !== undefined;
+    const audioOptions = (speed: number, turnDetection: api_proto.TurnDetectionType) =>
+      legacy
+        ? { speed, turn_detection: turnDetection }
+        : { audio: { input: { turn_detection: turnDetection }, output: { speed } } };
+    try {
+      await vi.waitFor(() => expect(connections[0]?.updates).toHaveLength(1));
+      const first = connections[0]!;
+      session.updateOptions({ speed: 0.8, turnDetection: paused });
+      await session.updateInstructions('updated');
+      await vi.waitFor(() => expect(first.updates.at(-1)?.session.instructions).toBe('updated'));
+      expect(first.updates.slice(1, -1).map((event) => event.session)).toEqual([
+        { ...(!legacy && { type: 'realtime' }), ...audioOptions(0.8, paused) },
+      ]);
+
+      const before = first.updates.length;
+      session.updateOptions({ speed: 0.8, turnDetection: paused });
+      session.updateOptions({});
+      await session.updateInstructions('unchanged');
+      await vi.waitFor(() => expect(first.updates.at(-1)?.session.instructions).toBe('unchanged'));
+      expect(first.updates).toHaveLength(before + 1);
+
+      const sibling = model.session({ instructions: 'sibling' });
+      sessions.push(sibling);
+      await vi.waitFor(() => expect(connections[1]?.updates).toHaveLength(1));
+      expect(connections[1]!.updates[0]!.session).toMatchObject({
+        ...audioOptions(1, original),
+        tool_choice: 'required',
+      });
+
+      first.socket.close();
+      await vi.waitFor(() => expect(connections[2]?.updates).toHaveLength(1));
+      const reconnected = connections[2]!;
+      expect(reconnected.updates[0]!.session).toMatchObject({
+        ...audioOptions(0.8, paused),
+        tool_choice: 'required',
+        instructions: 'unchanged',
+      });
+
+      session.updateOptions({ turnDetection: original });
+      await session.updateInstructions('restored');
+      await vi.waitFor(() =>
+        expect(reconnected.updates.at(-1)?.session.instructions).toBe('restored'),
+      );
+      expect(reconnected.updates.slice(1, -1).map((event) => event.session)).toEqual([
+        legacy
+          ? { turn_detection: original }
+          : { type: 'realtime', audio: { input: { turn_detection: original } } },
+      ]);
+      expect(connections[1]!.updates).toHaveLength(1);
+
+      reconnected.socket.close();
+      await vi.waitFor(() => expect(connections[3]?.updates).toHaveLength(1));
+      expect(connections[3]!.updates[0]!.session).toMatchObject({
+        ...audioOptions(0.8, original),
+        tool_choice: 'required',
+      });
+    } finally {
+      connections.forEach(({ socket }) => socket.terminate());
+      await Promise.all(sessions.map((active) => active.close()));
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  },
+);

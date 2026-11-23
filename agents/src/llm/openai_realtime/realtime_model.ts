@@ -896,27 +896,57 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.instructions = _instructions;
   }
 
-  updateOptions({ toolChoice }: { toolChoice?: llm.ToolChoice }): void {
-    const currentToolChoice = toOaiToolChoice(this._options.toolChoice);
-    const nextToolChoice = toOaiToolChoice(toolChoice);
-    if (currentToolChoice === nextToolChoice) {
-      this._options.toolChoice = toolChoice;
-      return;
+  /**
+   * Update this session's options, retaining them across reconnects.
+   * Omitted properties are unchanged; an explicit `toolChoice: undefined` restores `auto`.
+   * To enable or disable turn detection, create a new session instead.
+   * @param options - Speech speed, a non-null turn-detection configuration, or tool choice.
+   * @throws Error if the update would enable or disable turn detection.
+   */
+  updateOptions(options: {
+    toolChoice?: llm.ToolChoice;
+    speed?: number;
+    turnDetection?: api_proto.TurnDetectionType;
+  }): void {
+    if (
+      options.turnDetection !== undefined &&
+      (options.turnDetection === null || this._options.turnDetection === null)
+    ) {
+      throw new Error('To enable or disable turn detection, create a new session instead.');
     }
 
     const isLegacyAzure = this._options.isAzure && !!this._options.apiVersion;
-    const options: api_proto.SessionUpdateEvent['session'] = {
-      ...(!isLegacyAzure && { type: 'realtime' }),
-    };
+    const changes: api_proto.SessionUpdateEvent['session'] = {};
+    const audio: api_proto.RealtimeAudioConfig = {};
 
-    this._options.toolChoice = toolChoice;
-    options.tool_choice = toOaiToolChoice(toolChoice);
+    if ('toolChoice' in options) {
+      const current = toOaiToolChoice(this._options.toolChoice);
+      const next = toOaiToolChoice(options.toolChoice);
+      this._options.toolChoice = options.toolChoice;
+      if (current !== next) changes.tool_choice = next;
+    }
 
-    // TODO(brian): add other options here
+    if (options.speed !== undefined && options.speed !== this._options.speed) {
+      this._options.speed = options.speed;
+      if (isLegacyAzure) changes.speed = options.speed;
+      else audio.output = { speed: options.speed };
+    }
+
+    if (
+      options.turnDetection !== undefined &&
+      options.turnDetection !== this._options.turnDetection
+    ) {
+      this._options.turnDetection = options.turnDetection;
+      if (isLegacyAzure) changes.turn_detection = options.turnDetection;
+      else audio.input = { turn_detection: options.turnDetection };
+    }
+
+    if (audio.input || audio.output) changes.audio = audio;
+    if (Object.keys(changes).length === 0) return;
 
     this.sendEvent({
       type: 'session.update',
-      session: options,
+      session: { ...(!isLegacyAzure && { type: 'realtime' }), ...changes },
       event_id: shortuuid('options_update_'),
     });
   }
