@@ -902,7 +902,8 @@ export class RealtimeSession extends llm.RealtimeSession {
   /**
    * Update this session's desired options, retaining them across reconnects.
    * Omitted properties are unchanged; an explicit `toolChoice: undefined` restores `auto`.
-   * Explicit speed and VAD settings are resent so provider-rejected updates can be retried.
+   * Explicit speed/VAD settings and accompanying tool choice are resent so rejected updates
+   * can be retried.
    * Change speed between model turns. Azure 2024-10-01-preview only supports server VAD
    * threshold and timing updates; use GA for speed and VAD response controls.
    * To enable or disable turn detection, create a new session instead.
@@ -943,7 +944,9 @@ export class RealtimeSession extends llm.RealtimeSession {
       const current = toOaiToolChoice(this._options.toolChoice);
       const next = toOaiToolChoice(options.toolChoice);
       this._options.toolChoice = options.toolChoice;
-      if (current !== next) changes.tool_choice = next;
+      if (current !== next || options.speed !== undefined || options.turnDetection !== undefined) {
+        changes.tool_choice = next;
+      }
     }
 
     if (options.speed !== undefined) {

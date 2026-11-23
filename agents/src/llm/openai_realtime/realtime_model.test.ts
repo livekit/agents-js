@@ -1862,51 +1862,65 @@ it.each([
   },
 );
 
-it('retries the same speed after an in-progress response rejects it', async () => {
-  const { server, connections, url } = await startFunctionCallServer('');
-  const session = new RealtimeModel({ apiKey: 'fake', baseURL: url, speed: 1 }).session();
-  try {
-    await vi.waitFor(() => expect(connections[0]?.updates).toHaveLength(1));
-    const connection = connections[0]!;
-    const response = { id: 'speed_test', status: 'in_progress', output: [] };
-    const started = once(session, 'generation_created');
-    connection.socket.send(JSON.stringify({ type: 'response.created', response }));
-    await started;
-    session.updateOptions({ speed: 0.8 });
-    await vi.waitFor(() => expect(connection.updates).toHaveLength(2));
-    const rejected = once(session, 'error');
-    connection.socket.send(
-      JSON.stringify({
-        type: 'error',
-        error: {
-          type: 'invalid_request_error',
-          code: 'invalid_parameter',
-          message: 'Cannot change speed during a response',
-          event_id: connection.updates[1]!.event_id,
+it.each([undefined, 'required'] as const)(
+  'retries speed and accompanying tool choice after a response rejects them (%s)',
+  async (toolChoice) => {
+    const { server, connections, url } = await startFunctionCallServer('');
+    const session = new RealtimeModel({ apiKey: 'fake', baseURL: url, speed: 1 }).session();
+    const options = { speed: 0.8, ...(toolChoice === undefined ? {} : { toolChoice }) };
+    try {
+      await vi.waitFor(() => expect(connections[0]?.updates).toHaveLength(1));
+      const connection = connections[0]!;
+      const response = { id: 'speed_test', status: 'in_progress', output: [] };
+      const started = once(session, 'generation_created');
+      connection.socket.send(JSON.stringify({ type: 'response.created', response }));
+      await started;
+      session.updateOptions(options);
+      await vi.waitFor(() => expect(connection.updates).toHaveLength(2));
+      const rejected = once(session, 'error');
+      connection.socket.send(
+        JSON.stringify({
+          type: 'error',
+          error: {
+            type: 'invalid_request_error',
+            code: 'invalid_parameter',
+            message: 'Cannot change speed during a response',
+            event_id: connection.updates[1]!.event_id,
+          },
+        }),
+      );
+      await rejected;
+      const finished = once(session, 'metrics_collected');
+      connection.socket.send(
+        JSON.stringify({
+          type: 'response.done',
+          response: { ...response, status: 'completed' },
+        }),
+      );
+      await finished;
+      session.updateOptions(options);
+      await session.updateInstructions('retried');
+      await vi.waitFor(() =>
+        expect(connection.updates.at(-1)?.session.instructions).toBe('retried'),
+      );
+      expect(connection.updates.slice(1, -1).map((event) => event.session)).toEqual([
+        {
+          type: 'realtime',
+          audio: { output: { speed: 0.8 } },
+          ...(toolChoice === undefined ? {} : { tool_choice: toolChoice }),
         },
-      }),
-    );
-    await rejected;
-    const finished = once(session, 'metrics_collected');
-    connection.socket.send(
-      JSON.stringify({
-        type: 'response.done',
-        response: { ...response, status: 'completed' },
-      }),
-    );
-    await finished;
-    session.updateOptions({ speed: 0.8 });
-    await session.updateInstructions('retried');
-    await vi.waitFor(() => expect(connection.updates.at(-1)?.session.instructions).toBe('retried'));
-    expect(connection.updates.slice(1, -1).map((event) => event.session)).toEqual([
-      { type: 'realtime', audio: { output: { speed: 0.8 } } },
-      { type: 'realtime', audio: { output: { speed: 0.8 } } },
-    ]);
-  } finally {
-    connections.forEach(({ socket }) => socket.terminate());
-    await session.close();
-    await new Promise<void>((resolve, reject) => {
-      server.close((error) => (error ? reject(error) : resolve()));
-    });
-  }
-});
+        {
+          type: 'realtime',
+          audio: { output: { speed: 0.8 } },
+          ...(toolChoice === undefined ? {} : { tool_choice: toolChoice }),
+        },
+      ]);
+    } finally {
+      connections.forEach(({ socket }) => socket.terminate());
+      await session.close();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  },
+);
