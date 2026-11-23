@@ -597,6 +597,21 @@ describe('JobContext hosted log decision', () => {
     expect(decide).toHaveBeenCalledWith({ logs: false, redaction: true });
   });
 
+  it('does not redact a simulation for project redaction alone', async () => {
+    const dispatch = JSON.stringify({ simulationRunId: 'SR_1', simulationRunJobId: 'SRJ_1' });
+    const { ctx } = createJobContextWithRoom(
+      {},
+      { enableRedaction: true, attributes: { 'lk.simulator.dispatch': dispatch } },
+    );
+    expect(ctx.simulationContext()).toBeDefined();
+    const decide = vi.fn();
+    ctx._hostedOutput = { decided: false, decide } as unknown as NonNullable<
+      JobContext['_hostedOutput']
+    >;
+    await ctx.initRecording({ ...options, redaction: false });
+    expect(decide).toHaveBeenCalledWith({ logs: false, redaction: false });
+  });
+
   it.each([true, false])(
     'follows the job recording at cleanup when no session decided (recording %s)',
     (recording) => {

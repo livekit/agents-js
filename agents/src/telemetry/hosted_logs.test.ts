@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import {
+  chmodSync,
   closeSync,
   existsSync,
   mkdirSync,
@@ -87,6 +88,21 @@ describe('hosted log hand-off', () => {
     expect(existsSync(handoffFile)).toBe(false);
     expect(logsHandedOff()).toBe(false);
   });
+
+  it.skipIf(process.getuid?.() === 0)(
+    'keeps exporting when the hand-off folder cannot be entered',
+    () => {
+      const locked = join(dir, 'locked');
+      mkdirSync(locked, { mode: 0o000 });
+      vi.stubEnv(HOSTED_LOGS_HANDOFF_FILE_ENV, join(locked, 'sdk-handoff'));
+      try {
+        expect(() => handOffLogs()).not.toThrow();
+        expect(logsHandedOff()).toBe(false);
+      } finally {
+        chmodSync(locked, 0o755);
+      }
+    },
+  );
 
   it('keeps exporting when the file cannot be written', () => {
     vi.stubEnv(HOSTED_LOGS_HANDOFF_FILE_ENV, join(dir, 'missing-dir', 'sdk-handoff'));
@@ -210,7 +226,7 @@ describe('redirectJobOutput', () => {
     const write = { out: process.stdout.write, err: process.stderr.write };
     let out: JobOutput | undefined;
     try {
-      out = redirectJobOutput('AJ_1', false);
+      out = redirectJobOutput('AJ_1');
       process.stdout.write('from stdout\n');
       process.stderr.write(Buffer.from('from stderr\n'));
     } finally {
@@ -225,7 +241,7 @@ describe('redirectJobOutput', () => {
   });
 
   it('does nothing without a hand-off', () => {
-    expect(redirectJobOutput('AJ_1', false)).toBeUndefined();
+    expect(redirectJobOutput('AJ_1')).toBeUndefined();
   });
 
   it('gives a retried job a new file', () => {
@@ -238,7 +254,7 @@ describe('redirectJobOutput', () => {
     const write = { out: process.stdout.write, err: process.stderr.write };
     let out: JobOutput | undefined;
     try {
-      out = redirectJobOutput('AJ_1', false);
+      out = redirectJobOutput('AJ_1');
     } finally {
       process.stdout.write = write.out;
       process.stderr.write = write.err;

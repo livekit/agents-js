@@ -132,7 +132,7 @@ const startJob = (
   onSessionEnd?: (ctx: JobContext) => unknown,
   onSimulationEnd?: (ctx: SimulationContext) => unknown,
 ): JobTask => {
-  const hostedOutput = redirectJobOutput(info.job.id, Boolean(info.job.enableRedaction));
+  const hostedOutput = redirectJobOutput(info.job.id);
   let connect = false;
   let shutdown = false;
   // a shutdown the agent asked for (ctx.shutdown()), as opposed to the room dropping or the

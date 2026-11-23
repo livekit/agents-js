@@ -59,7 +59,9 @@ export function handOffLogs(): void {
     writeFileSync(tmp, JSON.stringify({ sdk: 'node', version }));
     renameSync(tmp, path);
   } catch {
-    rmSync(tmp, { force: true });
+    try {
+      rmSync(tmp, { force: true });
+    } catch {}
     return;
   }
   process.env[HANDED_OFF_ENV] = '1';
@@ -248,8 +250,11 @@ function newJobFile(dir: string, jobId: string): string {
   return join(dir, `job-${jobId}.log`);
 }
 
-/** Send this job process's stdout and stderr, and so its log records, to the job's file. */
-export function redirectJobOutput(jobId: string, redaction: boolean): JobOutput | undefined {
+/**
+ * Send this job process's stdout and stderr, and so its log records, to the job's file. Records
+ * are held until the session's decision, which also says whether they are redacted.
+ */
+export function redirectJobOutput(jobId: string): JobOutput | undefined {
   const dir = jobsDir();
   if (!logsHandedOff() || dir === undefined) return undefined;
   let path: string;
@@ -270,7 +275,7 @@ export function redirectJobOutput(jobId: string, redaction: boolean): JobOutput 
     replaceWrite(process.stderr, () => {});
     return undefined;
   }
-  const output = new JobOutput(path, jobId, fd, redaction);
+  const output = new JobOutput(path, jobId, fd, false);
   replaceWrite(process.stdout, (text) => output.write('stdout', text));
   replaceWrite(process.stderr, (text) => output.write('stderr', text));
   process.once('exit', () => output.close());
