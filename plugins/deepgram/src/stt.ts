@@ -96,8 +96,8 @@ function isMultiLanguage(language: string | undefined): boolean {
 }
 
 /**
- * The Nova-3 models Deepgram accepts `language_hint` on. Mirrors the gateway's list
- * (livekit/agent-gateway#1741): a model added elsewhere for another reason must not start
+ * The Nova-3 models Deepgram accepts `language_hint` on. Mirrors the gateway's list:
+ * a model added elsewhere for another reason must not start
  * receiving a parameter the vendor may reject.
  */
 const LANGUAGE_HINT_MODELS = new Set(['nova-3', 'nova-3-general']);

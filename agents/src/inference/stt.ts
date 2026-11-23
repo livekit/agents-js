@@ -114,7 +114,8 @@ export interface DeepgramOptions {
   diarize?: boolean;
   /**
    * Languages to bias recognition toward. Only applies in Nova-3 multi language mode: the session
-   * must also set `language: 'multi'`. Requires the gateway's `deepgram_stt_language_hint` flag.
+   * must also set `language: 'multi'`. LiveKit Inference may ignore the hint while support for it is
+   * rolling out.
    */
   language_hint?: string | string[];
 }

@@ -468,7 +468,7 @@ export class LLMStream extends llm.LLMStream {
         delete requestOptions.tool_choice;
       }
 
-      // Dynamically set the access token for the LiveKit Agent Gateway API
+      // Dynamically set the access token for the LiveKit Inference Gateway API
       if (this.gatewayOptions) {
         this.client.apiKey = await createAccessToken(
           this.gatewayOptions.apiKey,

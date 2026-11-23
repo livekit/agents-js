@@ -273,7 +273,7 @@ export class LocalTransport implements StreamingTurnDetectionTransport {
 /**
  * WebSocket transport for the `turn-detector-v1` (cloud) model.
  *
- * Maintains one inference session against the LiveKit Agent Gateway:
+ * Maintains one inference session against the LiveKit Inference Gateway:
  * connect → `SessionCreate` → three concurrent tasks (drain audio, send,
  * receive) → protobuf encode/decode → `stream._resolvePrediction(...)` +
  * `EOTInferenceMetrics` on the detector.
