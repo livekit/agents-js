@@ -266,6 +266,13 @@ export function normalizeTTSFallback(
  * timed-transcript path, so a fallback that sends no `output_alignment` would leave the
  * transcript empty. Only claim alignment when the primary and all fallbacks support it.
  */
+/** Builds the "code: detail" text of a LiveKit Inference error frame; an empty `data` falls back to `message`. */
+function formatErrorFrame(frame: { code?: string; data?: unknown; message?: string }): string {
+  const detail = frame.data || frame.message;
+  const text = typeof detail === 'string' || detail === undefined ? detail : JSON.stringify(detail);
+  return [frame.code, text].filter(Boolean).join(': ') || 'unknown error';
+}
+
 function hasAlignedTranscriptWithFallback(
   model: string | undefined,
   modelOptions: Record<string, unknown> | undefined,
@@ -959,22 +966,12 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
                 'Received error message from LiveKit TTS WebSocket',
               );
               await resourceCleanup();
-              {
-                const detail = serverEvent.data ?? serverEvent.message;
-                const text =
-                  detail === undefined
-                    ? undefined
-                    : typeof detail === 'string'
-                      ? detail
-                      : JSON.stringify(detail);
-                const message = [serverEvent.code, text].filter(Boolean).join(': ');
-                completionFuture.reject(
-                  new APIError(`LiveKit TTS returned error: ${message || 'unknown error'}`, {
-                    body: serverEvent,
-                    retryable: serverEvent.retryable ?? true,
-                  }),
-                );
-              }
+              completionFuture.reject(
+                new APIError(`LiveKit TTS returned error: ${formatErrorFrame(serverEvent)}`, {
+                  body: serverEvent,
+                  retryable: serverEvent.retryable ?? true,
+                }),
+              );
               return;
           }
         }

@@ -1064,4 +1064,37 @@ describe('Inference TTS gateway error frames', () => {
     expect(error.message).toContain('boom');
     expect(error.message).toContain('SERVER_ERROR');
   });
+
+  it('accepts a numeric code and surfaces it as a string', async () => {
+    const { errors } = await runWithErrorFrame(
+      { type: 'error', code: 4001, data: 'boom', retryable: false },
+      { maxRetry: 0, retryIntervalMs: 0, timeoutMs: 2_000 },
+    );
+
+    expect(errors).toHaveLength(1);
+    const error = errors[0]!.error as APIError;
+    expect(error.message).toContain('4001: boom');
+    expect((error.body as { code?: unknown }).code).toBe('4001');
+  });
+
+  it('treats retryable:null as retryable', async () => {
+    const maxRetry = 2;
+    const { connections, errors } = await runWithErrorFrame(
+      { type: 'error', code: 'SERVER_ERROR', data: 'boom', retryable: null },
+      { maxRetry, retryIntervalMs: 0, timeoutMs: 2_000 },
+    );
+
+    expect(connections).toBe(maxRetry + 1);
+    expect(errors).toHaveLength(1);
+  });
+
+  it('falls back to message when data is an empty string', async () => {
+    const { errors } = await runWithErrorFrame(
+      { type: 'error', code: 'SERVER_ERROR', data: '', message: 'x', retryable: false },
+      { maxRetry: 0, retryIntervalMs: 0, timeoutMs: 2_000 },
+    );
+
+    const error = errors[0]!.error as APIError;
+    expect(error.message).toBe('LiveKit TTS returned error: SERVER_ERROR: x');
+  });
 });
