@@ -20,6 +20,12 @@ export const HOSTED_LOGS_HANDOFF_FILE_ENV = 'LIVEKIT_HOSTED_LOGS_HANDOFF_FILE';
 export const HOSTED_LOGS_JOBS_DIR_ENV = 'LIVEKIT_HOSTED_LOGS_JOBS_DIR';
 export const HANDED_OFF_ENV = 'LIVEKIT_HOSTED_LOGS_HANDED_OFF';
 
+/**
+ * A job that never starts a session gets its decision only when it ends, so the held records
+ * need a limit. The newest records are kept.
+ */
+export const MAX_HELD_RECORDS = 10_000;
+
 const REDACTION_ATTRIBUTE = 'lk.redaction.enabled';
 
 /** The session's logs decision, as named in `job-<id>.<decision>.log`. */
@@ -114,14 +120,23 @@ export class JobOutput {
   #fd: number | undefined;
   #decided = false;
   #held: string[] | undefined = [];
+  #maxHeld: number;
+  #dropped = 0;
   #partial = new Map<string, string>();
   redaction: boolean;
 
-  constructor(path: string, jobId: string, fd: number, redaction: boolean) {
+  constructor(
+    path: string,
+    jobId: string,
+    fd: number,
+    redaction: boolean,
+    maxHeld = MAX_HELD_RECORDS,
+  ) {
     this.#path = path;
     this.#jobId = jobId;
     this.#fd = fd;
     this.redaction = redaction;
+    this.#maxHeld = maxHeld;
   }
 
   get decided(): boolean {
@@ -158,6 +173,16 @@ export class JobOutput {
     for (const line of held) {
       this.#writeRecord(line);
     }
+    if (this.#dropped > 0) {
+      this.#writeRaw(
+        JSON.stringify({
+          level: 40,
+          time: Date.now(),
+          msg: 'dropped the oldest log records held before the session started',
+          dropped: this.#dropped,
+        }),
+      );
+    }
   }
 
   /** Write any partial lines; records still held without a decision are never written. */
@@ -173,6 +198,10 @@ export class JobOutput {
     if (parseRecord(line) === undefined) {
       this.#writeRaw(line);
     } else if (this.#held !== undefined) {
+      if (this.#held.length >= this.#maxHeld) {
+        this.#held.shift();
+        this.#dropped++;
+      }
       this.#held.push(line);
     } else {
       this.#writeRecord(line);

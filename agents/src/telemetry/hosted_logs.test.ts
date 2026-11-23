@@ -52,10 +52,10 @@ afterEach(() => {
 
 const jobFiles = () => readdirSync(jobsDir).sort();
 
-function newOutput(redaction = false): JobOutput {
+function newOutput(redaction = false, maxHeld?: number): JobOutput {
   mkdirSync(jobsDir, { recursive: true });
   const path = join(jobsDir, 'job-AJ_1.log');
-  return new JobOutput(path, 'AJ_1', openSync(path, 'a'), redaction);
+  return new JobOutput(path, 'AJ_1', openSync(path, 'a'), redaction, maxHeld);
 }
 
 const record = (fields: Record<string, unknown>) => JSON.stringify({ level: 30, ...fields }) + '\n';
@@ -107,6 +107,20 @@ describe('job output', () => {
     const lines = readFileSync(join(jobsDir, 'job-AJ_1.export.log'), 'utf8').trim().split('\n');
     expect(lines[0]).toBe('raw before');
     expect(lines.slice(1).map((l) => JSON.parse(l).msg)).toEqual(['held', 'after']);
+  });
+
+  it('keeps only the newest held records', () => {
+    const out = newOutput(false, 2);
+    for (let i = 0; i < 5; i++) {
+      out.write('stdout', record({ msg: `line ${i}` }));
+    }
+    out.decide({ logs: true, redaction: false });
+    out.close();
+    const lines = readFileSync(join(jobsDir, 'job-AJ_1.export.log'), 'utf8').trim().split('\n');
+    const records = lines.map((l) => JSON.parse(l));
+    expect(records.slice(0, 2).map((r) => r.msg)).toEqual(['line 3', 'line 4']);
+    expect(records[2].dropped).toBe(3);
+    expect(records).toHaveLength(3);
   });
 
   it.each([
