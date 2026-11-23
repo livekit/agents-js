@@ -170,6 +170,92 @@ describe('OpenAI Responses HTTP incomplete handling', () => {
   });
 });
 
+function functionCallDone(status: string | undefined, args: string): ResponsesEvent {
+  return {
+    type: 'response.output_item.done',
+    item: {
+      type: 'function_call',
+      call_id: 'call_1',
+      name: 'set_temperature',
+      arguments: args,
+      ...(status === undefined ? {} : { status }),
+    },
+  };
+}
+
+async function replayToolCalls(
+  events: ResponsesEvent[],
+): Promise<{ toolCalls: [string, string][]; error?: Error }> {
+  const client = {
+    responses: {
+      create: async () => ({
+        async *[Symbol.asyncIterator]() {
+          yield* events;
+        },
+      }),
+    },
+  };
+  const model = new LLM({
+    model: 'gpt-4.1',
+    apiKey: 'test-key',
+    useWebSocket: false,
+    client: client as unknown as OpenAI,
+  });
+  let error: Error | undefined;
+  model.once('error', (event) => {
+    error = event.error;
+  });
+  const chatCtx = ChatContext.empty();
+  chatCtx.addMessage({ role: 'user', content: 'Set the temperature to 21 degrees.' });
+
+  const toolCalls: [string, string][] = [];
+  const stream = model.chat({
+    chatCtx,
+    connOptions: { maxRetry: 0, retryIntervalMs: 0, timeoutMs: 5000 },
+  });
+  for await (const chunk of stream) {
+    for (const call of chunk.delta?.toolCalls ?? []) {
+      toolCalls.push([call.name, call.args]);
+    }
+  }
+  await model.aclose();
+  return { toolCalls, error };
+}
+
+describe('OpenAI Responses HTTP function call completion', () => {
+  it.each(['incomplete', 'in_progress'])(
+    'does not emit a %s function call cut off by an incomplete response',
+    async (status) => {
+      const result = await replayToolCalls([
+        RESPONSE_CREATED,
+        functionCallDone(status, '{"temperature": 2'),
+        {
+          type: 'response.incomplete',
+          response: { id: 'resp_1', incomplete_details: { reason: 'max_output_tokens' } },
+        },
+      ]);
+
+      expect(result.toolCalls).toEqual([]);
+      expect(result.error).toBeInstanceOf(APIStatusError);
+      expect(result.error?.message).toContain('max_output_tokens');
+    },
+  );
+
+  it.each([
+    ['completed', 'completed'],
+    ['no status', undefined],
+  ] as const)('emits a function call with %s', async (_label, status) => {
+    const result = await replayToolCalls([
+      RESPONSE_CREATED,
+      functionCallDone(status, '{"temperature": 21}'),
+      { type: 'response.completed', response: { id: 'resp_1', status: 'completed' } },
+    ]);
+
+    expect(result.error).toBeUndefined();
+    expect(result.toolCalls).toEqual([['set_temperature', '{"temperature": 21}']]);
+  });
+});
+
 if (hasOpenAIApiKey) {
   describe('OpenAI Responses', async () => {
     await llm(
