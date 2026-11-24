@@ -364,12 +364,17 @@ class FallbackSpeechStream extends SpeechStream {
   label = 'stt.FallbackSpeechStream';
   private fallbackAdapter: FallbackAdapter;
   private recoveringStreams = new Map<SpeechStream, Task<void>>();
+  private mainStream: SpeechStream | null = null;
   private inputEnded = false;
   private _logger = log();
 
   constructor(adapter: FallbackAdapter, connOptions: APIConnectOptions) {
     super(adapter, undefined, connOptions);
     this.fallbackAdapter = adapter;
+  }
+
+  override get manualFlush(): boolean {
+    return this.mainStream?.manualFlush ?? super.manualFlush;
   }
 
   // Skip `metrics_collected` emission in the adapter stream — children's
@@ -599,6 +604,7 @@ class FallbackSpeechStream extends SpeechStream {
           // Keep child timestamps anchored to the parent stream's current retry attempt.
           child.startTimeOffset = this.startTimeOffset + (Date.now() - startTime) / 1000;
           mainRef.current = child;
+          this.mainStream = child;
           this.fallbackAdapter._served = { stt: sttInstance, stream: this };
           try {
             if (this.abortSignal.aborted) return;
@@ -650,6 +656,7 @@ class FallbackSpeechStream extends SpeechStream {
         } finally {
           sttInstance.off('error', errListener);
           mainRef.current = null;
+          this.mainStream = null;
         }
 
         this.tryRecoverStream(sttInstance);

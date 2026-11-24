@@ -547,6 +547,11 @@ export abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent>
     return this._startTimeOffset;
   }
 
+  /** Whether this stream finalizes a segment only when flushed. */
+  get manualFlush(): boolean {
+    return this.#stt.capabilities.manualFlush === true;
+  }
+
   set startTimeOffset(value: number) {
     if (value < 0) {
       throw new Error('startTimeOffset must be non-negative');

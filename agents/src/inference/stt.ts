@@ -149,6 +149,8 @@ export interface AssemblyAIOptions {
   end_of_turn_confidence_threshold?: number;
   /** Minimum silence duration in milliseconds when confident about end of turn. Default: 0. */
   min_end_of_turn_silence_when_confident?: number;
+  /** Current name for `min_end_of_turn_silence_when_confident`. */
+  min_turn_silence?: number;
   /** Maximum turn silence in milliseconds. Default: not specified. */
   max_turn_silence?: number;
   /** Key terms prompt for recognition. Default: not specified. */
@@ -172,8 +174,8 @@ export interface AssemblyAIOptions {
   voice_focus?: 'near-field' | 'far-field';
   /** Background suppression strength. Only supported with u3-rt-pro. */
   voice_focus_threshold?: number;
-  /** Accuracy/latency preset. Only supported with u3-rt-pro. */
-  mode?: 'min_latency' | 'balanced' | 'max_accuracy';
+  /** Accuracy/latency preset. `manual` requires U3.7 Realtime Agent. */
+  mode?: 'min_latency' | 'balanced' | 'max_accuracy' | 'manual';
 }
 
 export interface XaiOptions {
@@ -445,7 +447,16 @@ function isSpeechmaticsRTModel(model: string | undefined): boolean {
   return (model?.startsWith('speechmatics/') && model !== 'speechmatics/linden-1') ?? false;
 }
 
-function resolveVADForModel(model: string | undefined, vad: VAD | undefined): VAD | undefined {
+function isAssemblyAIModel(model: string | undefined): boolean {
+  return model?.startsWith('assemblyai/') ?? false;
+}
+
+function resolveVADForModel(
+  model: string | undefined,
+  vad: VAD | undefined,
+  externalEndpointing = false,
+): VAD | undefined {
+  if (externalEndpointing && isAssemblyAIModel(model)) return vad;
   const speechmaticsRT = isSpeechmaticsRTModel(model);
   if (vad && !speechmaticsRT) {
     log().warn({ model }, '`vad` will be ignored: model handles endpointing server-side');
@@ -510,6 +521,7 @@ export interface InferenceSTTOptions<TModel extends STTModels> {
   modelOptions: STTOptions<TModel>;
   fallback?: STTFallbackModel[];
   connOptions?: APIConnectOptions;
+  externalEndpointing: boolean;
 }
 
 type STTOptionUpdate<TModel extends STTModels> = Partial<
@@ -537,6 +549,7 @@ export class STT<TModel extends STTModels> extends BaseSTT {
   private opts: InferenceSTTOptions<TModel>;
   private streams: Set<SpeechStream<TModel>> = new Set();
   private vad?: VAD;
+  private configuredVad?: VAD;
   private _vadPromise?: Promise<VAD | undefined>;
   /** framework-managed; merged into modelOptions @internal */
   _sessionKeyterms: string[] = [];
@@ -567,6 +580,12 @@ export class STT<TModel extends STTModels> extends BaseSTT {
     fallback?: STTFallbackModelType | STTFallbackModelType[];
     connOptions?: APIConnectOptions;
     vad?: VAD;
+    /**
+     * Let AgentSession turn handling or a direct stream flush finalize AssemblyAI turns. A
+     * supplied VAD drives finalization instead. Configure provider turn detection separately in
+     * `modelOptions`, for example `{ mode: 'manual' }` for U3.7 Realtime Agent.
+     */
+    externalEndpointing?: boolean;
   }) {
     const modelOptions = (opts?.modelOptions ?? {}) as STTOptions<TModel>;
     const initialModel =
@@ -577,6 +596,8 @@ export class STT<TModel extends STTModels> extends BaseSTT {
       ...(normalizedFallback?.map(({ model }) => model) ?? []),
     ];
     const alignedTranscript = alignmentModels.every(alignedTranscriptForModel) ? 'word' : false;
+    const externalEndpointing = opts?.externalEndpointing ?? false;
+    const resolvedVad = resolveVADForModel(initialModel, opts?.vad, externalEndpointing);
     super({
       streaming: true,
       interimResults: true,
@@ -584,6 +605,8 @@ export class STT<TModel extends STTModels> extends BaseSTT {
       diarization: diarizationEnabled(modelOptions as Record<string, unknown>),
       keyterms: keytermsExtraForModel(initialModel) !== undefined,
       chatContext: supportsChatContext(initialModel),
+      manualFlush:
+        externalEndpointing && isAssemblyAIModel(initialModel) && resolvedVad === undefined,
     });
 
     const {
@@ -627,7 +650,8 @@ export class STT<TModel extends STTModels> extends BaseSTT {
         nextModel = parsedModel as TModel;
       }
     }
-    this.vad = resolveVADForModel(nextModel, vad);
+    this.configuredVad = vad;
+    this.vad = resolvedVad;
 
     this.opts = {
       model: nextModel as TModel,
@@ -640,6 +664,7 @@ export class STT<TModel extends STTModels> extends BaseSTT {
       modelOptions,
       fallback: normalizedFallback,
       connOptions: connOptions ?? DEFAULT_API_CONNECT_OPTIONS,
+      externalEndpointing,
     };
   }
 
@@ -689,7 +714,11 @@ export class STT<TModel extends STTModels> extends BaseSTT {
     };
 
     if (nextOpts.model !== undefined) {
-      this.vad = resolveVADForModel(nextOpts.model, this.vad);
+      this.vad = resolveVADForModel(
+        nextOpts.model,
+        this.opts.externalEndpointing ? this.configuredVad : this.vad,
+        this.opts.externalEndpointing,
+      );
       this._vadPromise = undefined;
       const alignmentModels = [
         this.opts.model,
@@ -698,6 +727,10 @@ export class STT<TModel extends STTModels> extends BaseSTT {
       this.updateCapabilities({
         keyterms: keytermsExtraForModel(this.opts.model) !== undefined,
         chatContext: supportsChatContext(this.opts.model),
+        manualFlush:
+          this.opts.externalEndpointing &&
+          isAssemblyAIModel(this.opts.model) &&
+          this.vad === undefined,
         alignedTranscript: alignmentModels.every(alignedTranscriptForModel) ? 'word' : false,
       });
     }
@@ -914,6 +947,13 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
   private updateUncertain = false;
   private handoffAudioOffsetInS = 0;
   private connectionAudioDurationInS = 0;
+  private connectionProviderDurationInS = 0;
+  private connectionPadding: Array<[startInS: number, durationInS: number]> = [];
+  private readonly _manualFlush: boolean;
+  private queuedFlushes = 0;
+  private processedFlushes = 0;
+  private lastInputWasFlush = false;
+  private finalFlush?: number;
   private retryHandoffOpts?: InferenceSTTOptions<TModel>;
 
   // Queued updates must follow the audio ahead of them after reconnecting.
@@ -983,6 +1023,7 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
     this.vad = sttImpl.vadPromise;
     this.connOptions = connOptions;
     this.extraHeaders = { ...extraHeaders };
+    this._manualFlush = sttImpl.capabilities.manualFlush === true;
     const keyterms = keytermsExtraForModel(opts.model, {
       extraKwargs: opts.modelOptions as Record<string, unknown>,
       sessionKeyterms: sttImpl._sessionKeyterms,
@@ -992,6 +1033,26 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
 
   get label(): string {
     return 'inference.SpeechStream';
+  }
+
+  override get manualFlush(): boolean {
+    return this._manualFlush;
+  }
+
+  override pushFrame(frame: AudioFrame): void {
+    this.lastInputWasFlush = false;
+    super.pushFrame(frame);
+  }
+
+  override flush(): void {
+    super.flush();
+    this.lastInputWasFlush = true;
+    this.queuedFlushes += 1;
+  }
+
+  override endInput(): void {
+    if (this.lastInputWasFlush) this.finalFlush = this.queuedFlushes;
+    super.endInput();
   }
 
   /** @internal */
@@ -1067,7 +1128,10 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
   protected async run(): Promise<void> {
     this.handoffAudioOffsetInS = 0;
     this.connectionAudioDurationInS = 0;
+    this.connectionProviderDurationInS = 0;
+    this.connectionPadding = [];
     const vad = await this.vad;
+    const assemblyAIExternal = this.opts.externalEndpointing && isAssemblyAIModel(this.opts.model);
     while (true) {
       // Create fresh resources for each connection attempt
       let ws: WebSocket | null = null;
@@ -1116,6 +1180,34 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
         candidate?.close();
       };
 
+      const prepareAudioFrame = (frame: AudioFrame) => {
+        const durationInS = frame.samplesPerChannel / frame.sampleRate;
+        const minimumBytes = Math.floor(this.opts.sampleRate / 20) * 2;
+        let audio = Buffer.from(frame.data.buffer, frame.data.byteOffset, frame.data.byteLength);
+        const paddingInS =
+          assemblyAIExternal && audio.byteLength < minimumBytes
+            ? (minimumBytes - audio.byteLength) / (2 * this.opts.sampleRate)
+            : 0;
+        if (paddingInS > 0) {
+          const padded = Buffer.alloc(minimumBytes);
+          audio.copy(padded);
+          audio = padded;
+        }
+        return {
+          message: { type: 'input_audio', audio: audio.toString('base64') },
+          onSent: () => {
+            this.speechDuration += durationInS;
+            this.connectionAudioDurationInS += durationInS;
+            this.connectionProviderDurationInS += durationInS;
+            if (paddingInS > 0) {
+              this.connectionPadding.push([this.connectionProviderDurationInS, paddingInS]);
+              this.connectionProviderDurationInS += paddingInS;
+            }
+            if (assemblyAIExternal) vadStream?.pushFrame(frame);
+          },
+        };
+      };
+
       const resourceCleanup = () => {
         if (cleanedUp) return;
         cleanedUp = true;
@@ -1123,13 +1215,10 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
           this.retryHandoffOpts ??= this.consumedOptions();
           if (audioStream && this.retryHandoffOpts !== undefined) {
             for (const frame of audioStream.flush()) {
-              const audio = Buffer.from(frame.data.buffer).toString('base64');
+              const { message, onSent } = prepareAudioFrame(frame);
               this.handoffWrites.push({
-                encoded: JSON.stringify({ type: 'input_audio', audio }),
-                onSent: () => {
-                  this.speechDuration += frame.samplesPerChannel / frame.sampleRate;
-                  this.connectionAudioDurationInS += frame.samplesPerChannel / frame.sampleRate;
-                },
+                encoded: JSON.stringify(message),
+                onSent,
               });
             }
           }
@@ -1250,11 +1339,8 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
       };
 
       const sendAudioFrame = (frame: AudioFrame) => {
-        const base64 = Buffer.from(frame.data.buffer).toString('base64');
-        this.sendOrBuffer({ type: 'input_audio', audio: base64 }, () => {
-          this.speechDuration += frame.samplesPerChannel / frame.sampleRate;
-          this.connectionAudioDurationInS += frame.samplesPerChannel / frame.sampleRate;
-        });
+        const { message, onSent } = prepareAudioFrame(frame);
+        this.sendOrBuffer(message, onSent);
       };
 
       const send = async (signal: AbortSignal) => {
@@ -1287,7 +1373,9 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
               for (const frame of audioStream.flush()) sendAudioFrame(frame);
               control.send();
             } else if (control.kind === 'finalize') {
-              for (const frame of audioStream.flush()) sendAudioFrame(frame);
+              if (!(assemblyAIExternal && vadStream)) {
+                for (const frame of audioStream.flush()) sendAudioFrame(frame);
+              }
               sendSessionFinalize();
             } else if (
               control.kind === 'handoff' &&
@@ -1306,19 +1394,29 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
 
           let frames: AudioFrame[];
           if (ev === SpeechStream.FLUSH_SENTINEL) {
+            this.processedFlushes += 1;
             frames = audioStream.flush();
           } else {
             const frame = ev as AudioFrame;
-            vadStream?.pushFrame(frame);
+            if (!assemblyAIExternal) vadStream?.pushFrame(frame);
             frames = audioStream.write(new Int16Array(frame.data).buffer);
           }
 
           for (const frame of frames) {
             sendAudioFrame(frame);
           }
+          if (
+            ev === SpeechStream.FLUSH_SENTINEL &&
+            assemblyAIExternal &&
+            !vadStream &&
+            this.processedFlushes !== this.finalFlush
+          ) {
+            sendSessionFinalize();
+          }
         }
 
         vadStream?.endInput();
+        for (const frame of audioStream.flush()) sendAudioFrame(frame);
         // A close in response to the final write is normal once it reaches the active socket.
         if (this.handoffId === undefined) inputEnded = true;
         sendSessionFinalize(() => {
@@ -1586,6 +1684,8 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
               attachSocket?.(this.activeWs);
               this.handoffAudioOffsetInS += this.connectionAudioDurationInS;
               this.connectionAudioDurationInS = 0;
+              this.connectionProviderDurationInS = 0;
+              this.connectionPadding = [];
               if (handoffTimer) clearTimeout(handoffTimer);
               this.abortHandoff = undefined;
               this.requestedHandoffId = undefined;
@@ -1702,11 +1802,11 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
         if (this._pendingExtra === pendingExtra) this._pendingExtra = undefined;
         this.pendingUpdates = [];
         this.updateUncertain = false;
+        vadStream = vad?.stream() ?? null;
         if (this.retryHandoffOpts) {
           this.releaseHandoffWrites(ws);
           this.retryHandoffOpts = undefined;
         }
-        vadStream = vad?.stream() ?? null;
 
         // Use a per-connection controller so reconnect loops don't inherit a permanently-aborted signal.
         const connController = new AbortController();
@@ -1762,6 +1862,15 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
     this.queue.put({ type: SpeechEventType.START_OF_SPEECH });
   }
 
+  private sessionTime(providerTimeInS: number): number {
+    let paddingInS = 0;
+    for (const [startInS, durationInS] of this.connectionPadding) {
+      if (providerTimeInS <= startInS) break;
+      paddingInS += Math.min(durationInS, providerTimeInS - startInS);
+    }
+    return this.startTimeOffset + this.handoffAudioOffsetInS + providerTimeInS - paddingInS;
+  }
+
   private processTranscript(data: SttTranscriptEvent, eventType: SpeechEventType) {
     // Check if queue is closed to avoid race condition during disconnect
     if (this.queue.closed) return;
@@ -1788,8 +1897,8 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
 
       const speechData: SpeechData = {
         language,
-        startTime: this.startTimeOffset + this.handoffAudioOffsetInS + data.start,
-        endTime: this.startTimeOffset + this.handoffAudioOffsetInS + data.start + data.duration,
+        startTime: this.sessionTime(data.start),
+        endTime: this.sessionTime(data.start + data.duration),
         confidence: data.confidence,
         text,
         speakerId: data.speaker_id ?? undefined,
@@ -1797,8 +1906,8 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
           (word): TimedString =>
             createTimedString({
               text: word.word,
-              startTime: word.start + this.startTimeOffset + this.handoffAudioOffsetInS,
-              endTime: word.end + this.startTimeOffset + this.handoffAudioOffsetInS,
+              startTime: this.sessionTime(word.start),
+              endTime: this.sessionTime(word.end),
               startTimeOffset: this.startTimeOffset + this.handoffAudioOffsetInS,
               confidence: word.confidence,
               speakerId: word.speaker_id ?? undefined,

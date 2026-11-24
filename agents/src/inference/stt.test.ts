@@ -15,7 +15,7 @@ import { createStreamChannel } from '../stream/stream_channel.js';
 import { type SpeechEvent, SpeechEventType } from '../stt/stt.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import { withResolvers } from '../utils.js';
-import { VAD, type VADEvent, VADEventType, type VADStream } from '../vad.js';
+import { VAD, type VADEvent, VADEventType, VADStream } from '../vad.js';
 import { createConversationItemAddedEvent } from '../voice/events.js';
 import {
   SpeechStream as InferenceSpeechStream,
@@ -66,6 +66,7 @@ function makeSpeechStream() {
     requestId: 'req-1',
     speechDuration: 0,
     handoffAudioOffsetInS: 0,
+    connectionPadding: [],
     _startTimeOffset: 0,
     _pendingExtra: undefined,
     opts: { language: 'en' },
@@ -720,6 +721,66 @@ describe('STT VAD handling for Speechmatics models', () => {
     await expect(stt.vadPromise).resolves.toBeUndefined();
   });
 
+  it('AssemblyAI uses an external VAD only when opted in', async () => {
+    const vad = new MockVAD();
+    const serverEndpointing = makeStt({ model: 'assemblyai/universal-3-6-pro', vad });
+    expect(serverEndpointing['vad']).toBeUndefined();
+    expect(serverEndpointing.capabilities.manualFlush).not.toBe(true);
+
+    const externalEndpointing = makeStt({
+      model: 'assemblyai/universal-3-6-pro',
+      vad,
+      externalEndpointing: true,
+    });
+    expect(externalEndpointing['vad']).toBe(vad);
+    expect(externalEndpointing.capabilities.manualFlush).not.toBe(true);
+  });
+
+  it('AssemblyAI external endpointing uses session turn finalization without a VAD', () => {
+    const stt = makeStt({
+      model: 'assemblyai/universal-3-6-pro',
+      externalEndpointing: true,
+    });
+    expect(stt.capabilities.manualFlush).toBe(true);
+  });
+
+  it('live AssemblyAI stream keeps manual flush after a model switch', () => {
+    const stt = makeStt({
+      model: 'assemblyai/universal-3-6-pro',
+      externalEndpointing: true,
+    });
+    const live = stt.stream();
+    stt.updateOptions({ model: 'deepgram/nova-3' });
+
+    expect(stt.capabilities.manualFlush).not.toBe(true);
+    expect(live.manualFlush).toBe(true);
+    const next = stt.stream();
+    expect(next.manualFlush).toBe(false);
+
+    live.close();
+    next.close();
+  });
+
+  it('AssemblyAI stream keeps a manual flush opt-out', () => {
+    class OptOutSTT extends STT<'assemblyai/universal-3-6-pro'> {
+      optOut(): void {
+        this.updateCapabilities({ manualFlush: false });
+      }
+    }
+
+    const stt = new OptOutSTT({
+      model: 'assemblyai/universal-3-6-pro',
+      externalEndpointing: true,
+      apiKey: 'test-key',
+      apiSecret: 'test-secret',
+      baseURL: 'https://example.livekit.cloud',
+    });
+    stt.optOut();
+    const stream = stt.stream();
+    expect(stream.manualFlush).toBe(false);
+    stream.close();
+  });
+
   it('updateOptions speechmatics → non-speechmatics clears VAD', async () => {
     const vad = new MockVAD();
     const stt = makeStt({ model: 'speechmatics/enhanced', vad });
@@ -736,6 +797,230 @@ describe('STT VAD handling for Speechmatics models', () => {
 
     stt.updateOptions({ model: 'speechmatics/enhanced' });
     expect(stt['vad']).toBeInstanceOf(InferenceVAD);
+  });
+});
+
+describe('AssemblyAI external endpointing', () => {
+  const noRetry = { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1_000 };
+
+  async function nextFinal(stream: InferenceSpeechStream<STTModels>) {
+    for await (const event of stream) {
+      if (event.type === SpeechEventType.FINAL_TRANSCRIPT) return event;
+    }
+    throw new Error('stream ended before a final transcript');
+  }
+
+  it.each([
+    ['assemblyai/universal-3-6-pro', { min_turn_silence: 10_000, max_turn_silence: 10_000 }],
+    ['assemblyai/assemblyai-stt-3-7-realtime-agent', { mode: 'manual' }],
+  ] as const)('finalizes %s turns in order while input stays open', async (model, modelOptions) => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const { port } = server.address() as AddressInfo;
+    const wire: Array<{ type: string; settings?: { extra?: Record<string, unknown> } }> = [];
+    const samplesSeen: number[] = [];
+
+    class EndOnChunkStream extends VADStream {
+      override pushFrame(frame: AudioFrame): void {
+        samplesSeen.push(frame.samplesPerChannel);
+        super.pushFrame(frame);
+        this.sendVADEvent({
+          type: VADEventType.END_OF_SPEECH,
+          samplesIndex: frame.samplesPerChannel,
+          timestamp: 0,
+          speechDuration: frame.duration,
+          silenceDuration: 0,
+          frames: [],
+          probability: 0,
+          inferenceDuration: 0,
+          speaking: false,
+          rawAccumulatedSilence: 0,
+          rawAccumulatedSpeech: frame.duration,
+        });
+      }
+    }
+    class EndOnChunkVAD extends VAD {
+      label = 'end-on-chunk';
+      constructor() {
+        super({ updateInterval: 1 });
+      }
+      stream(): VADStream {
+        return new EndOnChunkStream(this);
+      }
+    }
+
+    server.on('connection', (socket) => {
+      socket.on('message', (raw) => {
+        const event = JSON.parse(raw.toString()) as {
+          type: string;
+          settings?: { extra?: Record<string, unknown> };
+        };
+        wire.push(event);
+        if (event.type === 'session.finalize') {
+          socket.send(
+            JSON.stringify({
+              type: 'final_transcript',
+              transcript: 'hello',
+              language: 'en',
+              start: 0,
+              duration: 0.05,
+              confidence: 1,
+              words: [],
+            }),
+          );
+          socket.send(JSON.stringify({ type: 'session.finalized' }));
+        }
+      });
+    });
+
+    const stt = makeStt({
+      model,
+      modelOptions,
+      vad: new EndOnChunkVAD(),
+      externalEndpointing: true,
+      sampleRate: 16_000,
+      baseURL: `http://127.0.0.1:${port}`,
+      connOptions: noRetry,
+    });
+    const stream = stt.stream();
+    try {
+      expect(stt.capabilities.manualFlush).not.toBe(true);
+      for (let turn = 0; turn < 2; turn++) {
+        stream.pushFrame(new AudioFrame(new Int16Array(320), 16_000, 1, 320));
+        stream.pushFrame(new AudioFrame(new Int16Array(480), 16_000, 1, 480));
+        expect((await nextFinal(stream)).alternatives?.[0]?.text).toBe('hello');
+      }
+      expect(wire.map(({ type }) => type)).toEqual([
+        'session.create',
+        'input_audio',
+        'session.finalize',
+        'input_audio',
+        'session.finalize',
+      ]);
+      expect(samplesSeen).toEqual([800, 800]);
+      expect(wire[0]?.settings?.extra).toMatchObject(modelOptions);
+      expect(wire[0]?.settings?.extra).not.toHaveProperty('externalEndpointing');
+    } finally {
+      stream.close();
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('sends short audio before each external flush and pads it to 50 ms', async () => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const { port } = server.address() as AddressInfo;
+    const wire: Array<{ type: string; audio?: string }> = [];
+    server.on('connection', (socket) => {
+      socket.on('message', (raw) => {
+        const event = JSON.parse(raw.toString()) as { type: string; audio?: string };
+        wire.push(event);
+        if (event.type === 'session.finalize') {
+          socket.send(
+            JSON.stringify({
+              type: 'final_transcript',
+              transcript: 'hello',
+              language: 'en',
+              start: 0,
+              duration: 0.02,
+              confidence: 1,
+              words: [],
+            }),
+          );
+          socket.send(JSON.stringify({ type: 'session.finalized' }));
+        }
+      });
+    });
+    const stream = makeStt({
+      model: 'assemblyai/universal-3-6-pro',
+      externalEndpointing: true,
+      sampleRate: 16_000,
+      baseURL: `http://127.0.0.1:${port}`,
+      connOptions: noRetry,
+    }).stream();
+    const audio = new Int16Array(320).fill(1);
+    try {
+      stream.pushFrame(new AudioFrame(audio, 16_000, 1, 320));
+      stream.flush();
+      stream.pushFrame(new AudioFrame(audio, 16_000, 1, 320));
+      stream.endInput();
+      expect((await nextFinal(stream)).alternatives?.[0]?.text).toBe('hello');
+      expect((await nextFinal(stream)).alternatives?.[0]?.text).toBe('hello');
+      expect(wire.map(({ type }) => type)).toEqual([
+        'session.create',
+        'input_audio',
+        'session.finalize',
+        'input_audio',
+        'session.finalize',
+      ]);
+      const padded = Buffer.alloc(1600);
+      Buffer.from(audio.buffer).copy(padded);
+      expect(
+        wire
+          .filter(({ type }) => type === 'input_audio')
+          .map(({ audio }) => Buffer.from(audio!, 'base64')),
+      ).toEqual([padded, padded]);
+    } finally {
+      stream.close();
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('removes external endpointing padding from transcript timestamps', async () => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const { port } = server.address() as AddressInfo;
+    let finalizes = 0;
+    server.on('connection', (socket) => {
+      socket.on('message', (raw) => {
+        const event = JSON.parse(raw.toString()) as { type: string };
+        if (event.type !== 'session.finalize') return;
+        const start = 0.05 * finalizes++;
+        socket.send(
+          JSON.stringify({
+            type: 'final_transcript',
+            transcript: 'hello',
+            language: 'en',
+            start,
+            duration: 0.02,
+            confidence: 1,
+            words: [{ word: 'hello', start, end: start + 0.03, confidence: 1 }],
+          }),
+        );
+        socket.send(JSON.stringify({ type: 'session.finalized' }));
+      });
+    });
+    const stream = makeStt({
+      model: 'assemblyai/universal-3-6-pro',
+      externalEndpointing: true,
+      sampleRate: 16_000,
+      baseURL: `http://127.0.0.1:${port}`,
+      connOptions: noRetry,
+    }).stream();
+    try {
+      const timings: number[][] = [];
+      for (let turn = 0; turn < 2; turn++) {
+        stream.pushFrame(new AudioFrame(new Int16Array(320), 16_000, 1, 320));
+        stream.flush();
+        const speech = (await nextFinal(stream)).alternatives![0]!;
+        const word = speech.words![0]!;
+        timings.push(
+          [speech.startTime, speech.endTime, word.startTime, word.endTime].map((value) =>
+            Number((value - stream.startTimeOffset).toFixed(6)),
+          ),
+        );
+      }
+      expect(timings).toEqual([
+        [0, 0.02, 0, 0.02],
+        [0.02, 0.04, 0.02, 0.04],
+      ]);
+    } finally {
+      stream.close();
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   });
 });
 
