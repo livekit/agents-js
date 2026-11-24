@@ -7,6 +7,7 @@ import { fork } from 'node:child_process';
 import { extname } from 'node:path';
 import type { RunningJobInfo } from '../job.js';
 import { log } from '../log.js';
+import { markProcessDone } from '../telemetry/hosted_logs.js';
 import type { InferenceExecutor } from './inference_executor.js';
 import type { JobExecutor } from './job_executor.js';
 import { JobStatus } from './job_executor.js';
@@ -75,6 +76,11 @@ export class JobProcExecutor extends SupervisedProc implements JobExecutor {
   }
 
   async mainTask(proc: ChildProcess) {
+    proc.on('exit', () => {
+      if (this.#runningJob) {
+        markProcessDone(this.#runningJob.job.id);
+      }
+    });
     proc.on('message', (msg: IPCMessage) => {
       switch (msg.case) {
         case 'inferenceRequest':

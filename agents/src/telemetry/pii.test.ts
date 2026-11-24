@@ -9,7 +9,7 @@ import {
   SimpleSpanProcessor,
 } from '@opentelemetry/sdk-trace-node';
 import { describe, expect, it } from 'vitest';
-import { ATTRIBUTE_REDACTION_ENABLED } from '../types.js';
+import { ATTRIBUTE_REDACTION_ENABLED, ATTRIBUTE_SIMULATION_ENABLED } from '../types.js';
 import { PIIFilteringLogProcessor } from './logging.js';
 import { PIIFilteringSpanProcessor } from './pii.js';
 import { REDACTED_EXCEPTION_MESSAGE, isPIIAttribute, restorePii } from './redaction.js';
@@ -38,7 +38,12 @@ const SAFE_ATTRS: Attributes = {
   [traceTypes.ATTR_EOU_PROVIDER]: 'livekit',
 };
 
-function emit(options: { redaction?: boolean; exporterFirst?: boolean; allowPii?: boolean }) {
+function emit(options: {
+  redaction?: boolean;
+  simulation?: boolean;
+  exporterFirst?: boolean;
+  allowPii?: boolean;
+}) {
   const exporter = new InMemorySpanExporter();
   const exportProcessor = new SimpleSpanProcessor(exporter);
   const redactProcessor = new PIIFilteringSpanProcessor(options.allowPii ?? true);
@@ -50,6 +55,7 @@ function emit(options: { redaction?: boolean; exporterFirst?: boolean; allowPii?
 
   const span = provider.getTracer('test').startSpan('llm_request');
   if (options.redaction) span.setAttribute(ATTRIBUTE_REDACTION_ENABLED, true);
+  if (options.simulation) span.setAttribute(ATTRIBUTE_SIMULATION_ENABLED, true);
   span.setAttributes({ ...PII_ATTRS, ...SAFE_ATTRS });
   span.addEvent(traceTypes.EVENT_GEN_AI_USER_MESSAGE, { content: 'my pin is 1234' });
   span.addEvent('llm_started', { [traceTypes.ATTR_INSTRUCTIONS]: 'be brief', n: 1 });
@@ -110,6 +116,35 @@ describe('PIIFilteringSpanProcessor', () => {
     expect(leaked(stripped.attributes)).toEqual([]);
     expect(restorePii(stripped)).toBe(stripped);
   });
+
+  it.each([
+    { allowPii: false, redaction: false },
+    { allowPii: false, redaction: true },
+    { allowPii: true, redaction: false },
+    { allowPii: true, redaction: true },
+  ])(
+    'simulation content follows session redaction with allowPii=$allowPii redaction=$redaction',
+    ({ allowPii, redaction }) => {
+      const span = emit({ allowPii, redaction, simulation: true });
+      const restored = restorePii(span);
+
+      if (redaction) {
+        expect(leaked(restored.attributes)).toEqual([]);
+        expect(restored.events.map((event) => event.name)).not.toContain(
+          traceTypes.EVENT_GEN_AI_USER_MESSAGE,
+        );
+        return;
+      }
+
+      for (const [key, value] of Object.entries(PII_ATTRS)) {
+        expect(restored.attributes[key]).toEqual(value);
+      }
+      expect(restored.events.map((event) => event.name)).toContain(
+        traceTypes.EVENT_GEN_AI_USER_MESSAGE,
+      );
+      if (!allowPii) expect(leaked(span.attributes)).toEqual([]);
+    },
+  );
 
   it('withholds exception details from third-party exporters', () => {
     // recordException resolves the project's setting, so with redaction off it writes the
@@ -187,5 +222,20 @@ describe('PIIFilteringLogProcessor', () => {
     new PIIFilteringLogProcessor().onEmit({ attributes } as never);
 
     expect(attributes).toEqual({ [traceTypes.ATTR_CHAT_CTX]: '{"items": []}' });
+  });
+
+  it.each([false, true])('simulation logs follow resolved redaction %s', (redaction) => {
+    const attributes: Record<string, unknown> = {
+      [ATTRIBUTE_SIMULATION_ENABLED]: true,
+      ...(redaction ? { [ATTRIBUTE_REDACTION_ENABLED]: true } : {}),
+      [traceTypes.ATTR_USER_TRANSCRIPT]: 'my pin is 1234',
+    };
+    new PIIFilteringLogProcessor().onEmit({ attributes } as never);
+
+    if (redaction) {
+      expect(attributes[traceTypes.ATTR_USER_TRANSCRIPT]).toBeUndefined();
+    } else {
+      expect(attributes[traceTypes.ATTR_USER_TRANSCRIPT]).toBe('my pin is 1234');
+    }
   });
 });

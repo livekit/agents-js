@@ -511,6 +511,11 @@ export class RoomIO {
     return this.room;
   }
 
+  /** @internal Resolves once room I/O links a participant. */
+  _waitForLinkedParticipant(): Promise<RemoteParticipant> {
+    return this.participantAvailableFuture.await;
+  }
+
   get linkedParticipant(): RemoteParticipant | undefined {
     if (!this.isParticipantAvailable) {
       return undefined;

@@ -4,7 +4,7 @@
 import { setTimeout as waitFor } from 'node:timers/promises';
 import { z } from 'zod';
 import { getJobContext } from '../../job.js';
-import { tool } from '../../llm/index.js';
+import { ToolError, ToolResult, tool } from '../../llm/index.js';
 
 const DEFAULT_DTMF_PUBLISH_DELAY = 300;
 
@@ -47,6 +47,7 @@ export const sendDtmfEvents = tool({
   name: 'send_dtmf_events',
   description: `
 Send a list of DTMF events to the telephony provider.
+Successful sends do not request a follow-up reply.
 
 Call when:
 - User wants to send DTMF events
@@ -54,7 +55,7 @@ Call when:
   parameters: z.object({
     events: z.array(z.enum(DTMF_EVENTS)).describe('The DTMF events to send.'),
   }),
-  execute: async ({ events }, { ctx }) => {
+  execute: async ({ events }, { ctx, abortSignal }) => {
     const room = ctx.session._roomIO?.rtcRoom ?? getJobContext().room;
 
     for (const event of events) {
@@ -65,13 +66,18 @@ Call when:
         }
 
         await room.localParticipant.publishDtmf(code, event);
-        await waitFor(DEFAULT_DTMF_PUBLISH_DELAY);
+        await waitFor(DEFAULT_DTMF_PUBLISH_DELAY, undefined, { signal: abortSignal });
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        return `Failed to send DTMF event: ${event}. Error: ${message}`;
+        // a cancelled call propagates; a failed publish hides the provider error from the model
+        if (error instanceof Error && error.name === 'AbortError') {
+          throw error;
+        }
+        throw new ToolError('Failed to send DTMF events.');
       }
     }
 
-    return `Successfully sent DTMF events: ${events.join(', ')}`;
+    return new ToolResult(`Successfully sent DTMF events: ${events.join(', ')}`, {
+      replyRequired: false,
+    });
   },
 });

@@ -306,26 +306,39 @@ describe('JobContext telemetry metadata', () => {
     ).toEqual({ 'lk.redaction.enabled': true });
   });
 
-  it('includes simulation identity when the job has simulation dispatch metadata', () => {
-    const ctx = createJobContext({
-      job: {
-        id: 'job-id',
-        room: { name: 'assigned-room' },
-        attributes: {
-          'lk.simulator.dispatch': JSON.stringify({
-            simulationRunId: 'run_abc',
-            jobId: 'job_def',
-          }),
+  it.each([false, true])(
+    'includes simulation identity and session redaction when redaction is %s',
+    (redaction) => {
+      const ctx = createJobContext({
+        job: {
+          id: 'job-id',
+          room: { name: 'assigned-room' },
+          attributes: {
+            'lk.simulator.dispatch': JSON.stringify({
+              simulationRunId: 'run_abc',
+              jobId: 'job_def',
+            }),
+          },
         },
-      },
-    } as unknown as Partial<RunningJobInfo>);
+      } as unknown as Partial<RunningJobInfo>);
 
-    expect(ctx._otelMetadata()).toEqual({
-      'lk.simulation.enabled': true,
-      'lk.simulation.run_id': 'run_abc',
-      'lk.simulation.job_id': 'job_def',
-    });
-  });
+      expect(
+        ctx._otelMetadata({
+          audio: false,
+          traces: false,
+          logs: false,
+          transcript: false,
+          redaction,
+          inputDelta: false,
+        }),
+      ).toEqual({
+        'lk.simulation.enabled': true,
+        'lk.simulation.run_id': 'run_abc',
+        'lk.simulation.job_id': 'job_def',
+        ...(redaction ? { 'lk.redaction.enabled': true } : {}),
+      });
+    },
+  );
 
   it('omits blank simulation ids', () => {
     const ctx = createJobContext();
@@ -337,41 +350,72 @@ describe('JobContext telemetry metadata', () => {
 });
 
 describe('JobContext recording redaction', () => {
-  it('tracks project and session redaction in the resolved state', async () => {
-    const { ctx: projectRedacted } = createJobContextWithRoom({}, { enableRedaction: true });
-    const { ctx: sessionRedacted } = createJobContextWithRoom();
+  const cases = [
+    { simulation: false, projectRedaction: false, sessionRedaction: false },
+    { simulation: false, projectRedaction: false, sessionRedaction: true },
+    { simulation: false, projectRedaction: true, sessionRedaction: false },
+    { simulation: false, projectRedaction: true, sessionRedaction: true },
+    { simulation: true, projectRedaction: false, sessionRedaction: false },
+    { simulation: true, projectRedaction: false, sessionRedaction: true },
+    { simulation: true, projectRedaction: true, sessionRedaction: false },
+    { simulation: true, projectRedaction: true, sessionRedaction: true },
+  ];
 
-    expect(projectRedacted._redactionEnabled).toBe(true);
-    expect(sessionRedacted._redactionEnabled).toBe(false);
+  it.each(cases)(
+    'resolves redaction for simulation=$simulation project=$projectRedaction session=$sessionRedaction',
+    async ({ simulation, projectRedaction, sessionRedaction }) => {
+      const attributes = simulation
+        ? {
+            'lk.simulator.dispatch': JSON.stringify({
+              simulationRunId: 'run_abc',
+              jobId: 'job_def',
+            }),
+          }
+        : {};
+      const { ctx } = createJobContextWithRoom(
+        {},
+        { enableRedaction: projectRedaction, attributes },
+      );
 
-    await sessionRedacted.initRecording({
-      audio: false,
-      traces: false,
-      logs: false,
-      transcript: false,
-      redaction: true,
-    });
+      await ctx.initRecording({
+        audio: false,
+        traces: false,
+        logs: false,
+        transcript: false,
+        redaction: sessionRedaction,
+        inputDelta: false,
+      });
 
-    expect(sessionRedacted._redactionEnabled).toBe(true);
-  });
+      expect(ctx._redactionEnabled).toBe(sessionRedaction || (projectRedaction && !simulation));
+    },
+  );
 
-  it.each([
-    { source: 'project', projectRedaction: true, sessionRedaction: false },
-    { source: 'session', projectRedaction: false, sessionRedaction: true },
-  ])(
-    'rejects audio without transcripts under $source redaction',
-    async ({ projectRedaction, sessionRedaction }) => {
-      const { ctx } = createJobContextWithRoom({}, { enableRedaction: projectRedaction });
+  it.each(cases)(
+    'validates audio for simulation=$simulation project=$projectRedaction session=$sessionRedaction',
+    async ({ simulation, projectRedaction, sessionRedaction }) => {
+      const attributes = simulation
+        ? { 'lk.simulator.dispatch': JSON.stringify({ simulationRunId: 'run_abc' }) }
+        : {};
+      const { ctx } = createJobContextWithRoom(
+        {},
+        { enableRedaction: projectRedaction, attributes },
+      );
+      const result = ctx.initRecording({
+        audio: true,
+        traces: false,
+        logs: false,
+        transcript: false,
+        redaction: sessionRedaction,
+        inputDelta: false,
+      });
 
-      await expect(
-        ctx.initRecording({
-          audio: true,
-          traces: false,
-          logs: false,
-          transcript: false,
-          redaction: sessionRedaction,
-        }),
-      ).rejects.toThrow('audio upload requires transcript upload when redaction is enabled');
+      if (sessionRedaction || (projectRedaction && !simulation)) {
+        await expect(result).rejects.toThrow(
+          'audio upload requires transcript upload when redaction is enabled',
+        );
+      } else {
+        await expect(result).resolves.toBeUndefined();
+      }
     },
   );
 });
@@ -505,4 +549,92 @@ describe('JobContext rpc tracing', () => {
       install.mockRestore();
     }
   });
+});
+
+describe('JobContext hosted log decision', () => {
+  const options = {
+    audio: false,
+    traces: false,
+    logs: false,
+    transcript: true,
+    redaction: true,
+  };
+
+  function withOutput(enableRedaction = false, enableRecording = false) {
+    const { ctx } = createJobContextWithRoom({}, { enableRedaction, enableRecording });
+    const decide = vi.fn();
+    const output = { decided: false, decide };
+    ctx._hostedOutput = output as unknown as NonNullable<JobContext['_hostedOutput']>;
+    decide.mockImplementation(() => {
+      output.decided = true;
+    });
+    return { ctx, decide };
+  }
+
+  it('decides from the session options', async () => {
+    const { ctx, decide } = withOutput();
+    await ctx.initRecording(options);
+    expect(decide).toHaveBeenCalledWith({ logs: false, redaction: true });
+  });
+
+  it('lets a valid retry decide after rejected options', async () => {
+    const { ctx, decide } = withOutput();
+    await expect(
+      ctx.initRecording({ ...options, audio: true, transcript: false }),
+    ).rejects.toThrow();
+    expect(decide).not.toHaveBeenCalled();
+    await ctx.initRecording({ ...options, logs: true });
+    expect(decide).toHaveBeenCalledWith({ logs: true, redaction: true });
+  });
+
+  it('uses the rejected options at cleanup when no call succeeded', async () => {
+    const { ctx, decide } = withOutput();
+    await expect(
+      ctx.initRecording({ ...options, audio: true, transcript: false }),
+    ).rejects.toThrow();
+    ctx._recordingInitialized = true;
+    ctx._onCleanup();
+    expect(decide).toHaveBeenCalledWith({ logs: false, redaction: true });
+  });
+
+  it('keeps redaction on when a later session does not ask for it', async () => {
+    const { ctx } = withOutput();
+    await ctx.initRecording(options);
+    expect(ctx._redactionEnabled).toBe(true);
+    await ctx.initRecording({ ...options, redaction: false });
+    expect(ctx._redactionEnabled).toBe(true);
+  });
+
+  it('keeps the rejected options for a process that ends before a decision', async () => {
+    const { ctx } = withOutput();
+    await expect(
+      ctx.initRecording({ ...options, audio: true, transcript: false }),
+    ).rejects.toThrow();
+    expect(ctx._hostedOutput?.undecidedChoice).toEqual({ logs: false, redaction: true });
+  });
+
+  it('does not redact a simulation for project redaction alone', async () => {
+    const dispatch = JSON.stringify({ simulationRunId: 'SR_1', simulationRunJobId: 'SRJ_1' });
+    const { ctx } = createJobContextWithRoom(
+      {},
+      { enableRedaction: true, attributes: { 'lk.simulator.dispatch': dispatch } },
+    );
+    expect(ctx.simulationContext()).toBeDefined();
+    const decide = vi.fn();
+    ctx._hostedOutput = { decided: false, decide } as unknown as NonNullable<
+      JobContext['_hostedOutput']
+    >;
+    await ctx.initRecording({ ...options, redaction: false });
+    expect(decide).toHaveBeenCalledWith({ logs: false, redaction: false });
+  });
+
+  it.each([true, false])(
+    'follows the job recording at cleanup when no session decided (recording %s)',
+    (recording) => {
+      const { ctx, decide } = withOutput(true, recording);
+      ctx._recordingInitialized = true;
+      ctx._onCleanup();
+      expect(decide).toHaveBeenCalledWith({ logs: recording, redaction: true });
+    },
+  );
 });

@@ -250,6 +250,7 @@ const SAFE_KEYS = new Set([
   'lk.previous_agent_label',
   'lk.fallback.label',
   'lk.fallback.index',
+  'lk.fallback.recovery',
   'lk.interruption.probability',
   'lk.interruption.total_duration',
   'lk.interruption.prediction_duration',

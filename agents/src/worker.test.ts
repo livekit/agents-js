@@ -11,17 +11,18 @@ import {
   ServerMessage,
   type UpdateJobStatus,
   WorkerMessage,
+  WorkerPong,
   WorkerStatus,
 } from '@livekit/protocol';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import { setTimeout as delay, setImmediate } from 'node:timers/promises';
 import { describe, expect, it, vi } from 'vitest';
-import { WebSocketServer } from 'ws';
+import { WebSocket, WebSocketServer } from 'ws';
 import { type JobExecutor, JobStatus } from './ipc/job_executor.js';
 import { JobProcExecutor } from './ipc/job_proc_executor.js';
 import { ProcPool } from './ipc/proc_pool.js';
-import { Future } from './utils.js';
+import { Future, rejectOnAbort } from './utils.js';
 import { AgentServer, ServerOptions } from './worker.js';
 
 vi.mock('./inference/_warmup.js', () => ({
@@ -47,6 +48,36 @@ describe('AgentServer connection failures', () => {
     } finally {
       await server.close();
       await server.close();
+    }
+  });
+
+  it('times out waiting for the registration response', async () => {
+    const wss = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(wss, 'listening');
+    const register = new Future();
+    wss.on('connection', (ws) => ws.once('message', () => register.resolve()));
+
+    const server = new AgentServer(
+      new ServerOptions({
+        agent: 'test-agent.js',
+        wsURL: `ws://127.0.0.1:${(wss.address() as AddressInfo).port}`,
+        apiKey: 'devkey',
+        apiSecret: 'devsecret',
+        maxRetry: 0,
+        numIdleProcesses: 0,
+        simulation: true,
+      }),
+    );
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const failed = expect(server.run()).rejects.toThrow(/failed to connect/);
+    try {
+      await register.await;
+      await vi.advanceTimersByTimeAsync(10000);
+      await failed;
+    } finally {
+      await server.close();
+      wss.close();
+      vi.useRealTimers();
     }
   });
 });
@@ -200,6 +231,82 @@ describe('AgentServer drain', () => {
 });
 
 describe('AgentServer reconnect', () => {
+  it('reconnects when an open socket stops answering pings', async () => {
+    const wss = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(wss, 'listening');
+    const firstSocket = new Future<WebSocket>();
+    const firstPing = new Future();
+    const unansweredPing = new Future();
+    const recoveredPing = new Future();
+    const load = new Future<number>();
+    let connections = 0;
+    wss.on('connection', (ws) => {
+      const workerId = `AW_${++connections}`;
+      if (connections === 1) firstSocket.resolve(ws);
+      let pings = 0;
+      ws.on('message', (data: Buffer) => {
+        const msg = WorkerMessage.fromBinary(data);
+        if (msg.message.case === 'register') {
+          const res = new RegisterWorkerResponse({ workerId });
+          ws.send(new ServerMessage({ message: { case: 'register', value: res } }).toBinary());
+        } else if (msg.message.case === 'ping') {
+          if (++pings > 1 && workerId === 'AW_1') {
+            unansweredPing.resolve();
+            return;
+          }
+          const res = new WorkerPong({ lastTimestamp: msg.message.value.timestamp });
+          ws.send(new ServerMessage({ message: { case: 'pong', value: res } }).toBinary(), () => {
+            if (workerId === 'AW_1') firstPing.resolve();
+            else recoveredPing.resolve();
+          });
+        }
+      });
+    });
+
+    const server = new AgentServer(
+      new ServerOptions({
+        agent: 'test-agent.js',
+        wsURL: `ws://127.0.0.1:${(wss.address() as AddressInfo).port}`,
+        apiKey: 'devkey',
+        apiSecret: 'devsecret',
+        loadFunc: () => load.await,
+        numIdleProcesses: 0,
+        simulation: true,
+      }),
+    );
+    vi.useFakeTimers({
+      toFake: ['Date', 'setInterval', 'clearInterval', 'setTimeout', 'clearTimeout'],
+    });
+    const run = server.run().catch(() => undefined);
+    const timeout = rejectOnAbort(AbortSignal.timeout(3000));
+    try {
+      const ws = await Promise.race([firstSocket.await, timeout]);
+      await Promise.race([firstPing.await, timeout]);
+      await setImmediate();
+      await vi.advanceTimersByTimeAsync(1000);
+      await Promise.race([unansweredPing.await, timeout]);
+
+      const disconnected = once(ws, 'close');
+      await vi.advanceTimersByTimeAsync(1999);
+      expect(ws.readyState).toBe(WebSocket.OPEN);
+      const reconnected = once(server.event, 'worker_registered');
+      await vi.advanceTimersByTimeAsync(1);
+      await Promise.race([disconnected, timeout]);
+      await vi.advanceTimersByTimeAsync(2000);
+      await Promise.race([recoveredPing.await, timeout]);
+      const [workerId] = await reconnected;
+      expect(workerId).toBe('AW_2');
+    } finally {
+      const closing = server.close();
+      await vi.advanceTimersByTimeAsync(10000);
+      await closing;
+      await run;
+      load.resolve(0);
+      await new Promise<void>((resolve) => wss.close(() => resolve()));
+      vi.useRealTimers();
+    }
+  });
+
   it('reports the jobs it runs, as assigned, after it registers', async () => {
     const wss = new WebSocketServer({ port: 0 });
     await once(wss, 'listening');
@@ -359,6 +466,7 @@ describe('AgentServer job status', () => {
     const seen: string[] = [];
     const respond = new Future<() => void>();
     const updated = new Future();
+    const pinged = new Future();
     wss.on('connection', (ws) => {
       ws.on('message', (data: Buffer) => {
         const msg = WorkerMessage.fromBinary(new Uint8Array(data));
@@ -371,6 +479,8 @@ describe('AgentServer job status', () => {
           });
         } else if (msg.message.case === 'updateJob') {
           updated.resolve();
+        } else if (msg.message.case === 'ping') {
+          pinged.resolve();
         }
       });
     });
@@ -390,9 +500,9 @@ describe('AgentServer job status', () => {
       // a message sent at once would reach the server in this time
       await delay(50);
       sendRegistered();
-      await updated.await;
+      await Promise.all([updated.await, pinged.await]);
 
-      expect(seen).toEqual(['register', 'registered', 'updateJob']);
+      expect(seen).toEqual(['register', 'registered', 'updateJob', 'ping']);
     } finally {
       await server.close();
       await run;

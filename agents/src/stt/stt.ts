@@ -36,7 +36,8 @@ export enum SpeechEventType {
   FINAL_TRANSCRIPT = 2,
   /**
    * Indicate the end of speech, emitted when the user stops speaking.
-   * The first alternative is a combination of all the previous FINAL_TRANSCRIPT events.
+   * Alternatives are optional and provider-specific; they may contain only the latest segment.
+   * Build the complete transcript from FINAL_TRANSCRIPT events.
    */
   END_OF_SPEECH = 3,
   /** Usage event, emitted periodically to indicate usage metrics. */

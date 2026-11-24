@@ -52,6 +52,7 @@ function setup(ringingTimeout = 5_000) {
     simulationContext: () => undefined,
     info: { url: 'wss://example.livekit.cloud', apiKey: 'api-key', apiSecret: 'api-secret' },
     deleteRoom: vi.fn().mockResolvedValue(undefined),
+    initRecording: vi.fn().mockResolvedValue(undefined),
   } as unknown as JobContext;
   const connect = vi.spyOn(ConnectorClient.prototype, 'connectTwilioCall');
   const fetch = vi

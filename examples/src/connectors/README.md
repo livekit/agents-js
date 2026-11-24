@@ -117,6 +117,6 @@ supports CallToken directly, so this workflow does not require a Twilio conferen
 
 ## Connectors and SIP
 
-Connectors are one of two telephony paths. SIP trunking (see [`../telephony_amd.ts`](../telephony_amd.ts)) stays the recommended path when you are starting fresh: it works with any provider and LiveKit manages routing with dispatch rules. Use the connector when your call logic already lives in Twilio, or for WhatsApp, which has no phone number to trunk.
+Connectors are one of two telephony paths. SIP trunking (see [`../telephony/amd.ts`](../telephony/amd.ts)) stays the recommended path when you are starting fresh: it works with any provider and LiveKit manages routing with dispatch rules. Use the connector when your call logic already lives in Twilio, or for WhatsApp, which has no phone number to trunk.
 
 For setup instructions and more details, see the [main README](../../../README.md).
