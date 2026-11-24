@@ -8,7 +8,7 @@ import { WebSocket, WebSocketServer } from 'ws';
 import { APIConnectionError, APIError, APIStatusError } from '../_exceptions.js';
 import * as agents from '../index.js';
 import { normalizeLanguage } from '../language.js';
-import { initializeLogger } from '../log.js';
+import { initializeLogger, log } from '../log.js';
 import type { TTSError } from '../tts/tts.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import { STT } from './stt.js';
@@ -1054,11 +1054,14 @@ describe('Inference TTS gateway error frames', () => {
   });
 
   it('puts code and data in the message of a retryable frame', async () => {
-    const { errors } = await runWithErrorFrame(
+    const maxRetry = 2;
+    const { connections, errors } = await runWithErrorFrame(
       { type: 'error', code: 'SERVER_ERROR', data: 'boom', retryable: true },
-      { maxRetry: 0, retryIntervalMs: 0, timeoutMs: 2_000 },
+      { maxRetry, retryIntervalMs: 0, timeoutMs: 2_000 },
     );
 
+    expect(connections).toBe(maxRetry + 1);
+    expect(errors).toHaveLength(1);
     const error = errors[0]!.error as APIError;
     expect(error.retryable).toBe(true);
     expect(error.message).toContain('boom');
@@ -1096,5 +1099,63 @@ describe('Inference TTS gateway error frames', () => {
 
     const error = errors[0]!.error as APIError;
     expect(error.message).toBe('LiveKit TTS returned error: SERVER_ERROR: x');
+  });
+
+  it('logs an error frame on an idle pooled socket and keeps the socket usable', async () => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const { port } = server.address() as AddressInfo;
+    const sockets: WebSocket[] = [];
+    server.on('connection', (socket) => {
+      sockets.push(socket);
+      socket.on('message', (raw) => {
+        const event = JSON.parse(raw.toString()) as Record<string, unknown>;
+        if (event.type !== 'session.flush') return;
+        socket.send(
+          JSON.stringify({
+            type: 'output_audio',
+            session_id: 's1',
+            audio: Buffer.alloc(3200).toString('base64'),
+          }),
+        );
+        socket.send(JSON.stringify({ type: 'done', session_id: 's1' }));
+      });
+    });
+
+    const warn = vi.spyOn(log(), 'warn');
+    const tts = makeTts({ baseURL: `http://127.0.0.1:${port}` });
+    try {
+      tts.prewarm();
+      await vi.waitFor(() => expect(sockets).toHaveLength(1));
+      sockets[0]!.send(
+        JSON.stringify({ type: 'error', session_id: 's1', code: 'SERVER_ERROR', data: 'boom' }),
+      );
+      await vi.waitFor(() =>
+        expect(warn).toHaveBeenCalledWith(
+          expect.objectContaining({ code: 'SERVER_ERROR', data: 'boom' }),
+          expect.stringContaining('idle'),
+        ),
+      );
+
+      const stream = tts.stream({
+        connOptions: { maxRetry: 0, retryIntervalMs: 0, timeoutMs: 2_000 },
+      });
+      const errors: TTSError[] = [];
+      tts.on('error', (e: TTSError) => errors.push(e));
+      stream.pushText('Hello there.');
+      stream.endInput();
+      const audio = [];
+      for await (const event of stream) if (typeof event !== 'symbol') audio.push(event);
+      stream.close();
+
+      expect(errors).toHaveLength(0);
+      expect(audio.length).toBeGreaterThan(0);
+      expect(sockets).toHaveLength(1);
+    } finally {
+      warn.mockRestore();
+      for (const client of server.clients) client.terminate();
+      await tts.close();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   });
 });

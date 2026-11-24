@@ -259,13 +259,6 @@ export function normalizeTTSFallback(
   return [makeFallback(fallback)];
 }
 
-/**
- * Whether every model the gateway may serve the request from emits aligned timestamps.
- *
- * Server-side fallback is resolved by the gateway after the agent has already chosen the
- * timed-transcript path, so a fallback that sends no `output_alignment` would leave the
- * transcript empty. Only claim alignment when the primary and all fallbacks support it.
- */
 /** Builds the "code: detail" text of a LiveKit Inference error frame; an empty `data` falls back to `message`. */
 function formatErrorFrame(frame: { code?: string; data?: unknown; message?: string }): string {
   const detail = frame.data || frame.message;
@@ -273,6 +266,13 @@ function formatErrorFrame(frame: { code?: string; data?: unknown; message?: stri
   return [frame.code, text].filter(Boolean).join(': ') || 'unknown error';
 }
 
+/**
+ * Whether every model the gateway may serve the request from emits aligned timestamps.
+ *
+ * Server-side fallback is resolved by the gateway after the agent has already chosen the
+ * timed-transcript path, so a fallback that sends no `output_alignment` would leave the
+ * transcript empty. Only claim alignment when the primary and all fallbacks support it.
+ */
 function hasAlignedTranscriptWithFallback(
   model: string | undefined,
   modelOptions: Record<string, unknown> | undefined,
@@ -604,6 +604,19 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
         if (event.type === 'session.created') {
           const parsed = ttsKnownServerEventSchema.parse(event);
           if (parsed.type === 'session.created') state.sessionCreated = parsed;
+        }
+        if (event.type === 'error' && !state.onMessage) {
+          // The gateway keeps the session usable after an error, so the idle socket stays pooled.
+          const { code, data, message } = event as {
+            code?: string;
+            data?: unknown;
+            message?: string;
+          };
+          this.#logger.warn(
+            { code, data, message },
+            'inference.TTS received a gateway error on an idle connection',
+          );
+          return;
         }
         state.onMessage?.(event);
       } catch (error) {
