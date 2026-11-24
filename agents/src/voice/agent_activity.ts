@@ -29,7 +29,7 @@ import {
   renderInstructions,
 } from '../llm/chat_context.js';
 import { DuplexRealtimeAdapter, DuplexRealtimeSession } from '../llm/duplex_adapter.js';
-import { AsyncToolset, type Toolset } from '../llm/index.js';
+import { AsyncToolset, type Toolset, type ToolsetError } from '../llm/index.js';
 import {
   type ChatItem,
   type FunctionCall,
@@ -6539,31 +6539,39 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   private async setupToolsetList(toolsets: readonly Toolset[]): Promise<void> {
-    const outputs = await Promise.allSettled(
-      toolsets.map((ts) =>
-        ts.setup({
-          // A dynamic toolset pushes a changed tool list here; re-flatten and re-advertise it.
-          // Route through the session's current activity: a session toolset is set up once (on the
-          // first activity) but its pushes must re-advertise against whatever agent is active now,
-          // not the original (possibly closed) activity.
-          updateTools: (tools) => {
-            ts._setTools(tools);
-            if (this._suppressToolsetConfigUpdate) return;
-            const activity = this.agentSession._activity ?? this;
-            const update = activity.onToolsetToolsChanged();
-            void update.catch((error) =>
-              activity.logger.error({ error }, 'error re-advertising toolset tools'),
-            );
-            return update;
-          },
-        }),
-      ),
+    await Promise.allSettled(
+      toolsets.map(async (ts) => {
+        try {
+          await ts.setup({
+            // A dynamic toolset pushes a changed tool list here; re-flatten and re-advertise it.
+            // Route through the session's current activity: a session toolset is set up once (on the
+            // first activity) but its pushes must re-advertise against whatever agent is active now,
+            // not the original (possibly closed) activity.
+            updateTools: (tools) => {
+              ts._setTools(tools);
+              if (this._suppressToolsetConfigUpdate) return;
+              const activity = this.agentSession._activity ?? this;
+              const update = activity.onToolsetToolsChanged();
+              void update.catch((error) =>
+                activity.logger.error({ error }, 'error re-advertising toolset tools'),
+              );
+              return update;
+            },
+          });
+        } catch (cause) {
+          const error = cause instanceof Error ? cause : new Error(String(cause));
+          this.logger.error({ error, toolsetId: ts.id }, 'error setting up toolset');
+          const toolsetError: ToolsetError = {
+            type: 'toolset_error',
+            timestamp: Date.now(),
+            label: ts.id,
+            error,
+            recoverable: true,
+          };
+          this.agentSession.emit(AgentSessionEventTypes.Error, createErrorEvent(toolsetError, ts));
+        }
+      }),
     );
-    for (const output of outputs) {
-      if (output.status === 'rejected') {
-        this.logger.error({ error: output.reason }, 'error setting up toolset');
-      }
-    }
   }
 
   private async closeToolsetList(toolsets: readonly Toolset[]): Promise<void> {

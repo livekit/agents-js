@@ -259,6 +259,15 @@ export interface ToolsetContext {
   updateTools(tools: readonly ToolContextEntry[]): void | Promise<void>;
 }
 
+/** A toolset failed to set up; it is recoverable and the session keeps running. */
+export interface ToolsetError {
+  type: 'toolset_error';
+  timestamp: number;
+  label: string;
+  error: Error;
+  recoverable: boolean;
+}
+
 /**
  * Function tools of a `ToolContext`, sorted by name for deterministic provider payloads.
  * Provider tools are intentionally excluded — callers that need them iterate `flatten()`.
