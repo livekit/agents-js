@@ -1568,6 +1568,50 @@ describe('AMD lifecycle', () => {
     ]);
   });
 
+  it('a greeting queued before AMD is in the history when it plays', async () => {
+    let greeting: SpeechHandle | undefined;
+    const { detector, session, classifier } = await running({
+      beforeAmd: (s) => {
+        greeting = s.say('Hi, this is Alex.');
+      },
+    });
+    // AMD holds the greeting until it allows a reply
+    expect(activityOf(session)._authorizationPaused).toBe(true);
+    const hooks = await commit(detector, session, classifier);
+    classifier.prediction(1, AMDCategory.MACHINE_IVR);
+    expect(await hooks!.shouldReply(new ChatContext())).toBe(true);
+    await greeting!.waitForPlayout();
+    commitTurn(detector, endOfTurn('Press one for sales.'));
+    const request = await classifier.request();
+
+    const history = request.chatCtx.items
+      .filter((item): item is ChatMessage => item instanceof ChatMessage)
+      .slice(2)
+      .map((message) => [message.role, message.textContent]);
+    expect(history).toEqual([
+      ['user', 'hello'],
+      ['assistant', AGENT_REPLY],
+      ['user', 'Press one for sales.'],
+    ]);
+  });
+
+  it('AMD detaches from speeches when they end or it finishes', async () => {
+    const callbacks = (handle: SpeechHandle) =>
+      (handle as unknown as { itemAddedCallbacks: Set<unknown> }).itemAddedCallbacks.size;
+    const { detector, session, classifier } = await running();
+    const ended = agentSpeech(session);
+    const playing = agentSpeech(session);
+    expect(callbacks(ended)).toBe(1);
+    expect(callbacks(playing)).toBe(1);
+    ended._markDone();
+    await eventually(() => callbacks(ended) === 0);
+
+    await commit(detector, session, classifier);
+    classifier.prediction(1, AMDCategory.HUMAN);
+    await detector.execute();
+    expect(callbacks(playing)).toBe(0);
+  });
+
   it.each([
     [AMDCategory.UNCERTAIN, AMDCategory.MACHINE_IVR, 'Hi Sam, can you make it tomorrow?'],
     [AMDCategory.MACHINE_IVR, AMDCategory.UNCERTAIN, AGENT_REPLY],

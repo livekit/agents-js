@@ -652,6 +652,8 @@ export interface RunningOptions extends AMDOptions {
   classifier?: ClassifierLLM;
   agent?: Agent;
   sessionOptions?: Partial<AgentSessionOptions>;
+  /** Runs after the session starts and before AMD starts. */
+  beforeAmd?: (session: AgentSession) => void;
 }
 
 export interface Running {
@@ -670,6 +672,7 @@ export async function running({
   classifier = new ClassifierLLM(),
   agent = new CustomerAgent(),
   sessionOptions = {},
+  beforeAmd,
   ...options
 }: RunningOptions = {}): Promise<Running> {
   const model = new RecordingLLM();
@@ -692,6 +695,7 @@ export async function running({
     await detector.aclose();
     await session.close();
   });
+  beforeAmd?.(session);
   await detector.start();
   await eventually(() => detector.lifecycle === AMDLifecycle.ACTIVE);
   return { detector, session, classifier, model, agent };

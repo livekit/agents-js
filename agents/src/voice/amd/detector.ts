@@ -366,6 +366,7 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
   private speeches = new Set<SpeechHandle>();
   /** @internal Whether each speech's reply shows its words in the classifier history. */
   _replyWords = new Map<SpeechHandle, boolean>();
+  private itemCallbacks = new Map<SpeechHandle, (item: ChatItem) => void>();
   /** @internal */
   _heldTurnId: number | undefined;
   /** @internal */
@@ -651,6 +652,12 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
         room.on(RoomEvent.ParticipantDisconnected, this.onDisconnected);
         if (this.participantIdentity !== undefined) {
           roomIO.setParticipant(this.participantIdentity);
+        }
+      }
+      // speech queued before AMD, such as a greeting, can play during detection
+      for (const speech of [activity.currentSpeech, ...activity._queuedSpeeches]) {
+        if (speech !== undefined) {
+          this.watchReply(speech);
         }
       }
       this.spawn((signal) => this.setupListening(signal), 'AMD.setupListening');
@@ -1516,17 +1523,36 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     }
     const handle = event.speechHandle;
     this.speeches.add(handle);
-    // a turn reply replaces this value when AMD authorizes it
-    this._replyWords.set(handle, this._showsAgentWords);
-    handle._addItemAddedCallback((item) => this.onSpeechItemAdded(handle, item));
+    this.watchReply(handle);
     handle.addDoneCallback(this.onSpeechDone);
     this._updateIdle();
   };
 
   private onSpeechDone = (handle: SpeechHandle): void => {
     this.speeches.delete(handle);
-    this._replyWords.delete(handle);
     this._updateIdle();
+  };
+
+  /** Add the speech's reply to the classifier history when the session records it. */
+  private watchReply(handle: SpeechHandle): void {
+    if (handle.done() || this.itemCallbacks.has(handle)) {
+      return;
+    }
+    // a turn reply replaces this value when AMD authorizes it
+    this._replyWords.set(handle, this._showsAgentWords);
+    const callback = (item: ChatItem) => this.onSpeechItemAdded(handle, item);
+    this.itemCallbacks.set(handle, callback);
+    handle._addItemAddedCallback(callback);
+    handle.addDoneCallback(this.onReplyDone);
+  }
+
+  private onReplyDone = (handle: SpeechHandle): void => {
+    this._replyWords.delete(handle);
+    const callback = this.itemCallbacks.get(handle);
+    if (callback !== undefined) {
+      this.itemCallbacks.delete(handle);
+      handle._removeItemAddedCallback(callback);
+    }
   };
 
   // endregion
@@ -1662,6 +1688,11 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
       speech.removeDoneCallback(this.onSpeechDone);
     }
     this._replyWords.clear();
+    for (const [speech, callback] of this.itemCallbacks) {
+      speech._removeItemAddedCallback(callback);
+      speech.removeDoneCallback(this.onReplyDone);
+    }
+    this.itemCallbacks.clear();
     if (this.voicemailHandle !== undefined) {
       this.voicemailHandle.removeDoneCallback(this.onVoicemailDone);
       this.voicemailHandle = undefined;
