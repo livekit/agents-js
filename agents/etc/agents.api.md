@@ -839,12 +839,16 @@ export class AMD extends AMD_base {
     _onUserTurnCommitted(transcript: string, endOfTurnDelay: number | undefined): TurnHooks;
     // @internal (undocumented)
     pushAudio(frame: AudioFrame): void;
+    // @internal
+    _replyWords: Map<SpeechHandle, boolean>;
     // Warning: (ae-forgotten-export) The symbol "ReplyDecision" needs to be exported by the entry point index.d.ts
     //
     // @internal
     _shouldReply(turnId: number, chatCtx: ChatContext): Promise<ReplyDecision>;
     // @internal (undocumented)
     _shouldWait: boolean;
+    // @internal
+    get _showsAgentWords(): boolean;
     start(): Promise<this>;
     // @internal (undocumented)
     _state: AMDCategory;

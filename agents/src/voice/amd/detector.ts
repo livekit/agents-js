@@ -9,7 +9,7 @@ import { EventEmitter } from 'node:events';
 import { APIError } from '../../_exceptions.js';
 import * as inference from '../../inference/index.js';
 import type { ChatContext } from '../../llm/chat_context.js';
-import { ChatMessage } from '../../llm/chat_context.js';
+import { type ChatItem, ChatMessage } from '../../llm/chat_context.js';
 import { DecisionModel } from '../../llm/decisions.js';
 import { LLM } from '../../llm/llm.js';
 import { RealtimeModel } from '../../llm/realtime.js';
@@ -32,7 +32,6 @@ import {
   type AgentFalseInterruptionEvent,
   AgentSessionEventTypes,
   type AgentStateChangedEvent,
-  type ConversationItemAddedEvent,
   type FunctionToolsExecutedEvent,
   type SpeechCreatedEvent,
   type UserInputTranscribedEvent,
@@ -239,6 +238,7 @@ interface AMDResources {
 class AMDTurnHooks implements TurnHooks {
   replyInstructions: string | undefined = undefined;
   private trackVoicemail = false;
+  private replyWords = false;
 
   constructor(
     private readonly amd: AMD,
@@ -258,11 +258,14 @@ class AMDTurnHooks implements TurnHooks {
   }
 
   async shouldReply(chatCtx: ChatContext): Promise<boolean> {
+    // decide now: a later turn's prediction can arrive while the reply plays
+    this.replyWords = this.amd._showsAgentWords;
     if (this.turnId === undefined) {
       return !this.amd._forbidsReply && !this.amd._shouldWait;
     }
     const decision = await this.amd._shouldReply(this.turnId, chatCtx);
     this.trackVoicemail = decision.trackVoicemail ?? false;
+    this.replyWords = this.amd._showsAgentWords;
     if (decision.instructionsFor !== undefined) {
       this.replyInstructions = this.amd._getInstructions(decision.instructionsFor);
     }
@@ -270,6 +273,9 @@ class AMDTurnHooks implements TurnHooks {
   }
 
   onAgentTurnCommitted(handle: SpeechHandle): void {
+    if (this.amd._replyWords.has(handle)) {
+      this.amd._replyWords.set(handle, this.replyWords);
+    }
     if (this.turnId !== undefined && this.turnId === this.amd._heldTurnId) {
       this.amd._heldReply = handle;
     }
@@ -358,6 +364,8 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
   private latest: AMDPredictionEvent | null = null;
   private run: AMDResources | undefined;
   private speeches = new Set<SpeechHandle>();
+  /** @internal Whether each speech's reply shows its words in the classifier history. */
+  _replyWords = new Map<SpeechHandle, boolean>();
   /** @internal */
   _heldTurnId: number | undefined;
   /** @internal */
@@ -631,7 +639,6 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
       subscribe(AgentSessionEventTypes.UserStateChanged, this.onUserStateChanged);
       subscribe(AgentSessionEventTypes.UserInputTranscribed, this.onUserInputTranscribed);
       subscribe(AgentSessionEventTypes.FunctionToolsExecuted, this.onFunctionToolsExecuted);
-      subscribe(AgentSessionEventTypes.ConversationItemAdded, this.onConversationItemAdded);
       subscribe(AgentSessionEventTypes.SpeechCreated, this.onSpeechCreated);
       subscribe(AgentSessionEventTypes.AgentStateChanged, this.onAgentStateChanged);
       subscribe(AgentSessionEventTypes.AgentFalseInterruption, this.onFalseInterruption);
@@ -797,23 +804,32 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     }
   };
 
-  private onConversationItemAdded = (event: ConversationItemAddedEvent): void => {
+  private onSpeechItemAdded(handle: SpeechHandle, item: ChatItem): void {
     if (this.lifecycle !== AMDLifecycle.PENDING && this.lifecycle !== AMDLifecycle.ACTIVE) {
       return;
     }
-    const item = event.item;
     if (
       item instanceof ChatMessage &&
       item.role === 'assistant' &&
       item.textContent &&
       item.createdAt >= this.startedAt!
     ) {
-      const words =
-        this.likelyHuman ||
-        (fsm.LIKELY_HUMAN_STAGES.has(this._state) && this.category === AMDCategory.UNCERTAIN);
+      const words = this._replyWords.get(handle) ?? false;
       this.chatCtx.addAgentReply(item.createdAt, item.textContent, { words });
     }
-  };
+  }
+
+  /**
+   * @internal
+   * Whether the next turn may answer the agent's words: after a likely human turn, or
+   * after an uncertain turn in a menu or screener.
+   */
+  get _showsAgentWords(): boolean {
+    return (
+      this.likelyHuman ||
+      (fsm.LIKELY_HUMAN_STAGES.has(this._state) && this.category === AMDCategory.UNCERTAIN)
+    );
+  }
 
   private onUserStateChanged = (event: UserStateChangedEvent): void => {
     if (this.lifecycle !== AMDLifecycle.ACTIVE) {
@@ -1498,13 +1514,18 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     if (this.startingOpening) {
       event.speechHandle._bypassAuthorizationPause = true;
     }
-    this.speeches.add(event.speechHandle);
-    event.speechHandle.addDoneCallback(this.onSpeechDone);
+    const handle = event.speechHandle;
+    this.speeches.add(handle);
+    // a turn reply replaces this value when AMD authorizes it
+    this._replyWords.set(handle, this._showsAgentWords);
+    handle._addItemAddedCallback((item) => this.onSpeechItemAdded(handle, item));
+    handle.addDoneCallback(this.onSpeechDone);
     this._updateIdle();
   };
 
   private onSpeechDone = (handle: SpeechHandle): void => {
     this.speeches.delete(handle);
+    this._replyWords.delete(handle);
     this._updateIdle();
   };
 
@@ -1640,6 +1661,7 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
     for (const speech of this.speeches) {
       speech.removeDoneCallback(this.onSpeechDone);
     }
+    this._replyWords.clear();
     if (this.voicemailHandle !== undefined) {
       this.voicemailHandle.removeDoneCallback(this.onVoicemailDone);
       this.voicemailHandle = undefined;

@@ -42,6 +42,8 @@ import {
   FakeAudioOutput,
   FakeTTS,
   RecordingLLM,
+  agentSaid,
+  agentSpeech,
   commit,
   commitTurn,
   dtmfCalls,
@@ -1461,15 +1463,11 @@ describe('AMD lifecycle', () => {
   it('classifier sees that the agent spoke but not its words', async () => {
     const { detector, session, classifier } = await running();
     const startedAt = (detector as unknown as { startedAt: number }).startedAt;
-    session._conversationItemAdded(
-      ChatMessage.create({ role: 'assistant', content: ['before AMD'], createdAt: startedAt - 1 }),
-    );
+    agentSaid(session, 'before AMD', { createdAt: startedAt - 1 });
     commitTurn(detector, endOfTurn('Leave a message after the tone.'));
     await classifier.request();
-    session._conversationItemAdded(ChatMessage.create({ role: 'assistant', content: [''] }));
-    session._conversationItemAdded(
-      ChatMessage.create({ role: 'assistant', content: ['Hi Sam, this is Alex.'] }),
-    );
+    agentSaid(session, '');
+    agentSaid(session, 'Hi Sam, this is Alex.');
     commitTurn(detector, endOfTurn('To erase it and start over, press two.'));
     const request = await classifier.request();
 
@@ -1495,13 +1493,9 @@ describe('AMD lifecycle', () => {
     const second = await classifier.request();
     expect(first.currentTurn.createdAt).toBeLessThan(second.currentTurn.createdAt);
     // the reply started between the two turns but is added when its speech ends
-    session._conversationItemAdded(
-      ChatMessage.create({
-        role: 'assistant',
-        content: ['This is Alex from Acme.'],
-        createdAt: (first.currentTurn.createdAt + second.currentTurn.createdAt) / 2,
-      }),
-    );
+    agentSaid(session, 'This is Alex from Acme.', {
+      createdAt: (first.currentTurn.createdAt + second.currentTurn.createdAt) / 2,
+    });
     commitTurn(detector, endOfTurn('Please hold.'));
     const request = await classifier.request();
 
@@ -1523,16 +1517,12 @@ describe('AMD lifecycle', () => {
     await commit(detector, session, classifier);
     classifier.prediction(1, AMDCategory.MACHINE_IVR);
     await eventually(() => amd.turns.get(1)!.prediction !== null);
-    session._conversationItemAdded(
-      ChatMessage.create({ role: 'assistant', content: ['Pressing one.'] }),
-    );
+    agentSaid(session, 'Pressing one.');
     commitTurn(detector, endOfTurn('Hello?'));
     await classifier.request();
     classifier.prediction(2, AMDCategory.HUMAN);
     await eventually(() => amd.turns.get(2)!.prediction !== null);
-    session._conversationItemAdded(
-      ChatMessage.create({ role: 'assistant', content: ['Hi Sam, can you make it tomorrow?'] }),
-    );
+    agentSaid(session, 'Hi Sam, can you make it tomorrow?');
     commitTurn(detector, endOfTurn('Yes. Goodbye.'));
     const request = await classifier.request();
 
@@ -1562,9 +1552,7 @@ describe('AMD lifecycle', () => {
     await classifier.request();
     classifier.prediction(2, after);
     await eventually(() => amd.turns.get(2)!.prediction !== null);
-    session._conversationItemAdded(
-      ChatMessage.create({ role: 'assistant', content: ['Hi Sam, can you make it tomorrow?'] }),
-    );
+    agentSaid(session, 'Hi Sam, can you make it tomorrow?');
     commitTurn(detector, endOfTurn("Yes. That's confirmed."));
     const request = await classifier.request();
 
@@ -1579,6 +1567,54 @@ describe('AMD lifecycle', () => {
       ['user', "Yes. That's confirmed."],
     ]);
   });
+
+  it.each([
+    [AMDCategory.UNCERTAIN, AMDCategory.MACHINE_IVR, 'Hi Sam, can you make it tomorrow?'],
+    [AMDCategory.MACHINE_IVR, AMDCategory.UNCERTAIN, AGENT_REPLY],
+  ])(
+    'a reply after a %s turn keeps its words choice when the next turn is %s',
+    async (after, nextPrediction, reply) => {
+      const { detector, session, classifier } = await running();
+      const amd = internals(detector);
+      await commit(detector, session, classifier);
+      classifier.prediction(1, AMDCategory.MACHINE_IVR);
+      await eventually(() => amd.turns.get(1)!.prediction !== null);
+      const hooks = commitTurn(detector, endOfTurn('Sam.'));
+      await classifier.request();
+      // a preemptive reply exists before the prediction it answers
+      const handle = agentSpeech(session);
+      const shouldReply = hooks.shouldReply(new ChatContext());
+      classifier.prediction(2, after);
+      expect(await shouldReply).toBe(true);
+      hooks.onAgentTurnCommitted(handle);
+      const replyStartedAt = Date.now();
+      await eventually(() => Date.now() > replyStartedAt);
+
+      // the next turn is classified while the reply still plays
+      commitTurn(detector, endOfTurn('Please hold.'));
+      await classifier.request();
+      classifier.prediction(3, nextPrediction);
+      await eventually(() => amd.turns.get(3)!.prediction !== null);
+      agentSaid(session, 'Hi Sam, can you make it tomorrow?', {
+        handle,
+        createdAt: replyStartedAt,
+      });
+      commitTurn(detector, endOfTurn("Yes. That's confirmed."));
+      const request = await classifier.request();
+
+      const history = request.chatCtx.items
+        .filter((item): item is ChatMessage => item instanceof ChatMessage)
+        .slice(2)
+        .map((message) => [message.role, message.textContent]);
+      expect(history).toEqual([
+        ['user', 'hello'],
+        ['user', 'Sam.'],
+        ['assistant', reply],
+        ['user', 'Please hold.'],
+        ['user', "Yes. That's confirmed."],
+      ]);
+    },
+  );
 
   it('dtmf tool works without amd', async () => {
     const publishDtmf = vi.fn(async () => {});

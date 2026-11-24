@@ -92,8 +92,8 @@ export class AMDChatContext extends ChatContext {
    * The session adds a reply when its speech ends, so a participant turn committed
    * during that speech can arrive first. Inserting by start time keeps speaking order.
    * With `words`, keep what it said: after a likely human or uncertain turn in a menu
-   * or screener, a reply to the agent shows a person. The prompt still says the words are hidden; rewording it moved
-   * machine goodbyes between categories.
+   * or screener, a reply to the agent shows a person. The prompt still says the words
+   * are hidden; rewording it moved machine goodbyes between categories.
    */
   addAgentReply(
     startedAt: number,

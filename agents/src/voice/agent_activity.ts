@@ -4013,6 +4013,7 @@ export class AgentActivity implements RecognitionHooks {
           metrics: replyAssistantMetrics,
         });
         this.agent._chatCtx.insert(message);
+        speechHandle._itemAdded([message]);
         this.agentSession._conversationItemAdded(message);
       }
 

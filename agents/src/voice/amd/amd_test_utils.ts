@@ -27,10 +27,11 @@ import {
   AgentSessionEventTypes,
   type FunctionToolsExecutedEvent,
   createFunctionToolsExecutedEvent,
+  createSpeechCreatedEvent,
   createUserInputTranscribedEvent,
 } from '../events.js';
 import { AudioOutput } from '../io.js';
-import type { SpeechHandle } from '../speech_handle.js';
+import { SpeechHandle } from '../speech_handle.js';
 import { FakeLLM } from '../testing/fake_llm.js';
 import type { TurnHooks } from '../turn_hooks.js';
 import type { AMDChatContext, Turn } from './chat_context.js';
@@ -530,6 +531,33 @@ export function audioFrame(): AudioFrame {
 export function pushAudio(detector: AMD, stt: DrainingSTT): DrainingStream {
   detector.pushAudio(audioFrame());
   return stt.streams[stt.streams.length - 1]!;
+}
+
+/** Create a speech the way the session does, so AMD sees it. */
+export function agentSpeech(session: AgentSession): SpeechHandle {
+  const handle = SpeechHandle.create();
+  session.emit(
+    AgentSessionEventTypes.SpeechCreated,
+    createSpeechCreatedEvent({ userInitiated: false, source: 'say', speechHandle: handle }),
+  );
+  return handle;
+}
+
+/** Add a speech's reply when the speech ends, as the session does. */
+export function agentSaid(
+  session: AgentSession,
+  text: string,
+  { handle, createdAt }: { handle?: SpeechHandle; createdAt?: number } = {},
+): void {
+  const speech = handle ?? agentSpeech(session);
+  speech._itemAdded([
+    ChatMessage.create({
+      role: 'assistant',
+      content: [text],
+      ...(createdAt !== undefined ? { createdAt } : {}),
+    }),
+  ]);
+  speech._markDone();
 }
 
 export function commitTurn(detector: AMD, info: EndOfTurnInfo): TurnHooks {
