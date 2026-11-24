@@ -764,6 +764,53 @@ describe('Inference STT handoff replay', () => {
   });
 });
 
+describe('Inference STT handoff replay', () => {
+  it('sends the extra headers on the handoff probe', async () => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const address = server.address() as AddressInfo;
+    const features: (string | string[] | undefined)[] = [];
+    let probed!: () => void;
+    const probe = new Promise<void>((resolve) => {
+      probed = resolve;
+    });
+    server.on('connection', (socket, request) => {
+      const connection = features.push(request.headers['x-feature']);
+      socket.on('message', (raw) => {
+        const event = JSON.parse(raw.toString()) as { type: string };
+        if (event.type === 'session.create') {
+          socket.send(JSON.stringify({ type: 'session.created' }));
+          if (connection === 2) probed();
+        } else if (event.type === 'input_audio' && connection === 1) {
+          socket.send(JSON.stringify({ type: 'session.handoff.request', handoff_id: 'h1' }));
+        }
+      });
+    });
+    const stt = makeStt({
+      model: 'soniox/stt-rt',
+      sampleRate: 16000,
+      baseURL: `http://127.0.0.1:${address.port}`,
+      connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 1000 },
+    });
+    stt.on('error', () => {});
+    const stream = stt.stream({ extraHeaders: { 'X-Feature': 'amd' } });
+    try {
+      stream.pushFrame(new AudioFrame(new Int16Array(800), 16000, 1, 800));
+      await Promise.race([
+        probe,
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('probe timeout')), 2000),
+        ),
+      ]);
+      expect(features).toEqual(['amd', 'amd']);
+    } finally {
+      stream.close();
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+});
+
 describe('Inference STT connection lifecycle', () => {
   it('keeps a VAD finalize after partial audio across handoff', async () => {
     const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });

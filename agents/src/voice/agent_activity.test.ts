@@ -45,7 +45,11 @@ import { Event, Future, Task } from '../utils.js';
 import { AgentTask, _getActivityTaskInfo } from './agent.js';
 import { AgentActivity, onEnterStorage, transcriptsEquivalent } from './agent_activity.js';
 import type { EndOfTurnInfo, PreemptiveGenerationInfo } from './audio_recognition.js';
-import { AgentSessionEventTypes, type UserInputTranscribedEvent } from './events.js';
+import {
+  AgentSessionEventTypes,
+  type UserInputTranscribedEvent,
+  createFunctionToolsExecutedEvent,
+} from './events.js';
 import { ToolExecutionOutput } from './generation.js';
 import { SpeechHandle } from './speech_handle.js';
 
@@ -1515,7 +1519,28 @@ describe('AgentActivity - interrupted tool completion', () => {
       AgentSessionEventTypes.FunctionToolsExecuted,
       expect.objectContaining({ functionCalls: [call], functionCallOutputs: [output] }),
     );
+    // the interrupted handoff never starts
+    expect(emit.mock.calls[0]![1].hasAgentHandoff).toBe(false);
     expect(toolItemsAdded).toHaveBeenCalledWith([output]);
+  });
+
+  it('function tools executed methods work when destructured', () => {
+    const output = FunctionCallOutput.create({
+      callId: 'call_1',
+      name: 'transfer',
+      output: 'ok',
+      isError: false,
+    });
+    const event = createFunctionToolsExecutedEvent({
+      functionCalls: [],
+      functionCallOutputs: [output],
+    });
+    event._handoffRequired = true;
+    const { cancelAgentHandoff, cancelToolReply } = event;
+    cancelAgentHandoff();
+    cancelToolReply();
+    expect(event.hasAgentHandoff).toBe(false);
+    expect(output.replyRequired).toBe(false);
   });
 
   it('commits and emits only completed regular tools from a mixed interrupted batch', () => {
@@ -1600,6 +1625,7 @@ describe('AgentActivity - realtime reply chat context push', () => {
     userSilenceEvent.set();
     const generationEvent = {} as GenerationCreatedEvent;
     const realtimeSession = {
+      realtimeModel: { capabilities: { perResponseToolChoice: false } },
       chatCtx: ChatContext.empty(),
       tools: ToolContext.empty(),
       updateChatCtx: vi.fn(async (chatCtx: ChatContext) => {
@@ -1614,6 +1640,7 @@ describe('AgentActivity - realtime reply chat context push', () => {
     };
     const activity = {
       realtimeSession,
+      tools: ToolContext.empty(),
       toolChoice: undefined,
       _onEnterIgnoredTools: () => [],
       agent: { _chatCtx: ChatContext.empty() },
