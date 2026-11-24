@@ -1134,9 +1134,7 @@ export class AgentSession<
       ctx._redactionEnabled = Boolean(
         ctx._redactionEnabled || this.sessionOptions.recordingOptions.redaction,
       );
-      if (this._enableRecording) {
-        await ctx.initRecording(this.sessionOptions.recordingOptions);
-      }
+      await ctx.initRecording(this.sessionOptions.recordingOptions);
     }
 
     this._redactionEnabled = Boolean(

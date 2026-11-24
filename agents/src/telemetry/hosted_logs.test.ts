@@ -1,0 +1,351 @@
+// SPDX-FileCopyrightText: 2026 LiveKit, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+import {
+  chmodSync,
+  closeSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { version } from '../version.js';
+import {
+  HANDED_OFF_ENV,
+  HOSTED_LOGS_ENABLED,
+  HOSTED_LOGS_ENV,
+  HOSTED_LOGS_HANDOFF_FILE_ENV,
+  HOSTED_LOGS_JOBS_DIR_ENV,
+  JobOutput,
+  MAX_PARTIAL_LINE_LENGTH,
+  handOffLogs,
+  logsHandedOff,
+  markProcessDone,
+  redactRecord,
+  redirectJobOutput,
+} from './hosted_logs.js';
+
+let dir: string;
+let jobsDir: string;
+let handoffFile: string;
+
+beforeEach(() => {
+  dir = mkdtempSync(join(tmpdir(), 'hosted-logs-'));
+  jobsDir = join(dir, 'jobs');
+  handoffFile = join(dir, 'sdk-handoff');
+  vi.stubEnv(HOSTED_LOGS_ENV, HOSTED_LOGS_ENABLED);
+  vi.stubEnv(HOSTED_LOGS_HANDOFF_FILE_ENV, handoffFile);
+  vi.stubEnv(HOSTED_LOGS_JOBS_DIR_ENV, jobsDir);
+  vi.stubEnv(HANDED_OFF_ENV, '');
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  rmSync(dir, { recursive: true, force: true });
+});
+
+const jobFiles = () => readdirSync(jobsDir).sort();
+
+function newOutput(redaction = false, maxHeld?: number): JobOutput {
+  mkdirSync(jobsDir, { recursive: true });
+  const path = join(jobsDir, 'job-AJ_1.log');
+  return new JobOutput(path, 'AJ_1', openSync(path, 'a'), redaction, maxHeld);
+}
+
+const record = (fields: Record<string, unknown>) => JSON.stringify({ level: 30, ...fields }) + '\n';
+
+describe('hosted log hand-off', () => {
+  it('writes the sdk and version, and tells child processes', () => {
+    expect(logsHandedOff()).toBe(false);
+    handOffLogs();
+    expect(JSON.parse(readFileSync(handoffFile, 'utf8'))).toEqual({ sdk: 'node', version });
+    expect(existsSync(jobsDir)).toBe(true);
+    expect(process.env[HANDED_OFF_ENV]).toBe('1');
+    expect(logsHandedOff()).toBe(true);
+  });
+
+  it('trusts a hand-off from the parent without writing the file again', () => {
+    vi.stubEnv(HANDED_OFF_ENV, '1');
+    handOffLogs();
+    expect(existsSync(handoffFile)).toBe(false);
+    expect(logsHandedOff()).toBe(true);
+  });
+
+  it.each([
+    [HOSTED_LOGS_ENV, 'something-else'],
+    [HOSTED_LOGS_HANDOFF_FILE_ENV, ''],
+    [HOSTED_LOGS_JOBS_DIR_ENV, ''],
+  ])('does not hand off when %s is %j', (name, value) => {
+    vi.stubEnv(name, value);
+    handOffLogs();
+    expect(existsSync(handoffFile)).toBe(false);
+    expect(logsHandedOff()).toBe(false);
+  });
+
+  it.skipIf(process.getuid?.() === 0)(
+    'keeps exporting when the hand-off folder cannot be entered',
+    () => {
+      const locked = join(dir, 'locked');
+      mkdirSync(locked, { mode: 0o000 });
+      vi.stubEnv(HOSTED_LOGS_HANDOFF_FILE_ENV, join(locked, 'sdk-handoff'));
+      try {
+        expect(() => handOffLogs()).not.toThrow();
+        expect(logsHandedOff()).toBe(false);
+      } finally {
+        chmodSync(locked, 0o755);
+      }
+    },
+  );
+
+  it('keeps exporting when the file cannot be written', () => {
+    vi.stubEnv(HOSTED_LOGS_HANDOFF_FILE_ENV, join(dir, 'missing-dir', 'sdk-handoff'));
+    handOffLogs();
+    expect(logsHandedOff()).toBe(false);
+  });
+});
+
+describe('job output', () => {
+  it('writes raw lines at once and holds records until the decision', () => {
+    const out = newOutput();
+    out.write('stdout', 'raw before\n');
+    out.write('stdout', record({ msg: 'held' }));
+    expect(readFileSync(join(jobsDir, 'job-AJ_1.log'), 'utf8')).toBe('raw before\n');
+    out.decide({ logs: true, redaction: false });
+    out.write('stdout', record({ msg: 'after' }));
+    out.close();
+    const lines = readFileSync(join(jobsDir, 'job-AJ_1.export.log'), 'utf8').trim().split('\n');
+    expect(lines[0]).toBe('raw before');
+    expect(lines.slice(1).map((l) => JSON.parse(l).msg)).toEqual(['held', 'after']);
+  });
+
+  it('keeps only the newest held records', () => {
+    const out = newOutput(false, 2);
+    for (let i = 0; i < 5; i++) {
+      out.write('stdout', record({ msg: `line ${i}` }));
+    }
+    out.decide({ logs: true, redaction: false });
+    out.close();
+    const lines = readFileSync(join(jobsDir, 'job-AJ_1.export.log'), 'utf8').trim().split('\n');
+    const records = lines.map((l) => JSON.parse(l));
+    expect(records.slice(0, 2).map((r) => r.msg)).toEqual(['line 3', 'line 4']);
+    expect(records[2].dropped).toBe(3);
+    expect(records[2].job_id).toBe('AJ_1');
+    expect(records).toHaveLength(3);
+  });
+
+  it.each([
+    [true, 'job-AJ_1.export.log'],
+    [false, 'job-AJ_1.private.log'],
+  ])('names the file from the logs option (logs=%s)', (logs, name) => {
+    const out = newOutput();
+    out.decide({ logs, redaction: true });
+    out.close();
+    expect(jobFiles()).toEqual([name]);
+  });
+
+  it('keeps the first decision', () => {
+    const out = newOutput();
+    out.decide({ logs: false, redaction: false });
+    out.decide({ logs: true, redaction: false });
+    out.close();
+    expect(jobFiles()).toEqual(['job-AJ_1.private.log']);
+  });
+
+  it('writes held records with the undecided choice when the process ends first', () => {
+    const out = newOutput();
+    out.undecidedChoice = { logs: false, redaction: true };
+    out.write('stdout', record({ msg: 'held', 'lk.pii.secret': 's' }));
+    out.close();
+    const line = JSON.parse(readFileSync(join(jobsDir, 'job-AJ_1.private.log'), 'utf8'));
+    expect(line.msg).toBe('held');
+    expect(line['lk.pii.secret']).toBeUndefined();
+    expect(line['lk.redaction.enabled']).toBe(true);
+  });
+
+  it('holds an uncaught error as a record and redacts it when required', () => {
+    const out = newOutput();
+    out.writeUncaughtError(new TypeError('user said something private'));
+    expect(readFileSync(join(jobsDir, 'job-AJ_1.log'), 'utf8')).toBe('');
+    out.decide({ logs: true, redaction: true });
+    out.close();
+    const line = JSON.parse(readFileSync(join(jobsDir, 'job-AJ_1.export.log'), 'utf8'));
+    expect(line.msg).toBe('uncaught exception in job process');
+    expect(line.job_id).toBe('AJ_1');
+    expect(line.err).toEqual({ type: 'TypeError', message: 'exception details redacted' });
+  });
+
+  it('keeps the stack of an uncaught error when redaction is off', () => {
+    const out = newOutput();
+    out.writeUncaughtError(new Error('boom'));
+    out.decide({ logs: true, redaction: false });
+    out.close();
+    const line = JSON.parse(readFileSync(join(jobsDir, 'job-AJ_1.export.log'), 'utf8'));
+    expect(line.err.message).toBe('boom');
+    expect(line.err.stack).toContain('boom');
+  });
+
+  it('opens the decided file when the rename fails', () => {
+    const out = newOutput();
+    out.write('stdout', record({ msg: 'held' }));
+    rmSync(join(jobsDir, 'job-AJ_1.log'));
+    out.decide({ logs: true, redaction: false });
+    out.write('stdout', 'after\n');
+    out.close();
+    const lines = readFileSync(join(jobsDir, 'job-AJ_1.export.log'), 'utf8').trim().split('\n');
+    expect(JSON.parse(lines[0]!).msg).toBe('held');
+    expect(lines[1]).toBe('after');
+  });
+
+  it('writes output without a newline once it reaches the length limit', () => {
+    const out = newOutput();
+    out.write('stdout', 'x'.repeat(MAX_PARTIAL_LINE_LENGTH - 1));
+    expect(readFileSync(join(jobsDir, 'job-AJ_1.log'), 'utf8')).toBe('');
+    out.write('stdout', 'y');
+    expect(readFileSync(join(jobsDir, 'job-AJ_1.log'), 'utf8')).toHaveLength(
+      MAX_PARTIAL_LINE_LENGTH + 1,
+    );
+    out.close();
+  });
+
+  it('never writes records without a decision', () => {
+    const out = newOutput();
+    out.write('stdout', record({ msg: 'held' }));
+    out.close();
+    expect(readFileSync(join(jobsDir, 'job-AJ_1.log'), 'utf8')).toBe('');
+  });
+
+  it.each([
+    ['the project', true, false],
+    ['the session', false, true],
+  ])('redacts held and later records when %s requires it', (_source, project, session) => {
+    const out = newOutput(project);
+    out.write('stdout', record({ msg: 'before', 'lk.pii.secret': 's', room: 'alice' }));
+    out.decide({ logs: true, redaction: session });
+    out.write(
+      'stdout',
+      record({ msg: 'after', err: { type: 'Error', message: 'secret', stack: 'x' } }),
+    );
+    out.close();
+    const lines = readFileSync(join(jobsDir, 'job-AJ_1.export.log'), 'utf8').trim().split('\n');
+    const [before, after] = lines.map((l) => JSON.parse(l));
+    expect(before).toEqual({
+      level: 30,
+      msg: 'before',
+      room: 'alice',
+      'lk.redaction.enabled': true,
+    });
+    expect(after.err).toEqual({ type: 'Error', message: 'exception details redacted' });
+    expect(after['lk.redaction.enabled']).toBe(true);
+  });
+
+  it('keeps PII fields when redaction is off', () => {
+    const out = newOutput();
+    out.decide({ logs: true, redaction: false });
+    out.write('stdout', record({ msg: 'x', 'lk.pii.secret': 's' }));
+    out.close();
+    const line = JSON.parse(readFileSync(join(jobsDir, 'job-AJ_1.export.log'), 'utf8'));
+    expect(line['lk.pii.secret']).toBe('s');
+    expect(line['lk.redaction.enabled']).toBeUndefined();
+  });
+
+  it('never tears a line, and writes a partial line at close', () => {
+    const out = newOutput();
+    out.decide({ logs: true, redaction: false });
+    out.write('stdout', 'hel');
+    out.write('stderr', 'error line\n');
+    out.write('stdout', 'lo\npartial');
+    out.close();
+    expect(readFileSync(join(jobsDir, 'job-AJ_1.export.log'), 'utf8')).toBe(
+      'error line\nhello\npartial\n',
+    );
+  });
+
+  it('drops the rest of the output when the rename fails', () => {
+    const out = newOutput();
+    rmSync(jobsDir, { recursive: true });
+    out.decide({ logs: true, redaction: false });
+    out.write('stdout', 'dropped\n');
+    out.close();
+    expect(existsSync(jobsDir)).toBe(false);
+  });
+});
+
+describe('redirectJobOutput', () => {
+  it('sends stdout and stderr writes to the job file', () => {
+    handOffLogs();
+    const write = { out: process.stdout.write, err: process.stderr.write };
+    let out: JobOutput | undefined;
+    try {
+      out = redirectJobOutput('AJ_1');
+      process.stdout.write('from stdout\n');
+      const euro = Buffer.from('from stderr €\n');
+      process.stderr.write(euro.subarray(0, euro.length - 3));
+      process.stderr.write(euro.subarray(euro.length - 3));
+    } finally {
+      process.stdout.write = write.out;
+      process.stderr.write = write.err;
+    }
+    out!.decide({ logs: true, redaction: false });
+    out!.close();
+    expect(readFileSync(join(jobsDir, 'job-AJ_1.export.log'), 'utf8')).toBe(
+      'from stdout\nfrom stderr €\n',
+    );
+  });
+
+  it('does nothing without a hand-off', () => {
+    expect(redirectJobOutput('AJ_1')).toBeUndefined();
+  });
+
+  it('gives a retried job a new file', () => {
+    handOffLogs();
+    const stale = join(jobsDir, 'job-AJ_1.log');
+    writeFileSync(stale, 'earlier attempt\n');
+    writeFileSync(join(jobsDir, 'job-AJ_1.export.done.log'), 'older attempt\n');
+    const oldInode = statSync(stale).ino;
+    const heldByRunner = openSync(stale, 'r');
+    const write = { out: process.stdout.write, err: process.stderr.write };
+    let out: JobOutput | undefined;
+    try {
+      out = redirectJobOutput('AJ_1');
+    } finally {
+      process.stdout.write = write.out;
+      process.stderr.write = write.err;
+    }
+    try {
+      expect(jobFiles()).toEqual(['job-AJ_1.log']);
+      expect(readFileSync(stale, 'utf8')).toBe('');
+      expect(statSync(stale).ino).not.toBe(oldInode);
+    } finally {
+      closeSync(heldByRunner);
+      out!.close();
+    }
+  });
+});
+
+describe('markProcessDone', () => {
+  it.each(['job-AJ_1.log', 'job-AJ_1.export.log', 'job-AJ_1.private.log'])(
+    'adds .done to %s',
+    (name) => {
+      mkdirSync(jobsDir);
+      openSync(join(jobsDir, name), 'a');
+      markProcessDone('AJ_1');
+      expect(jobFiles()).toEqual([name.replace(/\.log$/, '.done.log')]);
+    },
+  );
+});
+
+describe('redactRecord', () => {
+  it('leaves the original record unchanged', () => {
+    const original = { msg: 'x', 'lk.pii.secret': 's' };
+    redactRecord(original);
+    expect(original['lk.pii.secret']).toBe('s');
+  });
+});
