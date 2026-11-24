@@ -130,6 +130,9 @@ export default defineAgent({
       tts: new inference.TTS({
         model: 'fishaudio/s2.1-pro',
         voice: 'fa4c9eb3dccc4806b382b40d61c6b10a',
+        // If the primary model fails, LiveKit Inference tries these models in order
+        // See more at https://docs.livekit.io/agents/logic/fallback-strategies/
+        fallback: [{ model: 'rime/coda', voice: 'astra' }],
       }),
 
       turnHandling: {
