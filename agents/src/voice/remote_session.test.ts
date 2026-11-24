@@ -12,12 +12,18 @@ import {
   type RunningJobInfo,
   runWithJobContextAsync,
 } from '../job.js';
-import { ChatMessage } from '../llm/chat_context.js';
+import { ChatMessage, FunctionCall, FunctionCallOutput } from '../llm/chat_context.js';
 import { initializeLogger, log } from '../log.js';
+import { encodeChatItem } from '../proto.js';
 import type { SimulationContext } from '../simulation.js';
 import { Future, waitUntilTimeout } from '../utils.js';
 import type { AgentSession } from './agent_session.js';
-import { AgentSessionEventTypes, CloseReason, createCloseEvent } from './events.js';
+import {
+  AgentSessionEventTypes,
+  CloseReason,
+  createCloseEvent,
+  createFunctionToolsExecutedEvent,
+} from './events.js';
 import { FinalizeSimulationError } from './index.js';
 import {
   NO_ACTIVE_SESSION_ERROR,
@@ -138,6 +144,47 @@ describe('SessionHost event forwarding', () => {
 
     const unsubscribed = new Set(off.mock.calls.map(([event]) => event));
     expect(unsubscribed).toEqual(FORWARDED_EVENTS);
+  });
+});
+
+describe('SessionHost function_tools_executed', () => {
+  it('sends each tool call and output as the chat history encodes it, ids included', async () => {
+    const transport = new FakeTransport();
+    const session = new EventEmitter();
+    const host = new SessionHost(transport);
+    host.registerSession(session as unknown as AgentSession);
+    await host.start();
+    cleanup.push(() => host.close());
+
+    const call = FunctionCall.create({
+      id: 'item_a1/fnc_0',
+      callId: 'call_1',
+      name: 'lookup',
+      args: '{"q":"x"}',
+    });
+    const output = FunctionCallOutput.create({
+      id: 'item_b2',
+      callId: 'call_1',
+      name: 'lookup',
+      output: 'found',
+      isError: false,
+    });
+    session.emit(
+      AgentSessionEventTypes.FunctionToolsExecuted,
+      createFunctionToolsExecutedEvent({ functionCalls: [call], functionCallOutputs: [output] }),
+    );
+
+    await vi.waitFor(() => expect(transport.sent).toHaveLength(1));
+    const event = transport.sent[0]?.message;
+    expect(event?.case).toBe('event');
+    const executed = event?.case === 'event' ? event.value.event : undefined;
+    expect(executed?.case).toBe('functionToolsExecuted');
+    if (executed?.case !== 'functionToolsExecuted') return;
+    // a consumer cites these items by id, so they must match the stored transcript's
+    expect(executed.value.functionCalls).toEqual([encodeChatItem(call).item.value]);
+    expect(executed.value.functionCallOutputs).toEqual([encodeChatItem(output).item.value]);
+    expect(executed.value.functionCalls[0]?.id).toBe('item_a1/fnc_0');
+    expect(executed.value.functionCallOutputs[0]?.id).toBe('item_b2');
   });
 });
 
