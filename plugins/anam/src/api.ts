@@ -44,6 +44,8 @@ export class AnamAPI {
         if (redactedHeaders.Authorization) {
           redactedHeaders.Authorization = 'Bearer ****';
         }
+        // The body carries app content such as director-notes style prompts,
+        // so it is logged under an lk.pii. key that log redaction drops.
         const redactedBody = (() => {
           if (body && typeof body === 'object') {
             try {
@@ -63,7 +65,7 @@ export class AnamAPI {
             url,
             method: 'POST',
             headers: redactedHeaders,
-            body: redactedBody,
+            'lk.pii.body': redactedBody,
             attempt: attempt + 1,
           },
           'calling Anam API',
@@ -82,7 +84,7 @@ export class AnamAPI {
               url,
               method: 'POST',
               headers: redactedHeaders,
-              body: redactedBody,
+              'lk.pii.body': redactedBody,
               status: res.status,
               response: text,
             },
@@ -100,7 +102,7 @@ export class AnamAPI {
           {
             url,
             method: 'POST',
-            body:
+            'lk.pii.body':
               body && typeof body === 'object'
                 ? { ...(body as Record<string, unknown>), livekitToken: '****' }
                 : body,
