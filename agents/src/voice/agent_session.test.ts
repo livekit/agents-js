@@ -7,7 +7,7 @@ import { APIConnectionError } from '../_exceptions.js';
 import { type JobContext, runWithJobContext } from '../job.js';
 import type { STTError } from '../stt/stt.js';
 import { Future } from '../utils.js';
-import { AgentSession, resolveRecordingOptions } from './agent_session.js';
+import { AgentSession, jobLogFileIsExported, resolveRecordingOptions } from './agent_session.js';
 import { AgentSessionEventTypes, CloseReason, createUserInputTranscribedEvent } from './events.js';
 import { SpeechHandle } from './speech_handle.js';
 
@@ -205,6 +205,19 @@ describe('AgentSession.run', () => {
         inputModality: 'audio',
       });
     });
+  });
+});
+
+describe('jobLogFileIsExported', () => {
+  it.each([
+    [false, false, true],
+    [false, true, true],
+    [true, true, true],
+    [true, { audio: false }, true],
+    [true, false, false],
+    [true, { logs: false }, false],
+  ] as const)('record given %s as %j exports %s', (recordIsGiven, record, exported) => {
+    expect(jobLogFileIsExported(recordIsGiven, resolveRecordingOptions(record))).toBe(exported);
   });
 });
 

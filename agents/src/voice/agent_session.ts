@@ -231,6 +231,21 @@ export function resolveRecordingOptions(
   return { ...RECORDING_ALL_ON, ...record };
 }
 
+/**
+ * Whether the job's hosted log file is exported: yes, unless the code turned logs off.
+ *
+ * The server's recording setting does not decide this. LiveKit Cloud decides for the project
+ * when it receives the logs, so that it can change without a new SDK.
+ *
+ * @internal
+ */
+export function jobLogFileIsExported(
+  recordIsGiven: boolean,
+  options: ResolvedRecordingOptions,
+): boolean {
+  return !(recordIsGiven && !options.logs);
+}
+
 export interface InternalSessionOptions<UserData> extends AgentSessionOptions<UserData> {
   turnHandling: InternalTurnHandlingOptions;
   useTtsAlignedTranscript: boolean;
@@ -1112,6 +1127,10 @@ export class AgentSession<
       }
 
       this.sessionOptions.recordingOptions = resolveRecordingOptions(record);
+      const exportJobLogFile = jobLogFileIsExported(
+        recordIsGiven,
+        this.sessionOptions.recordingOptions,
+      );
       if (this._textOnly) {
         this.sessionOptions.recordingOptions.audio = false;
       }
@@ -1134,7 +1153,7 @@ export class AgentSession<
       ctx._redactionEnabled = Boolean(
         ctx._redactionEnabled || this.sessionOptions.recordingOptions.redaction,
       );
-      await ctx.initRecording(this.sessionOptions.recordingOptions);
+      await ctx.initRecording(this.sessionOptions.recordingOptions, exportJobLogFile);
     }
 
     this._redactionEnabled = Boolean(

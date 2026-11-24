@@ -169,7 +169,7 @@ describe('AgentSession text-only gating', () => {
       redaction: false,
       inputDelta: false,
     });
-    expect(initRecording).toHaveBeenCalledWith(session.sessionOptions.recordingOptions);
+    expect(initRecording).toHaveBeenCalledWith(session.sessionOptions.recordingOptions, true);
     await session.close();
   });
 
@@ -187,6 +187,7 @@ describe('AgentSession text-only gating', () => {
 
     expect(initRecording).toHaveBeenCalledWith(
       expect.objectContaining({ audio: false, traces: false, logs: false, transcript: false }),
+      false,
     );
     await session.close();
   });
