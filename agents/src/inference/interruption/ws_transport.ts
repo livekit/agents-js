@@ -88,6 +88,8 @@ export function resolveEffectiveThreshold(
   return null;
 }
 
+const noopErrorHandler = () => {};
+
 /**
  * Creates a WebSocket connection and waits for it to open.
  */
@@ -102,45 +104,76 @@ async function connectWebSocket(
     headers: { ...buildMetadataHeaders(), Authorization: `Bearer ${token}` },
   });
 
+  let opened = false;
   try {
     await new ThrowsPromise<void, APIStatusError | APITimeoutError | APIConnectionError>(
       (resolve, reject) => {
-        const timeout = setTimeout(() => {
+        let settled = false;
+
+        const cleanup = () => {
+          ws.off('open', onOpen);
+          ws.off('unexpected-response', onUnexpectedResponse);
+          ws.off('error', onError);
+        };
+
+        const onOpen = () => {
+          clearTimeout(timeout);
+          if (settled) return;
+          settled = true;
+          opened = true;
+          cleanup();
+          resolve();
+        };
+
+        const abortAndReject = (err: APIStatusError | APITimeoutError | APIConnectionError) => {
+          clearTimeout(timeout);
+          if (settled) return;
+          settled = true;
+          cleanup();
+          // Attach a no-op error guard before terminating: ws.terminate() triggers
+          // abortHandshake() and emits 'error' asynchronously, which throws uncaught
+          // if all error listeners were stripped before or upon promise rejection.
+          ws.on('error', noopErrorHandler);
           ws.terminate();
-          reject(
+          reject(err);
+        };
+
+        const onUnexpectedResponse = (_req: unknown, res: { statusCode?: number }) => {
+          const statusCode = res.statusCode ?? -1;
+          abortAndReject(
+            new APIStatusError({
+              message: `WebSocket connection rejected with status ${statusCode}`,
+              options: { statusCode, retryable: false },
+            }),
+          );
+        };
+
+        const onError = (err: Error) => {
+          abortAndReject(
+            new APIConnectionError({ message: `WebSocket connection error: ${err.message}` }),
+          );
+        };
+
+        const timeout = setTimeout(() => {
+          abortAndReject(
             new APITimeoutError({
               message: 'WebSocket connection timeout',
               options: { retryable: false },
             }),
           );
         }, options.connectTimeout);
-        ws.once('open', () => {
-          clearTimeout(timeout);
-          resolve();
-        });
-        ws.once('unexpected-response', (_req, res) => {
-          clearTimeout(timeout);
-          ws.terminate();
-          const statusCode = res.statusCode ?? -1;
-          reject(
-            new APIStatusError({
-              message: `WebSocket connection rejected with status ${statusCode}`,
-              options: { statusCode, retryable: false },
-            }),
-          );
-        });
-        ws.once('error', (err: Error) => {
-          clearTimeout(timeout);
-          ws.terminate();
-          reject(new APIConnectionError({ message: `WebSocket connection error: ${err.message}` }));
-        });
+
+        ws.once('open', onOpen);
+        ws.once('unexpected-response', onUnexpectedResponse);
+        ws.once('error', onError);
       },
     );
   } finally {
-    // Drop the connection-phase once() listeners so a later socket error can't fire the stale
-    // once('error') alongside the operational on('error'). Safe to remove all: the message handler
-    // is attached after this returns.
-    ws.removeAllListeners();
+    // Only strip handshake listeners on opened sockets so the error guard stays attached
+    // throughout asynchronous teardown of failed/terminated connections.
+    if (opened) {
+      ws.removeAllListeners();
+    }
   }
 
   return ws;
@@ -431,9 +464,13 @@ export function createWsTransport(
     }
     // The abandoned socket can still emit 'error' during its close handshake; that handler closes
     // over the shared outputController, so a late error would tear down the replacement stream.
-    activeWs?.removeAllListeners();
-    activeWs?.close(1000); // signal normal websocket closure
-    activeWs = null;
+    // Keep a no-op error handler attached so teardown/abortHandshake errors never go uncaught.
+    if (activeWs) {
+      activeWs.removeAllListeners();
+      activeWs.on('error', noopErrorHandler);
+      activeWs.close(1000); // signal normal websocket closure
+      activeWs = null;
+    }
   }
 
   function close(): void {
@@ -490,6 +527,7 @@ export function createWsTransport(
         await ensureConnection().catch((e) => {
           controller.error(e);
         });
+        if (closed) closeSocket();
         void reconnectWatcher();
       },
 
