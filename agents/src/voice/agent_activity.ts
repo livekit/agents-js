@@ -2673,15 +2673,15 @@ export class AgentActivity implements RecognitionHooks {
     this.cancelPreemptiveGeneration();
   }
 
-  /**
-   * Cancel all pending speeches or generations, only preserve active or paused playback.
-   * @internal
-   */
   /** @internal Speech waiting in the queue, not yet the current speech. */
   get _queuedSpeeches(): SpeechHandle[] {
     return [...this.speechQueue.clone()].map(([, , speech]) => speech);
   }
 
+  /**
+   * Cancel all pending speeches or generations, only preserve active or paused playback.
+   * @internal
+   */
   _cancelPendingSpeeches(): void {
     this.cancelPreemptiveGeneration();
     for (const [, , speech] of this.speechQueue.clone()) {
