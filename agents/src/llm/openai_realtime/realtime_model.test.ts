@@ -141,6 +141,57 @@ describe('RealtimeSession.generateReply', () => {
     );
   });
 
+  it('sends per-response tool choice and tools on response.create', async () => {
+    const session = createSessionForTest();
+    const lookup = llm.tool({
+      name: 'lookup',
+      description: 'Look up an order',
+      parameters: { type: 'object', properties: {} },
+      execute: async () => 'found',
+    });
+    const abortController = new AbortController();
+
+    const promise = session.generateReply(undefined, {
+      signal: abortController.signal,
+      toolChoice: 'required',
+      tools: new llm.ToolContext([lookup]),
+    });
+    abortController.abort();
+
+    await expect(promise).rejects.toThrow('generateReply aborted');
+    expect(session.sendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'response.create',
+        response: expect.objectContaining({
+          tool_choice: 'required',
+          tools: [
+            {
+              type: 'function',
+              name: 'lookup',
+              description: 'Look up an order',
+              parameters: { type: 'object', properties: {} },
+            },
+          ],
+        }),
+      }),
+    );
+  });
+
+  it('omits tool choice and tools from response.create when not given', async () => {
+    const session = createSessionForTest();
+    const abortController = new AbortController();
+
+    const promise = session.generateReply('say hi', { signal: abortController.signal });
+    abortController.abort();
+
+    await expect(promise).rejects.toThrow('generateReply aborted');
+    const responseCreate = session.sendEvent.mock.calls
+      .map(([event]) => event as api_proto.ClientEvent)
+      .find((event) => event.type === 'response.create') as api_proto.ResponseCreateEvent;
+    expect(responseCreate.response).not.toHaveProperty('tool_choice');
+    expect(responseCreate.response).not.toHaveProperty('tools');
+  });
+
   it('cancels an in-flight response when aborted before response.created', async () => {
     const session = createSessionForTest();
     const abortController = new AbortController();

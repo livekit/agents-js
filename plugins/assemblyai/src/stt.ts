@@ -107,7 +107,9 @@ function normalizeUpdateOptions(
   speechModel: STTModels,
 ): Partial<STTOptions> {
   const nextOpts = { ...opts };
-  if (nextOpts.speechModel === 'u3-pro') nextOpts.speechModel = 'universal-3-5-pro';
+  if (nextOpts.speechModel === 'u3-pro') {
+    nextOpts.speechModel = 'assemblyai-stt-3-7-realtime-agent';
+  }
   // UpdateConfiguration cannot change the model of an existing provider session.
   if (nextOpts.speechModel !== undefined && nextOpts.speechModel !== speechModel) {
     throw new Error('speechModel cannot be changed via updateOptions; create a new STT instead.');
@@ -255,7 +257,7 @@ const defaultSTTOptions: STTOptions = {
   sampleRate: 16000,
   bufferSizeMs: 50,
   encoding: 'pcm_s16le',
-  speechModel: 'universal-3-5-pro',
+  speechModel: 'assemblyai-stt-3-7-realtime-agent',
   baseUrl: 'wss://streaming.assemblyai.com',
 };
 
@@ -301,8 +303,8 @@ export class STT extends stt.STT {
     });
 
     if (opts.speechModel === 'u3-pro') {
-      log().warn("'u3-pro' is deprecated, use 'universal-3-5-pro' instead.");
-      opts.speechModel = 'universal-3-5-pro';
+      log().warn("'u3-pro' is deprecated, use 'assemblyai-stt-3-7-realtime-agent' instead.");
+      opts.speechModel = 'assemblyai-stt-3-7-realtime-agent';
     }
 
     const speechModel = opts.speechModel ?? defaultSTTOptions.speechModel;

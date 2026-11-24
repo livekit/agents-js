@@ -195,6 +195,26 @@ export class AvatarSession extends voice.AvatarSession {
   }
 
   /**
+   * Remove the avatar from the room and end its Tavus conversation. Runs automatically at job
+   * shutdown when the session was started inside a job.
+   */
+  override async aclose(): Promise<void> {
+    await super.aclose();
+
+    const conversationId = this.conversationId;
+    if (conversationId === null) {
+      return;
+    }
+    this.conversationId = null;
+    // the replica keeps running until the conversation ends
+    try {
+      await this.api.endConversation(conversationId);
+    } catch (error) {
+      this.#logger.warn({ conversationId, error }, 'failed to end the tavus conversation');
+    }
+  }
+
+  /**
    * Set the avatar's facial emotion. The avatar keeps it until the next call;
    * an unsupported emotion sets `'neutral'`. Call it after `waitForJoin()`: an
    * emotion sent before the avatar joins the room is dropped.

@@ -162,6 +162,9 @@ export class SpeechHandle {
   /** @internal */
   _tasks: Task<void>[] = [];
 
+  /** @internal Set for a speech that AMD starts itself, which plays while AMD holds other replies. */
+  _bypassAuthorizationPause = false;
+
   /** @internal */
   _numSteps = 1;
   /**

@@ -170,6 +170,11 @@ export abstract class AudioOutput extends EventEmitter {
     return this.capabilities.pause && (this.nextInChain?.canPause ?? true);
   }
 
+  /** @internal Whether the playback start event can be emitted before playback. */
+  get _playbackStartIsEstimated(): boolean {
+    return this.nextInChain?._playbackStartIsEstimated ?? false;
+  }
+
   /**
    * Capture an audio frame for playback, frames can be pushed faster than real-time
    */

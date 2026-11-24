@@ -49,6 +49,9 @@ const MAX_RECONNECT_ATTEMPTS = 10;
 const ASSIGNMENT_TIMEOUT = 7.5 * 1000;
 const UPDATE_STATUS_INTERVAL = 1.5 * 1000;
 const UPDATE_LOAD_INTERVAL = 0.5 * 1000;
+const WORKER_PING_INTERVAL = 1000;
+const WORKER_PONG_TIMEOUT = 2000;
+const WORKER_REGISTRATION_TIMEOUT = 10_000;
 // number of load samples averaged by the default load function (2.5s window)
 const LOAD_AVG_SAMPLES = 5;
 const DRAIN_TIMEOUT = 60 * 60 * 1000;
@@ -535,9 +538,9 @@ export class AgentServer {
 
     const workerWS = async () => {
       let retries = 0;
-      this.#connecting = true;
 
       while (!this.#closed) {
+        this.#connecting = true;
         const url = new URL(this.#opts.wsURL);
         url.protocol = url.protocol.replace('http', 'ws');
         const token = new AccessToken(this.#opts.apiKey, this.#opts.apiSecret);
@@ -558,11 +561,11 @@ export class AgentServer {
             this.#session!.on('close', (code) => reject(new Error(`WebSocket returned ${code}`)));
           });
 
-          retries = 0;
           this.#logger.debug('connected to LiveKit server');
           await this.#runWS(this.#session);
         } catch (e: unknown) {
           if (this.#closed) return;
+          if (!this.#connecting) retries = 0;
           if (retries >= this.#opts.maxRetry) {
             throw new WorkerError(
               `failed to connect to LiveKit server (${this.#opts.wsURL}) after ${retries} attempts: ${e}`,
@@ -751,6 +754,24 @@ export class AgentServer {
 
   async #runWS(ws: WebSocket) {
     let closingWS = false;
+    let heartbeat: NodeJS.Timeout | undefined;
+    let pendingPing: { timestamp: bigint; timeout: NodeJS.Timeout } | undefined;
+
+    const sendPing = () => {
+      if (pendingPing || ws.readyState !== WebSocket.OPEN) return;
+      const timestamp = BigInt(Date.now());
+      const timeout = setTimeout(() => {
+        this.#logger.warn('worker ping timed out waiting for LiveKit pong');
+        ws.terminate();
+      }, WORKER_PONG_TIMEOUT);
+      pendingPing = { timestamp, timeout };
+      ws.send(new WorkerMessage({ message: { case: 'ping', value: { timestamp } } }).toBinary());
+    };
+
+    const registerTimeout = setTimeout(() => {
+      this.#logger.warn('worker registration timed out');
+      ws.terminate();
+    }, WORKER_REGISTRATION_TIMEOUT);
 
     const close = new ThrowsPromise<void, APIStatusError>((resolve, reject) => {
       ws.addEventListener('close', (event) => {
@@ -812,6 +833,7 @@ export class AgentServer {
 
       switch (msg.message.case) {
         case 'register': {
+          clearTimeout(registerTimeout);
           this.#id = msg.message.value.workerId;
           this.#logger
             .child({
@@ -832,6 +854,10 @@ export class AgentServer {
           // the server learns the running jobs before their queued updates
           this.#reportActiveJobs();
           for (const queued of this.#msgQueue.splice(0)) ws.send(queued.toBinary());
+          if (!heartbeat) {
+            sendPing();
+            heartbeat = setInterval(sendPing, WORKER_PING_INTERVAL);
+          }
           break;
         }
         case 'availability': {
@@ -858,6 +884,13 @@ export class AgentServer {
             task?.resolve(msg.message.value);
           } else {
             this.#logger.child({ job }).warn('received assignment for unknown job ' + job.id);
+          }
+          break;
+        }
+        case 'pong': {
+          if (pendingPing?.timestamp === msg.message.value.lastTimestamp) {
+            clearTimeout(pendingPing.timeout);
+            pendingPing = undefined;
           }
           break;
         }
@@ -961,6 +994,9 @@ export class AgentServer {
     try {
       await close;
     } finally {
+      clearTimeout(registerTimeout);
+      clearTimeout(pendingPing?.timeout);
+      clearInterval(heartbeat);
       // stop the sampler only after the last status tick, as a tick starts it again
       clearInterval(loadMonitor);
       DefaultLoadCalc.stop();

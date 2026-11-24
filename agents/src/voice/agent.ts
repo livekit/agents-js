@@ -334,6 +334,23 @@ export class Agent<UserData = any> {
     return this._turnHandling;
   }
 
+  /** @internal The agent's own interruption setting; `undefined` uses the session's. */
+  get _interruptionEnabled(): boolean | undefined {
+    return this._turnHandling?.interruption?.enabled;
+  }
+
+  /** @internal Set or clear (`undefined`) the agent's own interruption setting. */
+  _setInterruptionEnabled(enabled: boolean | undefined): void {
+    const { enabled: _previous, ...interruption } = this._turnHandling?.interruption ?? {};
+    const { interruption: _interruption, ...turnHandling } = this._turnHandling ?? {};
+    if (enabled !== undefined) {
+      Object.assign(interruption, { enabled });
+    }
+    const next: Partial<TurnHandlingOptions> =
+      Object.keys(interruption).length > 0 ? { ...turnHandling, interruption } : turnHandling;
+    this._turnHandling = Object.keys(next).length > 0 ? next : undefined;
+  }
+
   get minConsecutiveSpeechDelay(): number | undefined {
     return this._minConsecutiveSpeechDelay;
   }

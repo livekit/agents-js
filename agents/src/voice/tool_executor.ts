@@ -17,6 +17,7 @@ import {
   Toolset,
   isFunctionTool,
   isToolError,
+  isToolResult,
   tool,
 } from '../llm/tool_context.js';
 import { log } from '../log.js';
@@ -554,9 +555,14 @@ export class ToolExecutor {
     if (!this.runningTasks.has(runCtx.functionCall.callId)) {
       return;
     }
+    let replyRequired = output !== null && output !== undefined;
+    if (isToolResult(output)) {
+      replyRequired = output.replyRequired;
+      output = output.output;
+    }
     const pair = runCtx._makeUpdatePair(output, '_final');
     pair[1].isError = exception !== undefined;
-    pair[1].replyRequired = output !== null && output !== undefined;
+    pair[1].replyRequired = replyRequired;
     runCtx._recordUpdatePair(pair);
     // a return is a result to act on, unlike a report, so the reply that phrases it is as free
     // to call something as the reply to an ordinary tool would be
@@ -621,6 +627,12 @@ export class ToolExecutor {
         await waitUntilAborted(session.waitForIdle(), signal);
       }
       if (signal.aborted) return;
+
+      if (session.amd) {
+        // AMD owns replies while it runs; its next reply sees the updates in the chat context
+        this.pendingUpdates = [];
+        return;
+      }
 
       const updates = [...this.pendingUpdates];
       this.pendingUpdates = [];
