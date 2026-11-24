@@ -371,6 +371,9 @@ importers:
       '@livekit/noise-cancellation-node':
         specifier: ^0.1.9
         version: 0.1.9
+      '@livekit/plugins-ai-coustics':
+        specifier: ^0.3.6
+        version: 0.3.6(@livekit/agents@agents)(@livekit/rtc-node@1.2.2)
       '@livekit/rtc-node':
         specifier: 'catalog:'
         version: 1.2.2
@@ -2544,6 +2547,38 @@ packages:
     cpu: [x64]
     os: [win32]
 
+  '@livekit/plugins-ai-coustics-aarch64-apple-darwin@0.3.6':
+    resolution: {integrity: sha512-GUXOk/RZeZ/RbtmwYAStRNJQ7crLTZTv4cuFHZH3yQuiGglYrh3Yr0iOEfr0VZ01KNw/bX72o8Z5p5lOug9bXg==}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@livekit/plugins-ai-coustics-aarch64-unknown-linux-gnu@0.3.6':
+    resolution: {integrity: sha512-xk+LNILYNOfBngSMre4DqoxthAwq6AyyVmX40hokdJWl4FTFgMg4ohV1EMs95jytMD1sCNlEAXhIUP9y+i+0rw==}
+    cpu: [arm64]
+    os: [linux]
+
+  '@livekit/plugins-ai-coustics-x86_64-apple-darwin@0.3.6':
+    resolution: {integrity: sha512-pIuBgCOb/0BYLjrYVcHAg+mcrJc1b9iG0dQ7PJxnEwxbALsgUR8pqf1sjvQ8yYn5QtYrShqGfLIRZhihDcsoVg==}
+    cpu: [x64]
+    os: [darwin]
+
+  '@livekit/plugins-ai-coustics-x86_64-pc-windows-msvc@0.3.6':
+    resolution: {integrity: sha512-d0AdOlsom8PFYUw1+8z/CEqclh6ZBwhiqhOM+NJ5LT+gCL1wmcg/LOV8D32WOg2bUzaX1B+M2nmWOZzRYFZZHg==}
+    cpu: [x64]
+    os: [win32]
+
+  '@livekit/plugins-ai-coustics-x86_64-unknown-linux-gnu@0.3.6':
+    resolution: {integrity: sha512-oSbN1/rwgqfygsX6xkj21AUo34kKy4MDdZNny2Rs08z33lB8PIQIQCQ7MT5DGQSO3zrieaV3Nhaj3SDsQAIPNQ==}
+    cpu: [x64]
+    os: [linux]
+
+  '@livekit/plugins-ai-coustics@0.3.6':
+    resolution: {integrity: sha512-RAmfwVoqoDaR7AkguJ8wSpi0a1xKQTyXheC3pPMtQdhaTyTNcK4lU9M88H0O9/gZR1A/Fbi9l2oqTXW1SSkFyg==}
+    engines: {node: '>= 18'}
+    peerDependencies:
+      '@livekit/agents': ^1.0.43
+      '@livekit/rtc-node': ^1.1.0
+
   '@livekit/plugins-krisp-viva-aarch64-apple-darwin@0.2.3':
     resolution: {integrity: sha512-qmh7YqsVF/qtEXcdkShF3wM6zjvOi4eNXwXBaug6D2Z1KLsu8Wt6Ka4v3x0K9CFzh02qAEEGB2U5Lp8w/VvA5A==}
     engines: {node: '>= 18'}
@@ -3440,6 +3475,56 @@ packages:
   '@typespec/ts-http-runtime@0.3.6':
     resolution: {integrity: sha512-jIXhD0eWQ1JA6ln/5Dltyx22UxWNrw0hZmhy2rlv6m6KgF7kplHx3g0fzi09lNmTJQRR91OlemYp3xFnvDK9og==}
     engines: {node: '>=20.0.0'}
+
+  '@ubjs/core@0.31.0-5':
+    resolution: {integrity: sha512-oRBRtyYOhaodiOY3rLMZFgAHGFMmD44XefMpsAx4Ja0/rO+45kVdQB1VZsblQMLYxP965i3IHm56eymgo3I5eQ==}
+
+  '@ubjs/node-darwin-arm64@0.31.0-5':
+    resolution: {integrity: sha512-ZefUcOgW0UkPZe9aav021m1hBfBzzhj75gOS/gc85g2PkmWDctz+D+tKQYs/gwM44vu1We2WTGcitf8yrZJGyA==}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@ubjs/node-darwin-x64@0.31.0-5':
+    resolution: {integrity: sha512-K4A5k8hsLeOtgG4tT73u/XKfxUUOjWxwjRf3e4v3sggG6b7q3yoSFUwPjf12la6VSgD/E9sRjrTAT7MNdENaww==}
+    cpu: [x64]
+    os: [darwin]
+
+  '@ubjs/node-linux-arm64-gnu@0.31.0-5':
+    resolution: {integrity: sha512-m4S96owMdh53G6w6hALi7nfsUhB+Y6bAcjVJnRdzVe5WJ+o2dMTbj9u/IxtcJaENtLLEMDPHhLAZmxQS9Licew==}
+    cpu: [arm64]
+    os: [linux]
+    libc: [glibc]
+
+  '@ubjs/node-linux-arm64-musl@0.31.0-5':
+    resolution: {integrity: sha512-VVkXe8We9ka8FZqJfsbl4DEkbn4nt4htSCd2Vr39L9kOrBtNZ8SR0s+BiMQ8xBQnP6u+O95TrhOviROCDj2VSw==}
+    cpu: [arm64]
+    os: [linux]
+    libc: [musl]
+
+  '@ubjs/node-linux-x64-gnu@0.31.0-5':
+    resolution: {integrity: sha512-xFvl3iGWBVqghmz9lC4qij+ezLHV5V11O/6G+0rM7a/nAQdweCSCeZ65QsiVoqC/bYJ7fKIyKCXFMy5ldhSQvw==}
+    cpu: [x64]
+    os: [linux]
+    libc: [glibc]
+
+  '@ubjs/node-linux-x64-musl@0.31.0-5':
+    resolution: {integrity: sha512-R3HzFVI+v9G5CVOFOSxhF9SYX1o/6llA9mQbaANYMANuybE6LNJ8fgj51CTRrhobjWmgA24swq24DqbVsqypZg==}
+    cpu: [x64]
+    os: [linux]
+    libc: [musl]
+
+  '@ubjs/node-win32-arm64-msvc@0.31.0-5':
+    resolution: {integrity: sha512-A7Z6lYqY0QQF4j3ce/3k1iIjgJIMWje3wTU9RfOTDSl0hcKKHDezvwvLiLBbVjagwJQOKWO5zwWLBAw6KTUDHQ==}
+    cpu: [arm64]
+    os: [win32]
+
+  '@ubjs/node-win32-x64-msvc@0.31.0-5':
+    resolution: {integrity: sha512-rqaH2YZBjUphSV8nFseeTG5vJMToDt8QhoY4wKULGZr2OF/HM52Ggt/9yb+gsuJ1l4ekz2biJrlN/HlhyV3CZw==}
+    cpu: [x64]
+    os: [win32]
+
+  '@ubjs/node@0.31.0-5':
+    resolution: {integrity: sha512-w1gyA/1H7TiJIQfHD6Zjr673IDfG+1a4hpM0f0krxJr9jlTkrwouFCoNTwpLmSxSWJXtUxkB19Bk0ekxAepOHQ==}
 
   '@ungap/structured-clone@1.2.0':
     resolution: {integrity: sha512-zuVdFrMJiuCDQUMCzQaD6KL28MjnqqN8XnAqiEq9PNm/hCPTSGfrXCOfwj1ow4LFb/tNymJPwsNbVePc1xFqrQ==}
@@ -5369,6 +5454,10 @@ packages:
     resolution: {integrity: sha512-ip4qdzjkAyDDZklUaZkcRFb2iA118H9SgRh8yzTkSQK8HilsOJF7rSY8HoW5+I0M46AZgX/pxbprf2vvzQCE0Q==}
     hasBin: true
 
+  pino@9.13.1:
+    resolution: {integrity: sha512-Szuj+ViDTjKPQYiKumGmEn3frdl+ZPSdosHyt9SnUevFosOkMY2b7ipxlEctNKPmMD/VibeBI+ZcZCJK+4DPuw==}
+    hasBin: true
+
   pino@9.6.0:
     resolution: {integrity: sha512-i85pKRCt4qMjZ1+L7sy2Ag4t1atFcdbEt76+7iRJn1g2BvsnRMGu9p8pivl9fs63M2kF/A0OacFZhTub+m/qMg==}
     hasBin: true
@@ -5433,6 +5522,9 @@ packages:
 
   process-warning@4.0.1:
     resolution: {integrity: sha512-3c2LzQ3rY9d0hc1emcsHhfT9Jwz0cChib/QN89oME2R451w5fy3f0afAhERFZAwrbDU43wk12d0ORBpDVME50Q==}
+
+  process-warning@5.1.1:
+    resolution: {integrity: sha512-oCkNVj4OKnKEcocVBcDfiIugN1/cE6rgfT3nCtzeqZPA8+rIxMaQ0xXzIkGP8Gj2qUaP1UR7uhJ1VD8lUCpzCg==}
 
   process@0.11.10:
     resolution: {integrity: sha512-cdGef/drWFoydD1JsMzuFf8100nZl+GT+yacc2bEced5f9Rjk4z+WtFUTBu9PhOi9j/jfmBPu0mMEY4wIdAF8A==}
@@ -5696,6 +5788,9 @@ packages:
   slash@3.0.0:
     resolution: {integrity: sha512-g9Q1haeby36OSStwb4ntCGGGaKsaVSjQ68fBxoQcutl5fS1vuY18H3wSt3jFyFtrkx+Kz0V1G85A4MyAdDMi2Q==}
     engines: {node: '>=8'}
+
+  slow-redact@0.3.2:
+    resolution: {integrity: sha512-MseHyi2+E/hBRqdOi5COy6wZ7j7DxXRz9NkseavNYSvvWC06D8a5cidVZX3tcG5eCW3NIyVU4zT63hw0Q486jw==}
 
   sonic-boom@3.8.1:
     resolution: {integrity: sha512-y4Z8LCDBuum+PBP3lSV7RHrXscqksve/bi0as7mhwVnBW+/wUqKT/2Kb7um8yqcFy0duYbbPxzt89Zy2nOCaxg==}
@@ -7002,6 +7097,36 @@ snapshots:
   '@livekit/noise-cancellation-win32-x64@0.1.9':
     optional: true
 
+  '@livekit/plugins-ai-coustics-aarch64-apple-darwin@0.3.6':
+    optional: true
+
+  '@livekit/plugins-ai-coustics-aarch64-unknown-linux-gnu@0.3.6':
+    optional: true
+
+  '@livekit/plugins-ai-coustics-x86_64-apple-darwin@0.3.6':
+    optional: true
+
+  '@livekit/plugins-ai-coustics-x86_64-pc-windows-msvc@0.3.6':
+    optional: true
+
+  '@livekit/plugins-ai-coustics-x86_64-unknown-linux-gnu@0.3.6':
+    optional: true
+
+  '@livekit/plugins-ai-coustics@0.3.6(@livekit/agents@agents)(@livekit/rtc-node@1.2.2)':
+    dependencies:
+      '@livekit/agents': link:agents
+      '@livekit/rtc-node': 1.2.2
+      '@ubjs/core': 0.31.0-5
+      '@ubjs/node': 0.31.0-5
+      pino: 9.13.1
+      pino-pretty: 13.2.0
+    optionalDependencies:
+      '@livekit/plugins-ai-coustics-aarch64-apple-darwin': 0.3.6
+      '@livekit/plugins-ai-coustics-aarch64-unknown-linux-gnu': 0.3.6
+      '@livekit/plugins-ai-coustics-x86_64-apple-darwin': 0.3.6
+      '@livekit/plugins-ai-coustics-x86_64-pc-windows-msvc': 0.3.6
+      '@livekit/plugins-ai-coustics-x86_64-unknown-linux-gnu': 0.3.6
+
   '@livekit/plugins-krisp-viva-aarch64-apple-darwin@0.2.3':
     optional: true
 
@@ -7899,6 +8024,43 @@ snapshots:
       tslib: 2.6.2
     transitivePeerDependencies:
       - supports-color
+
+  '@ubjs/core@0.31.0-5': {}
+
+  '@ubjs/node-darwin-arm64@0.31.0-5':
+    optional: true
+
+  '@ubjs/node-darwin-x64@0.31.0-5':
+    optional: true
+
+  '@ubjs/node-linux-arm64-gnu@0.31.0-5':
+    optional: true
+
+  '@ubjs/node-linux-arm64-musl@0.31.0-5':
+    optional: true
+
+  '@ubjs/node-linux-x64-gnu@0.31.0-5':
+    optional: true
+
+  '@ubjs/node-linux-x64-musl@0.31.0-5':
+    optional: true
+
+  '@ubjs/node-win32-arm64-msvc@0.31.0-5':
+    optional: true
+
+  '@ubjs/node-win32-x64-msvc@0.31.0-5':
+    optional: true
+
+  '@ubjs/node@0.31.0-5':
+    optionalDependencies:
+      '@ubjs/node-darwin-arm64': 0.31.0-5
+      '@ubjs/node-darwin-x64': 0.31.0-5
+      '@ubjs/node-linux-arm64-gnu': 0.31.0-5
+      '@ubjs/node-linux-arm64-musl': 0.31.0-5
+      '@ubjs/node-linux-x64-gnu': 0.31.0-5
+      '@ubjs/node-linux-x64-musl': 0.31.0-5
+      '@ubjs/node-win32-arm64-msvc': 0.31.0-5
+      '@ubjs/node-win32-x64-msvc': 0.31.0-5
 
   '@ungap/structured-clone@1.2.0': {}
 
@@ -10054,6 +10216,20 @@ snapshots:
       sonic-boom: 3.8.1
       thread-stream: 2.7.0
 
+  pino@9.13.1:
+    dependencies:
+      atomic-sleep: 1.0.0
+      on-exit-leak-free: 2.1.2
+      pino-abstract-transport: 2.0.0
+      pino-std-serializers: 7.0.0
+      process-warning: 5.1.1
+      quick-format-unescaped: 4.0.4
+      real-require: 0.2.0
+      safe-stable-stringify: 2.4.3
+      slow-redact: 0.3.2
+      sonic-boom: 4.2.0
+      thread-stream: 3.1.0
+
   pino@9.6.0:
     dependencies:
       atomic-sleep: 1.0.0
@@ -10102,6 +10278,8 @@ snapshots:
   process-warning@3.0.0: {}
 
   process-warning@4.0.1: {}
+
+  process-warning@5.1.1: {}
 
   process@0.11.10: {}
 
@@ -10528,6 +10706,8 @@ snapshots:
   signal-exit@4.1.0: {}
 
   slash@3.0.0: {}
+
+  slow-redact@0.3.2: {}
 
   sonic-boom@3.8.1:
     dependencies:
