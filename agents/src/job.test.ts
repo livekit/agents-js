@@ -550,3 +550,91 @@ describe('JobContext rpc tracing', () => {
     }
   });
 });
+
+describe('JobContext hosted log decision', () => {
+  const options = {
+    audio: false,
+    traces: false,
+    logs: false,
+    transcript: true,
+    redaction: true,
+  };
+
+  function withOutput(enableRedaction = false, enableRecording = false) {
+    const { ctx } = createJobContextWithRoom({}, { enableRedaction, enableRecording });
+    const decide = vi.fn();
+    const output = { decided: false, decide };
+    ctx._hostedOutput = output as unknown as NonNullable<JobContext['_hostedOutput']>;
+    decide.mockImplementation(() => {
+      output.decided = true;
+    });
+    return { ctx, decide };
+  }
+
+  it('decides from the session options', async () => {
+    const { ctx, decide } = withOutput();
+    await ctx.initRecording(options);
+    expect(decide).toHaveBeenCalledWith({ logs: false, redaction: true });
+  });
+
+  it('lets a valid retry decide after rejected options', async () => {
+    const { ctx, decide } = withOutput();
+    await expect(
+      ctx.initRecording({ ...options, audio: true, transcript: false }),
+    ).rejects.toThrow();
+    expect(decide).not.toHaveBeenCalled();
+    await ctx.initRecording({ ...options, logs: true });
+    expect(decide).toHaveBeenCalledWith({ logs: true, redaction: true });
+  });
+
+  it('uses the rejected options at cleanup when no call succeeded', async () => {
+    const { ctx, decide } = withOutput();
+    await expect(
+      ctx.initRecording({ ...options, audio: true, transcript: false }),
+    ).rejects.toThrow();
+    ctx._recordingInitialized = true;
+    ctx._onCleanup();
+    expect(decide).toHaveBeenCalledWith({ logs: false, redaction: true });
+  });
+
+  it('keeps redaction on when a later session does not ask for it', async () => {
+    const { ctx } = withOutput();
+    await ctx.initRecording(options);
+    expect(ctx._redactionEnabled).toBe(true);
+    await ctx.initRecording({ ...options, redaction: false });
+    expect(ctx._redactionEnabled).toBe(true);
+  });
+
+  it('keeps the rejected options for a process that ends before a decision', async () => {
+    const { ctx } = withOutput();
+    await expect(
+      ctx.initRecording({ ...options, audio: true, transcript: false }),
+    ).rejects.toThrow();
+    expect(ctx._hostedOutput?.undecidedChoice).toEqual({ logs: false, redaction: true });
+  });
+
+  it('does not redact a simulation for project redaction alone', async () => {
+    const dispatch = JSON.stringify({ simulationRunId: 'SR_1', simulationRunJobId: 'SRJ_1' });
+    const { ctx } = createJobContextWithRoom(
+      {},
+      { enableRedaction: true, attributes: { 'lk.simulator.dispatch': dispatch } },
+    );
+    expect(ctx.simulationContext()).toBeDefined();
+    const decide = vi.fn();
+    ctx._hostedOutput = { decided: false, decide } as unknown as NonNullable<
+      JobContext['_hostedOutput']
+    >;
+    await ctx.initRecording({ ...options, redaction: false });
+    expect(decide).toHaveBeenCalledWith({ logs: false, redaction: false });
+  });
+
+  it.each([true, false])(
+    'follows the job recording at cleanup when no session decided (recording %s)',
+    (recording) => {
+      const { ctx, decide } = withOutput(true, recording);
+      ctx._recordingInitialized = true;
+      ctx._onCleanup();
+      expect(decide).toHaveBeenCalledWith({ logs: recording, redaction: true });
+    },
+  );
+});

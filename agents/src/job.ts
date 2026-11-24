@@ -227,6 +227,16 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
   /** @internal whether initRecording reached the cloud tracer (the job "registered") */
   _recordingInitialized = false;
 
+  /** @internal this job's log file, when LiveKit Cloud collects its logs */
+  _hostedOutput?: {
+    readonly decided: boolean;
+    undecidedChoice?: { logs: boolean; redaction: boolean };
+    decide(choice: { logs: boolean; redaction: boolean }): void;
+  };
+
+  /** @internal the logs and redaction choice of options that initRecording rejected */
+  _rejectedRecording?: { logs: boolean; redaction: boolean };
+
   /**
    * The trace context carrying the job's root span (`job_entrypoint`), for work that reaches
    * the job from a task whose own context predates it (an RPC dispatched by the SDK, a stall
@@ -430,6 +440,14 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
    * @internal
    */
   _onCleanup(): void {
+    if (this._hostedOutput && !this._hostedOutput.decided) {
+      this._hostedOutput.decide(
+        this._rejectedRecording ?? {
+          logs: Boolean(this.job.enableRecording),
+          redaction: this._redactionEnabled,
+        },
+      );
+    }
     if (!this._recordingInitialized) {
       discardPreparedCloudTracer(this.job.id);
     }
@@ -754,9 +772,13 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
       options.redaction || (this.job.enableRedaction && !this.simulationContext()),
     );
     if (redactionEnabled && options.audio && !options.transcript) {
+      this._rejectedRecording = { logs: options.logs, redaction: redactionEnabled };
+      if (this._hostedOutput) this._hostedOutput.undecidedChoice = this._rejectedRecording;
       throw new Error('audio upload requires transcript upload when redaction is enabled');
     }
-    this._redactionEnabled = redactionEnabled;
+    this._hostedOutput?.decide({ logs: options.logs, redaction: redactionEnabled });
+    // never lowered: a later session without redaction must not expose an earlier session's data
+    this._redactionEnabled ||= redactionEnabled;
 
     const observabilityBaseUrl = observabilityUrl(this.#info.url);
     if (!observabilityBaseUrl) {

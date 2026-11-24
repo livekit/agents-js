@@ -173,6 +173,24 @@ describe('AgentSession text-only gating', () => {
     await session.close();
   });
 
+  it('initializes recording with recording off, so the hosted log decision is made at start', async () => {
+    const ctx = jobCtxWithMode(null);
+    const initRecording = vi.spyOn(ctx, 'initRecording').mockResolvedValue();
+    const session = newSession();
+
+    await runWithJobContextAsync(ctx, async () => {
+      await session.start({
+        agent: new Agent({ instructions: 'help the user' }),
+        record: false,
+      });
+    });
+
+    expect(initRecording).toHaveBeenCalledWith(
+      expect.objectContaining({ audio: false, traces: false, logs: false, transcript: false }),
+    );
+    await session.close();
+  });
+
   it.each([
     { jobRedaction: false, sessionRedaction: false },
     { jobRedaction: false, sessionRedaction: true },
