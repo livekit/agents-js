@@ -263,13 +263,13 @@ export class SynthesizeStream extends tts.SynthesizeStream {
                 }
                 resolve();
               } catch (error) {
-                this.#logger.error(`Error parsing WebSocket message: ${error}`);
+                this.#logger.error({ error: error }, 'Error parsing WebSocket message');
                 reject(error);
               }
             });
 
             ws.on('error', (error) => {
-              this.#logger.error(`WebSocket error: ${error}`);
+              this.#logger.error({ error: error }, 'WebSocket error');
               if (!closing) {
                 closing = true;
                 this.queue.put(SynthesizeStream.END_OF_STREAM);
@@ -280,7 +280,10 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
             ws.on('close', (code, reason) => {
               if (!closing) {
-                this.#logger.error(`WebSocket closed with code ${code}: ${reason}`);
+                this.#logger.error(
+                  { code, 'lk.pii.reason': reason.toString() },
+                  'WebSocket closed',
+                );
                 this.queue.put(SynthesizeStream.END_OF_STREAM);
               }
               // Only reject if we haven't processed all expected frames

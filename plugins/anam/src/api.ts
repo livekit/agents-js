@@ -104,7 +104,7 @@ export class AnamAPI {
               body && typeof body === 'object'
                 ? { ...(body as Record<string, unknown>), livekitToken: '****' }
                 : body,
-            error: (e as Error)?.message,
+            error: e,
             nextRetrySec: retryInterval,
           },
           'Anam API error, retrying',

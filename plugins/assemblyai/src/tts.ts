@@ -1032,10 +1032,11 @@ class AssemblyAIConnection {
       log().warn(
         {
           sessionId: this.sessionId,
+          error,
           errorCode: frame.error_code,
           errorType: frame.error_type,
         },
-        error.message,
+        'AssemblyAI TTS error',
       );
       this.#fail(error);
       return;

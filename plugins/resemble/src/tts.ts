@@ -161,7 +161,7 @@ export class ChunkedStream extends tts.ChunkedStream {
             this.queue.close();
             doneFut.resolve();
           } catch (error) {
-            this.#logger.error('Error processing Resemble API response:', error);
+            this.#logger.error({ error: error }, 'Error processing Resemble API response:');
             this.queue.close();
             doneFut.resolve();
           }
@@ -268,7 +268,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
                       lastFrame = frame;
                     }
                   } catch (audioError) {
-                    this.#logger.error(`Error processing audio content: ${audioError}`);
+                    this.#logger.error({ error: audioError }, 'Error processing audio content');
                   }
                 } else if ('type' in json && json.type === 'audio_end') {
                   for (const frame of bstream.flush()) {
@@ -302,13 +302,13 @@ export class SynthesizeStream extends tts.SynthesizeStream {
                 }
                 resolve();
               } catch (error) {
-                this.#logger.error(`Error parsing WebSocket message: ${error}`);
+                this.#logger.error({ error: error }, 'Error parsing WebSocket message');
                 reject(error);
               }
             });
 
             ws.on('error', (error) => {
-              this.#logger.error(`WebSocket error: ${error}`);
+              this.#logger.error({ error: error }, 'WebSocket error');
               if (!closing) {
                 closing = true;
                 this.queue.put(SynthesizeStream.END_OF_STREAM);
@@ -319,7 +319,10 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
             ws.on('close', (code, reason) => {
               if (!closing) {
-                this.#logger.error(`WebSocket closed with code ${code}: ${reason}`);
+                this.#logger.error(
+                  { code, 'lk.pii.reason': reason.toString() },
+                  'WebSocket closed',
+                );
                 this.queue.put(SynthesizeStream.END_OF_STREAM);
               }
               // Only reject if we haven't received all expected frames

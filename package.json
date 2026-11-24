@@ -14,7 +14,7 @@
     "api:update": "turbo run api:update",
     "format:check": "prettier --check \"**/src/**/*.{ts,tsx,md,json}\"",
     "format:write": "prettier --write \"**/src/**/*.{ts,tsx,md,json}\"",
-    "lint": "eslint -f unix \"agents/src/**/*.ts\" \"plugins/*/src/**/*.{ts,js}\" \"examples/src/**/*.ts\"",
+    "lint": "node scripts/checkExceptionLogging.js && eslint -f unix \"agents/src/**/*.ts\" \"plugins/*/src/**/*.{ts,js}\" \"examples/src/**/*.ts\"",
     "lint:fix": "pnpm lint --fix",
     "typecheck": "turbo typecheck",
     "test": "vitest run",

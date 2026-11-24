@@ -42,6 +42,7 @@ import { AccessToken } from 'livekit-server-sdk';
 import fs from 'node:fs/promises';
 import type { ChatItem } from '../llm/index.js';
 import { enableOtelLogging, log } from '../log.js';
+import { tryLog } from '../log_core.js';
 import { filterZeroValues } from '../metrics/model_usage.js';
 import { encodeChatItem } from '../proto.js';
 import {
@@ -427,7 +428,9 @@ function setupCloudMetrics(
       cloudMeterProvider = undefined;
       // the pending export keeps the loop alive, so the shutdown completes before exit
       void ownedProvider?.shutdown({ timeoutMillis: 10_000 }).catch((error: unknown) => {
-        console.error('Failed to shut down cloud metrics:', error);
+        const logger = tryLog();
+        if (logger) logger.error({ error }, 'Failed to shut down cloud metrics');
+        else console.error('Failed to shut down cloud metrics');
       });
     });
   }
@@ -861,7 +864,9 @@ export async function setupCloudTracer(
       enableOtelLogging();
     }
   } catch (error) {
-    console.error('Failed to setup cloud tracer:', error);
+    const logger = tryLog();
+    if (logger) logger.error({ error }, 'Failed to setup cloud tracer');
+    else console.error('Failed to setup cloud tracer');
     throw error;
   }
 }

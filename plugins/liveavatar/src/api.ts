@@ -187,7 +187,7 @@ export class LiveAvatarAPI {
           throw e;
         }
         this.#logger.warn(
-          { error: String(e), url, attempt: i },
+          { error: e, url, attempt: i },
           `API request to ${url} failed on attempt ${i}`,
         );
       }

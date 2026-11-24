@@ -282,7 +282,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         }
       }
     } catch (e) {
-      console.warn(`Error during WebSocket close sequence: ${e}`);
+      log().warn({ error: e }, 'Error during WebSocket close sequence');
     } finally {
       if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
         ws.close();

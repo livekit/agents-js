@@ -536,12 +536,15 @@ class SpeechStreamv2 extends stt.SpeechStream {
             reject(error);
             return;
           }
-          this.#logger.error('Failed to parse Deepgram message', { error });
+          this.#logger.error({ error: error }, 'Failed to parse Deepgram message');
         }
       });
 
       this.#ws.on('close', (code, reason) => {
-        this.#logger.debug(`Deepgram WebSocket closed: ${code} ${reason}`);
+        this.#logger.debug(
+          { code, 'lk.pii.reason': reason.toString() },
+          'Deepgram WebSocket closed',
+        );
         resolve();
       });
 

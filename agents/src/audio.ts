@@ -186,7 +186,7 @@ export function audioFramesFromFile(
   });
 
   outputStream.on('error', (err: Error) => {
-    logger.error(err);
+    logger.error({ error: err }, 'Audio output stream failed');
     commandRunning = false;
     onClose();
   });
