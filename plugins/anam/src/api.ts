@@ -11,6 +11,15 @@ import {
 
 const DEFAULT_API_URL = 'https://api.anam.ai';
 
+function isHttpUrl(value: string): boolean {
+  try {
+    const { protocol } = new URL(value);
+    return protocol === 'https:' || protocol === 'http:';
+  } catch {
+    return false;
+  }
+}
+
 /** Copy of a request body with the LiveKit join token masked, for logging. */
 function redactBody(body: unknown): unknown {
   if (!body || typeof body !== 'object') return body;
@@ -40,6 +49,14 @@ export class AnamAPI {
     headersIn: Record<string, string>,
   ): Promise<T> {
     const url = `${this.apiUrl}${path}`;
+    // fetch rejects a malformed URL without sending anything. Catch it here so a
+    // bad ANAM_API_URL fails at once with a clear error instead of being retried
+    // like an outage.
+    if (!isHttpUrl(url)) {
+      throw new AnamException(
+        `Invalid Anam API URL "${this.apiUrl}": expected an http(s) URL such as ${DEFAULT_API_URL}`,
+      );
+    }
     const { maxRetry = 3, retryInterval = 2 } = this.conn;
     const logger = log().child({ module: 'AnamAPI' });
     const headers: Record<string, string> = {
@@ -94,7 +111,9 @@ export class AnamAPI {
         );
         if (attempt >= maxRetry) {
           if (isStatusError) throw e;
-          throw new APIConnectionError({ message: `Failed to connect to Anam API at ${url}` });
+          throw new APIConnectionError({
+            message: `Failed to connect to Anam API at ${url}: ${(e as Error)?.message}`,
+          });
         }
         await new Promise((r) => setTimeout(r, retryInterval * 1000));
       }

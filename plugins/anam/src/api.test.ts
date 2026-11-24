@@ -4,6 +4,7 @@
 import { APIConnectionError, APIStatusError, initializeLogger } from '@livekit/agents';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { AnamAPI } from './api.js';
+import { AnamException } from './types.js';
 
 function okResponse() {
   return new Response(JSON.stringify({ sessionId: 'session-test' }), {
@@ -73,9 +74,23 @@ describe('AnamAPI.startSession', () => {
       fetchMock.mockRejectedValue(new TypeError('fetch failed'));
       const api = new AnamAPI('anam-key', 'https://anam.test', connOptions);
 
-      await expect(api.startSession({ personaConfig })).rejects.toBeInstanceOf(APIConnectionError);
+      const err = await api.startSession({ personaConfig }).catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(APIConnectionError);
+      expect((err as APIConnectionError).message).toContain('fetch failed');
       expect(fetchMock).toHaveBeenCalledTimes(3);
     });
+
+    it.each(['api.anam.ai', 'ws://api.anam.ai', ''])(
+      'rejects the API URL %j without calling fetch',
+      async (apiUrl) => {
+        const fetchMock = stubFetch();
+        const api = new AnamAPI('anam-key', apiUrl, connOptions);
+
+        await expect(api.startSession({ personaConfig })).rejects.toBeInstanceOf(AnamException);
+        expect(fetchMock).not.toHaveBeenCalled();
+      },
+    );
 
     it('recovers from a network failure', async () => {
       const fetchMock = stubFetch();
