@@ -115,7 +115,7 @@ export interface STTOptions {
     maxSpeakers?: number;
     maxTurnSilence?: number;
     minTurnSilence?: number;
-    mode?: 'min_latency' | 'balanced' | 'max_accuracy';
+    mode?: 'min_latency' | 'balanced' | 'max_accuracy' | 'manual';
     previousContextNTurns?: number;
     prompt?: string;
     redactPii?: boolean;

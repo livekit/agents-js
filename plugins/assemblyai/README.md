@@ -51,12 +51,38 @@ const session = new voice.AgentSession({
 
 `assemblyai.STT` streams AssemblyAI-STT-3.7-Realtime-Agent by default (`speechModel`). Useful options:
 
-- `mode`: `"min_latency"`, `"balanced"` or `"max_accuracy"`.
+- `mode`: `"min_latency"`, `"balanced"`, `"max_accuracy"` or `"manual"` (see below).
 - `languageCodes`: steer transcription toward one or more expected languages (`"es"` or
   `["en", "es"]`).
 - `prompt`: context about the audio, such as its domain or scenario, to help recognize likely
   vocabulary (up to 1,750 characters).
 - `keytermsPrompt`: names and terms the model should get right.
+
+#### Manual mode
+
+To let a LiveKit turn detector decide when the user is done, set `mode: 'manual'`. AssemblyAI then
+doesn't end turns on short pauses. When LiveKit ends the turn, the plugin sends AssemblyAI a
+`ForceEndpoint` and gets that turn's final transcript back right away.
+
+```ts
+import { inference, voice } from '@livekit/agents';
+import * as assemblyai from '@livekit/agents-plugin-assemblyai';
+
+const session = new voice.AgentSession({
+  stt: new assemblyai.STT({
+    speechModel: 'assemblyai-stt-3-7-realtime-agent',
+    mode: 'manual',
+  }),
+  vad: new inference.VAD(),
+  turnHandling: { turnDetection: new inference.TurnDetector() },
+  // ... llm, tts, etc.
+});
+```
+
+Manual mode needs `assemblyai-stt-3-7-realtime-agent` and a LiveKit turn detector or VAD turn
+detection, and doesn't support `speakerLabels` yet. Leave `minTurnSilence` unset.
+`maxTurnSilence` (10 seconds by default) only ends a turn when LiveKit never does. See
+[manual mode](https://www.assemblyai.com/docs/streaming/turn-detection#manual-mode).
 
 ### Text-to-speech
 
