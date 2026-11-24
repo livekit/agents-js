@@ -131,6 +131,10 @@ export class AvatarSession extends voice.AvatarSession {
       room,
       destinationIdentity: this.avatarIdentity,
       waitRemoteTrack: TrackKind.KIND_VIDEO,
+      // Anam sends lk.playback_started once the avatar actually starts
+      // speaking, so turn state follows real playout instead of the first
+      // audio frame sent.
+      waitPlaybackStart: true,
     });
   }
 }
