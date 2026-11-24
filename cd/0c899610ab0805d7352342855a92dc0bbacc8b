@@ -1,0 +1,19 @@
+agents/src/voice/agent_activity.ts
+  s_00a44fee2d21de::t_7ca98453f033c3 2681-2684
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cd0c899610ab0805d7352342855a92dc0bbacc8b",
+  "prompts": {},
+  "sessions": {
+    "s_00a44fee2d21de": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a20de1-f97d-7bd2-ab59-1d56fa435802",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
