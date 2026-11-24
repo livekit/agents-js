@@ -10,6 +10,8 @@ import { ConnectionPool } from '../connection_pool.js';
 import { type LanguageCode, normalizeLanguage } from '../language.js';
 import { log } from '../log.js';
 import { createStreamChannel } from '../stream/stream_channel.js';
+import { WordTokenizer } from '../tokenize/basic/index.js';
+import type { SentenceStream, WordStream } from '../tokenize/index.js';
 import type { ChunkedStream } from '../tts/index.js';
 import { SynthesizeStream as BaseSynthesizeStream, TTS as BaseTTS } from '../tts/index.js';
 import { dropBracketCues, sentenceTokenizer } from '../tts/provider_format.js';
@@ -698,11 +700,11 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
     // Python side.
     let pendingTimedTranscripts: TimedString[] = [];
 
-    // chunking defaults (cap + expressive batch size) live in provider_format
     const provider = (this.opts.model ?? '').split('/')[0] ?? '';
-    const sendTokenizerStream = sentenceTokenizer(provider, {
-      expressive: this.expressive,
-    }).stream();
+    const textStream: WordStream | SentenceStream =
+      provider === 'gradium' && !this.expressive
+        ? new WordTokenizer(false).stream()
+        : sentenceTokenizer(provider, { expressive: this.expressive }).stream();
     const eventChannel = createStreamChannel<TtsServerEvent>();
     const requestId = shortuuid('tts_request_');
     const inputSentEvent = new Event();
@@ -713,7 +715,7 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
     const resourceCleanup = async () => {
       if (closing) return;
       closing = true;
-      sendTokenizerStream.close();
+      textStream.close();
       // close() returns a promise; don't leak it
       await eventChannel.close();
     };
@@ -749,21 +751,21 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
       for await (const data of this.input) {
         if (signal.aborted || closing) break;
         if (data === SynthesizeStream.FLUSH_SENTINEL) {
-          sendTokenizerStream.flush();
+          textStream.flush();
           continue;
         }
         // only expressive turns can carry markup; without it the text is a plain
         // utterance and must reach the provider byte-for-byte
-        sendTokenizerStream.pushText(this.expressive ? this.tts.markup.normalize(data) : data);
+        textStream.pushText(this.expressive ? this.tts.markup.normalize(data) : data);
       }
       // Only call endInput if the stream hasn't been closed by cleanup
       if (!closing) {
-        sendTokenizerStream.endInput();
+        textStream.endInput();
       }
     };
 
-    const createSentenceStreamTask = async (ws: WebSocket, signal: AbortSignal) => {
-      for await (const ev of sendTokenizerStream) {
+    const createSendTextTask = async (ws: WebSocket, signal: AbortSignal) => {
+      for await (const ev of textStream) {
         if (signal.aborted || closing) break;
 
         // Carry per-utterance generation config so mid-stream voice/model/language
@@ -774,8 +776,8 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
         if (this.opts.model) generationConfig.model = this.opts.model;
         if (this.opts.language) generationConfig.language = this.opts.language;
 
-        // re-normalize at sentence level: tags split across input chunks aren't caught by
-        // the per-chunk normalize in the input task
+        // Re-normalize the emitted text: tags split across input chunks aren't caught by
+        // the per-chunk normalize in the input task.
         const converted = this.expressive
           ? this.tts.markup.convert(this.tts.markup.normalize(ev.token))
           : ev.token;
@@ -1007,7 +1009,7 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
               Task.from(
                 async (controller) => {
                   const combined = combineSignals(runController.signal, controller.signal);
-                  await createSentenceStreamTask(ws, combined);
+                  await createSendTextTask(ws, combined);
                 },
                 undefined,
                 'inference-tts-sentence',
