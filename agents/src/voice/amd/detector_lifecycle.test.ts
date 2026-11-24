@@ -756,8 +756,16 @@ describe('AMD lifecycle', () => {
 
     it('text plays while other replies stay held', async () => {
       const opening = 'Hi, this is Alex from Acme Dental.';
-      const { detector, session, classifier, model } = await running({ openingText: opening });
+      const created: SpeechCreatedEvent[] = [];
+      const { detector, session, classifier, model } = await running({
+        openingText: opening,
+        beforeAmd: (s) => s.on(AgentSessionEventTypes.SpeechCreated, (ev) => created.push(ev)),
+      });
       await eventually(() => assistantMessages(session).join() === opening);
+      // a handle keeps its done callbacks, so AMD removes its own
+      const doneCallbacks = (handle: SpeechHandle) =>
+        (handle as unknown as { doneCallbacks: Set<unknown> }).doneCallbacks.size;
+      await eventually(() => doneCallbacks(created[0]!.speechHandle) === 0);
       // the opening skips the reply hold; every other reply still waits for a prediction
       expect(activityOf(session)._authorizationPaused).toBe(true);
       expect(model.calls.size).toBe(0);
@@ -1596,14 +1604,20 @@ describe('AMD lifecycle', () => {
   });
 
   it('AMD detaches from speeches when they end or it finishes', async () => {
-    const callbacks = (handle: SpeechHandle) =>
-      (handle as unknown as { itemAddedCallbacks: Set<unknown> }).itemAddedCallbacks.size;
+    const callbacks = (handle: SpeechHandle) => {
+      const internal = handle as unknown as {
+        itemAddedCallbacks: Set<unknown>;
+        doneCallbacks: Set<unknown>;
+      };
+      return internal.itemAddedCallbacks.size + internal.doneCallbacks.size;
+    };
     const { detector, session, classifier } = await running();
     const ended = agentSpeech(session);
     const playing = agentSpeech(session);
-    expect(callbacks(ended)).toBe(1);
-    expect(callbacks(playing)).toBe(1);
+    expect(callbacks(ended)).toBeGreaterThan(0);
+    expect(callbacks(playing)).toBeGreaterThan(0);
     ended._markDone();
+    // a handle keeps its done callbacks after it ends
     await eventually(() => callbacks(ended) === 0);
 
     await commit(detector, session, classifier);

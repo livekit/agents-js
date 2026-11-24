@@ -1507,6 +1507,8 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
   }
 
   private onOpeningDone = (handle: SpeechHandle): void => {
+    // a handle keeps its done callbacks, which would keep AMD reachable
+    handle.removeDoneCallback(this.onOpeningDone);
     if (handle === this.opening) {
       this.opening = undefined;
     }
@@ -1529,6 +1531,7 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
   };
 
   private onSpeechDone = (handle: SpeechHandle): void => {
+    handle.removeDoneCallback(this.onSpeechDone);
     this.speeches.delete(handle);
     this._updateIdle();
   };
@@ -1547,6 +1550,7 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
   }
 
   private onReplyDone = (handle: SpeechHandle): void => {
+    handle.removeDoneCallback(this.onReplyDone);
     this._replyWords.delete(handle);
     const callback = this.itemCallbacks.get(handle);
     if (callback !== undefined) {
