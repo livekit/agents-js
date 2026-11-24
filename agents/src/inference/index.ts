@@ -9,6 +9,9 @@ import * as stt from './stt.js';
 import * as tts from './tts.js';
 
 export { eot };
+
+export { DecisionModel, type DecisionModelOptions, type DecisionModels } from './decision_model.js';
+
 export {
   TurnDetector,
   TurnDetectorStreamImpl,
