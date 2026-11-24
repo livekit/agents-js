@@ -158,6 +158,7 @@ class SegmentSynchronizerImpl {
   private outputStream: IdentityTransform<string | TimedString>;
   private outputStreamWriter: WritableStreamDefaultWriter<string | TimedString>;
   private captureTask: Promise<void>;
+  private captionedText = '';
   private startWallTime?: number;
 
   private startFuture: Future = new Future();
@@ -410,19 +411,22 @@ class SegmentSynchronizerImpl {
     if (this.playbackCompleted) {
       return this.textData.pushedText;
     }
-    return this.textData.forwardedText;
+    // A caption can reach the sink before its pacing delay ends. A blocked sink can lag behind.
+    const pacedText = this.textData.forwardedText;
+    return this.captionedText.length > pacedText.length ? this.captionedText : pacedText;
   }
 
   private async captureTaskImpl() {
     // Don't use a for-await loop here, because exiting the loop will close the writer in the
     // outputStream, which will cause an error in the mainTask.then method.
-    // NOTE: forwardedText is updated in mainTask, NOT here
     const reader = this.outputStream.readable.getReader();
     while (true) {
       const { done, value: text } = await reader.read();
       if (done) {
         break;
       }
+      // The text output can trigger an interruption before the pacing delay ends.
+      this.captionedText += isTimedString(text) ? text.text : text;
       await this.nextInChain.captureText(text);
     }
     reader.releaseLock();

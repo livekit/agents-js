@@ -80,20 +80,30 @@ describe('recordException', () => {
     ).not.toContain('secret transcript');
   });
 
-  it('uses the resolved session redaction setting by default', () => {
+  it.each([false, true])('uses resolved simulation redaction %s by default', (redaction) => {
     const span = fakeSpan();
     const context = {
-      job: { enableRedaction: false },
-      _redactionEnabled: true,
+      job: { enableRedaction: true },
+      _redactionEnabled: redaction,
+      simulationContext: () => ({}),
     } as unknown as JobContext;
 
     runWithJobContext(context, () => captureException(span));
 
-    expect(span.recordException).not.toHaveBeenCalled();
-    expect(span.setAttributes).toHaveBeenCalledWith({
-      [traceTypes.ATTR_EXCEPTION_TYPE]: 'Error',
-      [traceTypes.ATTR_EXCEPTION_MESSAGE]: REDACTED_EXCEPTION_MESSAGE,
-    });
+    if (redaction) {
+      expect(span.recordException).not.toHaveBeenCalled();
+      expect(span.setAttributes).toHaveBeenCalledWith({
+        [traceTypes.ATTR_EXCEPTION_TYPE]: 'Error',
+        [traceTypes.ATTR_EXCEPTION_MESSAGE]: REDACTED_EXCEPTION_MESSAGE,
+      });
+    } else {
+      expect(span.recordException).toHaveBeenCalledOnce();
+      expect(span.setAttributes).toHaveBeenCalledWith({
+        [traceTypes.ATTR_EXCEPTION_TYPE]: 'Error',
+        [traceTypes.ATTR_EXCEPTION_MESSAGE]: 'secret transcript',
+        [traceTypes.ATTR_EXCEPTION_TRACE]: expect.stringContaining('secret transcript'),
+      });
+    }
   });
 
   it('preserves exception details by default without a job context', () => {

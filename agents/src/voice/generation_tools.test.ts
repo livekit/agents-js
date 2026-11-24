@@ -4,7 +4,7 @@
 import { ReadableStream as NodeReadableStream } from 'stream/web';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
-import { FunctionCall, ToolContext, ToolError, handoff, tool } from '../llm/index.js';
+import { FunctionCall, ToolContext, ToolError, ToolResult, handoff, tool } from '../llm/index.js';
 import { initializeLogger } from '../log.js';
 import type { Task } from '../utils.js';
 import { cancelAndWait, delay } from '../utils.js';
@@ -133,6 +133,77 @@ describe('Generation + Tool Execution', () => {
       isError: false,
       replyRequired: true,
     });
+  });
+
+  describe.each([true, false])('with a ToolResult (replyRequired: %s)', (replyRequired) => {
+    it.each([
+      { output: 'ok', expected: '"ok"' },
+      { output: { sent: '1' }, expected: '{"sent":"1"}' },
+      { output: undefined, expected: '' },
+    ])('keeps the output $expected and replyRequired', ({ output, expected }) => {
+      const toolResult = new ToolResult(output, { replyRequired });
+      const result = createToolOutput({
+        toolCall: FunctionCall.create({ callId: 'dtmf-1', name: 'send_dtmf', args: '{}' }),
+        output: toolResult,
+      });
+
+      expect(result.toolCallOutput).toMatchObject({
+        callId: 'dtmf-1',
+        output: expected,
+        isError: false,
+        replyRequired,
+      });
+      expect(result.rawOutput).toBe(toolResult);
+      expect(result.rawException).toBeUndefined();
+    });
+
+    it.each([
+      {
+        label: 'alone',
+        output: (agent: Agent, result: ToolResult) => handoff({ agent, returns: result }),
+      },
+      {
+        label: 'in a list',
+        output: (agent: Agent, result: ToolResult) => [handoff({ agent, returns: result })],
+      },
+    ])('applies it as the returns of a handoff $label', ({ output }) => {
+      const nextAgent = new Agent({ instructions: 'next' });
+      const result = createToolOutput({
+        toolCall: FunctionCall.create({ callId: 'call_handoff', name: 'transfer', args: '{}' }),
+        output: output(nextAgent, new ToolResult('Transferred', { replyRequired })),
+      });
+
+      expect(result.agentTask).toBe(nextAgent);
+      expect(result.toolCallOutput).toMatchObject({
+        output: JSON.stringify('Transferred'),
+        isError: false,
+        replyRequired,
+      });
+    });
+  });
+
+  it.each([
+    {
+      label: 'a ToolResult with an invalid output',
+      output: () => new ToolResult(Symbol('invalid'), { replyRequired: false }),
+    },
+    { label: 'a nested ToolResult', output: () => new ToolResult(new ToolResult('ok')) },
+    {
+      label: 'a ToolResult in a list',
+      output: () => [new ToolResult('ok', { replyRequired: false })],
+    },
+  ])('answers $label as an error', ({ output }) => {
+    const toolResult = output();
+    const result = createToolOutput({
+      toolCall: FunctionCall.create({ callId: 'invalid-1', name: 'invalid_output', args: '{}' }),
+      output: toolResult,
+    });
+
+    expect(result.toolCallOutput).toMatchObject({
+      output: 'the tool returned an invalid output',
+      isError: true,
+    });
+    expect(result.rawOutput).toBe(toolResult);
   });
 
   it('should not abort tool when preamble forwarders are cleaned up', async () => {

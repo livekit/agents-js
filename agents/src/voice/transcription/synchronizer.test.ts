@@ -4,6 +4,7 @@
 import { AudioFrame } from '@livekit/rtc-node';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as logModule from '../../log.js';
+import { Future } from '../../utils.js';
 import {
   AudioOutput,
   TextOutput,
@@ -241,6 +242,45 @@ class MockTextOutput extends TextOutput {
 }
 
 describe('TranscriptionSynchronizer enabled behavior', () => {
+  it('retains words that finished pacing while the caption output was blocked', async () => {
+    vi.useFakeTimers();
+    const releaseCaption = new Future<void>();
+    const audio = new MockAudioOutput();
+    const captions = new (class extends MockTextOutput {
+      override async captureText(text: string | TimedString) {
+        await super.captureText(text);
+        await releaseCaption.await;
+      }
+    })();
+    const synchronizer = new TranscriptionSynchronizer(audio, captions, {
+      ...defaultTextSyncOptions,
+      hyphenateWord: (word) => [word],
+    });
+
+    try {
+      await synchronizer.textOutput.captureText('one two three');
+      await synchronizer.textOutput.flush();
+      await synchronizer.audioOutput.captureFrame(
+        new AudioFrame(new Int16Array(8000), 8000, 1, 8000),
+      );
+      synchronizer.audioOutput.flush();
+      audio.onPlaybackStarted(Date.now());
+
+      // At 3.83 syllables per second, two one-syllable words have finished pacing.
+      await vi.advanceTimersByTimeAsync(600);
+      expect(captions.captured).toEqual(['one']);
+      audio.onPlaybackFinished({ playbackPosition: 0.6, interrupted: true });
+      await expect(synchronizer.audioOutput.waitForPlayout()).resolves.toMatchObject({
+        synchronizedTranscript: 'one two',
+      });
+    } finally {
+      releaseCaption.resolve();
+      await vi.runAllTimersAsync();
+      await synchronizer.close();
+      vi.useRealTimers();
+    }
+  });
+
   it.each([
     ['It is', ' sunny'],
     ['It is curren', 'tly sunny'],

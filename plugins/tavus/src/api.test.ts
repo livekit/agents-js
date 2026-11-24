@@ -101,13 +101,13 @@ describe('Tavus TavusAPI.createConversation', () => {
     expect(body).not.toHaveProperty('face_id');
   });
 
-  it('defaults to the stock pal and face when neither is provided', async () => {
+  it('defaults to the stock pal and its own face when neither is provided', async () => {
     const f = mockFetchOk({ conversation_id: 'c5' });
     await new TavusAPI({ apiKey: 'k' }).createConversation();
     expect(f).toHaveBeenCalledTimes(1); // no /v2/pals call
     const body = sentBody(f);
     expect(body.pal_id).toBe('pb87e71797da');
-    expect(body.face_id).toBe('r4067604db72');
+    expect(body).not.toHaveProperty('face_id'); // the stock pal's own default face is used
   });
 
   it("keeps an extraPayload pal's own face", async () => {
@@ -120,13 +120,33 @@ describe('Tavus TavusAPI.createConversation', () => {
     expect(body).not.toHaveProperty('face_id');
   });
 
-  it('prefers the environment face over the default face', async () => {
+  it("overrides the stock pal's face with the environment face", async () => {
     process.env.TAVUS_FACE_ID = 'envf';
     const f = mockFetchOk({ conversation_id: 'c7' });
     await new TavusAPI({ apiKey: 'k' }).createConversation();
     const body = sentBody(f);
     expect(body.pal_id).toBe('pb87e71797da');
     expect(body.face_id).toBe('envf');
+  });
+});
+
+describe('Tavus TavusAPI.endConversation', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('posts to the end endpoint without reading a body', async () => {
+    // Tavus answers /end without a JSON body, so reading one would fail a call that succeeded
+    const json = vi.fn().mockRejectedValue(new SyntaxError('Unexpected end of JSON input'));
+    const f = vi.fn().mockResolvedValue({ ok: true, status: 200, json } as unknown as Response);
+    global.fetch = f as unknown as typeof fetch;
+
+    await new TavusAPI({ apiKey: 'k', apiUrl: 'http://tavus.test' }).endConversation('c1');
+
+    expect(f).toHaveBeenCalledTimes(1);
+    expect(f.mock.calls[0]![0]).toBe('http://tavus.test/conversations/c1/end');
+    expect((f.mock.calls[0]![1] as RequestInit).method).toBe('POST');
+    expect(json).not.toHaveBeenCalled();
   });
 });
 

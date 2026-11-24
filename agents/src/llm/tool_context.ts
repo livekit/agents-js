@@ -16,6 +16,7 @@ const FUNCTION_TOOL_SYMBOL = Symbol('function_tool');
 const PROVIDER_TOOL_SYMBOL = Symbol('provider_tool');
 const TOOLSET_SYMBOL = Symbol('toolset');
 const TOOL_ERROR_SYMBOL = Symbol('tool_error');
+const TOOL_RESULT_SYMBOL = Symbol('tool_result');
 const HANDOFF_SYMBOL = Symbol('handoff');
 
 export type JSONValue = null | string | number | boolean | JSONObject | JSONArray;
@@ -90,6 +91,36 @@ const CONFIRM_DUPLICATE_DESCRIPTION =
   'Set this to true to confirm you want to run a duplicate. ' +
   'Only do this when user confirms the duplication is needed.';
 
+/**
+ * A function tool's output and whether it requests a follow-up reply.
+ *
+ * @example
+ * ```ts
+ * return new ToolResult('Successfully sent DTMF events: 1', { replyRequired: false });
+ * ```
+ */
+export class ToolResult {
+  /**
+   * The value to return to the model, such as a string, object, array, or `undefined`. For a
+   * handoff, return `handoff({ agent, returns: new ToolResult(...) })`.
+   */
+  output: unknown;
+
+  /**
+   * Whether this result requests a reply. Defaults to `true`. `false` keeps the output in chat
+   * history without requesting a reply. Other tool results can still request a reply, and
+   * interruption or `cancelToolReply()` can still prevent one.
+   */
+  replyRequired: boolean;
+
+  readonly [TOOL_RESULT_SYMBOL] = true as const;
+
+  constructor(output: unknown, options: { replyRequired?: boolean } = {}) {
+    this.output = output;
+    this.replyRequired = options.replyRequired ?? true;
+  }
+}
+
 export class ToolError extends Error {
   constructor(message: string) {
     super(message);
@@ -115,7 +146,7 @@ export interface AgentHandoff {
   agent: Agent;
 
   /**
-   * The return value of the tool.
+   * The return value of the tool. Use a {@link ToolResult} to also set `replyRequired`.
    */
   returns?: any; // eslint-disable-line @typescript-eslint/no-explicit-any
 
@@ -896,6 +927,11 @@ export function isToolset(value: any): value is Toolset {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function isToolError(error: any): error is ToolError {
   return !!error && error[TOOL_ERROR_SYMBOL] === true;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function isToolResult(value: any): value is ToolResult {
+  return !!value && value[TOOL_RESULT_SYMBOL] === true;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
