@@ -1,0 +1,97 @@
+.changeset/adaptive-interruption-probability.md
+  s_aaf78334cb7322::t_bfdf14949569ab 1-5
+.changeset/curly-pumas-decide.md
+  s_aaf78334cb7322::t_0bbfe9c97879de 1-5
+.changeset/hosted-logs-handoff.md
+  s_aaf78334cb7322::t_e2d1b37f03716a 1-5
+.changeset/interrupted-say-playout.md
+  s_aaf78334cb7322::t_bce3371726bf96 1-5
+.changeset/tavus-stock-pal-face.md
+  s_aaf78334cb7322::t_8dfdf41e7925e8 1-5
+agents/etc/agents.api.md
+  s_aaf78334cb7322::t_2b2b1e03d7da9e 1318-1320,1853-1854,2927-2928,2959-2966,2997,3000,3028-3043,3049-3108,4524-4526,5047-5058,5096-5100,5330-5333,9117,10266-10268
+agents/src/index.ts
+  s_aaf78334cb7322::t_625ed233c96f89 12-13
+agents/src/inference/decision_model.test.ts
+  s_aaf78334cb7322::t_3cbbb0150f86c1 1-423
+agents/src/inference/decision_model.ts
+  s_aaf78334cb7322::t_3dd5942e2d16f1 1-288
+agents/src/inference/index.ts
+  s_aaf78334cb7322::t_9fed481c9cd86e 12-14
+agents/src/inference/interruption/defaults.ts
+  s_aaf78334cb7322::t_e42f76c1f9859d 7
+agents/src/inference/interruption/utils.ts
+  s_aaf78334cb7322::t_ee0e7a9a549135 118-122
+agents/src/ipc/job_proc_executor.ts
+  s_aaf78334cb7322::t_73882daa180140 10,79-83
+agents/src/ipc/job_proc_lazy_main.ts
+  s_aaf78334cb7322::t_14285d6cfd3e0a 30,135-147,181-187,422
+agents/src/job.test.ts
+  s_aaf78334cb7322::t_123c9ae9123d7a 553-640
+agents/src/job.ts
+  s_aaf78334cb7322::t_1cac2dd2bd53c5 230-239,443-450,775-776,779-781
+agents/src/llm/decision_fallback_adapter.ts
+  s_aaf78334cb7322::t_b5655a17373456 1-278
+agents/src/llm/decision_fallback_adapter.type.test.ts
+  s_aaf78334cb7322::t_3207461ead6eec 1-24
+agents/src/llm/decisions.test.ts
+  s_aaf78334cb7322::t_9d7537fd8193ef 4-7,10,21,69-71,156,176,541-912
+agents/src/llm/decisions.ts
+  s_aaf78334cb7322::t_6043e392b45a09 220-223,229-230,358-361,368-370,495
+agents/src/llm/index.ts
+  s_aaf78334cb7322::t_8c689bc8cb59af 111-117
+agents/src/telemetry/hosted_logs.test.ts
+  s_aaf78334cb7322::t_6e164ccd977703 1-351
+agents/src/telemetry/hosted_logs.ts
+  s_aaf78334cb7322::t_09939af49dfb3a 1-352
+agents/src/telemetry/hosted_logs_startup.ts
+  s_aaf78334cb7322::t_e4bdf78ed4ad0a 1-6
+agents/src/telemetry/trace_types.test.ts
+  s_aaf78334cb7322::t_3d5e881b0574b4 253
+agents/src/telemetry/trace_types.ts
+  s_aaf78334cb7322::t_fb6ea79189ae28 246
+agents/src/telemetry/traces.ts
+  s_aaf78334cb7322::t_b1717af27b66ea 56,852
+agents/src/voice/agent_activity.ts
+  s_aaf78334cb7322::t_6211ffdb06e4ba 3974-3979,3982-3987,3989,3992,4010
+agents/src/voice/agent_activity_interrupted_commit.test.ts
+  s_aaf78334cb7322::t_7585e079523ebc 12,14,89,109-115,254-423
+agents/src/voice/agent_session.ts
+  s_aaf78334cb7322::t_c1eab3fc820ba0 1137
+agents/src/voice/agent_session_text_only.test.ts
+  s_aaf78334cb7322::t_0634890111b66d 176-193
+agents/src/voice/avatar/datastream_io.test.ts
+  s_aaf78334cb7322::t_477841a579bf84 12,35,42,49,60,65-106
+agents/src/voice/avatar/datastream_io.ts
+  s_aaf78334cb7322::t_f3141ee5c04b35 163-167
+agents/src/voice/io.ts
+  s_aaf78334cb7322::t_bc510a4ff0aa55 173-177
+agents/src/voice/session_host_lifecycle.test.ts
+  s_aaf78334cb7322::t_cc138498303fa7 332
+agents/src/voice/transcription/synchronizer.test.ts
+  s_aaf78334cb7322::t_1cb8827577668a 7,245-283
+agents/src/voice/transcription/synchronizer.ts
+  s_aaf78334cb7322::t_5497d6a593d05e 161,401-403,415-416
+agents/src/workflows/twilio_connector_warm_transfer_lifecycle.test.ts
+  s_aaf78334cb7322::t_9fb4af76ea4f64 55
+plugins/tavus/src/api.test.ts
+  s_aaf78334cb7322::t_08530464699dbf 104,110,123
+plugins/tavus/src/api.ts
+  s_aaf78334cb7322::t_d92b5b3d25c33b 17-18,123,128-129,132-133,139,144
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3674d18874a5865fa02392b10ce8d6034db0b541",
+  "prompts": {},
+  "sessions": {
+    "s_aaf78334cb7322": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d2193486-0057-4a50-bb24-44082ff248d9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
