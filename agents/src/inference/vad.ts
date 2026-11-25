@@ -339,15 +339,22 @@ class InferenceVADStream extends BaseVADStream {
           );
         }
 
+        const isSpeech =
+          p >= this._opts.activationThreshold ||
+          (pubSpeaking && p > this._opts.deactivationThreshold);
         if (pubSpeaking) pubSpeechDurationMs += windowDurationMs;
         else pubSilenceDurationMs += windowDurationMs;
+
+        // Silence after the last speech window only counts once speech resumes,
+        // so it can't push the speech duration over the interruption threshold.
+        const trailingSilenceMs = isSpeech ? 0 : silenceThresholdDurationMs + windowDurationMs;
 
         this.sendVADEvent({
           type: VADEventType.INFERENCE_DONE,
           samplesIndex: pubCurrentSample,
           timestamp: pubTimestampMs,
           silenceDuration: pubSilenceDurationMs,
-          speechDuration: pubSpeechDurationMs,
+          speechDuration: Math.max(0, pubSpeechDurationMs - trailingSilenceMs),
           probability: p,
           inferenceDuration,
           frames: [
@@ -363,10 +370,7 @@ class InferenceVADStream extends BaseVADStream {
           rawAccumulatedSpeech: speechThresholdDurationMs,
         });
 
-        if (
-          p >= this._opts.activationThreshold ||
-          (pubSpeaking && p > this._opts.deactivationThreshold)
-        ) {
+        if (isSpeech) {
           speechThresholdDurationMs += windowDurationMs;
           silenceThresholdDurationMs = 0;
           if (!pubSpeaking && speechThresholdDurationMs >= this._opts.minSpeechDuration) {

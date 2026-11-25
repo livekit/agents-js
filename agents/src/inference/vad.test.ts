@@ -5,6 +5,10 @@ import { AudioFrame } from '@livekit/rtc-node';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { initializeLogger } from '../log.js';
 import { type VADEvent, VADEventType, type VADStream } from '../vad.js';
+import { Agent } from '../voice/agent.js';
+import { AgentActivity } from '../voice/agent_activity.js';
+import { AgentSession } from '../voice/agent_session.js';
+import { SpeechHandle } from '../voice/speech_handle.js';
 import { VAD, type VADOptions } from './vad.js';
 
 beforeAll(() => {
@@ -152,6 +156,92 @@ describe('inference.VAD updateOptions propagation', () => {
       }
     } finally {
       stream.close();
+    }
+  });
+});
+
+describe('inference.VAD interruption duration', () => {
+  it.each([
+    { name: 'short speech', windows: Array(4).fill(1), speechDuration: 128, interruptAt: null },
+    {
+      name: 'first silent window',
+      windows: Array(15).fill(1),
+      speechDuration: 480,
+      interruptAt: null,
+    },
+    { name: 'continuous speech', windows: Array(16).fill(1), speechDuration: 512, interruptAt: 16 },
+    {
+      name: 'internal pause',
+      windows: [...Array(8).fill(1), ...Array(4).fill(0), ...Array(4).fill(1)],
+      speechDuration: 512,
+      interruptAt: 16,
+    },
+  ])('excludes trailing silence for $name', async ({ windows, speechDuration, interruptAt }) => {
+    const vad = new VAD({
+      minSpeechDuration: 50,
+      minSilenceDuration: 550,
+      maxBufferedSpeech: 2000,
+    });
+    const stream = vad.stream();
+    const s = internals(stream);
+    s._windowSamples = WINDOW_SAMPLES;
+    s._nativeVad = {
+      predict: async (samples) => (samples.some((sample) => sample !== 0) ? 1 : 0),
+      reset: () => {},
+    };
+    const session = new AgentSession({
+      vad,
+      turnHandling: {
+        turnDetection: 'vad',
+        interruption: { mode: 'vad', minDuration: 500, resumeFalseInterruption: false },
+      },
+      aecWarmupDuration: null,
+    });
+    const activity = new AgentActivity(new Agent({ instructions: 'test' }), session);
+    const handle = SpeechHandle.create({ allowInterruptions: true });
+    activity._currentSpeech = handle;
+
+    try {
+      for (const value of [...windows, ...Array(18).fill(0)]) {
+        stream.pushFrame(
+          new AudioFrame(
+            new Int16Array(WINDOW_SAMPLES).fill(value),
+            SAMPLE_RATE,
+            1,
+            WINDOW_SAMPLES,
+          ),
+        );
+      }
+      const transitions: VADEvent[] = [];
+      let firstInterruption: number | null = null;
+      let inferenceEvents = 0;
+      while (inferenceEvents < windows.length + 18) {
+        const { value: event } = await stream.next();
+        if (event === undefined) throw new Error('stream ended before all windows were processed');
+        if (event.type === VADEventType.INFERENCE_DONE) {
+          inferenceEvents += 1;
+          activity.onVADInferenceDone(event);
+          if (handle.interrupted && firstInterruption === null) {
+            firstInterruption = event.samplesIndex / WINDOW_SAMPLES;
+          }
+        } else {
+          transitions.push(event);
+        }
+      }
+      const { value: endEvent } = await stream.next();
+      if (endEvent !== undefined) transitions.push(endEvent);
+
+      expect(transitions.map((event) => event.type)).toEqual([
+        VADEventType.START_OF_SPEECH,
+        VADEventType.END_OF_SPEECH,
+      ]);
+      expect(transitions[0]?.speechDuration).toBeCloseTo(64);
+      expect(transitions[1]?.speechDuration).toBeCloseTo(speechDuration);
+      expect(firstInterruption).toBe(interruptAt);
+    } finally {
+      stream.close();
+      handle._markDone();
+      await session.close().catch(() => {});
     }
   });
 });
