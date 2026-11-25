@@ -4,7 +4,7 @@
 import type { AudioFrame } from '@livekit/rtc-node';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
 import { WebSocket } from 'ws';
-import { APIError, APIStatusError, APITimeoutError } from '../_exceptions.js';
+import { APIConnectionError, APIError, APIStatusError, APITimeoutError } from '../_exceptions.js';
 import { AudioByteStream } from '../audio.js';
 import { ConnectionPool } from '../connection_pool.js';
 import { type LanguageCode, normalizeLanguage } from '../language.js';
@@ -27,11 +27,14 @@ import { type TimedString, createTimedString } from '../voice/io.js';
 import {
   type TtsClientEvent,
   type TtsServerEvent,
+  type TtsSessionCreatedEvent,
   ttsClientEventSchema,
   ttsKnownServerEventSchema,
   ttsServerEventSchema,
 } from './api_protos.js';
 import { type AnyString, connectWs, createAccessToken, getDefaultInferenceUrl } from './utils.js';
+
+export type { FallbackActivatedEvent } from '../tts/tts.js';
 
 export type CartesiaModels =
   | 'cartesia/sonic-3.6'
@@ -281,6 +284,31 @@ const DEFAULT_SAMPLE_RATE = 16000;
 const NUM_CHANNELS = 1;
 const DEFAULT_LANGUAGE = 'en';
 
+interface TtsSocketState {
+  inUse: boolean;
+  handoffId?: string;
+  sessionCreated?: TtsSessionCreatedEvent;
+  onMessage?: (event: TtsServerEvent) => void;
+  onDisconnect?: (error?: Error) => void;
+}
+
+const ttsSocketStates = new WeakMap<WebSocket, TtsSocketState>();
+
+function retireTtsSocket(ws: WebSocket, state: TtsSocketState, pool: ConnectionPool<WebSocket>) {
+  const handoffId = state.handoffId;
+  state.handoffId = undefined;
+  if (ws.readyState !== WebSocket.OPEN || handoffId === undefined) return;
+  try {
+    ws.send(JSON.stringify({ type: 'session.handoff.complete', handoff_id: handoffId }));
+  } catch {
+    // The draining gateway can close before the acknowledgement is sent.
+  } finally {
+    pool.remove(ws);
+    ws.close();
+    pool.prewarm();
+  }
+}
+
 export interface InferenceTTSOptions<TModel extends TTSModels> {
   model?: TModel;
   voice?: string;
@@ -293,6 +321,11 @@ export interface InferenceTTSOptions<TModel extends TTSModels> {
   /** Flat provider-specific inference options forwarded as the `extra` payload field. */
   modelOptions: TTSOptions<TModel>;
   fallback?: TTSFallbackModel[];
+  /**
+   * Opt out of the gateway's system-default fallback models. Customer `fallback` models still
+   * apply. Set only at construction; `updateOptions` does not change it.
+   */
+  disableSystemDefaultFallback?: boolean;
   connOptions?: APIConnectOptions;
 }
 
@@ -319,6 +352,11 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
     /** Flat provider-specific inference options forwarded as the `extra` payload field. */
     modelOptions?: TTSOptions<TModel>;
     fallback?: TTSFallbackModelType | TTSFallbackModelType[];
+    /**
+     * Opt out of the gateway's system-default fallback models. Customer `fallback` models still
+     * apply. Set only at construction; `updateOptions` does not change it.
+     */
+    disableSystemDefaultFallback?: boolean;
     connOptions?: APIConnectOptions;
   }) {
     const sampleRate = opts?.sampleRate ?? DEFAULT_SAMPLE_RATE;
@@ -339,6 +377,7 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
       apiSecret,
       modelOptions = {} as TTSOptions<TModel>,
       fallback,
+      disableSystemDefaultFallback = false,
       connOptions,
     } = opts || {};
 
@@ -386,6 +425,7 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
       apiSecret: lkApiSecret,
       modelOptions,
       fallback: normalizedFallback,
+      disableSystemDefaultFallback,
       connOptions: connOptions ?? DEFAULT_API_CONNECT_OPTIONS,
     };
 
@@ -510,6 +550,7 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
 
     const params = {
       type: 'session.create',
+      handoff_protocol: 1,
       sample_rate: String(this.opts.sampleRate),
       encoding: this.opts.encoding,
       extra: this.opts.modelOptions,
@@ -519,13 +560,16 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
     if (this.opts.model) (params as Record<string, unknown>).model = this.opts.model;
     if (this.opts.language) (params as Record<string, unknown>).language = this.opts.language;
 
-    if (this.opts.fallback?.length) {
+    if (this.opts.fallback?.length || this.opts.disableSystemDefaultFallback) {
       params.fallback = {
-        models: this.opts.fallback.map((m) => ({
+        models: (this.opts.fallback ?? []).map((m) => ({
           model: m.model,
           voice: m.voice,
           extra: m.extraKwargs ?? {},
         })),
+        ...(this.opts.disableSystemDefaultFallback
+          ? { disable_system_default_fallback: true }
+          : {}),
       };
     }
 
@@ -538,8 +582,43 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
 
     this.#logger.debug({ url }, 'inference.TTS creating new websocket connection (pool miss)');
     const socket = await connectWs(url, headers, timeout);
-    socket.send(JSON.stringify(params));
-    return socket;
+    const state: TtsSocketState = { inUse: false };
+    ttsSocketStates.set(socket, state);
+    socket.on('message', (raw) => {
+      try {
+        const event = ttsServerEventSchema.parse(JSON.parse(raw.toString()));
+        if (event.type === 'session.handoff.request') {
+          const handoffId = (event as { handoff_id?: unknown }).handoff_id;
+          if (typeof handoffId !== 'string' || !handoffId || state.handoffId !== undefined) return;
+          state.handoffId = handoffId;
+          if (!state.inUse) retireTtsSocket(socket, state, this.pool);
+          return;
+        }
+        if (event.type === 'session.created') {
+          const parsed = ttsKnownServerEventSchema.parse(event);
+          if (parsed.type === 'session.created') state.sessionCreated = parsed;
+        }
+        state.onMessage?.(event);
+      } catch (error) {
+        this.#logger.error({ error }, 'Error handling TTS WebSocket message');
+      }
+    });
+    socket.on('error', (error) => {
+      state.onDisconnect?.(error);
+      this.pool.remove(socket);
+      socket.terminate();
+    });
+    socket.once('close', () => {
+      this.pool.remove(socket);
+      state.onDisconnect?.();
+    });
+    try {
+      socket.send(JSON.stringify(params));
+      return socket;
+    } catch (error) {
+      socket.close();
+      throw error;
+    }
   }
 
   async closeWs(ws: WebSocket) {
@@ -723,51 +802,30 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
 
     // Handles WebSocket message routing and error handling
     // Completes based on protocol messages, NOT on ws.close()
-    const createWsListenerTask = async (ws: WebSocket, signal: AbortSignal) => {
-      const onMessage = (data: Buffer) => {
-        try {
-          const eventJson = JSON.parse(data.toString()) as Record<string, unknown>;
-          const validatedEvent = ttsServerEventSchema.parse(eventJson);
-          // writer.write returns a promise; avoid unhandled rejections if stream is closed
-          void eventChannel.write(validatedEvent).catch((error) => {
-            this.#logger.debug(
-              { error },
-              'Failed writing TTS event to stream channel (likely closed)',
-            );
-          });
-        } catch (e) {
-          this.#logger.error({ error: e }, 'Error parsing WebSocket message');
-        }
+    const createWsListenerTask = async (
+      ws: WebSocket,
+      state: TtsSocketState,
+      signal: AbortSignal,
+    ) => {
+      const onMessage = (event: TtsServerEvent) => {
+        void eventChannel.write(event).catch((error) => {
+          this.#logger.debug({ error }, 'Failed to queue TTS server event');
+        });
       };
-
-      const onError = (e: Error) => {
-        this.#logger.error({ error: e }, 'WebSocket error');
+      const onDisconnect = (error?: Error) => {
+        if (closing) return;
         void resourceCleanup();
-        try {
-          // If the ws is misbehaving, hard-stop it immediately to avoid buffering.
-          ws.terminate?.();
-        } catch {
-          // ignore
-        }
-        // Ensure this ws is not reused
-        this.tts.pool.remove(ws);
-        completionFuture.reject(e);
-      };
-
-      const onClose = () => {
-        // WebSocket closed unexpectedly (not by us)
-        if (!closing) {
-          this.#logger.error('WebSocket closed unexpectedly');
-          void resourceCleanup();
-          // Ensure this ws is not reused
-          this.tts.pool.remove(ws);
-          completionFuture.reject(
-            new APIStatusError({
-              message: 'Gateway connection closed unexpectedly',
-              options: { requestId },
-            }),
-          );
-        }
+        completionFuture.reject(
+          error
+            ? new APIConnectionError({
+                message: 'LiveKit TTS connection lost',
+                options: { body: error },
+              })
+            : new APIStatusError({
+                message: 'Gateway connection closed unexpectedly',
+                options: { requestId },
+              }),
+        );
       };
 
       const onAbort = () => {
@@ -784,20 +842,18 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
         completionFuture.resolve();
       };
 
-      // Attach listeners
-      ws.on('message', onMessage);
-      ws.on('error', onError);
-      ws.on('close', onClose);
+      state.onMessage = onMessage;
+      state.onDisconnect = onDisconnect;
+      if (state.sessionCreated) onMessage(state.sessionCreated);
       signal.addEventListener('abort', onAbort);
+      if (ws.readyState !== WebSocket.OPEN) onDisconnect();
 
       try {
         // Wait for protocol-driven completion or error
         await completionFuture.await;
       } finally {
-        // IMPORTANT: Remove listeners so connection can be reused
-        ws.off('message', onMessage);
-        ws.off('error', onError);
-        ws.off('close', onClose);
+        state.onMessage = undefined;
+        state.onDisconnect = undefined;
         signal.removeEventListener('abort', onAbort);
       }
     };
@@ -837,6 +893,16 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
           switch (serverEvent.type) {
             case 'session.created':
               currentSessionId = serverEvent.session_id;
+              break;
+            case 'fallback_activated':
+              this.tts.emit('fallback_activated', {
+                sessionId: serverEvent.session_id,
+                fallbackType: serverEvent.fallback_type,
+                provider: serverEvent.provider,
+                model: serverEvent.model,
+                voice: serverEvent.voice,
+                cause: serverEvent.cause,
+              });
               break;
             case 'output_audio':
               const base64Data = new Int8Array(Buffer.from(serverEvent.audio, 'base64'));
@@ -921,6 +987,8 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
     try {
       await this.tts.pool.withConnection(
         async (ws: WebSocket) => {
+          const state = ttsSocketStates.get(ws)!;
+          state.inUse = true;
           try {
             // IMPORTANT: don't cancel the stream's controller on normal completion,
             // otherwise the pool will remove+close the ws and every run becomes a pool miss.
@@ -948,7 +1016,7 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
               Task.from(
                 async (controller) => {
                   const combined = combineSignals(runController.signal, controller.signal);
-                  await createWsListenerTask(ws, combined);
+                  await createWsListenerTask(ws, state, combined);
                 },
                 undefined,
                 'inference-tts-ws-listener',
@@ -972,12 +1040,17 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
               await cancelAndWait(tasks, 5000);
               this.abortController.signal.removeEventListener('abort', onStreamAbort);
             }
+            if (!runController.signal.aborted && state.handoffId !== undefined) {
+              retireTtsSocket(ws, state, this.tts.pool);
+            }
           } catch (e) {
             // If aborted, don't throw - let cleanup handle it
             if (e instanceof Error && e.name === 'AbortError') {
               return;
             }
             throw e;
+          } finally {
+            state.inUse = false;
           }
         },
         {

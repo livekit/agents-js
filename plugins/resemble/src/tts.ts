@@ -3,12 +3,15 @@
 // SPDX-License-Identifier: Apache-2.0
 import {
   type APIConnectOptions,
+  APIConnectionError,
+  APIError,
   AudioByteStream,
   Future,
   log,
   shortuuid,
   tokenize,
   tts,
+  waitForWebSocketOpen,
 } from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
 import { request } from 'node:https';
@@ -215,6 +218,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       const packet = toResembleOptions(this.#opts, true);
 
       for await (const event of tokenizer) {
+        if (closing || this.abortSignal.aborted) return;
         const reqId = requestCounter++;
         packet.data = event.token + ' ';
         packet.request_id = reqId;
@@ -229,12 +233,15 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
     const inputTask = async () => {
       for await (const data of this.input) {
+        // A failed attempt closes its tokenizer; a retry reads the replayed input instead.
+        if (tokenizer.closed) return;
         if (data === SynthesizeStream.FLUSH_SENTINEL) {
           tokenizer.flush();
           continue;
         }
         tokenizer.pushText(data);
       }
+      if (tokenizer.closed) return;
       tokenizer.endInput();
       tokenizer.close();
     };
@@ -250,7 +257,8 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         }
       };
 
-      // Use promise-based message handling similar to ElevenLabs
+      // Use promise-based message handling similar to ElevenLabs. A failure rejects the attempt
+      // without ending the output, so the base class can retry it before any audio.
       while ((!closing && activeRequests.size > 0) || !tokenizer.closed) {
         try {
           await new Promise<void>((resolve, reject) => {
@@ -295,9 +303,8 @@ export class SynthesizeStream extends tts.SynthesizeStream {
                     .error(`Resemble API error: ${explanation}`);
 
                   closing = true;
-                  this.queue.put(SynthesizeStream.END_OF_STREAM);
                   ws.close();
-                  reject(new Error(`Resemble API error: ${errorName}`));
+                  reject(new APIError(`Resemble API error: ${errorName}`, { retryable: false }));
                   return;
                 }
                 resolve();
@@ -308,34 +315,30 @@ export class SynthesizeStream extends tts.SynthesizeStream {
             });
 
             ws.on('error', (error) => {
-              this.#logger.error(`WebSocket error: ${error}`);
               if (!closing) {
                 closing = true;
-                this.queue.put(SynthesizeStream.END_OF_STREAM);
                 ws.close();
               }
-              reject(error);
+              reject(new APIConnectionError({ message: `Resemble WebSocket error: ${error}` }));
             });
 
             ws.on('close', (code, reason) => {
-              if (!closing) {
-                this.#logger.error(`WebSocket closed with code ${code}: ${reason}`);
-                this.queue.put(SynthesizeStream.END_OF_STREAM);
-              }
               // Only reject if we haven't received all expected frames
               if (activeRequests.size > 0 || !tokenizer.closed) {
-                reject(new Error(`WebSocket closed prematurely with code ${code}: ${reason}`));
+                reject(
+                  new APIConnectionError({
+                    message: `Resemble WebSocket closed prematurely with code ${code}: ${reason}`,
+                  }),
+                );
               } else {
                 resolve();
               }
             });
           });
         } catch (err) {
-          // Skip log error for normal websocket close
-          if (err instanceof Error && !err.message.includes('WebSocket closed prematurely')) {
-            this.#logger.error({ err }, 'Error in recvTask from Resemble WebSocket');
-          }
-          break;
+          // close() tears the socket down; that ends the attempt without a failure.
+          if (this.abortSignal.aborted) break;
+          throw err;
         }
       }
     };
@@ -347,22 +350,25 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     });
     this.#websocket = ws;
 
+    let tasks: Promise<void>[] = [];
     try {
-      await new Promise((resolve, reject) => {
-        ws.on('open', resolve);
-        ws.on('error', (error) => reject(error));
-        ws.on('close', (code) => reject(`WebSocket returned ${code}`));
-      });
+      await waitForWebSocketOpen(ws, 'Resemble');
 
-      await Promise.all([inputTask(), sentenceStreamTask(ws), recvTask(ws)]);
+      tasks = [inputTask(), sentenceStreamTask(ws), recvTask(ws)];
+      await Promise.all(tasks);
     } catch (e) {
-      throw new Error(`failed to connect to Resemble: ${e}`);
+      if (this.abortSignal.aborted) return;
+      if (e instanceof APIError) throw e;
+      throw new APIConnectionError({ message: `failed to connect to Resemble: ${e}` });
     } finally {
+      closing = true;
+      if (!this.input.closed) this.input.close();
       tokenizer.close();
       if (this.#websocket === ws) this.#websocket = null;
       if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
         ws.close();
       }
+      await Promise.allSettled(tasks);
     }
   }
 

@@ -141,6 +141,57 @@ describe('RealtimeSession.generateReply', () => {
     );
   });
 
+  it('sends per-response tool choice and tools on response.create', async () => {
+    const session = createSessionForTest();
+    const lookup = llm.tool({
+      name: 'lookup',
+      description: 'Look up an order',
+      parameters: { type: 'object', properties: {} },
+      execute: async () => 'found',
+    });
+    const abortController = new AbortController();
+
+    const promise = session.generateReply(undefined, {
+      signal: abortController.signal,
+      toolChoice: 'required',
+      tools: new llm.ToolContext([lookup]),
+    });
+    abortController.abort();
+
+    await expect(promise).rejects.toThrow('generateReply aborted');
+    expect(session.sendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'response.create',
+        response: expect.objectContaining({
+          tool_choice: 'required',
+          tools: [
+            {
+              type: 'function',
+              name: 'lookup',
+              description: 'Look up an order',
+              parameters: { type: 'object', properties: {} },
+            },
+          ],
+        }),
+      }),
+    );
+  });
+
+  it('omits tool choice and tools from response.create when not given', async () => {
+    const session = createSessionForTest();
+    const abortController = new AbortController();
+
+    const promise = session.generateReply('say hi', { signal: abortController.signal });
+    abortController.abort();
+
+    await expect(promise).rejects.toThrow('generateReply aborted');
+    const responseCreate = session.sendEvent.mock.calls
+      .map(([event]) => event as api_proto.ClientEvent)
+      .find((event) => event.type === 'response.create') as api_proto.ResponseCreateEvent;
+    expect(responseCreate.response).not.toHaveProperty('tool_choice');
+    expect(responseCreate.response).not.toHaveProperty('tools');
+  });
+
   it('cancels an in-flight response when aborted before response.created', async () => {
     const session = createSessionForTest();
     const abortController = new AbortController();
@@ -1160,6 +1211,62 @@ describe('RealtimeSession chat context update events', () => {
       previous_item_id: 'item_1',
       item: { id: 'item_2' },
     });
+  });
+});
+
+describe('RealtimeSession initial session options', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function queuedEvents(session: llm.RealtimeSession): api_proto.ClientEvent[] {
+    return (session as unknown as { messageChannel: { items: api_proto.ClientEvent[] } })
+      .messageChannel.items;
+  }
+
+  it('queues the seeded instructions and tools before the socket connects', () => {
+    stubTaskRuntime();
+
+    const tools = new llm.ToolContext([
+      llm.tool({ name: 'lookup', description: 'look something up', execute: async () => 'ok' }),
+    ]);
+    const session = new RealtimeModel({ apiKey: 'test-key' }).session({
+      instructions: 'be brief',
+      tools,
+    });
+
+    const sessionUpdates = queuedEvents(session).filter(
+      (ev): ev is api_proto.SessionUpdateEvent => ev.type === 'session.update',
+    );
+    expect(sessionUpdates).toHaveLength(2);
+    expect((sessionUpdates[0]!.session as { instructions?: string }).instructions).toBe('be brief');
+    expect(sessionUpdates[1]!.session.tools?.map((tool) => tool.name)).toEqual(['lookup']);
+    expect(session.tools.equals(tools)).toBe(true);
+  });
+
+  it('queues the seeded chat context through the standard update path', async () => {
+    stubTaskRuntime();
+
+    const chatCtx = llm.ChatContext.empty();
+    chatCtx.addMessage({ role: 'user', content: 'hi there' });
+    const session = new RealtimeModel({ apiKey: 'test-key' }).session({ chatCtx });
+
+    await vi.waitFor(() =>
+      expect(queuedEvents(session).some((ev) => ev.type === 'conversation.item.create')).toBe(true),
+    );
+  });
+
+  it('keeps disabling turn detection alongside the seeded config', () => {
+    stubTaskRuntime();
+
+    const session = new RealtimeModel({ apiKey: 'test-key' }).session({
+      turnDetectionDisabled: true,
+      instructions: 'be brief',
+    });
+
+    const update = queuedEvents(session)[0] as api_proto.SessionUpdateEvent;
+    expect(JSON.stringify(update.session)).toContain('"turn_detection":null');
+    expect((update.session as { instructions?: string }).instructions).toBe('be brief');
   });
 });
 

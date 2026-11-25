@@ -80,8 +80,10 @@ class RealtimeModel_4 extends OpenAIRealtimeModel {
     constructor(options?: RealtimeModelOptions);
     // (undocumented)
     label(): string;
+    // Warning: (ae-forgotten-export) The symbol "llm_3" needs to be exported by the entry point index.d.ts
+    //
     // (undocumented)
-    session(): RealtimeSession_4;
+    session(options?: llm_3.RealtimeSessionOptions): RealtimeSession_4;
 }
 
 // Warning: (ae-forgotten-export) The symbol "OpenAIRealtimeModelOptions" needs to be exported by the entry point index.d.ts
@@ -104,7 +106,6 @@ interface RealtimeModelOptions extends Omit<OpenAIRealtimeModelOptions, 'model'>
 class RealtimeSession_4 extends OpenAIRealtimeSession {
     // (undocumented)
     close(): Promise<void>;
-    // Warning: (ae-forgotten-export) The symbol "llm_3" needs to be exported by the entry point index.d.ts
     // Warning: (ae-forgotten-export) The symbol "realtime_2" needs to be exported by the entry point index.d.ts
     //
     // (undocumented)

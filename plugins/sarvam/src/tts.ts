@@ -637,8 +637,15 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
         ws.on('close', () => {
           if (!finalReceived) {
-            reject(new APIConnectionError({ message: 'Sarvam TTS WebSocket closed unexpectedly' }));
-            return;
+            for (const frame of bstream.flush()) {
+              sendLastFrame(false);
+              lastFrame = frame;
+            }
+            sendLastFrame(true);
+
+            if (!this.queue.closed) {
+              this.queue.put(SynthesizeStream.END_OF_STREAM);
+            }
           }
           resolve();
         });

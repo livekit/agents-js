@@ -9,6 +9,8 @@
  * @see {@link https://docs.livekit.io/agents/overview | LiveKit Agents documentation}
  * @packageDocumentation
  */
+import './telemetry/hosted_logs_startup.js';
+
 export * from './_exceptions.js';
 export * from './audio.js';
 export * as beta from './beta/index.js';

@@ -322,11 +322,21 @@ export class ChunkedStream extends tts.ChunkedStream {
 
 /** @public */
 export class SynthesizeStream extends tts.SynthesizeStream {
+  // One input reader feeds every attempt, which resends its cached input from the start.
+  protected override readonly inputRetryMode = 'stream';
   #tts: TTS;
   #opts: TTSOptions;
   #connection?: _Connection;
   #streamId = '';
   #cancelled = false;
+  /**
+   * Everything pushed so far. One reader fills it for the stream's whole life, so a retry
+   * replays it and then keeps sending what the caller pushes next.
+   */
+  #inputCache: Array<string | typeof SynthesizeStream.FLUSH_SENTINEL> = [];
+  #inputDone = false;
+  #inputReader?: Promise<void>;
+  #inputWaiters: Array<() => void> = [];
   label = 'soniox.SynthesizeStream';
 
   constructor(tts: TTS, opts: TTSOptions, connOptions?: APIConnectOptions) {
@@ -402,9 +412,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       throw new APIConnectionError({ message: `Soniox TTS connection error: ${error}` });
     } finally {
       attemptState.cancelled = true;
-      if (!this.input.closed) {
-        this.input.close();
-      }
+      this.#wakeInputWaiters();
       await inputTask;
       if (this.#connection !== undefined && this.#streamId) {
         this.#connection.unregisterStream(this.#streamId);
@@ -414,18 +422,48 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
   protected override onStreamDone(): void {
     getTTSState(this.#tts).streams.delete(this);
+    // No attempt is left to send what the caller pushes from here on.
+    if (!this.input.closed) {
+      this.input.close();
+    }
   }
 
-  async #sendInput(attemptState: { cancelled: boolean }): Promise<void> {
-    for await (const data of this.input) {
-      if (this.#cancelled || attemptState.cancelled || this.#connection === undefined) {
-        break;
+  /** Starts the one reader of the caller's input, the first time an attempt needs it. */
+  #readInput(): void {
+    this.#inputReader ??= (async () => {
+      for await (const data of this.input) {
+        this.#inputCache.push(data);
+        this.#wakeInputWaiters();
       }
-      this.#sendInputItem(data);
-    }
+      this.#inputDone = true;
+      this.#wakeInputWaiters();
+    })();
+  }
 
-    if (!this.#cancelled && !attemptState.cancelled && this.#connection !== undefined) {
-      this.#connection.sendText(this.#streamId, '', true);
+  #wakeInputWaiters(): void {
+    for (const wake of this.#inputWaiters.splice(0)) {
+      wake();
+    }
+  }
+
+  /** Sends everything pushed so far, then what follows, until the input ends. */
+  async #sendInput(attemptState: { cancelled: boolean }): Promise<void> {
+    this.#readInput();
+    let sent = 0;
+    for (;;) {
+      if (this.#cancelled || attemptState.cancelled || this.#connection === undefined) {
+        return;
+      }
+      if (sent < this.#inputCache.length) {
+        this.#sendInputItem(this.#inputCache[sent]!);
+        sent += 1;
+        continue;
+      }
+      if (this.#inputDone) {
+        this.#connection.sendText(this.#streamId, '', true);
+        return;
+      }
+      await new Promise<void>((resolve) => this.#inputWaiters.push(resolve));
     }
   }
 

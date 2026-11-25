@@ -16,8 +16,9 @@ import { tracer } from './traces.js';
  *
  * Set in the LiveKit Cloud dashboard (or per session with `record: { redaction: true }`) and
  * never weakened from here — when it is on, PII is stripped for every destination, LiveKit
- * Cloud included. `spanAttributes` lets a span ended outside the job's async context resolve
- * from the flag stamped on it at span start.
+ * Cloud included. Simulations ignore the project setting but can opt in with the per-session
+ * option. `spanAttributes` lets a span ended outside the job's async context resolve from the
+ * flag stamped on it at span start.
  *
  * Stripping PII for *third-party* exporters is not this flag: that is the default, and is
  * lifted per provider with `setTracerProvider(provider, { allowPii: true })`.

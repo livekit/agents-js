@@ -52,6 +52,8 @@ export type OpenAIModels =
 
 export type GoogleModels =
   | 'google/gemini-4-argon'
+  | 'google/gemini-4-hydrogen'
+  | 'google/gemini-4-neon'
   | 'google/gemini-3.1-pro'
   | 'google/gemini-3-flash'
   | 'google/gemini-3.1-flash-lite'
@@ -96,7 +98,7 @@ export interface ChatCompletionOptions extends Record<string, unknown> {
   presence_penalty?: number;
   prompt_cache_key?: string;
   prompt_cache_retention?: 'in_memory' | '24h';
-  reasoning_effort?: 'none' | 'minimal' | 'low' | 'medium' | 'high';
+  reasoning_effort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
   safety_identifier?: string;
   seed?: number;
   service_tier?: 'auto' | 'default' | 'flex' | 'scale' | 'priority';
@@ -339,7 +341,15 @@ export class LLM extends llm.LLM {
     const resolvedInferenceClass =
       inferenceClass !== undefined ? inferenceClass : this.opts.inferenceClass;
 
+    const callHeaders = modelOptions.extra_headers as Record<string, string> | undefined;
+    const modelHeaders = (this.opts.modelOptions as Record<string, unknown>).extra_headers as
+      | Record<string, string>
+      | undefined;
     modelOptions = { ...modelOptions, ...this.opts.modelOptions };
+    // merge, don't replace: a turn's headers survive the model's own
+    if (callHeaders || modelHeaders) {
+      modelOptions.extra_headers = { ...modelHeaders, ...callHeaders };
+    }
 
     return new LLMStream(this, {
       model: this.opts.model,

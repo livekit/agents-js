@@ -3,8 +3,10 @@
 // SPDX-License-Identifier: Apache-2.0
 import * as grpc from '@grpc/grpc-js';
 import {
+  APIConnectionError,
   Agent,
   AgentSession,
+  ConnectionPool,
   DEFAULT_API_CONNECT_OPTIONS,
   initializeLogger,
   type metrics,
@@ -101,11 +103,11 @@ describe('NVIDIA TTS', () => {
     expect(DEFAULT_API_CONNECT_OPTIONS.maxRetry).toBe(defaultMaxRetry);
   });
 
-  it('fails without replaying text the provider already received', async () => {
+  it('does not replay input when NVIDIA rejects it with a fatal status', async () => {
     let calls = 0;
     const provider = await startServer((call) => {
       calls++;
-      call.emit('error', { code: grpc.status.UNAVAILABLE, details: 'unavailable' });
+      call.emit('error', { code: grpc.status.INVALID_ARGUMENT, details: 'invalid request' });
     });
     const recoverable: boolean[] = [];
     provider.on('error', (error) => recoverable.push(error.recoverable));
@@ -119,6 +121,52 @@ describe('NVIDIA TTS', () => {
     expect(calls).toBe(1);
     expect(recoverable).toEqual([false]);
     expect(connOptions.maxRetry).toBe(3);
+  });
+
+  it('replays input after a transient NVIDIA error before audio', async () => {
+    const texts: string[] = [];
+    const provider = await startServer((call) => {
+      texts.push(call.request.text as string);
+      if (texts.length === 1) {
+        call.emit('error', { code: grpc.status.UNAVAILABLE, details: 'unavailable' });
+        return;
+      }
+      call.write({ audio: Buffer.alloc(3200) });
+      call.end();
+    });
+    const errors: unknown[] = [];
+    provider.on('error', (error) => errors.push(error));
+
+    stream = provider.stream({ connOptions: { maxRetry: 1, retryIntervalMs: 0, timeoutMs: 1000 } });
+    stream.pushText('Hello there.');
+    stream.endInput();
+
+    expect(await collect(stream)).toHaveLength(1);
+    expect(texts).toEqual(['Hello there.', 'Hello there.']);
+    expect(errors).toEqual([]);
+  });
+
+  it('replays flushed and ended input after a failed channel acquisition', async () => {
+    const texts: string[] = [];
+    const provider = await startServer((call) => {
+      texts.push(call.request.text as string);
+      call.write({ audio: Buffer.alloc(3200) });
+      call.end();
+    });
+    const acquire = vi
+      .spyOn(ConnectionPool.prototype, 'get')
+      .mockRejectedValueOnce(new APIConnectionError({ message: 'no channel' }));
+
+    stream = provider.stream({ connOptions: { maxRetry: 1, retryIntervalMs: 0, timeoutMs: 1000 } });
+    stream.pushText('Hello there.');
+    stream.flush();
+    stream.pushText('See you later.');
+    stream.endInput();
+    const audio = await collect(stream);
+
+    expect(acquire).toHaveBeenCalledTimes(2);
+    expect(texts).toEqual(['Hello there.', 'See you later.']);
+    expect(audio.length).toBeGreaterThan(0);
   });
 
   it('preserves audio and continues after a failed sentence', async () => {

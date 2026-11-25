@@ -92,7 +92,7 @@ import {
   cleanupReusableResources,
   isSchedulingPausedError,
 } from './agent_activity.js';
-import type { AMD, AMDPredictionEvent } from './amd.js';
+import type { AMD, AMDCompletedEvent, AMDPredictionEvent } from './amd/index.js';
 import type { _TurnDetector } from './audio_recognition.js';
 import { AgentsConsole } from './console_io.js';
 import {
@@ -146,6 +146,7 @@ import type {
   TurnHandlingOptions,
 } from './turn_config/turn_handling.js';
 import { migrateLegacyOptions, stripUndefined } from './turn_config/utils.js';
+import type { TurnHooks } from './turn_hooks.js';
 import { setParticipantSpanAttributes } from './utils.js';
 
 const SIP_RULE_ID_ATTR = 'sip.ruleID';
@@ -161,9 +162,10 @@ export interface AgentSessionUsage {
  * Granular control over which recording features are active.
  *
  * Content recording keys default to `true` when omitted, so `{ logs: false }` means "record
- * everything except logs". Input deltas are opt-in. Redaction defaults to the project setting;
- * `false` is ignored when redaction is enabled globally for the project. Pass to
- * {@link AgentSession.start} as `record`:
+ * everything except logs". Input deltas are opt-in. Outside simulations, redaction defaults to
+ * the project setting; `false` is ignored when redaction is enabled globally for the project.
+ * Simulations ignore the project setting and enable redaction only with
+ * `record: { redaction: true }`. Pass to {@link AgentSession.start} as `record`:
  *
  * - `record: true` — all on (backward compatible)
  * - `record: false` — all off (backward compatible)
@@ -654,12 +656,11 @@ export class AgentSession<
   /** @internal */
   _roomIO?: RoomIO;
 
-  /**
-   * Currently active AMD instance, if one was constructed against this session.
-   * Mirrors python `AgentSession._amd`. Useful for tests, telemetry, and
-   * higher-level helpers that need to introspect classification state.
-   */
+  /** The running AMD instance, if any. Mirrors python `AgentSession._amd`. */
   private _amd: AMD | null = null;
+
+  /** @internal Hooks that observe committed turns and control their replies. */
+  _turnHooks: TurnHooks | undefined = undefined;
 
   /** @internal */
   _aecWarmupRemaining = 0;
@@ -1130,13 +1131,14 @@ export class AgentSession<
         this.sessionOptions.recordingOptions = resolveRecordingOptions(false);
       }
 
-      if (this._enableRecording) {
-        await ctx.initRecording(this.sessionOptions.recordingOptions);
-      }
+      ctx._redactionEnabled = Boolean(
+        ctx._redactionEnabled || this.sessionOptions.recordingOptions.redaction,
+      );
+      await ctx.initRecording(this.sessionOptions.recordingOptions);
     }
 
     this._redactionEnabled = Boolean(
-      ctx?.job.enableRedaction || this.sessionOptions.recordingOptions.redaction,
+      ctx?._redactionEnabled || this.sessionOptions.recordingOptions.redaction,
     );
 
     this.sessionSpan = tracer.startSpan({
@@ -1179,6 +1181,9 @@ export class AgentSession<
   }
 
   updateAgent(agent: Agent): void {
+    if (this._amd) {
+      throw new Error('agent handoffs are not supported while AMD is running');
+    }
     this.agent = agent;
 
     if (!this.started) {
@@ -1250,6 +1255,25 @@ export class AgentSession<
     if (!this.activity) {
       throw new Error('AgentSession is not running');
     }
+    if (this._amd) {
+      // AMD would hold the speech and play it after detection
+      throw new Error('say() is not supported while AMD is running');
+    }
+    return this._say(text, options);
+  }
+
+  /** @internal say() without the AMD check, for a speech that AMD starts itself. */
+  _say(
+    text: string | ReadableStream<string>,
+    options?: {
+      audio?: ReadableStream<AudioFrame>;
+      allowInterruptions?: boolean;
+      addToChatCtx?: boolean;
+    },
+  ): SpeechHandle {
+    if (!this.activity) {
+      throw new Error('AgentSession is not running');
+    }
 
     const doSay = (activity: AgentActivity, nextActivity?: AgentActivity) => {
       if (activity.schedulingPaused) {
@@ -1307,10 +1331,7 @@ export class AgentSession<
     super.emit(AgentSessionEventTypes.DebugMessage, debugMessage);
   }
 
-  /**
-   * The currently bound `AMD` instance, or `null` if AMD is not in use.
-   * Mirrors python `AgentSession.amd`.
-   */
+  /** The Answering Machine Detection (AMD) instance, or `null` if AMD is not running. */
   get amd(): AMD | null {
     return this._amd;
   }
@@ -1318,6 +1339,11 @@ export class AgentSession<
   /** @internal — used by AMD to register/unregister itself with the session. */
   _setAmd(amd: AMD | null): void {
     this._amd = amd;
+  }
+
+  /** @internal The activity being started by an agent handoff, if any. */
+  get _nextActivity(): AgentActivity | undefined {
+    return this.nextActivity;
   }
 
   /**
@@ -1340,12 +1366,12 @@ export class AgentSession<
   }
 
   /**
-   * @internal — returns a tee'd branch of the active participant audio stream
-   * for AMD's dedicated STT. Returns `undefined` when no `AgentActivity` is
-   * running yet (the AMD STT pump retries until an activity is available).
+   * @internal — forwarded to {@link SessionHost} so a connected
+   * {@link RemoteSession} peer receives an `amd_completed` event once per AMD run.
+   * Mirrors python `AgentSession._on_amd_completed`.
    */
-  _subscribeAudioStream(): ReadableStream<AudioFrame> | undefined {
-    return this.activity?.subscribeAudioStream();
+  _onAmdCompleted(event: AMDCompletedEvent): void {
+    this.sessionHost?._onAmdCompleted(event);
   }
 
   pauseReplyAuthorization(): void {
@@ -1421,10 +1447,28 @@ export class AgentSession<
     chatCtx?: ChatContext;
     instructions?: string | Instructions;
     toolChoice?: ToolChoice;
+    /**
+     * IDs of the tools to make available for this reply. When set, only these tools can be used.
+     * Each ID must match a tool registered on the agent: a function tool's ID is its name
+     * (`myTool.id`), and a toolset's ID is the one given at construction (`myToolset.id`).
+     */
+    tools?: string[];
     allowInterruptions?: boolean;
     /** The input modality used for generating the reply. Defaults to `"text"`. */
     inputModality?: 'audio' | 'text';
   }): SpeechHandle {
+    if (!this.activity) {
+      throw new Error('AgentSession is not running');
+    }
+    if (this._amd) {
+      // AMD would hold the reply and play it after detection
+      throw new Error('generateReply() is not supported while AMD is running');
+    }
+    return this._generateReply(options);
+  }
+
+  /** @internal generateReply() without the AMD check, for a speech that AMD starts itself. */
+  _generateReply(options?: Parameters<AgentSession['generateReply']>[0]): SpeechHandle {
     if (!this.activity) {
       throw new Error('AgentSession is not running');
     }
@@ -1561,6 +1605,9 @@ export class AgentSession<
       let handoffCtx: Context | undefined;
 
       try {
+        if (this._amd) {
+          throw new Error('agent handoffs are not supported while AMD is running');
+        }
         if (this.closing && newActivity === 'start') {
           this.logger.warn({ agentId: agent.id }, 'Session is closing, skipping start of activity');
           return;
@@ -1783,8 +1830,7 @@ export class AgentSession<
   }
 
   async close(): Promise<void> {
-    this._closeSoon({ reason: CloseReason.USER_INITIATED });
-    await this.closingTask;
+    await this._closeImpl({ reason: CloseReason.USER_INITIATED });
   }
 
   shutdown(options?: { drain?: boolean; reason?: ShutdownReason }): void {
@@ -1794,6 +1840,24 @@ export class AgentSession<
       reason,
       drain,
     });
+  }
+
+  /**
+   * Close the session with the supplied reason and wait for teardown to finish.
+   * If closure is already in progress, wait for it and preserve its reason.
+   * @internal
+   */
+  async _closeImpl({
+    reason,
+    drain = false,
+    error = null,
+  }: {
+    reason: ShutdownReason;
+    drain?: boolean;
+    error?: RealtimeModelError | STTError | TTSError | LLMError | null;
+  }): Promise<void> {
+    this._closeSoon({ reason, drain, error });
+    await this.closingTask;
   }
 
   /** @internal */
@@ -1967,7 +2031,7 @@ export class AgentSession<
 
     this.emit(
       AgentSessionEventTypes.UserStateChanged,
-      createUserStateChangedEvent(oldState, state),
+      createUserStateChangedEvent(oldState, state, Date.now(), options?.lastSpeakingTime),
     );
   }
 
@@ -1985,7 +2049,7 @@ export class AgentSession<
   private onAudioEnabledChanged(enabled: boolean): void {
     if (!enabled && this._userState === 'speaking') {
       if (this.activity) {
-        this.activity.onEndOfSpeech(undefined);
+        this.activity.onEndOfSpeech(undefined, Date.now());
       } else {
         this._updateUserState('listening');
       }
@@ -2187,6 +2251,12 @@ export class AgentSession<
     this.closingController.abort();
     this._cancelUserAwayTimer();
     this._onAecWarmupExpired();
+
+    if (this._amd) {
+      await this._amd.aclose();
+      this._amd = null;
+      this._turnHooks = undefined;
+    }
 
     let activity = this.activity;
     // Let inline tasks finish their handoffs before closing the resumed parent.

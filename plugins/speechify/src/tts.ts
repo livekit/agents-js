@@ -223,6 +223,8 @@ type Work = { kind: 'sentence'; segmentId: string; text: string } | { kind: 'seg
  */
 export class SynthesizeStream extends tts.SynthesizeStream {
   label = 'speechify.SynthesizeStream';
+  // The input is read once, and a retry resumes at the sentence that failed.
+  protected override readonly inputRetryMode = 'resume';
   #client: SpeechifyClient;
   #opts: TTSOptions;
   #work = new AsyncIterableQueue<Work>();

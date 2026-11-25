@@ -1,9 +1,13 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { describe, expect, it } from 'vitest';
+import { SpanStatusCode } from '@opentelemetry/api';
+import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base';
+import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
+import { describe, expect, it, vi } from 'vitest';
 import { APIConnectionError, APIStatusError, APITimeoutError } from '../_exceptions.js';
 import type { DecisionMetrics } from '../metrics/base.js';
+import { setTracerProvider, tracer } from '../telemetry/index.js';
 import type { APIConnectOptions } from '../types.js';
 import {
   AgentConfigUpdate,
@@ -14,6 +18,7 @@ import {
   FunctionCallOutput,
   createImageContent,
 } from './chat_context.js';
+import { DecisionModelFallbackAdapter } from './decision_fallback_adapter.js';
 import {
   Choice,
   ChoiceResult,
@@ -61,7 +66,9 @@ class StaticModel extends DecisionModel {
     ...rest: Array<DecisionResponse | Error | DecisionKind[]>
   ) {
     const hasKinds = Array.isArray(rest.at(-1));
-    const kinds = hasKinds ? (rest.pop() as DecisionKind[]) : ['probability', 'choice', 'score'];
+    const kinds: DecisionKind[] = hasKinds
+      ? (rest.pop() as DecisionKind[])
+      : ['probability', 'choice', 'score'];
     super({ capabilities: { decisionKinds: kinds } });
     this.outcomes = Array.isArray(outcomesOrFirst)
       ? outcomesOrFirst
@@ -146,7 +153,7 @@ describe('DecisionModel', () => {
     expect(Object.keys(response.results)).toEqual(Object.keys(QUESTIONS));
     expect(response.errors).toEqual({});
     expect([response.model, response.provider]).toEqual(['resolved-model', 'test-provider']);
-    const [[, definitions]] = model.requests;
+    const [, definitions] = model.requests[0]!;
     expect(definitions).toEqual(QUESTIONS);
     const [metrics] = collected;
     expect(metrics?.type).toBe('decision_metrics');
@@ -166,7 +173,7 @@ describe('DecisionModel', () => {
   it('copies definitions before passing them to the provider', async () => {
     const model = new StaticModel(new DecisionResponse({ results: validResults() }));
     await evaluate(model);
-    const [[, definitions]] = model.requests;
+    const [, definitions] = model.requests[0]!;
     expect(definitions).not.toBe(QUESTIONS);
     expect((definitions?.intent as Choice).options).not.toBe((QUESTIONS.intent as Choice).options);
   });
@@ -529,5 +536,377 @@ describe('formatTranscript', () => {
         '[agent handoff: booking -> receptionist]\n' +
         'assistant: I can offer seven. [interrupted]',
     );
+  });
+});
+
+const CHECK: Record<string, Decision> = { check: new Probability('True?') };
+
+class SwitchModel extends DecisionModel {
+  readonly requests: Array<[string, Readonly<Record<string, Decision>>]> = [];
+
+  constructor(
+    readonly name: string,
+    public failure?: Error | 'hang',
+    kinds: DecisionKind[] = ['probability', 'choice', 'score'],
+  ) {
+    super({ capabilities: { decisionKinds: kinds } });
+  }
+
+  override get model(): string {
+    return this.name;
+  }
+
+  override get provider(): string {
+    return 'test-provider';
+  }
+
+  protected override async _evaluateImpl({
+    input,
+    decisions,
+    abortSignal,
+  }: {
+    input: string;
+    decisions: Readonly<Record<string, Decision>>;
+    connOptions: APIConnectOptions;
+    abortSignal: AbortSignal;
+  }): Promise<DecisionResponse> {
+    this.requests.push([input, decisions]);
+    if (this.failure === 'hang') {
+      return new Promise((_, reject) => {
+        abortSignal.addEventListener('abort', () => reject(abortSignal.reason), { once: true });
+      });
+    }
+    if (this.failure) throw this.failure;
+    return new DecisionResponse({
+      results: Object.fromEntries(
+        Object.keys(decisions).map((name) => [name, new ProbabilityResult({ value: 0.9 })]),
+      ),
+    });
+  }
+}
+
+function fallback(
+  models: DecisionModel[],
+  options: Omit<ConstructorParameters<typeof DecisionModelFallbackAdapter>[0], 'models'> = {},
+): [DecisionModelFallbackAdapter, Array<[string, boolean]>] {
+  const adapter = new DecisionModelFallbackAdapter({ models, ...options });
+  const events: Array<[string, boolean]> = [];
+  adapter.on('decision_availability_changed', (event) => {
+    events.push([event.model.model, event.available]);
+  });
+  return [adapter, events];
+}
+
+describe('DecisionModelFallbackAdapter', () => {
+  it('skips a failed model until it answers again', async () => {
+    const primary = new SwitchModel('primary', new APIConnectionError({ message: 'down' }));
+    const [adapter, events] = fallback([primary, new SwitchModel('secondary')], {
+      retryIntervalMs: 1,
+    });
+
+    expect((await evaluate(adapter, { decisions: CHECK })).model).toBe('secondary');
+    expect(events).toEqual([['primary', false]]);
+    expect(adapter.model).toBe('secondary');
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    primary.failure = undefined;
+    expect((await evaluate(adapter, { decisions: CHECK })).model).toBe('secondary');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(events).toEqual([
+      ['primary', false],
+      ['primary', true],
+    ]);
+    expect((await evaluate(adapter, { decisions: CHECK })).model).toBe('primary');
+    await adapter.aclose();
+  });
+
+  it('checks recovery again after a model throws synchronously', async () => {
+    const primary = new SwitchModel('primary');
+    const evaluatePrimary = primary.evaluate.bind(primary);
+    const down = new APIConnectionError({ message: 'down' });
+    const requests = vi
+      .spyOn(primary, 'evaluate')
+      .mockImplementationOnce(() => {
+        throw down;
+      })
+      .mockImplementationOnce(() => {
+        throw down;
+      })
+      .mockImplementation(evaluatePrimary);
+    const [adapter, events] = fallback([primary, new SwitchModel('secondary')]);
+
+    expect((await evaluate(adapter, { decisions: CHECK })).model).toBe('secondary');
+    expect(requests).toHaveBeenCalledTimes(2);
+    expect(events).toEqual([['primary', false]]);
+    expect((await evaluate(adapter, { decisions: CHECK })).model).toBe('secondary');
+    await vi.waitFor(() =>
+      expect(events).toEqual([
+        ['primary', false],
+        ['primary', true],
+      ]),
+    );
+    expect((await evaluate(adapter, { decisions: CHECK })).model).toBe('primary');
+    await adapter.aclose();
+  });
+
+  it.each([
+    new APIStatusError({ message: 'unauthorized', options: { statusCode: 401 } }),
+    new Error('boom'),
+  ])('moves on after any request failure', async (failure) => {
+    const [adapter, events] = fallback([
+      new SwitchModel('primary', failure),
+      new SwitchModel('secondary'),
+    ]);
+    expect((await evaluate(adapter, { decisions: CHECK })).model).toBe('secondary');
+    expect(events).toEqual([['primary', false]]);
+    await adapter.aclose();
+  });
+
+  it('continues notifying listeners and trying models after a listener throws', async () => {
+    const primary = new SwitchModel('primary', new Error('primary failed'));
+    const backup = new SwitchModel('backup', new Error('backup failed'));
+    const adapter = new DecisionModelFallbackAdapter({
+      models: [primary, backup, new SwitchModel('healthy')],
+    });
+    const failedOnce = vi.fn(() => {
+      throw new Error('availability listener failed');
+    });
+    const observed = vi.fn();
+    adapter.once('decision_availability_changed', failedOnce);
+    adapter.on('decision_availability_changed', observed);
+
+    try {
+      expect((await evaluate(adapter, { decisions: CHECK })).model).toBe('healthy');
+      expect(failedOnce).toHaveBeenCalledTimes(1);
+      expect(observed.mock.calls).toEqual([
+        [{ model: primary, available: false }],
+        [{ model: backup, available: false }],
+      ]);
+    } finally {
+      await adapter.aclose();
+    }
+  });
+
+  it('propagates TypeError from an availability listener before trying the backup', async () => {
+    const backup = new SwitchModel('backup');
+    const [adapter] = fallback([new SwitchModel('primary', new Error('down')), backup]);
+    const error = new TypeError('invalid availability listener');
+    adapter.on('decision_availability_changed', () => {
+      throw error;
+    });
+
+    try {
+      await expect(evaluate(adapter, { decisions: CHECK })).rejects.toBe(error);
+      expect(backup.requests).toEqual([]);
+    } finally {
+      await adapter.aclose();
+    }
+  });
+
+  it('records total failure on the adapter span and leaves cancellation unset', async () => {
+    const originalProvider = tracer.getProvider();
+    const exporter = new InMemorySpanExporter();
+    const provider = new NodeTracerProvider({
+      spanProcessors: [new SimpleSpanProcessor(exporter)],
+    });
+    setTracerProvider(provider, { allowPii: true });
+    const [adapter] = fallback([new SwitchModel('primary', new Error('down'))]);
+    try {
+      await expect(evaluate(adapter, { decisions: CHECK })).rejects.toBeInstanceOf(
+        APIConnectionError,
+      );
+      const abortSignal = AbortSignal.abort(new Error('caller cancelled'));
+      await expect(evaluate(adapter, { decisions: CHECK, abortSignal })).rejects.toBe(
+        abortSignal.reason,
+      );
+      const spans = exporter
+        .getFinishedSpans()
+        .filter((span) => span.name === 'decision_fallback_adapter');
+      expect(spans.map((span) => span.status.code)).toEqual([
+        SpanStatusCode.ERROR,
+        SpanStatusCode.UNSET,
+      ]);
+      expect(spans[0]?.events.map((event) => event.name)).toContain('exception');
+      expect(spans[1]?.events).toEqual([]);
+    } finally {
+      await adapter.aclose();
+      setTracerProvider(originalProvider);
+      await provider.shutdown();
+    }
+  });
+
+  it.each([
+    [1000, {}],
+    [50, { attemptTimeoutMs: 50 }],
+  ] as const)('applies its own %i ms timeout to each model', async (expectedTimeout, options) => {
+    const [adapter] = fallback(
+      [new SwitchModel('primary', 'hang'), new SwitchModel('secondary')],
+      options,
+    );
+    const started = performance.now();
+    const response = await evaluate(adapter, {
+      decisions: CHECK,
+      connOptions: { maxRetry: 3, retryIntervalMs: 0, timeoutMs: 10_000 },
+    });
+    expect(response.model).toBe('secondary');
+    expect(performance.now() - started).toBeGreaterThanOrEqual(expectedTimeout - 10);
+    await adapter.aclose();
+  });
+
+  it('does not mark a model unavailable when the caller deadline wins', async () => {
+    const secondary = new SwitchModel('secondary');
+    const [adapter, events] = fallback([new SwitchModel('primary', 'hang'), secondary], {
+      attemptTimeoutMs: 1000,
+    });
+    const controller = new AbortController();
+    const reason = new Error('caller deadline');
+    setTimeout(() => controller.abort(reason), 20);
+    await expect(
+      evaluate(adapter, { decisions: CHECK, abortSignal: controller.signal }),
+    ).rejects.toBe(reason);
+    expect(events).toEqual([]);
+    expect(secondary.requests).toEqual([]);
+  });
+
+  it('starts no background check after close', async () => {
+    const primary = new SwitchModel('primary', 'hang');
+    const [adapter] = fallback([primary, new SwitchModel('secondary')], {
+      attemptTimeoutMs: 50,
+    });
+    const request = evaluate(adapter, { decisions: CHECK });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    await adapter.aclose();
+    expect((await request).model).toBe('secondary');
+    await new Promise((resolve) => setTimeout(resolve, 75));
+    expect(primary.requests).toHaveLength(1);
+  });
+
+  it('cancels an in-flight recovery check on close', async () => {
+    const primary = new SwitchModel('primary', 'hang');
+    const requests = vi
+      .spyOn(primary, 'evaluate')
+      .mockRejectedValueOnce(new APIConnectionError({ message: 'down' }));
+    const [adapter, events] = fallback([primary, new SwitchModel('secondary')]);
+
+    expect((await evaluate(adapter, { decisions: CHECK })).model).toBe('secondary');
+    expect(requests).toHaveBeenCalledTimes(2);
+    const recoverySignal = requests.mock.calls[1]?.[0].abortSignal;
+    expect(recoverySignal?.aborted).toBe(false);
+
+    await adapter.aclose();
+    expect(recoverySignal?.aborted).toBe(true);
+    expect(events).toEqual([['primary', false]]);
+  });
+
+  it('retries every model once all are unavailable', async () => {
+    const down = new APIConnectionError({ message: 'down' });
+    const secondary = new SwitchModel('secondary', down);
+    const [adapter, events] = fallback([new SwitchModel('primary', down), secondary]);
+
+    await expect(evaluate(adapter, { decisions: CHECK })).rejects.toThrow(/primary.*secondary/);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    secondary.failure = undefined;
+    expect((await evaluate(adapter, { decisions: CHECK })).model).toBe('secondary');
+    expect(events).toEqual([
+      ['primary', false],
+      ['secondary', false],
+      ['secondary', true],
+    ]);
+    await adapter.aclose();
+  });
+
+  it('returns partial errors from the answering model', async () => {
+    const results = validResults();
+    delete results.intent;
+    const secondary = new SwitchModel('secondary');
+    const [adapter, events] = fallback([
+      new StaticModel(new DecisionResponse({ results, errors: { intent: 'declined' } })),
+      secondary,
+    ]);
+    const response = await evaluate(adapter);
+    expect(response.errors).toEqual({ intent: 'declined' });
+    expect(secondary.requests).toEqual([]);
+    expect(events).toEqual([]);
+  });
+
+  it('reports usage once per request', async () => {
+    const [adapter] = fallback([new SwitchModel('primary'), new SwitchModel('secondary')]);
+    const collected: DecisionMetrics[] = [];
+    adapter.on('metrics_collected', (metrics) => collected.push(metrics));
+    await evaluate(adapter, { decisions: CHECK });
+    expect(collected).toHaveLength(1);
+    expect(collected[0]?.metadata?.modelName).toBe('primary');
+  });
+
+  it('forwards metrics once per model instance and unsubscribes on close', async () => {
+    const primary = new SwitchModel('primary');
+    const [adapter] = fallback([primary, primary]);
+    const collected = vi.fn();
+    adapter.on('metrics_collected', collected);
+
+    await evaluate(adapter, { decisions: CHECK });
+    expect(collected).toHaveBeenCalledTimes(1);
+
+    await adapter.aclose();
+    await evaluate(primary, { decisions: CHECK });
+    expect(collected).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the configured model order when callers mutate the input array', async () => {
+    const primary = new SwitchModel('primary');
+    const secondary = new SwitchModel('secondary');
+    const models = [primary, secondary];
+    const [adapter] = fallback(models);
+    models.reverse();
+
+    expect(adapter.models).toEqual([primary, secondary]);
+    expect(() => Array.prototype.pop.call(adapter.models)).toThrow(TypeError);
+    expect(Reflect.set(adapter, 'models', [secondary])).toBe(false);
+    expect((await evaluate(adapter, { decisions: CHECK })).model).toBe('primary');
+    expect(primary.listenerCount('metrics_collected')).toBe(1);
+    await adapter.aclose();
+    expect(primary.listenerCount('metrics_collected')).toBe(0);
+  });
+
+  it('does not bring a model back for an empty batch', async () => {
+    const primary = new SwitchModel('primary', new APIConnectionError({ message: 'down' }));
+    const [adapter, events] = fallback([primary, new SwitchModel('secondary')]);
+    await evaluate(adapter, { decisions: CHECK });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const response = await evaluate(adapter, { decisions: {} });
+    expect(response).toBeInstanceOf(DecisionResponse);
+    expect(response).toMatchObject({ results: {}, errors: {}, model: 'secondary' });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(events).toEqual([['primary', false]]);
+    await adapter.aclose();
+  });
+
+  it('supports only the kinds every model supports', async () => {
+    const primary = new SwitchModel('primary', undefined, ['probability', 'choice']);
+    const [adapter, events] = fallback([
+      primary,
+      new SwitchModel('secondary', undefined, ['score', 'probability']),
+    ]);
+    expect(adapter.capabilities.decisionKinds).toEqual(['probability']);
+    await expect(evaluate(adapter, { decisions: { intent: QUESTIONS.intent! } })).rejects.toThrow(
+      'does not support "choice"',
+    );
+    expect(primary.requests).toEqual([]);
+    expect(events).toEqual([]);
+  });
+
+  it('requires models with a shared kind', () => {
+    expect(() => new DecisionModelFallbackAdapter({ models: [] })).toThrow(
+      'at least one decision model',
+    );
+    expect(
+      () =>
+        new DecisionModelFallbackAdapter({
+          models: [
+            new SwitchModel('a', undefined, ['choice']),
+            new SwitchModel('b', undefined, ['score']),
+          ],
+        }),
+    ).toThrow('share no decision kind');
   });
 });

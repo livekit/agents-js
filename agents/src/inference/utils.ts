@@ -23,6 +23,11 @@ export const STAGING_INFERENCE_URL = 'https://agent-gateway.staging.livekit.clou
 /** LiveKit Agent Gateway routing header names. */
 export const INFERENCE_PROVIDER_HEADER = 'X-LiveKit-Inference-Provider';
 export const INFERENCE_PRIORITY_HEADER = 'X-LiveKit-Inference-Priority';
+/**
+ * Names the SDK feature that made a request (e.g. `AMD`), so the gateway can measure feature
+ * traffic apart from the agent's own. Absent on ordinary agent requests.
+ */
+export const CLIENT_FEATURE_HEADER = 'X-LiveKit-Client-Feature';
 
 /**
  * Get the default inference URL based on the environment.

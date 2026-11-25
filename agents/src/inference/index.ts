@@ -9,6 +9,9 @@ import * as stt from './stt.js';
 import * as tts from './tts.js';
 
 export { eot };
+
+export { DecisionModel, type DecisionModelOptions, type DecisionModels } from './decision_model.js';
+
 export {
   TurnDetector,
   TurnDetectorStreamImpl,
@@ -65,6 +68,9 @@ export {
   type DuplexModelOptions,
   type DuplexModels,
   type DuplexOptions,
+  type DecisionsOptions,
+  type DecisionsTrigger,
+  type DecisionEventEnvelope,
   type OpenAIDuplexOptions,
   type OpenAIResponsesOptions,
 } from './duplex.js';
@@ -91,6 +97,7 @@ export {
   normalizeTTSFallback,
   parseTTSModelString,
   TTS,
+  type FallbackActivatedEvent,
   type TTSFallbackModel,
   type TTSFallbackModelType,
   type TTSModels,

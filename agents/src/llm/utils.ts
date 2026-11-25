@@ -19,6 +19,7 @@ import {
   type ToolContext,
   type ToolInputSchema,
   type ToolOptions,
+  isToolResult,
   sortedToolNames,
 } from './tool_context.js';
 import {
@@ -613,10 +614,14 @@ export async function executeToolCall(
 
   try {
     const result = await tool.execute(params, createToolOptions(toolCall.callId));
+    const { output, replyRequired } = isToolResult(result)
+      ? result
+      : { output: result, replyRequired: true };
     return FunctionCallOutput.create({
       callId: toolCall.callId,
-      output: JSON.stringify(result),
+      output: output !== undefined ? JSON.stringify(output) : '',
       isError: false,
+      replyRequired,
     });
   } catch (error) {
     return FunctionCallOutput.create({

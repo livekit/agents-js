@@ -17,7 +17,16 @@ import type * as metrics from '../../metrics/index.js';
 import * as stream from '../../stream/index.js';
 import type { APIConnectOptions } from '../../types.js';
 import { DEFAULT_API_CONNECT_OPTIONS } from '../../types.js';
-import { Future, Queue, Task, cancelAndWait, delay, shortuuid } from '../../utils.js';
+import {
+  Future,
+  Queue,
+  Task,
+  cancelAndWait,
+  combineSignals,
+  delay,
+  shortuuid,
+  waitUntilAborted,
+} from '../../utils.js';
 import { type TimedString, createTimedString } from '../../voice/io.js';
 import * as llm from '../index.js';
 import * as api_proto from './api_proto.js';
@@ -342,7 +351,7 @@ export class RealtimeModel extends llm.RealtimeModel {
     });
   }
 
-  session(options?: { turnDetectionDisabled?: boolean }) {
+  session(options?: llm.RealtimeSessionOptions) {
     return new RealtimeSession(this, options);
   }
 
@@ -496,7 +505,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   #task: Task<void>;
   #closed = false;
 
-  constructor(realtimeModel: RealtimeModel, options?: { turnDetectionDisabled?: boolean }) {
+  constructor(realtimeModel: RealtimeModel, options?: llm.RealtimeSessionOptions) {
     super(realtimeModel);
 
     this.oaiRealtimeModel = realtimeModel;
@@ -509,10 +518,29 @@ export class RealtimeSession extends llm.RealtimeSession {
     if (options?.turnDetectionDisabled) {
       this._options.turnDetection = null;
     }
+    // Seed before the first session.update, so the instructions go in it. Sending them again
+    // through updateInstructions or updateTools only replaces the same values.
+    if (options?.instructions !== undefined) {
+      this.instructions = options.instructions;
+    }
+    if (options?.tools !== undefined) {
+      this._tools = options.tools.copy();
+    }
 
     this.#task = Task.from(({ signal }) => this.#mainTask(signal));
 
+    // The queued events go out when the socket connects, in the same order as a reconnect.
     this.sendEvent(this.createSessionUpdateEvent());
+    if (Object.keys(this._tools.functionTools).length > 0) {
+      this.sendEvent(this.createToolsUpdateEvent(this._tools));
+    }
+    if (options?.chatCtx !== undefined && options.chatCtx.items.length > 0) {
+      // A later updateChatCtx with the same context waits for this one and then finds nothing new.
+      // It sends items again only if this call times out or the server rejects an item.
+      void this.updateChatCtx(options.chatCtx).catch((error) => {
+        this.#logger.error(error, 'failed to apply the initial chat context');
+      });
+    }
   }
 
   private hasInflightResponse(): boolean {
@@ -815,7 +843,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     unlock();
   }
 
-  protected createToolsUpdateEvent(_tools: llm.ToolContext): api_proto.SessionUpdateEvent {
+  protected convertToolsToOai(_tools: llm.ToolContext): api_proto.Tool[] {
     const oaiTools: api_proto.Tool[] = [];
 
     for (const t of _tools.flatten()) {
@@ -841,6 +869,12 @@ export class RealtimeSession extends llm.RealtimeSession {
         continue;
       }
     }
+
+    return oaiTools;
+  }
+
+  protected createToolsUpdateEvent(_tools: llm.ToolContext): api_proto.SessionUpdateEvent {
+    const oaiTools = this.convertToolsToOai(_tools);
 
     const isLegacyAzure = this._options.isAzure && !!this._options.apiVersion;
     return {
@@ -934,7 +968,7 @@ export class RealtimeSession extends llm.RealtimeSession {
 
   async generateReply(
     instructions?: string,
-    options: { signal?: AbortSignal } = {},
+    options: { signal?: AbortSignal; toolChoice?: llm.ToolChoice; tools?: llm.ToolContext } = {},
   ): Promise<llm.GenerationCreatedEvent> {
     // In OpenAI realtime, the session-level instructions are completely replaced by the
     // per-response instructions for this response. Prepend the session instructions so they
@@ -947,6 +981,8 @@ export class RealtimeSession extends llm.RealtimeSession {
     const handle = this.createResponse({
       instructions: responseInstructions,
       userInitiated: true,
+      toolChoice: options.toolChoice,
+      tools: options.tools,
     });
     this.textModeRecoveryRetries = 0;
 
@@ -1314,7 +1350,7 @@ export class RealtimeSession extends llm.RealtimeSession {
           // a failed first handshake leaves the startup events queued, with nothing to replay
           reconnecting = true;
 
-          await this.runWs(wsConn);
+          await this.runWs(wsConn, signal);
           if (signal.aborted) break;
         } catch (error) {
           if (!isAPIError(error)) {
@@ -1352,25 +1388,48 @@ export class RealtimeSession extends llm.RealtimeSession {
             `OpenAI Realtime API connection failed, retrying in ${retryInterval / 1000}s`,
           );
 
-          await delay(retryInterval);
+          await delay(retryInterval, { signal });
           numRetries++;
         }
       }
     } finally {
+      wsConn?.close();
       this.closeCurrentGeneration('session close');
       this.rejectResponseCreatedFutures('Realtime session closed');
     }
   }
 
-  private async runWs(wsConn: WebSocket): Promise<void> {
-    const forwardEvents = async (signal: AbortSignal): Promise<void> => {
-      const abortFuture = new Future<void>();
-      signal.addEventListener('abort', () => abortFuture.resolve());
+  /** @internal */
+  protected get acceptsEmptyDeleteAcknowledgement(): boolean {
+    return false;
+  }
 
+  /** @internal */
+  protected waitForSocketRecycle?(ws: WebSocket, signal: AbortSignal): Promise<void>;
+
+  /** @internal */
+  protected get socketHandoffState() {
+    const generation = this.currentGeneration;
+    return {
+      canObserveTurns: this._options.turnDetection != null,
+      transcribesInput: this._options.inputAudioTranscription != null,
+      responsePending:
+        (generation !== undefined &&
+          !(generation instanceof DiscardedGeneration) &&
+          !generation._doneFut.done) ||
+        Object.values(this.responseCreatedFutures).some(({ doneFut }) => !doneFut.done),
+      timeoutMs: this._options.connOptions.timeoutMs,
+    };
+  }
+
+  private async runWs(wsConn: WebSocket, sessionSignal: AbortSignal): Promise<void> {
+    const forwardEvents = async (signal: AbortSignal): Promise<void> => {
       while (!this.#closed && wsConn.readyState === WebSocket.OPEN && !signal.aborted) {
         try {
-          const event = await Promise.race([this.messageChannel.get(), abortFuture.await]);
-          if (signal.aborted || abortFuture.done || event === undefined) {
+          const event = await this.messageChannel.get({ signal });
+          if (signal.aborted || wsConn.readyState !== WebSocket.OPEN) {
+            // The next socket needs anything dequeued before teardown that never reached the wire.
+            this.messageChannel.items.unshift(event);
             break;
           }
 
@@ -1518,14 +1577,14 @@ export class RealtimeSession extends llm.RealtimeSession {
     const sendTask = Task.from(({ signal }) => forwardEvents(signal));
 
     const wsTask = Task.from(({ signal }) => {
-      const abortPromise = new Promise<void>((resolve) => {
-        signal.addEventListener('abort', () => {
-          resolve();
-        });
-      });
-
-      return Promise.race([wsCloseFuture.await, abortPromise]);
+      return waitUntilAborted(wsCloseFuture.await, combineSignals(signal, sessionSignal)).then(
+        ({ result }) => result,
+      );
     });
+
+    const recycleTask = this.waitForSocketRecycle
+      ? Task.from(({ signal }) => this.waitForSocketRecycle!(wsConn, signal))
+      : undefined;
 
     const waitReconnectTask =
       this._options.maxSessionDuration === null
@@ -1542,6 +1601,7 @@ export class RealtimeSession extends llm.RealtimeSession {
         wsTask.result,
         sendTask.result,
         ...(waitReconnectTask ? [waitReconnectTask.result] : []),
+        ...(recycleTask ? [recycleTask.result] : []),
       ]);
 
       const currentGeneration = this.currentGeneration;
@@ -1549,7 +1609,7 @@ export class RealtimeSession extends llm.RealtimeSession {
         if (currentGeneration instanceof DiscardedGeneration) {
           this.currentGeneration = undefined;
         } else {
-          await currentGeneration._doneFut.await;
+          await waitUntilAborted(currentGeneration._doneFut.await, sessionSignal);
         }
       }
 
@@ -1557,8 +1617,14 @@ export class RealtimeSession extends llm.RealtimeSession {
         throw result;
       }
     } finally {
+      wsConn.onmessage = null;
       await cancelAndWait(
-        [wsTask, sendTask, ...(waitReconnectTask ? [waitReconnectTask] : [])],
+        [
+          wsTask,
+          sendTask,
+          ...(waitReconnectTask ? [waitReconnectTask] : []),
+          ...(recycleTask ? [recycleTask] : []),
+        ],
         2000,
       );
       wsConn.close();
@@ -1569,7 +1635,8 @@ export class RealtimeSession extends llm.RealtimeSession {
     this.resetInputTurnState();
     super.close();
     this.#closed = true;
-    await this.#task;
+    this.#task.cancel();
+    await this.#task.result.catch(() => {});
     this.inputResampler?.close();
     this.inputResampler = undefined;
 
@@ -1760,25 +1827,34 @@ export class RealtimeSession extends llm.RealtimeSession {
     }
   }
 
+  /** @internal */
+  protected resolveDeletedItemId(itemId: string): string {
+    if (itemId === '' && this.acceptsEmptyDeleteAcknowledgement) {
+      return Object.keys(this.itemDeleteFutures)[0] ?? '';
+    }
+    return itemId;
+  }
+
   private handleConversationItemDeleted(event: api_proto.ConversationItemDeletedEvent): void {
-    if (!event.item_id) {
+    const itemId = this.resolveDeletedItemId(event.item_id);
+    if (!itemId) {
       throw new Error('item_id is not set');
     }
 
     // Clean up audio-capable tracking for deleted items
-    this.audioCapableItemIds.delete(event.item_id);
-    this.inputTranscriptAccumulators.delete(event.item_id);
+    this.audioCapableItemIds.delete(itemId);
+    this.inputTranscriptAccumulators.delete(itemId);
 
     try {
-      this.remoteChatCtx.delete(event.item_id);
+      this.remoteChatCtx.delete(itemId);
     } catch (error) {
-      this.#logger.error({ error, itemId: event.item_id }, 'failed to delete conversation item');
+      this.#logger.error({ error, itemId }, 'failed to delete conversation item');
     }
 
-    const fut = this.itemDeleteFutures[event.item_id];
+    const fut = this.itemDeleteFutures[itemId];
     if (fut) {
       if (!fut.done) fut.resolve();
-      delete this.itemDeleteFutures[event.item_id];
+      delete this.itemDeleteFutures[itemId];
     }
   }
 
@@ -2311,10 +2387,14 @@ export class RealtimeSession extends llm.RealtimeSession {
   private createResponse({
     userInitiated,
     instructions,
+    toolChoice,
+    tools,
     oldHandle,
   }: {
     userInitiated: boolean;
     instructions?: string;
+    toolChoice?: llm.ToolChoice;
+    tools?: llm.ToolContext;
     oldHandle?: CreateResponseHandle;
   }): CreateResponseHandle {
     const handle = oldHandle || new CreateResponseHandle({ instructions });
@@ -2340,6 +2420,8 @@ export class RealtimeSession extends llm.RealtimeSession {
     const response: api_proto.ResponseCreateEvent['response'] = {};
     if (instructions) response.instructions = instructions;
     if (userInitiated) response.metadata = { client_event_id: eventId };
+    if (toolChoice !== undefined) response.tool_choice = toOaiToolChoice(toolChoice);
+    if (tools !== undefined) response.tools = this.convertToolsToOai(tools);
 
     this.sendEvent({
       type: 'response.create',

@@ -4,7 +4,8 @@
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
-import { type WebSocket, WebSocketServer } from 'ws';
+import { WebSocket, WebSocketServer } from 'ws';
+import { APIConnectionError, APIStatusError } from '../_exceptions.js';
 import * as agents from '../index.js';
 import { normalizeLanguage } from '../language.js';
 import { initializeLogger } from '../log.js';
@@ -12,6 +13,7 @@ import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js
 import { STT } from './stt.js';
 import { describeLiveKitInference } from './test_utils.js';
 import {
+  type FallbackActivatedEvent,
   TTS,
   type TTSFallbackModel,
   type TTSFallbackModelType,
@@ -33,6 +35,81 @@ function makeTts(overrides: Record<string, unknown> = {}) {
     baseURL: 'https://example.livekit.cloud',
   };
   return new TTS({ ...defaults, ...overrides });
+}
+
+async function captureSessionCreate(overrides: Record<string, unknown> = {}) {
+  const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+  await once(server, 'listening');
+  const { port } = server.address() as AddressInfo;
+  let resolvePayload!: (payload: Record<string, unknown>) => void;
+  const payload = new Promise<Record<string, unknown>>((resolve) => {
+    resolvePayload = resolve;
+  });
+
+  server.on('connection', (socket) => {
+    socket.once('message', (raw) => {
+      resolvePayload(JSON.parse(raw.toString()) as Record<string, unknown>);
+    });
+  });
+
+  const tts = makeTts({ ...overrides, baseURL: `http://127.0.0.1:${port}` });
+  let socket: WebSocket | undefined;
+  try {
+    socket = await tts.connectWs(1_000);
+    return await payload;
+  } finally {
+    socket?.terminate();
+    await tts.close();
+    for (const client of server.clients) client.terminate();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+}
+
+async function runGatewayEvents(events: Record<string, unknown>[]) {
+  const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+  await once(server, 'listening');
+  const { port } = server.address() as AddressInfo;
+
+  server.on('connection', (socket) => {
+    socket.on('message', (raw) => {
+      const event = JSON.parse(raw.toString()) as { type: string };
+      if (event.type !== 'session.flush') return;
+      for (const serverEvent of events) {
+        socket.send(JSON.stringify(serverEvent));
+      }
+    });
+  });
+
+  const tts = makeTts({
+    baseURL: `http://127.0.0.1:${port}`,
+    connOptions: { maxRetry: 0, retryIntervalMs: 0, timeoutMs: 1_000 },
+  });
+  const fallbackEvents: FallbackActivatedEvent[] = [];
+  tts.on('fallback_activated', (event) => fallbackEvents.push(event));
+  const stream = tts.stream();
+
+  try {
+    stream.updateInputStream(
+      new ReadableStream<string>({
+        start(controller) {
+          controller.enqueue('hello');
+          controller.close();
+        },
+      }),
+    );
+
+    const output = [];
+    for await (const event of stream) output.push(event);
+    return {
+      fallbackEvents,
+      audioEvents: output.filter((event) => typeof event !== 'symbol'),
+    };
+  } finally {
+    stream.close();
+    await tts.close();
+    for (const client of server.clients) client.terminate();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
 }
 
 describe('Inference TTS connection', () => {
@@ -67,6 +144,168 @@ describe('Inference TTS connection', () => {
       await tts.close();
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
+  });
+});
+
+describe('Inference TTS session.create fallback', () => {
+  const basePayload = {
+    type: 'session.create',
+    handoff_protocol: 1,
+    sample_rate: '16000',
+    encoding: 'pcm_s16le',
+    extra: {},
+    model: 'cartesia/sonic',
+    language: 'en',
+    connection: { timeout: 10, retries: 3 },
+  };
+
+  it.each([{}, { fallback: [] }])(
+    'omits fallback when no models and system fallback remains enabled',
+    async (overrides) => {
+      expect(await captureSessionCreate(overrides)).toEqual(basePayload);
+    },
+  );
+
+  it.each([
+    { disableSystemDefaultFallback: true },
+    { fallback: [], disableSystemDefaultFallback: true },
+  ])('can disable system fallback without customer fallback models', async (overrides) => {
+    expect(await captureSessionCreate(overrides)).toEqual({
+      ...basePayload,
+      fallback: {
+        models: [],
+        disable_system_default_fallback: true,
+      },
+    });
+  });
+
+  it.each([false, true])(
+    'maps customer fallback models exactly when opt-out is %s',
+    async (disableSystemDefaultFallback) => {
+      expect(
+        await captureSessionCreate({
+          fallback: [
+            'deepgram/aura-2:asteria',
+            {
+              model: 'rime/mistv3',
+              voice: 'speaker-1',
+              extraKwargs: { speed_alpha: 0.9 },
+            },
+          ],
+          disableSystemDefaultFallback,
+        }),
+      ).toEqual({
+        ...basePayload,
+        fallback: {
+          models: [
+            { model: 'deepgram/aura-2', voice: 'asteria', extra: {} },
+            {
+              model: 'rime/mistv3',
+              voice: 'speaker-1',
+              extra: { speed_alpha: 0.9 },
+            },
+          ],
+          ...(disableSystemDefaultFallback ? { disable_system_default_fallback: true } : {}),
+        },
+      });
+    },
+  );
+});
+
+describe('Inference TTS gateway notices', () => {
+  const audioEvent = {
+    type: 'output_audio',
+    session_id: 'session-1',
+    audio: Buffer.alloc(3200).toString('base64'),
+  };
+  const doneEvent = { type: 'done', session_id: 'session-1' };
+
+  it('emits fallback activation notices without interrupting audio', async () => {
+    const result = await runGatewayEvents([
+      { type: 'session.created', session_id: 'session-1' },
+      {
+        type: 'fallback_activated',
+        session_id: 'session-1',
+        fallback_type: 'fallback',
+        provider: 'deepgram',
+        model: 'deepgram/aura-2',
+        voice: 'asteria',
+        cause: 'quota_exceeded',
+      },
+      audioEvent,
+      doneEvent,
+    ]);
+
+    expect(result.fallbackEvents).toEqual([
+      {
+        sessionId: 'session-1',
+        fallbackType: 'fallback',
+        provider: 'deepgram',
+        model: 'deepgram/aura-2',
+        voice: 'asteria',
+        cause: 'quota_exceeded',
+      },
+    ]);
+    expect(result.audioEvents).toHaveLength(1);
+  });
+
+  it('ignores unrelated unknown gateway messages', async () => {
+    const result = await runGatewayEvents([
+      { type: 'session.created', session_id: 'session-1' },
+      { type: 'future_message', session_id: 'session-1', data: 'ignored' },
+      audioEvent,
+      doneEvent,
+    ]);
+
+    expect(result.fallbackEvents).toEqual([]);
+    expect(result.audioEvents).toHaveLength(1);
+  });
+
+  it('drops malformed fallback activation notices without interrupting audio', async () => {
+    const result = await runGatewayEvents([
+      { type: 'session.created', session_id: 'session-1' },
+      {
+        type: 'fallback_activated',
+        session_id: 'session-1',
+        fallback_type: 'fallback',
+        model: 42,
+        cause: 'timeout',
+      },
+      audioEvent,
+      doneEvent,
+    ]);
+
+    expect(result.fallbackEvents).toEqual([]);
+    expect(result.audioEvents).toHaveLength(1);
+  });
+
+  it('normalizes unsupported fallback causes without interrupting audio', async () => {
+    const result = await runGatewayEvents([
+      { type: 'session.created', session_id: 'session-1' },
+      {
+        type: 'fallback_activated',
+        session_id: 'session-1',
+        fallback_type: 'future_type',
+        provider: 'deepgram',
+        model: 'deepgram/aura-2',
+        voice: 'asteria',
+        cause: 'future_cause',
+      },
+      audioEvent,
+      doneEvent,
+    ]);
+
+    expect(result.fallbackEvents).toEqual([
+      {
+        sessionId: 'session-1',
+        fallbackType: 'unknown',
+        provider: 'deepgram',
+        model: 'deepgram/aura-2',
+        voice: 'asteria',
+        cause: 'unknown',
+      },
+    ]);
+    expect(result.audioEvents).toHaveLength(1);
   });
 });
 
@@ -228,6 +467,12 @@ describe('TTS constructor fallback and connOptions', () => {
   it('fallback not given defaults to undefined', () => {
     const tts = makeTts();
     expect(tts['opts'].fallback).toBeUndefined();
+    expect(tts['opts'].disableSystemDefaultFallback).toBe(false);
+  });
+
+  it('stores the system fallback opt-out', () => {
+    const tts = makeTts({ disableSystemDefaultFallback: true });
+    expect(tts['opts'].disableSystemDefaultFallback).toBe(true);
   });
 
   it('fallback single string is normalized', () => {
@@ -561,4 +806,185 @@ describe('Inference TTS releaseIdleConnections', () => {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   });
+});
+
+describe('Inference TTS gateway drain', () => {
+  it.each(['close', 'socket error'])('reports %s during synthesis promptly', async (failure) => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await once(server, 'listening');
+    const { port } = server.address() as AddressInfo;
+    server.on('connection', (socket) => {
+      socket.on('message', (raw) => {
+        const event = JSON.parse(raw.toString()) as { type: string };
+        if (event.type === 'session.create') {
+          socket.send(JSON.stringify({ type: 'session.created', session_id: 'session-1' }));
+        } else if (event.type === 'session.flush' && failure === 'close') {
+          socket.close(1001);
+        }
+      });
+    });
+    const original = WebSocket.prototype.send;
+    const send = vi.spyOn(WebSocket.prototype, 'send').mockImplementation(function (
+      this: WebSocket,
+      ...args: Parameters<WebSocket['send']>
+    ) {
+      const data = args[0];
+      if (
+        failure === 'socket error' &&
+        typeof data === 'string' &&
+        JSON.parse(data).type === 'session.flush'
+      ) {
+        queueMicrotask(() => this.emit('error', new Error('test transport error')));
+      }
+      return original.apply(this, args);
+    });
+    const tts = makeTts({
+      baseURL: `http://127.0.0.1:${port}`,
+      connOptions: { maxRetry: 0, retryIntervalMs: 0, timeoutMs: 10_000 },
+    });
+    const errors: unknown[] = [];
+    tts.on('error', ({ error }) => errors.push(error));
+    const synth = tts.stream();
+    try {
+      synth.updateInputStream(
+        new ReadableStream<string>({
+          start(controller) {
+            controller.enqueue('Hello.');
+            controller.close();
+          },
+        }),
+      );
+      await vi.waitFor(
+        () =>
+          expect(errors[0]).toBeInstanceOf(
+            failure === 'close' ? APIStatusError : APIConnectionError,
+          ),
+        { timeout: 1_000 },
+      );
+    } finally {
+      send.mockRestore();
+      await synth.close();
+      await tts.close();
+      for (const client of server.clients) client.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it.each(['idle', 'synthesizing', 'closed'])(
+    'gets the next turn off the %s pooled socket',
+    async (state) => {
+      const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+      await once(server, 'listening');
+      const { port } = server.address() as AddressInfo;
+      const requests: Array<{ socket: WebSocket; event: Record<string, unknown> }> = [];
+      const tts = makeTts({
+        baseURL: `http://127.0.0.1:${port}`,
+        connOptions: { maxRetry: 0, retryIntervalMs: 0, timeoutMs: 2_000 },
+      });
+      server.on('connection', (socket) => {
+        socket.on('message', (raw) => {
+          const event = JSON.parse(raw.toString()) as Record<string, unknown>;
+          requests.push({ socket, event });
+          if (event.type === 'session.create') {
+            socket.send(JSON.stringify({ type: 'session.created', session_id: 'session-1' }));
+          }
+        });
+      });
+      const synthesize = async () => {
+        const synth = tts.stream();
+        try {
+          synth.updateInputStream(
+            new ReadableStream<string>({
+              start(controller) {
+                controller.enqueue('Hello.');
+                controller.close();
+              },
+            }),
+          );
+          const output = [];
+          for await (const frame of synth) {
+            if (typeof frame !== 'symbol') output.push(frame);
+          }
+          return output;
+        } finally {
+          await synth.close();
+        }
+      };
+      const sendAudio = (socket: WebSocket) => {
+        socket.send(
+          JSON.stringify({
+            type: 'output_audio',
+            session_id: 'session-1',
+            audio: Buffer.alloc(640).toString('base64'),
+          }),
+        );
+        socket.send(JSON.stringify({ type: 'done', session_id: 'session-1' }));
+      };
+      try {
+        tts.prewarm();
+        await vi.waitFor(() => expect(requests[0]?.event.type).toBe('session.create'));
+        const first = requests[0]!.socket;
+        expect(requests[0]!.event.handoff_protocol).toBe(1);
+
+        const firstTurn = state === 'synthesizing' ? synthesize() : undefined;
+        if (firstTurn) {
+          void firstTurn.catch(() => {});
+          await vi.waitFor(() =>
+            expect(requests.some(({ event }) => event.type === 'session.flush')).toBe(true),
+          );
+        }
+
+        if (state === 'closed') {
+          const closed = once(first, 'close');
+          first.close();
+          await closed;
+        } else {
+          first.send(JSON.stringify({ type: 'session.handoff.request', handoff_id: 'tts-drain' }));
+        }
+        if (firstTurn) {
+          await new Promise((resolve) => setTimeout(resolve, 75));
+          expect(requests.filter(({ event }) => event.type === 'session.handoff.complete')).toEqual(
+            [],
+          );
+          sendAudio(first);
+          expect(await firstTurn).toHaveLength(1);
+        }
+
+        const expectedAck =
+          state === 'closed'
+            ? []
+            : [
+                {
+                  socket: first,
+                  event: { type: 'session.handoff.complete', handoff_id: 'tts-drain' },
+                },
+              ];
+        if (state !== 'closed') {
+          await vi.waitFor(() =>
+            expect(requests.filter(({ event }) => event.type === 'session.create')).toHaveLength(2),
+          );
+        }
+        expect(requests.filter(({ event }) => event.type === 'session.handoff.complete')).toEqual(
+          expectedAck,
+        );
+        const secondTurn = synthesize();
+        void secondTurn.catch(() => {});
+        await vi.waitFor(() =>
+          expect(requests.filter(({ event }) => event.type === 'session.create')).toHaveLength(2),
+        );
+        const next = requests.find(({ socket }) => socket !== first)!.socket;
+        await vi.waitFor(() =>
+          expect(
+            requests.some(({ socket, event }) => socket === next && event.type === 'session.flush'),
+          ).toBe(true),
+        );
+        sendAudio(next);
+        expect(await secondTurn).toHaveLength(1);
+      } finally {
+        await tts.close();
+        for (const client of server.clients) client.terminate();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      }
+    },
+  );
 });

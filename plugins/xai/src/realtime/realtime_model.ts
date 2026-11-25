@@ -92,10 +92,11 @@ export class RealtimeModel extends OpenAIRealtimeModel {
       turnDetection: XAI_DEFAULT_TURN_DETECTION,
       ...options,
     });
+    this.capabilities.perResponseToolChoice = false;
   }
 
-  override session(): RealtimeSession {
-    return new RealtimeSession(this);
+  override session(options?: llm.RealtimeSessionOptions): RealtimeSession {
+    return new RealtimeSession(this, options);
   }
 }
 

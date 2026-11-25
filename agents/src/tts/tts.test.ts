@@ -290,7 +290,189 @@ class MidInputRetrySynthesizeStream extends SynthesizeStream {
   }
 }
 
+type InputRetryMode = 'replay' | 'stream' | 'resume';
+
+/** Fails its first attempt as scripted, then turns each input item into one audio frame. */
+class ModeRetrySynthesizeStream extends SynthesizeStream {
+  label = 'test.ModeRetrySynthesizeStream';
+  protected override readonly inputRetryMode: InputRetryMode;
+  attempts: Array<Array<string | '<flush>'>> = [];
+  firstFailed: Promise<void>;
+  #resolveFirstFailed!: () => void;
+
+  constructor(
+    tts: TTS,
+    connOptions: APIConnectOptions,
+    mode: InputRetryMode,
+    private readonly firstAttempt: { audioBeforeFailure: boolean; failAfterItems: number },
+  ) {
+    super(tts, connOptions);
+    this.inputRetryMode = mode;
+    this.firstFailed = new Promise((resolve) => {
+      this.#resolveFirstFailed = resolve;
+    });
+  }
+
+  protected async run(): Promise<void> {
+    // Like the Rime pump, read whatever `input` currently is for every item.
+    const attempt: Array<string | '<flush>'> = [];
+    this.attempts.push(attempt);
+    const first = this.attempts.length === 1;
+    if (first && this.firstAttempt.audioBeforeFailure) this.#emit('pre-failure audio');
+
+    for (;;) {
+      if (first && attempt.length === this.firstAttempt.failAfterItems) {
+        this.#resolveFirstFailed();
+        throw new APIConnectionError({ message: 'retryable failure' });
+      }
+      const item = await this.input.next();
+      if (item.done) break;
+      attempt.push(typeof item.value === 'string' ? item.value : '<flush>');
+      if (!first && typeof item.value === 'string') this.#emit(item.value);
+    }
+    this.queue.put(SynthesizeStream.END_OF_STREAM);
+  }
+
+  #emit(segmentId: string) {
+    this.queue.put({ requestId: 'request', segmentId, frame: audioFrame(1), final: false });
+  }
+}
+
+/** Throws a retryable error when the stream is closed, like a provider whose socket was torn down. */
+class FailOnCloseSynthesizeStream extends SynthesizeStream {
+  label = 'test.FailOnCloseSynthesizeStream';
+  attempts = 0;
+  started: Promise<void>;
+  #resolveStarted!: () => void;
+
+  constructor(tts: TTS, connOptions: APIConnectOptions) {
+    super(tts, connOptions);
+    this.started = new Promise((resolve) => {
+      this.#resolveStarted = resolve;
+    });
+  }
+
+  protected async run(): Promise<void> {
+    this.attempts += 1;
+    this.#resolveStarted();
+    if (!this.abortSignal.aborted) {
+      await new Promise((resolve) =>
+        this.abortSignal.addEventListener('abort', resolve, { once: true }),
+      );
+    }
+    throw new APIConnectionError({ message: 'socket closed' });
+  }
+}
+
+async function collectSegments(stream: SynthesizeStream): Promise<string[]> {
+  const segments: string[] = [];
+  for await (const event of stream) {
+    if (event !== SynthesizeStream.END_OF_STREAM) segments.push(event.segmentId);
+  }
+  return segments;
+}
+
 describe('SynthesizeStream retries', () => {
+  it('returns audio from the retry, including text pushed during the retry delay', async () => {
+    const tts = new TestTTS();
+    const errors: TTSError[] = [];
+    tts.on('error', (error) => errors.push(error));
+    const stream = new ModeRetrySynthesizeStream(
+      tts,
+      { ...RETRY_OPTIONS, retryIntervalMs: 50 },
+      'replay',
+      { audioBeforeFailure: false, failAfterItems: 2 },
+    );
+    const output = collectSegments(stream);
+    stream.pushText('hello');
+    stream.flush();
+
+    await stream.firstFailed;
+    stream.pushText('world');
+    stream.endInput();
+
+    expect(await output).toEqual(['hello', 'world']);
+    expect(stream.attempts).toEqual([
+      ['hello', '<flush>'],
+      ['hello', '<flush>', 'world', '<flush>'],
+    ]);
+    expect(errors).toEqual([]);
+  });
+
+  it('does not retry or report an attempt that fails because the stream closed', async () => {
+    const tts = new TestTTS();
+    const errors: TTSError[] = [];
+    tts.on('error', (error) => errors.push(error));
+    const stream = new FailOnCloseSynthesizeStream(tts, { ...RETRY_OPTIONS, maxRetry: 2 });
+    stream.pushText('hello');
+
+    await stream.started;
+    stream.close();
+    await new Promise((resolve) => setTimeout(resolve, 250));
+
+    expect(stream.attempts).toBe(1);
+    expect(errors).toEqual([]);
+  });
+
+  it('does not start a retry when the stream closes during the retry delay', async () => {
+    const tts = new TestTTS();
+    const errors: TTSError[] = [];
+    tts.on('error', (error) => errors.push(error));
+    const stream = new MidInputRetrySynthesizeStream(tts, {
+      ...RETRY_OPTIONS,
+      retryIntervalMs: 50,
+    });
+    stream.pushText('hello');
+
+    await stream.firstInputConsumed;
+    stream.close();
+    await new Promise((resolve) => setTimeout(resolve, 250));
+
+    expect(stream.attempts).toEqual([['hello']]);
+    expect(errors).toEqual([]);
+  });
+
+  it.each([
+    ['stream', false],
+    ['resume', true],
+  ] as const)(
+    'leaves input to a %s-mode subclass; retries after audio: %s',
+    async (mode, retriesAfterAudio) => {
+      const stream = new ModeRetrySynthesizeStream(new TestTTS(), RETRY_OPTIONS, mode, {
+        audioBeforeFailure: true,
+        failAfterItems: 1,
+      });
+      const output = collectSegments(stream);
+      stream.pushText('hello');
+      stream.pushText('world');
+      stream.endInput();
+
+      const segments = await output;
+      if (retriesAfterAudio) {
+        // The subclass resumes with the input it has not read yet.
+        expect(stream.attempts).toEqual([['hello'], ['world', '<flush>']]);
+        expect(segments).toEqual(['pre-failure audio', 'world']);
+      } else {
+        expect(stream.attempts).toEqual([['hello']]);
+        expect(segments).toEqual(['pre-failure audio']);
+      }
+    },
+  );
+
+  it('retries a stream-mode subclass before audio without replacing its input', async () => {
+    const stream = new ModeRetrySynthesizeStream(new TestTTS(), RETRY_OPTIONS, 'stream', {
+      audioBeforeFailure: false,
+      failAfterItems: 1,
+    });
+    const output = collectSegments(stream);
+    stream.pushText('hello');
+    stream.pushText('world');
+    stream.endInput();
+
+    expect(await output).toEqual(['world']);
+    expect(stream.attempts).toEqual([['hello'], ['world', '<flush>']]);
+  });
+
   it('replays buffered input into a fresh queue', async () => {
     const stream = new RetrySynthesizeStream(new TestTTS(), RETRY_OPTIONS);
     stream.pushText('hello');

@@ -15,6 +15,7 @@ export {
   ToolContext,
   ToolError,
   ToolFlag,
+  ToolResult,
   Toolset,
   toToolContext,
   type AgentHandoff,
@@ -108,6 +109,13 @@ export {
 } from './decisions.js';
 
 export {
+  DecisionModelFallbackAdapter,
+  type DecisionAvailabilityChangedEvent,
+  type DecisionModelFallbackAdapterOptions,
+  type DecisionModelFallbackCallbacks,
+} from './decision_fallback_adapter.js';
+
+export {
   RealtimeError,
   RealtimeModel,
   RealtimeSession,
@@ -118,6 +126,7 @@ export {
   type MessageGeneration,
   type RealtimeCapabilities,
   type RealtimeModelError,
+  type RealtimeSessionOptions,
   type RealtimeSessionReconnectedEvent,
 } from './realtime.js';
 

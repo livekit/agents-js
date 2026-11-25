@@ -88,11 +88,34 @@ export function resolveEffectiveThreshold(
   return null;
 }
 
+type Logger = ReturnType<typeof log>;
+
+// `ws` emits 'error' on the next tick when a socket that is still CONNECTING is terminated or
+// closed (abortHandshake), and Node throws an uncaught exception for an 'error' event with no
+// listener. A socket must therefore never be left without an error listener, so every socket
+// carries this guard from construction until it is garbage collected. The logger is resolved by
+// the caller: calling log() here could throw inside an error listener.
+function socketErrorGuard(logger: Logger): (err: Error) => void {
+  return (err) => logger.debug({ err }, 'adaptive interruption WebSocket emitted an error');
+}
+
+/**
+ * Drops every listener from a socket we no longer use, so late events cannot reach the shared
+ * stream controller, then closes it. The error guard is re-attached synchronously so there is
+ * no window without an error listener.
+ */
+function abandonSocket(ws: WebSocket, logger: Logger): void {
+  ws.removeAllListeners();
+  ws.on('error', socketErrorGuard(logger));
+  ws.close(1000); // signal normal websocket closure
+}
+
 /**
  * Creates a WebSocket connection and waits for it to open.
  */
 async function connectWebSocket(
   options: WsTransportOptions,
+  logger: Logger,
 ): Promise<Throws<WebSocket, APIStatusError | APITimeoutError | APIConnectionError>> {
   const baseUrl = options.baseUrl.replace(/^http/, 'ws');
   const token = await createAccessToken(options.apiKey, options.apiSecret);
@@ -101,7 +124,11 @@ async function connectWebSocket(
   const ws = new WebSocket(url, {
     headers: { ...buildMetadataHeaders(), Authorization: `Bearer ${token}` },
   });
+  // Permanent: outlives the handshake listeners below, including the open -> setupMessageHandler
+  // handoff and the deferred 'error' from terminating a socket that is still CONNECTING.
+  ws.on('error', socketErrorGuard(logger));
 
+  let removeHandshakeListeners = () => {};
   try {
     await new ThrowsPromise<void, APIStatusError | APITimeoutError | APIConnectionError>(
       (resolve, reject) => {
@@ -114,12 +141,8 @@ async function connectWebSocket(
             }),
           );
         }, options.connectTimeout);
-        ws.once('open', () => {
-          clearTimeout(timeout);
-          resolve();
-        });
-        ws.once('unexpected-response', (_req, res) => {
-          clearTimeout(timeout);
+        const onOpen = () => resolve();
+        const onUnexpectedResponse = (_req: unknown, res: { statusCode?: number }) => {
           ws.terminate();
           const statusCode = res.statusCode ?? -1;
           reject(
@@ -128,19 +151,25 @@ async function connectWebSocket(
               options: { statusCode, retryable: false },
             }),
           );
-        });
-        ws.once('error', (err: Error) => {
-          clearTimeout(timeout);
+        };
+        const onError = (err: Error) => {
           ws.terminate();
           reject(new APIConnectionError({ message: `WebSocket connection error: ${err.message}` }));
-        });
+        };
+        removeHandshakeListeners = () => {
+          clearTimeout(timeout);
+          ws.off('open', onOpen);
+          ws.off('unexpected-response', onUnexpectedResponse);
+          ws.off('error', onError);
+        };
+        ws.on('open', onOpen);
+        ws.on('unexpected-response', onUnexpectedResponse);
+        ws.on('error', onError);
       },
     );
   } finally {
-    // Drop the connection-phase once() listeners so a later socket error can't fire the stale
-    // once('error') alongside the operational on('error'). Safe to remove all: the message handler
-    // is attached after this returns.
-    ws.removeAllListeners();
+    // Remove only the handshake listeners: the error guard must stay attached.
+    removeHandshakeListeners();
   }
 
   return ws;
@@ -218,10 +247,17 @@ export function createWsTransport(
   async function ensureConnection(): Promise<
     Throws<void, APIStatusError | APITimeoutError | APIConnectionError>
   > {
-    if (activeWs && activeWs.readyState === WebSocket.OPEN) return;
+    if (closed || (activeWs && activeWs.readyState === WebSocket.OPEN)) return;
 
-    activeWs = await connectWebSocket(options);
-    setupMessageHandler(activeWs);
+    const ws = await connectWebSocket(options, logger);
+    if (closed) {
+      // close() raced with the handshake and its closeSocket() saw no active socket. Drop this
+      // one before it opens a gateway session.
+      abandonSocket(ws, logger);
+      return;
+    }
+    activeWs = ws;
+    setupMessageHandler(ws);
 
     const settings: Record<string, unknown> = {
       sample_rate: options.sampleRate,
@@ -236,7 +272,7 @@ export function createWsTransport(
       type: MSG_SESSION_CREATE,
       settings,
     });
-    activeWs.send(sessionCreateMsg);
+    ws.send(sessionCreateMsg);
   }
 
   function handleMessage(message: WsMessage): void {
@@ -431,9 +467,10 @@ export function createWsTransport(
     }
     // The abandoned socket can still emit 'error' during its close handshake; that handler closes
     // over the shared outputController, so a late error would tear down the replacement stream.
-    activeWs?.removeAllListeners();
-    activeWs?.close(1000); // signal normal websocket closure
-    activeWs = null;
+    if (activeWs) {
+      abandonSocket(activeWs, logger);
+      activeWs = null;
+    }
   }
 
   function close(): void {
@@ -465,9 +502,6 @@ export function createWsTransport(
         closeSocket();
         getState().cache.clear(); // abandon the old socket's unanswered in-flight requests
         await ensureConnection();
-        // close() may have raced in during the await; its closeSocket() saw activeWs === null and
-        // was a no-op, so tear down the socket we just opened — else it leaks with live handlers.
-        if (closed) closeSocket();
       })().catch((e: unknown) => {
         outputController?.error(e);
       });

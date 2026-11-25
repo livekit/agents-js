@@ -172,4 +172,54 @@ describe('AgentSession text-only gating', () => {
     expect(initRecording).toHaveBeenCalledWith(session.sessionOptions.recordingOptions);
     await session.close();
   });
+
+  it('initializes recording with recording off, so the hosted log decision is made at start', async () => {
+    const ctx = jobCtxWithMode(null);
+    const initRecording = vi.spyOn(ctx, 'initRecording').mockResolvedValue();
+    const session = newSession();
+
+    await runWithJobContextAsync(ctx, async () => {
+      await session.start({
+        agent: new Agent({ instructions: 'help the user' }),
+        record: false,
+      });
+    });
+
+    expect(initRecording).toHaveBeenCalledWith(
+      expect.objectContaining({ audio: false, traces: false, logs: false, transcript: false }),
+    );
+    await session.close();
+  });
+
+  it.each([
+    { jobRedaction: false, sessionRedaction: false },
+    { jobRedaction: false, sessionRedaction: true },
+    { jobRedaction: true, sessionRedaction: false },
+    { jobRedaction: true, sessionRedaction: true },
+  ])(
+    'uses resolved job redaction $jobRedaction with session redaction $sessionRedaction',
+    async ({ jobRedaction, sessionRedaction }) => {
+      const ctx = jobCtxWithMode('SIMULATION_MODE_TEXT');
+      ctx.job.enableRedaction = true;
+      ctx._redactionEnabled = jobRedaction;
+      vi.spyOn(ctx, 'initRecording').mockResolvedValue();
+      const session = newSession();
+
+      await runWithJobContextAsync(ctx, () =>
+        session.start({
+          agent: new Agent({ instructions: 'help the user' }),
+          record: {
+            audio: false,
+            traces: false,
+            logs: false,
+            transcript: false,
+            redaction: sessionRedaction,
+          },
+        }),
+      );
+
+      expect(session._redactionEnabled).toBe(jobRedaction || sessionRedaction);
+      await session.close();
+    },
+  );
 });

@@ -43,6 +43,8 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     // (undocumented)
     flush(): void;
     // (undocumented)
+    protected readonly inputRetryMode = "stream";
+    // (undocumented)
     label: string;
     // (undocumented)
     protected onStreamDone(): void;

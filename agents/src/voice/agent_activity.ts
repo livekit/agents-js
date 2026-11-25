@@ -182,6 +182,7 @@ import {
 } from './tool_executor.js';
 import { type EndpointingOptions, createEndpointing } from './turn_config/endpointing.js';
 import { resolveEndpointing } from './turn_config/utils.js';
+import type { TurnHooks } from './turn_hooks.js';
 import { createSilenceFrameLike, setParticipantSpanAttributes } from './utils.js';
 
 export const agentActivityStorage = new AsyncLocalStorage<AgentActivity>();
@@ -954,6 +955,8 @@ export class AgentActivity implements RecognitionHooks {
     if (this.llm instanceof RealtimeModel) {
       const rtReused = reuseResources?.rtSession !== undefined;
 
+      removeInstructions(this.agent._chatCtx);
+
       if (rtReused) {
         this.logger.debug('reusing realtime session from previous activity');
         this.realtimeSession = reuseResources!.rtSession;
@@ -963,8 +966,13 @@ export class AgentActivity implements RecognitionHooks {
         await this.realtimeSession!.interrupt();
         await this.realtimeSession!.clearAudio();
       } else {
+        // Pass the initial configuration at creation. A provider that sends it in the connection
+        // handshake (Gemini Live) then connects once, and _updateSession below changes nothing.
         this.realtimeSession = this.llm.session({
           turnDetectionDisabled: !this.rtTurnDetectionEnabled,
+          instructions: renderInstructions(this.agent.instructions),
+          chatCtx: this.agent.chatCtx,
+          tools: this.tools,
         });
       }
 
@@ -978,8 +986,6 @@ export class AgentActivity implements RecognitionHooks {
       );
       this.realtimeSession!.on('metrics_collected', this.onMetricsCollected);
       this.realtimeSession!.on('error', this.onModelError);
-
-      removeInstructions(this.agent._chatCtx);
 
       // skip the update if the session is reused and no mid-session update is supported
       // this means the content is the same as the previous session
@@ -1390,14 +1396,6 @@ export class AgentActivity implements RecognitionHooks {
   /** @internal */
   get inputStartedAt() {
     return this.audioRecognition?.inputStartedAt;
-  }
-
-  /**
-   * @internal — used by AMD to obtain a private branch of the participant
-   * audio stream that does not interfere with the pipeline VAD/STT.
-   */
-  subscribeAudioStream(): ReadableStream<AudioFrame> | undefined {
-    return this.audioRecognition?.subscribeAudioStream();
   }
 
   async updateChatCtx(chatCtx: ChatContext): Promise<void> {
@@ -1869,18 +1867,30 @@ export class AgentActivity implements RecognitionHooks {
 
     this.audioStreamId = this.audioStream.addInputStream(audioStream);
 
+    // AMD discards pre-answer audio for every consumer, then hears each frame before the
+    // session substitutes silence for its own STT.
+    const amdAudio = new TransformStream<AudioFrame, AudioFrame>({
+      transform: (frame, controller) => {
+        const amd = this.agentSession.amd;
+        if (amd?._blocksSessionAudio) {
+          return;
+        }
+        amd?.pushAudio(frame);
+        controller.enqueue(frame);
+      },
+    });
+    const inputAudio = this.audioStream.stream.pipeThrough(amdAudio);
+
     if (this.realtimeSession && this.audioRecognition) {
-      const [realtimeAudioStream, recognitionAudioStream] = this.audioStream.stream.tee();
+      const [realtimeAudioStream, recognitionAudioStream] = inputAudio.tee();
       this.realtimeSession.setInputAudioStream(
         realtimeAudioStream.pipeThrough(silenceDiscardedAudio),
       );
       this.audioRecognition.setInputAudioStream(recognitionAudioStream);
     } else if (this.realtimeSession) {
-      this.realtimeSession.setInputAudioStream(
-        this.audioStream.stream.pipeThrough(silenceDiscardedAudio),
-      );
+      this.realtimeSession.setInputAudioStream(inputAudio.pipeThrough(silenceDiscardedAudio));
     } else if (this.audioRecognition) {
-      this.audioRecognition.setInputAudioStream(this.audioStream.stream);
+      this.audioRecognition.setInputAudioStream(inputAudio);
     }
   }
 
@@ -2121,10 +2131,6 @@ export class AgentActivity implements RecognitionHooks {
     );
 
     if (ev.isFinal) {
-      if (!this.stt && ev.transcript) {
-        this.agentSession.amd?.onTranscript(ev.transcript);
-      }
-
       const turnStartedAt = ev.turnStartedAt;
 
       const userMetrics: MetricsReport = {};
@@ -2207,8 +2213,6 @@ export class AgentActivity implements RecognitionHooks {
       lastSpeakingTime: speechStartTime,
       otelContext: otelContext.active(),
     });
-    // Mirrors python AudioRecognition._on_vad_event → amd._on_user_speech_started().
-    this.agentSession.amd?.onUserSpeechStarted();
     this.userSilenceEvent.clear();
     if (
       this.isInterruptionDetectionEnabled &&
@@ -2241,14 +2245,7 @@ export class AgentActivity implements RecognitionHooks {
     }
   }
 
-  onEndOfSpeech(ev?: VADEvent): void {
-    let speechEndTime = Date.now();
-    let silenceDurationMs = 0;
-    if (ev) {
-      // Subtract both silenceDuration and inferenceDuration to correct for VAD model latency.
-      speechEndTime = speechEndTime - ev.silenceDuration - ev.inferenceDuration;
-      silenceDurationMs = ev.silenceDuration;
-    }
+  onEndOfSpeech(_ev: VADEvent | undefined, speechEndTime: number): void {
     if (this.isInterruptionDetectionEnabled && this.audioRecognition) {
       // Pass speechEndTime as the absolute endedAt timestamp.
       this.audioRecognition.onEndOfOverlapSpeech(
@@ -2260,8 +2257,6 @@ export class AgentActivity implements RecognitionHooks {
       lastSpeakingTime: speechEndTime,
       otelContext: otelContext.active(),
     });
-    // Mirrors python AudioRecognition._on_vad_event → amd._on_user_speech_ended(ev.silence_duration).
-    this.agentSession.amd?.onUserSpeechEnded(silenceDurationMs);
     this.userSilenceEvent.set();
 
     if (this.pausedSpeech) {
@@ -2473,9 +2468,6 @@ export class AgentActivity implements RecognitionHooks {
         speakerId: ev.alternatives![0].speakerId ?? null,
       }),
     );
-    // Mirrors python AudioRecognition._on_stt_event → amd._on_transcript(transcript).
-    this.agentSession.amd?.onTranscript(ev.alternatives![0].text);
-
     // agent speech might not be interrupted if VAD failed and a final transcript is received
     // we call interruptByAudioActivity (idempotent) to pause the speech, if possible
     if (
@@ -2588,6 +2580,9 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   onUserTurnExceeded(ev: UserTurnExceededEvent): void {
+    if (this.agentSession.amd) {
+      return; // AMD owns replies while it runs, and a voicemail greeting runs long
+    }
     if (this.userTurnExceededLocked) {
       return;
     }
@@ -2671,6 +2666,63 @@ export class AgentActivity implements RecognitionHooks {
       this._preemptiveGeneration.speechHandle._cancel(source);
       this._preemptiveGeneration = undefined;
     }
+  }
+
+  /** @internal */
+  _cancelPreemptiveGeneration(): void {
+    this.cancelPreemptiveGeneration();
+  }
+
+  /** @internal Speech waiting in the queue, not yet the current speech. */
+  get _queuedSpeeches(): SpeechHandle[] {
+    return [...this.speechQueue.clone()].map(([, , speech]) => speech);
+  }
+
+  /**
+   * Cancel all pending speeches or generations, only preserve active or paused playback.
+   * @internal
+   */
+  _cancelPendingSpeeches(): void {
+    this.cancelPreemptiveGeneration();
+    for (const [, , speech] of this.speechQueue.clone()) {
+      speech._cancel();
+    }
+    const current = this._currentSpeech;
+    if (current && this.agentSession.agentState !== 'speaking' && this.pausedSpeech === undefined) {
+      current._cancel();
+    }
+  }
+
+  /** @internal */
+  get _newTurnsBlocked(): boolean {
+    return this.newTurnsBlocked;
+  }
+
+  /** @internal */
+  get _rtTurnDetectionEnabled(): boolean {
+    return this.rtTurnDetectionEnabled;
+  }
+
+  /**
+   * Whether there is any work for turn handling, speech, playback, or interruption recovery.
+   * @internal
+   */
+  get _isAgentBusy(): boolean {
+    const agentState = this.agentSession.agentState;
+    // the scheduler stops popping while authorization is paused, so skip finished handles
+    // the Python scheduler would already have dropped
+    const queued = [...this.speechQueue.clone()].some(([, , speech]) => !speech.done());
+    return (
+      queued ||
+      (this._currentSpeech !== undefined && !this._currentSpeech.done()) ||
+      this.pausedSpeech !== undefined ||
+      this.falseInterruptionTimer !== undefined ||
+      this.falseInterruptionPending ||
+      agentState === 'speaking' ||
+      agentState === 'thinking' ||
+      (this.agentSession.output.audio?.pendingPlayoutSegments ?? 0) > 0 ||
+      (this._userTurnCompletedTask !== undefined && !this._userTurnCompletedTask.done)
+    );
   }
 
   private _interruptBackgroundSpeeches(
@@ -2780,16 +2832,6 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   async onEndOfTurn(info: EndOfTurnInfo): Promise<boolean> {
-    // When AMD has taken over the turn with a machine verdict, the caller drives
-    // its own reply (e.g. leaving a voicemail). Cancel any post-verdict preemptive
-    // generation and mark the turn so the normal auto-reply is skipped, otherwise
-    // it would race with — and interrupt — the caller's generateReply.
-    const amd = this.agentSession?.amd;
-    if (amd && amd.onEndOfTurn(info)) {
-      this.cancelPreemptiveGeneration();
-      info.skipReply = true;
-    }
-
     if (this.schedulingPaused || this.newTurnsBlocked) {
       this.cancelPreemptiveGeneration();
       this.logger.warn(
@@ -2806,8 +2848,10 @@ export class AgentActivity implements RecognitionHooks {
     // Refactored interruption word count check for consistency with onVADInferenceDone:
     // - Always apply minInterruptionWords filtering when STT is available and minInterruptionWords > 0
     // - Use consistent word splitting logic with splitWords (matching onVADInferenceDone pattern)
+    // AMD classifies every turn, so short turns are committed while it runs
     if (
       this.stt &&
+      !this.agentSession.amd &&
       this.turnDetection !== 'manual' &&
       this._currentSpeech &&
       this._currentSpeech.allowInterruptions &&
@@ -2844,6 +2888,11 @@ export class AgentActivity implements RecognitionHooks {
       return false;
     }
 
+    let turnHooks = this.agentSession._turnHooks;
+    if (turnHooks !== undefined) {
+      turnHooks = turnHooks.onUserTurnCommitted(info.newTranscript, info.endOfUtteranceDelay);
+    }
+
     // A replying turn interrupts the paused speech, so cancel the resume that would race it.
     // The reply task returns before that for these two cases, so leave the resume armed.
     if (!info.skipReply && !this.rtTurnDetectionEnabled) {
@@ -2856,9 +2905,13 @@ export class AgentActivity implements RecognitionHooks {
     // the span, so that turn is left for recognition to end
     info.userTurnSpanAdopted = info.userTurnSpan !== undefined && !info.skipReply;
     this._userTurnCompletedTask = this.createSpeechTask({
-      taskFn: () => this.userTurnCompleted(info, oldTask),
+      taskFn: () => this.userTurnCompleted(info, oldTask, turnHooks),
       name: 'AgentActivity.userTurnCompleted',
     });
+    if (turnHooks !== undefined) {
+      const hooks = turnHooks;
+      this._userTurnCompletedTask.addDoneCallback(() => hooks.onUserTurnCompleted());
+    }
     return true;
   }
 
@@ -3015,7 +3068,7 @@ export class AgentActivity implements RecognitionHooks {
         if (!heapItem) {
           throw new Error('Speech queue is empty');
         }
-        if (this._authorizationPaused) {
+        if (this._authorizationPaused && !heapItem[2]._bypassAuthorizationPause) {
           this.speechQueue.push(heapItem);
           break;
         }
@@ -3173,6 +3226,8 @@ export class AgentActivity implements RecognitionHooks {
     chatCtx?: ChatContext;
     instructions?: string | Instructions;
     toolChoice?: ToolChoice | null;
+    /** IDs of the registered tools and toolsets to offer for this reply only. */
+    tools?: string[];
     allowInterruptions?: boolean;
     scheduleSpeech?: boolean;
     inputDetails?: InputDetails;
@@ -3188,6 +3243,7 @@ export class AgentActivity implements RecognitionHooks {
       chatCtx,
       instructions: defaultInstructions,
       toolChoice: defaultToolChoice,
+      tools: toolIds,
       allowInterruptions: defaultAllowInterruptions,
       scheduleSpeech = true,
       inputDetails,
@@ -3226,6 +3282,33 @@ export class AgentActivity implements RecognitionHooks {
       }
     }
 
+    const agentTools = this.tools;
+    // inject DTMF tool for IVR if needed
+    const allTools = this.agentSession._turnHooks?.onReplyGeneration(agentTools) ?? agentTools;
+
+    // resolve tool IDs to the registered tools and toolsets
+    let resolvedTools: ToolContextEntry[] | undefined;
+    if (toolIds !== undefined) {
+      const toolsetsById = new Map(allTools.toolsets.map((toolset) => [toolset.id, toolset]));
+      const toolsById = new Map<string, ToolContextEntry>([
+        ...Object.entries(allTools.functionTools),
+        ...allTools.providerTools.map((tool): [string, ToolContextEntry] => [tool.id, tool]),
+      ]);
+      resolvedTools = [];
+      for (const id of new Set(toolIds)) {
+        const tool = toolsetsById.get(id) ?? toolsById.get(id);
+        if (tool === undefined) {
+          throw new Error(
+            `tool '${id}' not found in agent's registered tools. ` +
+              `Available tools: ${JSON.stringify(Object.keys(allTools.functionTools))}`,
+          );
+        }
+        resolvedTools.push(tool);
+      }
+    } else if (!allTools.equals(agentTools)) {
+      resolvedTools = [...allTools.tools];
+    }
+
     const handle = SpeechHandle.create({
       allowInterruptions: allowInterruptions ?? this.allowInterruptions,
       inputDetails,
@@ -3253,6 +3336,7 @@ export class AgentActivity implements RecognitionHooks {
             // TODO(brian): support llm.ChatMessage for the realtime model
             userInput: userMessage?.rawTextContent,
             instructions,
+            tools: resolvedTools,
             modelSettings: {
               // isGiven(toolChoice) = toolChoice !== undefined
               toolChoice: toOaiToolChoice(toolChoice !== undefined ? toolChoice : this.toolChoice),
@@ -3270,7 +3354,7 @@ export class AgentActivity implements RecognitionHooks {
         instructions = concatInstructions(this.agent.instructions, '\n', instructions);
       }
 
-      const tools = this.tools;
+      const tools = resolvedTools !== undefined ? new ToolContext(resolvedTools) : allTools;
       tools._exclude(this._onEnterIgnoredTools(tools));
 
       const task = this.createSpeechTask({
@@ -3396,15 +3480,23 @@ export class AgentActivity implements RecognitionHooks {
     this.agentSession._conversationItemAdded(userMessage);
   }
 
-  private async userTurnCompleted(info: EndOfTurnInfo, oldTask?: Task<void>): Promise<void> {
+  private async userTurnCompleted(
+    info: EndOfTurnInfo,
+    oldTask?: Task<void>,
+    turnHooks?: TurnHooks,
+  ): Promise<void> {
     try {
-      await this.userTurnCompletedImpl(info, oldTask);
+      await this.userTurnCompletedImpl(info, oldTask, turnHooks);
     } finally {
       endAdoptedUserTurnSpan(info);
     }
   }
 
-  private async userTurnCompletedImpl(info: EndOfTurnInfo, oldTask?: Task<void>): Promise<void> {
+  private async userTurnCompletedImpl(
+    info: EndOfTurnInfo,
+    oldTask?: Task<void>,
+    turnHooks?: TurnHooks,
+  ): Promise<void> {
     if (oldTask) {
       // We never cancel user code as this is very confusing.
       // So we wait for the old execution of onUserTurnCompleted to finish.
@@ -3435,7 +3527,7 @@ export class AgentActivity implements RecognitionHooks {
       }
     }
 
-    // The reply is being driven elsewhere (e.g. AMD leaving a voicemail). Commit the
+    // The reply is being driven elsewhere (e.g. a manual commit that skips it). Commit the
     // user turn to chat context but don't generate or interrupt anything.
     if (info.skipReply) {
       this.commitSkippedUserTurn(info);
@@ -3531,25 +3623,6 @@ export class AgentActivity implements RecognitionHooks {
 
     const callbackDuration = Date.now() - startTime;
 
-    if (this.llm instanceof RealtimeModel) {
-      // ignore stt transcription for realtime model
-      userMessage = undefined;
-    } else if (this.llm === undefined) {
-      return;
-    }
-
-    if (this.schedulingPaused || this.newTurnsBlocked) {
-      this.logger.warn(
-        { 'lk.pii.user_input': info.newTranscript },
-        'skipping reply to user input, speech scheduling is paused',
-      );
-      if (userMessage && this.agentSession._closing) {
-        this.agent._chatCtx.items.push(userMessage);
-        this.agentSession._conversationItemAdded(userMessage);
-      }
-      return;
-    }
-
     const userMetricsReport: MetricsReport = {};
     if (info.startedSpeakingAt !== undefined) {
       userMetricsReport.startedSpeakingAt = info.startedSpeakingAt / 1000; // ms -> seconds
@@ -3564,8 +3637,46 @@ export class AgentActivity implements RecognitionHooks {
       userMetricsReport.endOfTurnDelay = info.endOfUtteranceDelay / 1000; // ms -> seconds
     }
     userMetricsReport.onUserTurnCompletedDelay = callbackDuration / 1000; // ms -> seconds
-    if (userMessage) {
-      userMessage.metrics = userMetricsReport;
+    userMessage.metrics = userMetricsReport;
+
+    if (
+      turnHooks !== undefined &&
+      info.newTranscript &&
+      this.llm instanceof RealtimeModel &&
+      !this.llm.capabilities.userTranscription
+    ) {
+      this.agent._chatCtx.insert(userMessage);
+      this.agentSession._conversationItemAdded(userMessage);
+    }
+
+    if (turnHooks !== undefined && !(await turnHooks.shouldReply(chatCtx))) {
+      this.cancelPreemptiveGeneration();
+      if (info.newTranscript && !(this.llm instanceof RealtimeModel)) {
+        this.agent._chatCtx.insert(userMessage);
+        this.agentSession._conversationItemAdded(userMessage);
+      }
+      return;
+    }
+
+    let replyInstructions: string | undefined;
+    if (this.llm instanceof RealtimeModel) {
+      // ignore stt transcription for realtime model
+      userMessage = undefined;
+      replyInstructions = turnHooks?.replyInstructions || undefined;
+    } else if (this.llm === undefined) {
+      return;
+    }
+
+    if (this.schedulingPaused || this.newTurnsBlocked) {
+      this.logger.warn(
+        { 'lk.pii.user_input': info.newTranscript },
+        'skipping reply to user input, speech scheduling is paused',
+      );
+      if (userMessage && this.agentSession._closing) {
+        this.agent._chatCtx.items.push(userMessage);
+        this.agentSession._conversationItemAdded(userMessage);
+      }
+      return;
     }
 
     let speechHandle: SpeechHandle | undefined;
@@ -3586,6 +3697,7 @@ export class AgentActivity implements RecognitionHooks {
         // history keeps the final transcript and onUserTurnCompleted edits.
         if (userMessage) {
           preemptive.userMessage.content = [...userMessage.content];
+          Object.assign(preemptive.userMessage.extra, userMessage.extra);
           preemptive.userMessage.metrics = userMetricsReport;
           preemptive.userMessage.transcriptConfidence = userMessage.transcriptConfidence;
         }
@@ -3613,11 +3725,14 @@ export class AgentActivity implements RecognitionHooks {
       speechHandle = this.generateReply({
         userMessage,
         chatCtx,
+        instructions: replyInstructions,
         inputDetails: { modality: 'audio' },
         // the invalidated preemptive attempt answered this same turn: one agent_turn
         continueTurnFrom: discardedPreemptive,
       });
     }
+
+    turnHooks?.onAgentTurnCommitted(speechHandle);
 
     const eouMetrics: EOUMetrics = {
       type: 'eou_metrics',
@@ -3861,19 +3976,25 @@ export class AgentActivity implements RecognitionHooks {
       }
 
       recordInterruption(speechHandle);
-      if (speechHandle.interrupted && audioOutput && audioOut && playbackEv) {
-        // waitForPlayout returns the previous segment's event when this speech never reached
-        // the output: only a segment of its own counts as played
-        const playedOwnFrame =
-          audioOutput.capturedPlayoutSegments > audioOut.capturedSegmentsBefore;
-        if (playedOwnFrame) {
+      let forwardedText = textOut?.text ?? '';
+      const interruptedPlayback = speechHandle.interrupted ? playbackEv : undefined;
+      if (audioOutput && interruptedPlayback) {
+        // If this speech supplied no frames, waitForPlayout returns the previous segment's event.
+        let played = false;
+        if (audioOut && audioOutput.capturedPlayoutSegments > audioOut.capturedSegmentsBefore) {
           trace
             .getSpan(speechHandle._agentTurnContext ?? otelContext.active())
-            ?.setAttribute(traceTypes.ATTR_PLAYOUT_POSITION, playbackEv.playbackPosition);
+            ?.setAttribute(traceTypes.ATTR_PLAYOUT_POSITION, interruptedPlayback.playbackPosition);
+          played =
+            interruptedPlayback.playbackPosition > 0 ||
+            (!audioOutput._playbackStartIsEstimated &&
+              audioOut.firstFrameFut.done &&
+              !audioOut.firstFrameFut.rejected);
         }
+        forwardedText = played ? interruptedPlayback.synchronizedTranscript ?? forwardedText : '';
       }
 
-      if (addToChatCtx) {
+      if (addToChatCtx && (!interruptedPlayback || forwardedText)) {
         const replyStoppedSpeakingAt = Date.now();
         const replyAssistantMetrics: MetricsReport = {};
         if (replyTtsGenData?.ttfb !== undefined) {
@@ -3891,12 +4012,13 @@ export class AgentActivity implements RecognitionHooks {
 
         const message = ChatMessage.create({
           role: 'assistant',
-          content: textOut?.text || '',
+          content: forwardedText,
           interrupted: speechHandle.interrupted,
           createdAt: replyStartedSpeakingAt ?? Date.now(),
           metrics: replyAssistantMetrics,
         });
         this.agent._chatCtx.insert(message);
+        speechHandle._itemAdded([message]);
         this.agentSession._conversationItemAdded(message);
       }
 
@@ -4603,8 +4725,10 @@ export class AgentActivity implements RecognitionHooks {
       );
     }
 
-    const { functionToolsExecutedEvent, newAgentTask, ignoreTaskSwitch } =
-      this.summarizeToolExecutionOutput(toolOutput, speechHandle);
+    const { functionToolsExecutedEvent, newAgentTask } = this.summarizeToolExecutionOutput(
+      toolOutput,
+      speechHandle,
+    );
 
     this.agentSession.emit(
       AgentSessionEventTypes.FunctionToolsExecuted,
@@ -4612,7 +4736,7 @@ export class AgentActivity implements RecognitionHooks {
     );
 
     let schedulingPaused = this.schedulingPaused;
-    if (!ignoreTaskSwitch && newAgentTask !== null) {
+    if (functionToolsExecutedEvent._handoffRequired && newAgentTask !== null) {
       this.agentSession.updateAgent(newAgentTask);
       schedulingPaused = true;
     }
@@ -4719,6 +4843,8 @@ export class AgentActivity implements RecognitionHooks {
     modelSettings: ModelSettings,
     replyAbortController: AbortController,
     addToChatCtx: boolean = true,
+    instructions?: string | Instructions,
+    tools?: ToolContextEntry[],
   ): Promise<void> {
     return withAgentTurn(
       stateLease.speechHandle,
@@ -4732,6 +4858,8 @@ export class AgentActivity implements RecognitionHooks {
             modelSettings,
             replyAbortController,
             addToChatCtx,
+            instructions,
+            tools,
             span,
             inferenceSpan,
           });
@@ -4748,6 +4876,8 @@ export class AgentActivity implements RecognitionHooks {
     modelSettings,
     replyAbortController,
     addToChatCtx,
+    instructions,
+    tools,
     span,
     inferenceSpan,
   }: {
@@ -4756,6 +4886,10 @@ export class AgentActivity implements RecognitionHooks {
     modelSettings: ModelSettings;
     replyAbortController: AbortController;
     addToChatCtx: boolean;
+    /** The reply's instructions, reused by its tool follow-up. */
+    instructions?: string | Instructions;
+    /** The reply's own tools: they run its tool calls and stay on its tool follow-up. */
+    tools?: ToolContextEntry[];
     span: Span;
     inferenceSpan: Span;
   }): Promise<void> {
@@ -4807,7 +4941,7 @@ export class AgentActivity implements RecognitionHooks {
     const textOutput = this.agentSession.output.transcriptionEnabled
       ? this.agentSession.output.transcription
       : null;
-    const toolCtx = realtimeSession.tools;
+    const toolCtx = tools !== undefined ? new ToolContext(tools) : realtimeSession.tools;
 
     const authorizationTasks: Promise<unknown>[] = [speechHandle._waitForAuthorization()];
     if (speechHandle.allowInterruptions && !this.rtOverlappingSpeechEnabled) {
@@ -5282,8 +5416,10 @@ export class AgentActivity implements RecognitionHooks {
     const maxStepsReached = speechHandle.numSteps >= maxToolSteps + 1;
     speechHandle._numSteps += 1;
 
-    const { functionToolsExecutedEvent, newAgentTask, ignoreTaskSwitch } =
-      this.summarizeToolExecutionOutput(toolOutput, speechHandle);
+    const { functionToolsExecutedEvent, newAgentTask } = this.summarizeToolExecutionOutput(
+      toolOutput,
+      speechHandle,
+    );
 
     this.agentSession.emit(
       AgentSessionEventTypes.FunctionToolsExecuted,
@@ -5291,7 +5427,7 @@ export class AgentActivity implements RecognitionHooks {
     );
 
     let schedulingPaused = this.schedulingPaused;
-    if (!ignoreTaskSwitch && newAgentTask !== null) {
+    if (functionToolsExecutedEvent._handoffRequired && newAgentTask !== null) {
       this.agentSession.updateAgent(newAgentTask);
       schedulingPaused = true;
     }
@@ -5378,7 +5514,15 @@ export class AgentActivity implements RecognitionHooks {
       }
     }
 
-    if (!functionToolsExecutedEvent.hasToolReply) return;
+    if (!functionToolsExecutedEvent.hasToolReply) {
+      // no reply follows, so nothing else clears the "thinking" the tool asserted
+      const noPendingSpeech =
+        !this.speechQueue.peek() && (!this._currentSpeech || this._currentSpeech.done());
+      if (noPendingSpeech && this._backgroundSpeeches.size === 0) {
+        this.releaseAgentStateLease(stateLease, 'thinking');
+      }
+      return;
+    }
 
     // the model generates the reply itself: its next generation continues this turn
     if (realtimeModel.capabilities.autoToolReplyGeneration) {
@@ -5410,6 +5554,8 @@ export class AgentActivity implements RecognitionHooks {
         this.realtimeReplyTask({
           stateLease: replyLease,
           modelSettings: { toolChoice },
+          instructions,
+          tools,
           abortController,
         }),
       ownedSpeechHandle: speechHandle,
@@ -5490,6 +5636,8 @@ export class AgentActivity implements RecognitionHooks {
       toolOutput,
       speechHandle,
     );
+    // an interrupted handoff never starts
+    functionToolsExecutedEvent._handoffRequired = false;
     this.agentSession.emit(
       AgentSessionEventTypes.FunctionToolsExecuted,
       functionToolsExecutedEvent,
@@ -5537,6 +5685,10 @@ export class AgentActivity implements RecognitionHooks {
       );
     }
 
+    if (newAgentTask !== null && !ignoreTaskSwitch) {
+      functionToolsExecutedEvent._handoffRequired = true;
+    }
+
     return {
       functionToolsExecutedEvent,
       newAgentTask,
@@ -5547,6 +5699,7 @@ export class AgentActivity implements RecognitionHooks {
   private async realtimeReplyTask({
     stateLease,
     modelSettings: { toolChoice },
+    tools,
     userInput,
     instructions,
     abortController,
@@ -5554,6 +5707,7 @@ export class AgentActivity implements RecognitionHooks {
     stateLease: AgentStateLease;
     modelSettings: ModelSettings;
     abortController: AbortController;
+    tools?: ToolContextEntry[];
     userInput?: string;
     instructions?: string | Instructions;
   }): Promise<void> {
@@ -5584,7 +5738,7 @@ export class AgentActivity implements RecognitionHooks {
       } catch (error) {
         if (error instanceof RealtimeError) {
           this.logger.warn(
-            { error: error.message },
+            { error },
             'failed to update the chat context before generating the reply',
           );
         } else {
@@ -5600,20 +5754,40 @@ export class AgentActivity implements RecognitionHooks {
       this.agentSession._conversationItemAdded(message);
     }
 
+    // inside onEnter, hide flagged tools even when no tools were passed (fall back to this.tools)
+    let turnTools: ToolContext | undefined;
+    const toolCtx = tools !== undefined ? new ToolContext(tools) : this.tools;
+    const onEnterIgnored = this._onEnterIgnoredTools(toolCtx);
+    if (tools !== undefined || onEnterIgnored.length > 0) {
+      turnTools = toolCtx._flattenedCopy();
+      turnTools._exclude(onEnterIgnored);
+    }
+
+    const perResponseToolChoice =
+      !!this.realtimeSession.realtimeModel.capabilities.perResponseToolChoice;
     const originalToolChoice = this.toolChoice;
+    let resetToolChoice = false;
+    let resetTools = false;
     const onEnterData = onEnterStorage.getStore();
     const onEnterScope =
-      onEnterData?.agent === this.agent && onEnterData?.session === this.agentSession
+      !perResponseToolChoice &&
+      onEnterData?.agent === this.agent &&
+      onEnterData?.session === this.agentSession
         ? { toolsUpdated: false }
         : undefined;
     if (onEnterScope) this.realtimeOnEnterScopes.add(onEnterScope);
     try {
-      if (this._onEnterIgnoredTools(this.realtimeSession.tools).length > 0) {
-        await this.updateRealtimeTools();
-      }
+      if (!perResponseToolChoice) {
+        // update the tools and tool choice at the session level if they are specified
+        if (toolChoice !== undefined && !isSameToolChoice(toolChoice, originalToolChoice)) {
+          resetToolChoice = true;
+          this.realtimeSession.updateOptions({ toolChoice });
+        }
 
-      if (toolChoice !== undefined) {
-        this.realtimeSession.updateOptions({ toolChoice });
+        if (turnTools !== undefined) {
+          resetTools = true;
+          await this.realtimeSession.updateTools(turnTools);
+        }
       }
 
       const generateReplyAbortController = new AbortController();
@@ -5621,7 +5795,10 @@ export class AgentActivity implements RecognitionHooks {
         instructions !== undefined
           ? renderInstructions(instructions, speechHandle.inputDetails.modality)
           : undefined,
-        { signal: generateReplyAbortController.signal },
+        {
+          signal: generateReplyAbortController.signal,
+          ...(perResponseToolChoice && { toolChoice, tools: turnTools }),
+        },
       );
       void generationPromise.catch(() => undefined);
 
@@ -5637,18 +5814,21 @@ export class AgentActivity implements RecognitionHooks {
         generationEvent,
         { toolChoice },
         abortController,
+        true,
+        instructions,
+        tools,
       );
     } finally {
       if (onEnterScope) this.realtimeOnEnterScopes.delete(onEnterScope);
-      // reset toolChoice value
-      if (toolChoice !== undefined && toolChoice !== originalToolChoice) {
+      // reset toolChoice and tools
+      if (resetToolChoice) {
         try {
           this.realtimeSession.updateOptions({ toolChoice: originalToolChoice });
         } catch (error) {
           this.logger.error({ error }, 'failed to reset tool_choice');
         }
       }
-      if (onEnterScope?.toolsUpdated) {
+      if (resetTools || onEnterScope?.toolsUpdated) {
         try {
           await this.updateRealtimeTools();
         } catch (error) {
