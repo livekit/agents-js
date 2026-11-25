@@ -1,0 +1,19 @@
+agents/src/inference/interruption/ws_transport.ts
+  s_857496f44baec9::t_225f083dbf761c 91-92,96-100,107,109,118,129,252,256,471
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7f9cddab7eb02996b288a19c8a8ba9b202abfb82",
+  "prompts": {},
+  "sessions": {
+    "s_857496f44baec9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_857496f44baec9",
+        "model": "unknown"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
