@@ -10,7 +10,7 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 import type { FunctionCallOutput } from '../llm/chat_context.js';
-import { handoff, tool } from '../llm/tool_context.js';
+import { ToolResult, handoff, tool } from '../llm/tool_context.js';
 import { initializeLogger } from '../log.js';
 import { Agent, StopResponse } from './agent.js';
 import { AgentSession } from './agent_session.js';
@@ -18,10 +18,14 @@ import { FakeLLM } from './testing/fake_llm.js';
 
 initializeLogger({ pretty: false, level: 'silent' });
 
-/** Run one turn whose single tool call runs `behavior`, and return that call's answer. */
-async function run(behavior: () => unknown) {
+/**
+ * Run one turn whose single tool call runs `behavior`, and return that call's answer. With
+ * `replyTo`, the model answers a tool reply to that output with "Done.".
+ */
+async function run(behavior: () => unknown, { replyTo }: { replyTo?: string } = {}) {
   const llm = new FakeLLM([
     { input: 'Do the thing.', toolCalls: [{ name: 'do_the_thing', args: {} }] },
+    ...(replyTo !== undefined ? [{ input: replyTo, content: 'Done.' }] : []),
   ]);
   const chat = vi.spyOn(llm, 'chat');
   const agent = new Agent({
@@ -95,5 +99,116 @@ describe('tool output per call', () => {
     expect(session.currentAgent, 'the handoff must be applied').toBe(nextAgent);
     expect(output).toMatchObject({ output: '', isError: false, replyRequired: false });
     expect(inferences, 'the old agent must not reply').toBe(1);
+  });
+
+  it.each([
+    {
+      result: () => new ToolResult('Successfully sent DTMF events: 1', { replyRequired: false }),
+      expected: JSON.stringify('Successfully sent DTMF events: 1'),
+      replyRequired: false,
+    },
+    {
+      result: () => new ToolResult('ok', { replyRequired: true }),
+      expected: '"ok"',
+      replyRequired: true,
+    },
+    { result: () => new ToolResult('ok'), expected: '"ok"', replyRequired: true },
+    {
+      result: () => new ToolResult(undefined, { replyRequired: true }),
+      expected: '',
+      replyRequired: true,
+    },
+    {
+      result: () => new ToolResult(undefined, { replyRequired: false }),
+      expected: '',
+      replyRequired: false,
+    },
+    { result: () => 'ok', expected: '"ok"', replyRequired: true },
+    { result: () => undefined, expected: '', replyRequired: false },
+  ])(
+    'lets the tool result $expected control the follow-up reply ($replyRequired)',
+    async ({ result, expected, replyRequired }) => {
+      const { agent, session, output, inferences } = await run(result, { replyTo: expected });
+
+      expect(output.isError).toBe(false);
+      expect(inferences).toBe(replyRequired ? 2 : 1);
+      for (const items of [agent.chatCtx.items, session.history.items]) {
+        const outputs = items.filter((item) => item.type === 'function_call_output');
+        expect(outputs[0]).toMatchObject({ output: expected, replyRequired });
+        const replies = items.filter(
+          (item) => item.type === 'message' && item.role === 'assistant',
+        );
+        expect(replies.map((item) => item.type === 'message' && item.textContent)).toEqual(
+          replyRequired ? ['Done.'] : [],
+        );
+      }
+    },
+  );
+
+  it('keeps a handoff ToolResult output without requesting a reply', async () => {
+    const nextAgent = new Agent({ instructions: 'You are the next agent.' });
+    const { session, output, inferences } = await run(
+      () =>
+        handoff({
+          agent: nextAgent,
+          returns: new ToolResult('Transferred', { replyRequired: false }),
+        }),
+      { replyTo: '"Transferred"' },
+    );
+
+    expect(session.currentAgent).toBe(nextAgent);
+    expect(output).toMatchObject({ output: '"Transferred"', isError: false, replyRequired: false });
+    expect(inferences, 'the old agent must not reply').toBe(1);
+  });
+
+  it('does not let a ToolResult suppress the replies of other tools', async () => {
+    const llm = new FakeLLM([
+      {
+        input: 'Send DTMF and look it up.',
+        content: 'Working on it.',
+        toolCalls: [
+          { name: 'send_dtmf', args: {} },
+          { name: 'lookup', args: {} },
+        ],
+      },
+      { input: '"Sent"', content: 'Done.' },
+      { input: '"Found"', content: 'Done.' },
+    ]);
+    const chat = vi.spyOn(llm, 'chat');
+    const agent = new Agent({
+      instructions: 'test',
+      tools: {
+        send_dtmf: tool({
+          description: 'Send DTMF events.',
+          execute: async () => new ToolResult('Sent', { replyRequired: false }),
+        }),
+        lookup: tool({ description: 'Look something up.', execute: async () => 'Found' }),
+      },
+    });
+    const session = new AgentSession({ llm, turnHandling: { turnDetection: 'manual' } });
+
+    await session.start({ agent });
+    try {
+      await session.generateReply({ userInput: 'Send DTMF and look it up.' }).waitForPlayout();
+
+      const outputs = new Map(
+        session.history.items
+          .filter((item) => item.type === 'function_call_output')
+          .map((item) => [item.callId, item]),
+      );
+      expect([...outputs.keys()].sort()).toEqual(['fake_call_0', 'fake_call_1']);
+      expect(outputs.get('fake_call_0')).toMatchObject({ output: '"Sent"', replyRequired: false });
+      expect(outputs.get('fake_call_1')).toMatchObject({ output: '"Found"', replyRequired: true });
+      const replies = session.history.items.filter(
+        (item) => item.type === 'message' && item.role === 'assistant',
+      );
+      expect(replies.map((item) => item.type === 'message' && item.textContent)).toEqual([
+        'Working on it.',
+        'Done.',
+      ]);
+      expect(chat).toHaveBeenCalledTimes(2);
+    } finally {
+      await session.close();
+    }
   });
 });

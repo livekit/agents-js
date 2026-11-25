@@ -258,7 +258,10 @@ export abstract class VADStream implements AsyncIterableIterator<VADEvent> {
       throw new Error('Stream is closed');
     }
     this.inputClosed = true;
-    this.input.writable.close();
+    // The writable is locked by inputWriter; close through it so buffered frames drain first.
+    this.inputWriter.close().catch((error) => {
+      this.logger.warn({ error }, 'failed to close VAD stream input');
+    });
   }
 
   async next(): Promise<IteratorResult<VADEvent>> {

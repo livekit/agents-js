@@ -100,12 +100,16 @@ class PcmRingBuffer {
 
   pushFrame(frame: AudioFrame): number {
     const src = frame.data;
-    for (let i = 0; i < src.length; i++) {
-      this.buf[this.writeIdx] = src[i]!;
+    for (let i = 0; i < frame.samplesPerChannel; i++) {
+      let sample = 0;
+      for (let channel = 0; channel < frame.channels; channel++) {
+        sample += src[i * frame.channels + channel]!;
+      }
+      this.buf[this.writeIdx] = Math.floor(sample / frame.channels);
       this.writeIdx = (this.writeIdx + 1) % this.capacity;
     }
-    this.filled = Math.min(this.filled + src.length, this.capacity);
-    return src.length;
+    this.filled = Math.min(this.filled + frame.samplesPerChannel, this.capacity);
+    return frame.samplesPerChannel;
   }
 
   /** Returns a contiguous Int16Array snapshot of the last `filled` samples. */

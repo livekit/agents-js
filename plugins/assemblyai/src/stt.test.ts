@@ -1,11 +1,12 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
+import { log } from '@livekit/agents';
 import { VAD } from '@livekit/agents-plugin-silero';
 import { stt } from '@livekit/agents-plugins-test';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { WebSocketServer } from 'ws';
 import { STT } from './stt.js';
 
@@ -123,12 +124,130 @@ describe('AssemblyAI options', () => {
     }
   });
 
+  it('accepts assemblyai-stt-3-7-realtime-agent', () => {
+    const stt = new STT({
+      apiKey: 'test-key',
+      speechModel: 'assemblyai-stt-3-7-realtime-agent',
+    });
+
+    expect(stt.model).toBe('assemblyai-stt-3-7-realtime-agent');
+  });
+
+  it('accepts u3-pro parameters for assemblyai-stt-3-7-realtime-agent', async () => {
+    const { wss, baseUrl } = await startWebSocketServer();
+    let requestUrl = '';
+
+    wss.on('connection', (_ws, req) => {
+      requestUrl = req.url ?? '';
+    });
+
+    try {
+      const stream = new STT({
+        apiKey: 'test-key',
+        baseUrl,
+        speechModel: 'assemblyai-stt-3-7-realtime-agent',
+        prompt: 'medical dictation',
+        agentContext: "The agent asked for the patient's name.",
+        previousContextNTurns: 10,
+        continuousPartials: true,
+        interruptionDelay: 300,
+        voiceFocus: 'near-field',
+        voiceFocusThreshold: 0.5,
+        mode: 'max_accuracy',
+        languageCodes: ['en', 'es'],
+      }).stream();
+
+      await waitUntil(() => requestUrl !== '');
+      stream.close();
+
+      const url = new URL(`ws://127.0.0.1${requestUrl}`);
+      expect(url.searchParams.get('speech_model')).toBe('assemblyai-stt-3-7-realtime-agent');
+      expect(url.searchParams.get('prompt')).toBe('medical dictation');
+      expect(url.searchParams.get('agent_context')).toBe("The agent asked for the patient's name.");
+      expect(url.searchParams.get('previous_context_n_turns')).toBe('10');
+      expect(url.searchParams.get('continuous_partials')).toBe('true');
+      expect(url.searchParams.get('interruption_delay')).toBe('300');
+      expect(url.searchParams.get('voice_focus')).toBe('near-field');
+      expect(url.searchParams.get('voice_focus_threshold')).toBe('0.5');
+      expect(url.searchParams.get('mode')).toBe('max_accuracy');
+      expect(JSON.parse(url.searchParams.get('language_codes')!)).toEqual(['en', 'es']);
+    } finally {
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('applies u3-pro connection defaults to assemblyai-stt-3-7-realtime-agent', async () => {
+    const { wss, baseUrl } = await startWebSocketServer();
+    let requestUrl = '';
+
+    wss.on('connection', (_ws, req) => {
+      requestUrl = req.url ?? '';
+    });
+
+    try {
+      const stream = new STT({
+        apiKey: 'test-key',
+        baseUrl,
+        speechModel: 'assemblyai-stt-3-7-realtime-agent',
+      }).stream();
+
+      await waitUntil(() => requestUrl !== '');
+      stream.close();
+
+      const url = new URL(`ws://127.0.0.1${requestUrl}`);
+      expect(url.searchParams.get('speech_model')).toBe('assemblyai-stt-3-7-realtime-agent');
+      expect(url.searchParams.get('min_turn_silence')).toBe('100');
+      expect(url.searchParams.get('max_turn_silence')).toBe('100');
+      expect(url.searchParams.get('language_detection')).toBe('true');
+    } finally {
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  it('defaults to assemblyai-stt-3-7-realtime-agent', () => {
+    const stt = new STT({ apiKey: 'test-key' });
+
+    expect(stt.model).toBe('assemblyai-stt-3-7-realtime-agent');
+  });
+
+  it('accepts u3-pro parameters with the deprecated alias', () => {
+    const stt = new STT({ apiKey: 'test-key', speechModel: 'u3-pro', continuousPartials: true });
+
+    expect(stt.model).toBe('assemblyai-stt-3-7-realtime-agent');
+  });
+
+  it('warns and rewrites the deprecated u3-pro alias to the default model', () => {
+    const warn = vi.spyOn(log(), 'warn').mockImplementation(() => undefined);
+
+    try {
+      const stt = new STT({ apiKey: 'test-key', speechModel: 'u3-pro' });
+
+      expect(stt.model).toBe('assemblyai-stt-3-7-realtime-agent');
+      expect(warn).toHaveBeenCalledOnce();
+      expect(warn.mock.calls[0]?.[0]).toContain('assemblyai-stt-3-7-realtime-agent');
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('limits assemblyai-stt-3-7-realtime-agent to 10 language codes', () => {
+    expect(
+      () =>
+        new STT({
+          apiKey: 'test-key',
+          speechModel: 'assemblyai-stt-3-7-realtime-agent',
+          languageCodes: ['en', 'es', 'fr', 'de', 'it', 'pt', 'nl', 'pl', 'ru', 'ja', 'ko'],
+        }),
+    ).toThrow(/at most 10/);
+  });
+
   it('allows family-only options for every u3-pro family model', () => {
     const models = [
       'u3-rt-pro',
       'u3-rt-pro-beta-1',
       'universal-3-5-pro',
       'universal-3-6-pro',
+      'assemblyai-stt-3-7-realtime-agent',
     ] as const;
 
     for (const speechModel of models) {
@@ -151,6 +270,7 @@ describe('AssemblyAI options', () => {
       'u3-rt-pro-beta-1',
       'universal-3-5-pro',
       'universal-3-6-pro',
+      'assemblyai-stt-3-7-realtime-agent',
       'u3-pro',
     ] as const;
 

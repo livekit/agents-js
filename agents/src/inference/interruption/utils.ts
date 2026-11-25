@@ -115,9 +115,11 @@ export class BoundedCache<K, V extends object> {
 }
 
 /**
- * Estimate probability by finding the n-th maximum value in the probabilities array.
- * The n-th position is determined by the window size (25ms per frame).
- * Returns 0 if there are insufficient probabilities.
+ * Estimate the reported interruption probability from the returned frame scores.
+ *
+ * Return the nth-highest score across all frames. Divide `windowSizeInS` by the frame duration
+ * and round up to get n. Return 0 if there are fewer than n frames. The server determines the
+ * interruption verdict separately.
  */
 export function estimateProbability(
   probabilities: number[],

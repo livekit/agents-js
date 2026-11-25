@@ -137,8 +137,17 @@ async function waitForCond(predicate: () => boolean, ticks = 50): Promise<void> 
   }
 }
 
-function pcmFrame(samples = 320, value = 0): AudioFrame {
-  return new AudioFrame(new Int16Array(samples).fill(value), 16000, 1, samples);
+function pcmFrame(samples = 320, value = 0, channels = 1): AudioFrame {
+  return new AudioFrame(new Int16Array(samples * channels).fill(value), 16000, channels, samples);
+}
+
+function stereoFrame(left: number[], right: number[]): AudioFrame {
+  const data = new Int16Array(left.length * 2);
+  for (let i = 0; i < left.length; i++) {
+    data[i * 2] = left[i]!;
+    data[i * 2 + 1] = right[i]!;
+  }
+  return new AudioFrame(data, 16000, 2, left.length);
 }
 
 describe('CloudStreamRetry', () => {
@@ -434,37 +443,49 @@ describe('LocalTransportInput', () => {
     };
   }
 
-  it('passes the last model window and the full turn length', async () => {
-    const { transport, calls } = makeLocal();
-    await transport.pushFrame(pcmFrame(8000));
-    await transport.pushFrame(pcmFrame(4000));
-    transport.onStartOfTurn(250);
-    for (let i = 0; i < (2 * EOT_MAX_SAMPLES) / 1600; i++) {
-      await transport.pushFrame(pcmFrame(1600));
-    }
-    const input = await predict(transport, calls);
-    expect(input.pcm.length).toBe(EOT_MAX_SAMPLES);
-    expect(input.turnSamples).toBe(4000 + 2 * EOT_MAX_SAMPLES);
-  });
+  it.each([1, 2, 3])(
+    'passes the last model window and full turn length (%i channels)',
+    async (channels) => {
+      const { transport, calls } = makeLocal();
+      await transport.pushFrame(pcmFrame(8000, 1, channels));
+      await transport.pushFrame(pcmFrame(4000, 2, channels));
+      transport.onStartOfTurn(250);
+      for (let i = 0; i < (2 * EOT_MAX_SAMPLES) / 1600; i++) {
+        await transport.pushFrame(pcmFrame(1600, i, channels));
+      }
+      const input = await predict(transport, calls);
+      expect(input.pcm.length).toBe(EOT_MAX_SAMPLES);
+      expect(input.turnSamples).toBe(4000 + 2 * EOT_MAX_SAMPLES);
+      expect([...input.pcm]).toEqual(
+        Array.from(
+          { length: EOT_MAX_SAMPLES },
+          (_, i) => EOT_MAX_SAMPLES / 1600 + Math.floor(i / 1600),
+        ),
+      );
+    },
+  );
 
-  it('drops audio before the turn start and resets on flush', async () => {
-    const { transport, calls } = makeLocal();
-    await transport.pushFrame(pcmFrame(EOT_MAX_SAMPLES, 1));
-    await transport.pushFrame(pcmFrame(4000, 2));
-    transport.onStartOfTurn(250);
-    await transport.pushFrame(pcmFrame(1600, 2));
-    const first = await predict(transport, calls);
-    expect(first.pcm.length).toBe(5600);
-    expect(first.turnSamples).toBe(5600);
-    expect(first.pcm.every((sample) => sample === 2)).toBe(true);
+  it.each([1, 2, 3])(
+    'drops audio before the turn start and resets on flush (%i channels)',
+    async (channels) => {
+      const { transport, calls } = makeLocal();
+      await transport.pushFrame(pcmFrame(EOT_MAX_SAMPLES, 1, channels));
+      await transport.pushFrame(pcmFrame(4000, 2, channels));
+      transport.onStartOfTurn(250);
+      await transport.pushFrame(pcmFrame(1600, 2, channels));
+      const first = await predict(transport, calls);
+      expect(first.pcm.length).toBe(5600);
+      expect(first.turnSamples).toBe(5600);
+      expect(first.pcm.every((sample) => sample === 2)).toBe(true);
 
-    await transport.flush({ kind: 'flush' });
-    calls.length = 0;
-    await transport.pushFrame(pcmFrame(6000));
-    const second = await predict(transport, calls);
-    expect(second.pcm.length).toBe(6000);
-    expect(second.turnSamples).toBe(6000);
-  });
+      await transport.flush({ kind: 'flush' });
+      calls.length = 0;
+      await transport.pushFrame(pcmFrame(6000, 0, channels));
+      const second = await predict(transport, calls);
+      expect(second.pcm.length).toBe(6000);
+      expect(second.turnSamples).toBe(6000);
+    },
+  );
 
   it('clamps a turn start before the last flush to the buffered audio', async () => {
     const { transport, calls } = makeLocal();
@@ -473,5 +494,40 @@ describe('LocalTransportInput', () => {
     const input = await predict(transport, calls);
     expect(input.pcm.length).toBe(1600);
     expect(input.turnSamples).toBe(1600);
+  });
+
+  it.each([
+    { left: [100, 200], right: [300, 400], expected: [200, 300] },
+    { left: [-100, 200], right: [100, -200], expected: [0, 0] },
+  ])('downmixes stereo audio by averaging channels', async ({ left, right, expected }) => {
+    const { transport, calls } = makeLocal();
+    await transport.pushFrame(stereoFrame(left, right));
+    const input = await predict(transport, calls);
+    expect(Array.from(input.pcm)).toEqual(expected);
+    expect(input.turnSamples).toBe(expected.length);
+  });
+
+  it.each([
+    { channels: 2, samples: [32767, 32767, -32768, -32768], mono: [32767, -32768] },
+    { channels: 2, samples: [-1, 0, 0, 1], mono: [-1, 0] },
+    { channels: 3, samples: [1000, 2000, 6000, -1, 0, 0], mono: [3000, -1] },
+  ])(
+    'downmixes $channels channels at sample boundaries: $samples',
+    async ({ channels, samples, mono }) => {
+      const { transport, calls } = makeLocal();
+      await transport.pushFrame(new AudioFrame(Int16Array.from(samples), 16000, channels, 2));
+      const input = await predict(transport, calls);
+      expect(input.turnSamples).toBe(2);
+      expect([...input.pcm]).toEqual(mono);
+    },
+  );
+
+  it('buffers mono audio after downmixed stereo audio', async () => {
+    const { transport, calls } = makeLocal();
+    await transport.pushFrame(stereoFrame([100, 200], [300, 400]));
+    await transport.pushFrame(new AudioFrame(new Int16Array([50, 60]), 16000, 1, 2));
+    const input = await predict(transport, calls);
+    expect(Array.from(input.pcm)).toEqual([200, 300, 50, 60]);
+    expect(input.turnSamples).toBe(4);
   });
 });

@@ -27,6 +27,7 @@ import {
 import { initializeLogger, log } from '../log.js';
 import { loggerOptions, setLoggerState } from '../log_core.js';
 import type { SimulationContext } from '../simulation.js';
+import { redirectJobOutput } from '../telemetry/hosted_logs.js';
 import { recordException, traceTypes, tracer } from '../telemetry/index.js';
 import { getMonitor, startMonitoring, stopMonitoring } from '../telemetry/loop_monitor.js';
 import { Future, shortuuid } from '../utils.js';
@@ -131,6 +132,19 @@ const startJob = (
   onSessionEnd?: (ctx: JobContext) => unknown,
   onSimulationEnd?: (ctx: SimulationContext) => unknown,
 ): JobTask => {
+  // Project redaction is the safe choice until the job context applies the simulation rule.
+  const hostedOutput = redirectJobOutput(info.job.id, {
+    logs: Boolean(info.job.enableRecording),
+    redaction: Boolean(info.job.enableRedaction),
+  });
+  if (hostedOutput) {
+    // Node prints an uncaught error to fd 2, which the job file does not see. Record it in the
+    // job file instead, and keep the default exit when nothing else handles the error.
+    process.on('uncaughtException', (error) => {
+      hostedOutput.writeUncaughtError(error);
+      if (process.listenerCount('uncaughtException') === 1) process.exit(1);
+    });
+  }
   let connect = false;
   let shutdown = false;
   // a shutdown the agent asked for (ctx.shutdown()), as opposed to the room dropping or the
@@ -164,6 +178,13 @@ const startJob = (
 
   const ctx = new JobContext(proc, info, room, onConnect, onShutdown, new InfClient());
   ctx._simulationEndFnc = onSimulationEnd;
+  ctx._hostedOutput = hostedOutput;
+  if (hostedOutput) {
+    hostedOutput.undecidedChoice = {
+      logs: Boolean(info.job.enableRecording),
+      redaction: ctx._redactionEnabled,
+    };
+  }
 
   const task = (async () => {
     let closeReason = '';
@@ -398,6 +419,7 @@ const startJob = (
 
           logger = logger.child({
             jobID: msg.value.runningJob.job.id,
+            job_id: msg.value.runningJob.job.id,
             room_id: msg.value.runningJob.job.room?.sid,
             ...(msg.value.runningJob.job.agentName
               ? { agent_name: msg.value.runningJob.job.agentName }

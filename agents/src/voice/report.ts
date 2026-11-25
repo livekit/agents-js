@@ -181,9 +181,12 @@ function eventToJSON(event: AgentEvent): Record<string, unknown> {
       delete e.speechInput;
       break;
     case 'function_tools_executed':
-      // Derived from the outputs' replyRequired, so Python's model_dump() omits them.
+      // Derived or private state, so Python's model_dump() omits them.
       delete e.hasToolReply;
       delete e.cancelToolReply;
+      delete e.hasAgentHandoff;
+      delete e.cancelAgentHandoff;
+      delete e._handoffRequired;
       break;
     case 'error':
       e.source = serializeEventSource(e.source);

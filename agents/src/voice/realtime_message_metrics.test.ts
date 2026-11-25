@@ -134,6 +134,7 @@ const REALTIME_REDACTION_WARNING =
 function fakeJobContext(enableRedaction: boolean): JobContext {
   return {
     job: { enableRecording: true, enableRedaction },
+    _redactionEnabled: enableRedaction,
     simulationContext: () => undefined,
     initRecording: vi.fn(async () => {}),
     _primaryAgentSession: undefined,

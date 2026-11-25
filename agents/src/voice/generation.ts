@@ -25,6 +25,7 @@ import {
   isAgentHandoff,
   isFunctionTool,
   isToolError,
+  isToolResult,
   sortedToolNames,
 } from '../llm/tool_context.js';
 import { parseFunctionArguments } from '../llm/utils.js';
@@ -223,6 +224,11 @@ function isValidToolOutput(toolOutput: unknown): boolean {
     return true;
   }
 
+  // only the top-level output, or a handoff's `returns`, can be a ToolResult
+  if (isToolResult(toolOutput)) {
+    return false;
+  }
+
   if (Array.isArray(toolOutput)) {
     return toolOutput.every(isValidToolOutput);
   }
@@ -340,6 +346,12 @@ export class _JsOutput {
       toolOutput = this.output.returns;
     }
 
+    let replyRequired = toolOutput !== undefined;
+    if (isToolResult(toolOutput)) {
+      replyRequired = toolOutput.replyRequired;
+      toolOutput = toolOutput.output;
+    }
+
     if (!isValidToolOutput(toolOutput)) {
       this.#logger.error(
         {
@@ -366,7 +378,7 @@ export class _JsOutput {
         callId: this.toolCall.callId,
         output: toolOutput !== undefined ? JSON.stringify(toolOutput) : '', // take the string representation of the output
         isError: false,
-        replyRequired: toolOutput !== undefined,
+        replyRequired,
       }),
       agentTask,
     });
@@ -470,6 +482,13 @@ export function createToolOutput(params: {
     toolOutput = finalOutput.returns;
   }
 
+  // a tool with nothing to say, such as a bare handoff, expects no reply
+  let replyRequired = toolOutput !== undefined;
+  if (isToolResult(toolOutput)) {
+    replyRequired = toolOutput.replyRequired;
+    toolOutput = toolOutput.output;
+  }
+
   if (!isValidToolOutput(toolOutput)) {
     logger.error(
       {
@@ -498,7 +517,7 @@ export function createToolOutput(params: {
       callId: toolCall.callId,
       output: toolOutput !== undefined ? JSON.stringify(toolOutput) : '', // take the string representation of the output
       isError: false,
-      replyRequired: toolOutput !== undefined,
+      replyRequired,
     }),
     agentTask,
     rawOutput: finalOutput,
@@ -708,15 +727,19 @@ export function performLLMInference(
     span: Span,
     inference: genAI.InferenceMarker,
   ) => {
-    const delta = inputDelta.compute(inputDelta.LLM_NODE, chatCtx, span);
-    span.setAttribute(
-      traceTypes.ATTR_CHAT_CTX,
-      // snake_case wire shape, matching Python's `chat_ctx.to_dict()` for this span attribute
-      // (toJSON() emits camelCase). Defaults exclude image/audio/timestamps like the Python side.
-      JSON.stringify(toSnakeCaseDeep(delta.chatCtx.toJSON())),
-    );
-    inputDelta.setAttributes(span, delta);
-    span.setAttribute(traceTypes.ATTR_FUNCTION_TOOLS, JSON.stringify(sortedToolNames(toolCtx)));
+    const delta = span.isRecording()
+      ? inputDelta.compute(inputDelta.LLM_NODE, chatCtx, span)
+      : undefined;
+    if (delta) {
+      span.setAttribute(
+        traceTypes.ATTR_CHAT_CTX,
+        // snake_case wire shape, matching Python's `chat_ctx.to_dict()` for this span attribute
+        // (toJSON() emits camelCase). Defaults exclude image/audio/timestamps like the Python side.
+        JSON.stringify(toSnakeCaseDeep(delta.chatCtx.toJSON())),
+      );
+      inputDelta.setAttributes(span, delta);
+      span.setAttribute(traceTypes.ATTR_FUNCTION_TOOLS, JSON.stringify(sortedToolNames(toolCtx)));
+    }
 
     let nodeError: Error | string | undefined;
 
@@ -821,18 +844,20 @@ export function performLLMInference(
       logger.error({ error }, 'error in llm node');
       throw error;
     } finally {
-      span.setAttribute(traceTypes.ATTR_RESPONSE_TEXT, data.generatedText);
-      span.setAttribute(
-        traceTypes.ATTR_RESPONSE_FUNCTION_CALLS,
-        JSON.stringify(
-          data.generatedToolCalls.map(({ id, callId, name, args }) => ({
-            id,
-            call_id: callId,
-            name,
-            arguments: args,
-          })),
-        ),
-      );
+      if (span.isRecording()) {
+        span.setAttribute(traceTypes.ATTR_RESPONSE_TEXT, data.generatedText);
+        span.setAttribute(
+          traceTypes.ATTR_RESPONSE_FUNCTION_CALLS,
+          JSON.stringify(
+            data.generatedToolCalls.map(({ id, callId, name, args }) => ({
+              id,
+              call_id: callId,
+              name,
+              arguments: args,
+            })),
+          ),
+        );
+      }
       if (data.ttft !== undefined) {
         span.setAttribute(traceTypes.ATTR_RESPONSE_TTFT, data.ttft);
       }
@@ -855,16 +880,18 @@ export function performLLMInference(
           finishReasons: [finishReason],
           timeToFirstChunk: data.ttft,
         });
-        genAI.setContentAttributes(span, {
-          systemInstructions: delta.systemInstructions(),
-          inputMessages: delta.inputMessages(),
-          toolDefinitions: genAI.toToolDefinitions(toolCtx.functionTools),
-          outputMessages: genAI.toOutputMessages({
-            text: data.generatedText,
-            functionCalls: data.generatedToolCalls,
-            finishReason,
-          }),
-        });
+        if (delta && genAI.captureContentEnabled() && span.isRecording()) {
+          genAI.setContentAttributes(span, {
+            systemInstructions: delta.systemInstructions(),
+            inputMessages: delta.inputMessages(),
+            toolDefinitions: genAI.toToolDefinitions(toolCtx.functionTools),
+            outputMessages: genAI.toOutputMessages({
+              text: data.generatedText,
+              functionCalls: data.generatedToolCalls,
+              finishReason,
+            }),
+          });
+        }
       }
       llmStreamReader?.releaseLock();
       await llmStream?.cancel();
@@ -923,8 +950,10 @@ export function performTTSInference(
   };
   let startTime: number | undefined;
   const textReader = text.getReader();
+  let textReaderReleased = false;
   let inputCancellation: Promise<void> | undefined;
   const cancelInput = () => {
+    if (textReaderReleased) return;
     inputCancellation ??= textReader.cancel().catch((error) => {
       logger.debug({ error }, 'failed to cancel TTS text reader');
     });
@@ -967,6 +996,7 @@ export function performTTSInference(
     } finally {
       await inputCancellation;
       textReader.releaseLock();
+      textReaderReleased = true;
     }
   })();
   void inputTask.catch((error) => logger.debug({ error }, 'TTS text forwarding failed'));

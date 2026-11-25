@@ -174,6 +174,8 @@ export const ATTR_TTS_LABEL = 'lk.tts.label';
 export const ATTR_RESPONSE_TTFB = 'lk.response.ttfb';
 
 // eou detection
+export const ATTR_EOU_MODEL = 'lk.eou.model';
+export const ATTR_EOU_PROVIDER = 'lk.eou.provider';
 export const ATTR_EOU_PROBABILITY = 'lk.eou.probability';
 export const ATTR_EOU_UNLIKELY_THRESHOLD = 'lk.eou.unlikely_threshold';
 /** The endpointing delay in force for the turn, in seconds. */
@@ -241,6 +243,7 @@ export const ATTR_PREVIOUS_AGENT_LABEL = 'lk.previous_agent_label';
 /** Label of the provider that served the request. */
 export const ATTR_FALLBACK_LABEL = 'lk.fallback.label';
 export const ATTR_FALLBACK_INDEX = 'lk.fallback.index';
+export const ATTR_FALLBACK_RECOVERY = 'lk.fallback.recovery';
 
 // Adaptive Interruption attributes
 export const ATTR_IS_INTERRUPTION = 'lk.is_interruption';
