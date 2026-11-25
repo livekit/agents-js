@@ -1,5 +1,41 @@
 # @livekit/agents
 
+## 1.11.0
+
+### Minor Changes
+
+- Replace the one-shot answering-machine detection (AMD) with multi-turn AMD, ported from livekit/agents#6202. - [#3008](https://github.com/livekit/agents-js/pull/3008) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+  AMD now classifies each committed user turn through call screening, voicemail, and IVR stages until it completes. `execute()` returns an `AMDCompletedEvent` (`category`, `reason`, `voicemailMessagePlayed`, `lastPrediction`) instead of the first prediction. Start AMD with `await amd.start()` and close it with `await amd.aclose()`. The `amd_prediction` event fires for each turn, and the new `amd_completed` and `amd_menu_observed` events report completion and observed IVR menus. AMD holds machine replies until the participant is silent, adds stage instructions to replies, gives IVR replies the DTMF tool, and tracks voicemail playout. Set `screeningInstructions`, `voicemailInstructions`, or `ivrInstructions` to `null` to complete AMD without a reply when the call enters that stage, for example to hang up at the first voicemail prediction. `humanInstructions: null` keeps the Agent's own instructions. The `llm` option also accepts a `DecisionModel` that supports `choice` decisions; it classifies each turn with one choice, and AMD then skips IVR menu extraction.
+
+  Remote sessions get screening and wait as their own AMD categories, each prediction's turn ID, stage, and inference duration, and a new `amd_completed` event with the run's result. This requires `@livekit/protocol` 1.53.3 or later.
+
+  `AgentSession` gains internal turn hooks that AMD uses to observe committed turns and control their replies. `UserStateChangedEvent` gains `speechTimestamp`, and `FunctionToolsExecutedEvent` gains `hasAgentHandoff` and `cancelAgentHandoff()`. Agent handoffs, `session.say()`, and `session.generateReply()` throw while AMD runs, and entering AMD while an `AgentTask` is the current agent throws. While AMD runs, a tool's deferred update reply is dropped (its updates stay in the chat context), and the user turn limit does not call `onUserTurnExceeded`. Without `participantIdentity`, AMD listens to the participant that room I/O links. `sendDtmfEvents` returns a `ToolResult` that requests no follow-up reply and throws a `ToolError` without provider text when a publish fails. A realtime reply's tool follow-up keeps its instructions and tools, and the agent returns to `listening` when no tool reply follows. A closed `LLMStream` no longer retries.
+
+  AMD's own LiveKit Inference requests include `X-LiveKit-Client-Feature: AMD`. `inference.STT.stream()` accepts `extraHeaders`, which persist across reconnects, and Inference STT connections include SDK metadata headers.
+
+### Patch Changes
+
+- Clarify how the adaptive interruption probability is estimated from frame scores. - [#3056](https://github.com/livekit/agents-js/pull/3056) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Add gateway and cross-provider fallback support for decision models. - [#3041](https://github.com/livekit/agents-js/pull/3041) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Export a hosted job's log file unless the agent's code turns logs off. LiveKit Cloud applies the project setting when it receives the logs. - [#3065](https://github.com/livekit/agents-js/pull/3065) ([@andrewnitu](https://github.com/andrewnitu))
+
+- On LiveKit Cloud, hand log collection to LiveKit Cloud when `LIVEKIT_HOSTED_LOGS=true`, `LIVEKIT_HOSTED_LOGS_HANDOFF_FILE` and `LIVEKIT_HOSTED_LOGS_JOBS_DIR` are set. Each job process writes its output to its own file, and the session's `record` logs and redaction options decide whether that file is collected. Log records are held until that decision and redacted when the project or the session requires it. Pino log lines are no longer exported over OTLP; session reports, transcripts, and traces are unchanged. - [#2844](https://github.com/livekit/agents-js/pull/2844) ([@andrewnitu](https://github.com/andrewnitu))
+
+- Avoid committing `say()` text when speech is interrupted before audio playback starts. - [#3051](https://github.com/livekit/agents-js/pull/3051) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Keep an error listener on every adaptive interruption WebSocket so a failed, abandoned or replaced socket no longer throws an uncaught `WebSocket was closed before the connection was established` error, and stop opening a gateway session when the transport closes during the handshake. - [#3074](https://github.com/livekit/agents-js/pull/3074) ([@chenghao-mou](https://github.com/chenghao-mou))
+
+- Keep Gemini Live's server turn detection enabled when using LiveKit Inference. - [#3003](https://github.com/livekit/agents-js/pull/3003) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Fix `VADStream.endInput()` so it closes input after buffered frames instead of leaving a rejected promise. - [#3029](https://github.com/livekit/agents-js/pull/3029) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Coordinate LiveKit Inference STT, TTS, and realtime handoffs when the gateway drains. - [#2973](https://github.com/livekit/agents-js/pull/2973) ([@shawnfeldman](https://github.com/shawnfeldman))
+
+- Avoid cancelling a released TTS text reader during synthesis cleanup. - [#3032](https://github.com/livekit/agents-js/pull/3032) ([@chenghao-mou](https://github.com/chenghao-mou))
+
 ## 1.10.1
 
 ### Patch Changes
