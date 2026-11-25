@@ -7,7 +7,7 @@ import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { type WebSocket, WebSocketServer } from 'ws';
 import { isDialogueModel } from './models.js';
-import { TTS } from './tts.js';
+import { type SynthesizeStream, TTS } from './tts.js';
 
 async function startWebSocketServer() {
   const wss = new WebSocketServer({ host: '127.0.0.1', port: 0 });
@@ -679,6 +679,71 @@ describe('ElevenLabs text-to-dialogue', () => {
     } finally {
       await elevenlabs.close();
       await closeWebSocketServer(wss);
+    }
+  });
+
+  async function startDialogueServer() {
+    const { wss, baseURL } = await startWebSocketServer();
+    const server = {
+      baseURL,
+      received: [] as Record<string, unknown>[],
+      rejected: [] as Record<string, unknown>[],
+      connections: 0,
+      close: () => closeWebSocketServer(wss),
+    };
+    wss.on('connection', (ws) => {
+      server.connections += 1;
+      const closedContexts = new Set<unknown>();
+      ws.on('message', (raw) => {
+        const message = JSON.parse(raw.toString()) as Record<string, unknown>;
+        server.received.push(message);
+        if (closedContexts.has(message.context_id)) {
+          server.rejected.push(message);
+          ws.close(1008);
+        } else if (message.close_context) {
+          closedContexts.add(message.context_id);
+          ws.send(JSON.stringify({ context_id: message.context_id, audio, is_final: true }));
+        }
+      });
+    });
+    return server;
+  }
+
+  async function synthesize(stream: SynthesizeStream, text: string) {
+    stream.pushText(text);
+    stream.endInput();
+    const events: unknown[] = [];
+    for await (const event of stream) events.push(event);
+    return events;
+  }
+
+  it('keeps the shared socket open for the next reply after an interruption', async () => {
+    const server = await startDialogueServer();
+    const elevenlabs = new TTS({
+      apiKey: 'test-key',
+      baseURL: server.baseURL,
+      model: 'eleven_v3_conversational',
+    });
+    const connOptions = { maxRetry: 0, retryIntervalMs: 0, timeoutMs: 1000 };
+    const interrupted = elevenlabs.stream({ connOptions });
+    const next = elevenlabs.stream({ connOptions });
+
+    try {
+      interrupted.pushText('hello world.');
+      interrupted.flush();
+      await waitUntil(() => server.received.some((message) => message.inputs));
+      interrupted.close();
+
+      const nextAudio = await waitFor(synthesize(next, 'next reply.'));
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      expect(server.rejected).toEqual([]);
+      expect(server.connections).toBe(1);
+      expect(nextAudio.length).toBeGreaterThan(0);
+    } finally {
+      next.close();
+      await elevenlabs.close();
+      await server.close();
     }
   });
 
