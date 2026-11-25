@@ -477,6 +477,13 @@ export class RealtimeSession extends llm.RealtimeSession {
   protected currentGeneration?: ResponseGeneration | DiscardedGeneration;
   private responseCreatedFutures: { [id: string]: CreateResponseHandle } = {};
   private discardedEventIds = new Set<string>();
+  /**
+   * Some OpenAI-compatible providers (e.g. Inworld) reject a `session.update`
+   * that arrives before the server acknowledged the session. Buffer the first
+   * update until `session.created` arrives instead of dropping audio later.
+   */
+  private sessionAcknowledged = false;
+  private pendingSessionUpdate?: { event: api_proto.ClientEvent; ws: WebSocket };
 
   private textModeRecoveryRetries: number = 0;
 
@@ -1447,6 +1454,11 @@ export class RealtimeSession extends llm.RealtimeSession {
           if (this._options.isAzure && this._options.apiVersion) {
             normalizeAzureClientEvent(event as unknown as Record<string, unknown>);
           }
+          if (event.type === 'session.update' && !this.sessionAcknowledged) {
+            // Hold the first update until the server sends `session.created`.
+            this.pendingSessionUpdate = { event, ws: wsConn };
+            continue;
+          }
           wsConn.send(JSON.stringify(event));
           if (event.event_id && this.chatCtxEventFutures[event.event_id]) {
             this.sentChatCtxEvents[event.event_id] = event;
@@ -1471,6 +1483,19 @@ export class RealtimeSession extends llm.RealtimeSession {
     wsConn.onmessage = (message: MessageEvent) => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const event: any = JSON.parse(message.data as string);
+
+      if (event.type === 'session.created') {
+        this.sessionAcknowledged = true;
+        const pending = this.pendingSessionUpdate;
+        if (pending) {
+          this.pendingSessionUpdate = undefined;
+          try {
+            pending.ws.send(JSON.stringify(pending.event));
+          } catch (error) {
+            this.#logger.warn({ error }, 'failed to flush buffered session.update');
+          }
+        }
+      }
 
       this.emit('openai_server_event_received', event);
       if (lkOaiDebug) {
@@ -1961,14 +1986,20 @@ export class RealtimeSession extends llm.RealtimeSession {
       this.#logger.warn('Text response received from OpenAI Realtime API in audio modality.');
     }
 
-    if (!itemGeneration.modalities.done) {
-      const modalityResult: api_proto.Modality[] = isTextType ? ['text'] : ['audio', 'text'];
-      itemGeneration.modalities.resolve(modalityResult);
+    // Track items with real server-side audio for truncation eligibility
+    if (!isTextType) {
+      this.audioCapableItemIds.add(itemId);
+    }
 
-      // Track items with real server-side audio for truncation eligibility
-      if (!isTextType) {
-        this.audioCapableItemIds.add(itemId);
-      }
+    // A text delta must not pin the modality to ['text'] while the provider can
+    // still deliver audio for the same item. Some OpenAI-compatible providers
+    // (e.g. Inworld) send the text part before the audio part; letting the text
+    // delta decide would discard the following audio and leave the item silent.
+    if (
+      !itemGeneration.modalities.done &&
+      (!isTextType || !this.oaiRealtimeModel.capabilities.audioOutput)
+    ) {
+      itemGeneration.modalities.resolve(isTextType ? ['text'] : ['audio', 'text']);
     }
 
     if (this.currentGeneration._firstTokenTimestamp === undefined) {
