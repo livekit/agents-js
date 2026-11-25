@@ -52,6 +52,7 @@ const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 50));
 
 describe('createWsTransport', () => {
   const servers: Server[] = [];
+  const wsServers: WebSocketServer[] = [];
   const sockets = new Set<Socket>();
   const uncaught: unknown[] = [];
   const onUncaught = (err: unknown) => uncaught.push(err);
@@ -79,22 +80,35 @@ describe('createWsTransport', () => {
     return { server, port: (server.address() as AddressInfo).port };
   }
 
+  // Standalone `ws` server, closed in afterEach even when the test body throws.
+  async function listenWs(
+    options: ConstructorParameters<typeof WebSocketServer>[0] = { host: '127.0.0.1', port: 0 },
+  ): Promise<{ wss: WebSocketServer; port: number }> {
+    const wss = new WebSocketServer(options);
+    wsServers.push(wss);
+    if (!options?.noServer) await once(wss, 'listening');
+    return { wss, port: options?.noServer ? 0 : (wss.address() as AddressInfo).port };
+  }
+
   afterEach(async () => {
-    await settle();
-    expect(uncaught).toEqual([]);
-    uncaught.length = 0;
-    await Promise.all(
-      servers.splice(0).map(
-        (server) =>
-          new Promise<void>((resolve) => {
-            // Upgraded or stalled sockets are not tracked by closeAllConnections().
-            for (const socket of sockets) socket.destroy();
-            sockets.clear();
-            server.close(() => resolve());
-          }),
-      ),
-    );
+    // Clean up first so a failing assertion below cannot leak servers or spies into later tests.
     vi.restoreAllMocks();
+    await settle();
+    const errors = uncaught.splice(0);
+    const wsToClose = wsServers.splice(0);
+    for (const wss of wsToClose) {
+      for (const client of wss.clients) client.terminate();
+    }
+    // Upgraded or stalled sockets are not tracked by closeAllConnections().
+    for (const socket of sockets) socket.destroy();
+    sockets.clear();
+    await Promise.all([
+      ...wsToClose.map((wss) => new Promise<void>((resolve) => wss.close(() => resolve()))),
+      ...servers
+        .splice(0)
+        .map((server) => new Promise<void>((resolve) => server.close(() => resolve()))),
+    ]);
+    expect(errors).toEqual([]);
   });
 
   describe('failed handshake', () => {
@@ -134,44 +148,30 @@ describe('createWsTransport', () => {
   });
 
   describe('error listener guard', () => {
-    it('keeps an error listener on the socket between open and the stream handlers', async () => {
-      const wss = new WebSocketServer({ host: '127.0.0.1', port: 0 });
-      await once(wss, 'listening');
-      const { port } = wss.address() as AddressInfo;
+    it('has an error listener when the stream handlers attach after the handshake', async () => {
+      const { port } = await listenWs();
 
-      // Inject a socket error on the tick right after the client socket opens, before the
-      // transport has had a chance to continue from `await connectWebSocket()`.
-      const emit = WebSocket.prototype.emit;
-      let escaped: unknown;
-      let injected = false;
-      vi.spyOn(WebSocket.prototype, 'emit').mockImplementation(function (
+      // setupMessageHandler() attaches the first stream handler as soon as the handshake ends.
+      // Until then the socket must already carry an error listener of its own, because the
+      // handshake listeners are gone by that point.
+      const on = WebSocket.prototype.on;
+      const errorListenersAtHandoff: number[] = [];
+      vi.spyOn(WebSocket.prototype, 'on').mockImplementation(function (
         this: WebSocket,
-        event: string | symbol,
-        ...args: unknown[]
+        ...args: Parameters<typeof on>
       ) {
-        const result = emit.call(this, event, ...args);
-        // Only the client socket has a URL; the server-side peer emits 'open' as well.
-        if (event === 'open' && this.url) {
-          process.nextTick(() => {
-            try {
-              emit.call(this, 'error', new Error('injected socket error'));
-            } catch (err) {
-              escaped = err;
-            }
-            injected = true;
-          });
+        // Only the client socket has a URL; the server-side peer attaches handlers too.
+        if (args[0] === 'message' && this.url) {
+          errorListenersAtHandoff.push(this.listenerCount('error'));
         }
-        return result;
+        return on.apply(this, args);
       });
 
       const { close } = createTransport(port);
-      try {
-        await vi.waitFor(() => expect(injected).toBe(true));
-        expect(escaped).toBeUndefined();
-      } finally {
-        close();
-        await new Promise<void>((resolve) => wss.close(() => resolve()));
-      }
+      await vi.waitFor(() => expect(errorListenersAtHandoff).toHaveLength(1));
+      close();
+
+      expect(errorListenersAtHandoff[0]).toBeGreaterThan(0);
     });
   });
 
@@ -208,9 +208,7 @@ describe('createWsTransport', () => {
     });
 
     it('keeps an error listener on a socket replaced by reconnect() and does not fail the stream', async () => {
-      const wss = new WebSocketServer({ host: '127.0.0.1', port: 0 });
-      await once(wss, 'listening');
-      const { port } = wss.address() as AddressInfo;
+      const { wss, port } = await listenWs();
       const sessions: string[] = [];
       wss.on('connection', (peer) =>
         peer.on('message', (data) => sessions.push(JSON.parse(data.toString()).type)),
@@ -237,13 +235,12 @@ describe('createWsTransport', () => {
       expect(failure).toBeUndefined();
 
       close();
-      await new Promise<void>((resolve) => wss.close(() => resolve()));
     });
   });
 
   describe('close() during the handshake', () => {
     it('does not create a gateway session on a socket that opens after close()', async () => {
-      const wss = new WebSocketServer({ noServer: true });
+      const { wss } = await listenWs({ noServer: true });
       const { server, port } = await listen();
       // Hold the upgrade so close() lands while the client socket is still CONNECTING.
       const upgrade = once(server, 'upgrade');
@@ -261,15 +258,12 @@ describe('createWsTransport', () => {
 
       expect(await closeCode.promise).toBe(1000);
       expect(received).toEqual([]);
-      wss.close();
     });
   });
 
   describe('normal lifecycle', () => {
     it('opens a session on connect and closes it on close()', async () => {
-      const wss = new WebSocketServer({ host: '127.0.0.1', port: 0 });
-      await once(wss, 'listening');
-      const { port } = wss.address() as AddressInfo;
+      const { wss, port } = await listenWs();
 
       const received: string[] = [];
       const closeCode = Promise.withResolvers<number>();
@@ -284,7 +278,6 @@ describe('createWsTransport', () => {
       close();
       expect(await closeCode.promise).toBe(1000);
       expect(received).toEqual(['session.create', 'session.close']);
-      await new Promise<void>((resolve) => wss.close(() => resolve()));
     });
   });
 });
