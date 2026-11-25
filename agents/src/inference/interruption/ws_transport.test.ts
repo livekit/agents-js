@@ -94,7 +94,6 @@ describe('createWsTransport', () => {
     // Clean up first so a failing assertion below cannot leak servers or spies into later tests.
     vi.restoreAllMocks();
     await settle();
-    const errors = uncaught.splice(0);
     const wsToClose = wsServers.splice(0);
     for (const wss of wsToClose) {
       for (const client of wss.clients) client.terminate();
@@ -108,6 +107,9 @@ describe('createWsTransport', () => {
         .splice(0)
         .map((server) => new Promise<void>((resolve) => server.close(() => resolve()))),
     ]);
+    // Read last, so errors raised by the cleanup above fail this test, not the next one.
+    await settle();
+    const errors = uncaught.splice(0);
     expect(errors).toEqual([]);
   });
 
