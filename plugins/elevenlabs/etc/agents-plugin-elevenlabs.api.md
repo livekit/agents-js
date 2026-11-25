@@ -228,6 +228,7 @@ export class TTS extends tts.TTS {
     get model(): string;
     // (undocumented)
     get provider(): string;
+    retireConnection(): void;
     // (undocumented)
     stream(options?: {
         connOptions?: APIConnectOptions;
