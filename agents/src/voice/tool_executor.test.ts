@@ -11,7 +11,12 @@ import { AgentSession } from './agent_session.js';
 import { RunContext } from './run_context.js';
 import { SpeechHandle } from './speech_handle.js';
 import { FakeLLM } from './testing/fake_llm.js';
-import { ToolExecutor, _getCancellableRunningTasks, getRunningTasks } from './tool_executor.js';
+import {
+  ToolExecutor,
+  _getCancellableRunningTasks,
+  getRunningTasks,
+  renderTemplate,
+} from './tool_executor.js';
 
 describe('ToolExecutor', () => {
   function buildRunContext(
@@ -721,5 +726,16 @@ describe('ToolExecutor', () => {
 
     release.resolve();
     await executor.waitForAll();
+  });
+});
+
+describe('renderTemplate', () => {
+  it('keeps dollar signs in the substituted values as written', () => {
+    expect(
+      renderTemplate('Call {name} said: {output}', {
+        name: 'lookup',
+        output: "priced $$ or $& or $'",
+      }),
+    ).toBe("Call lookup said: priced $$ or $& or $'");
   });
 });

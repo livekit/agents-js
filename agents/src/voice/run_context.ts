@@ -296,9 +296,9 @@ function renderTemplate(
   if (!template) return args.message;
   if (typeof template === 'function') return template(args);
   return template
-    .replaceAll('{functionName}', args.functionName)
-    .replaceAll('{callId}', args.callId)
-    .replaceAll('{message}', args.message);
+    .replaceAll('{functionName}', () => args.functionName)
+    .replaceAll('{callId}', () => args.callId)
+    .replaceAll('{message}', () => args.message);
 }
 
 function stringifyToolOutput(value: unknown): string {
