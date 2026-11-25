@@ -579,7 +579,7 @@ describe('JobContext hosted log decision', () => {
 
   it('exports the job file when the project recording is off', async () => {
     const { ctx, decide } = withOutput();
-    await ctx.initRecording({ ...options, redaction: false }, true);
+    await ctx._initRecording({ ...options, redaction: false }, true);
     expect(decide).toHaveBeenCalledWith({ logs: true, redaction: false });
   });
 

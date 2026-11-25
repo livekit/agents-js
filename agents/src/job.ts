@@ -761,12 +761,18 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
     this.#participantEntrypoints.push(callback);
   }
 
+  async initRecording(options: ResolvedRecordingOptions) {
+    return this._initRecording(options);
+  }
+
   /**
    * @param options - what this SDK uploads to LiveKit Cloud
    * @param exportJobLogFile - whether the job's hosted log file is exported; follows
    *   `options.logs` when omitted
+   *
+   * @internal
    */
-  async initRecording(options: ResolvedRecordingOptions, exportJobLogFile?: boolean) {
+  async _initRecording(options: ResolvedRecordingOptions, exportJobLogFile?: boolean) {
     if (this.isFakeJob) {
       return;
     }

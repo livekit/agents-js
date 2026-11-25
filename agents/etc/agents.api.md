@@ -5068,7 +5068,9 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
     // Warning: (ae-forgotten-export) The symbol "ResolvedRecordingOptions" needs to be exported by the entry point index.d.ts
     //
     // (undocumented)
-    initRecording(options: ResolvedRecordingOptions, exportJobLogFile?: boolean): Promise<void>;
+    initRecording(options: ResolvedRecordingOptions): Promise<void>;
+    // @internal (undocumented)
+    _initRecording(options: ResolvedRecordingOptions, exportJobLogFile?: boolean): Promise<void>;
     // (undocumented)
     get isFakeJob(): boolean;
     // (undocumented)
