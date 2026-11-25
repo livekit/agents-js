@@ -1,0 +1,19 @@
+agents/src/inference/interruption/ws_transport.test.ts
+  s_f6dafb23d56563::t_a8c2c6958dd565 55,83-92,94,96-111,151-159,161,163-165,167,171-174,211,243,266
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "de90ee391ff5ae59d009e087d1cce92303dc3db8",
+  "prompts": {},
+  "sessions": {
+    "s_f6dafb23d56563": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_f6dafb23d56563",
+        "model": "unknown"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
