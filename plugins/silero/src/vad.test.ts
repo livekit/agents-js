@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import {
   AudioByteStream,
+  ExpFilter,
   type VADEvent,
   VADEventType,
   type VADStream,
@@ -256,6 +257,84 @@ describe('Silero VADStream buffer resize', () => {
     } finally {
       stream.close();
       runSpy.mockRestore();
+    }
+  });
+});
+
+describe('Silero VADStream interruption duration', () => {
+  it.each([
+    { name: 'short speech', windows: Array(4).fill(1), speechDuration: 128, interruptAt: null },
+    {
+      name: 'first silent window',
+      windows: Array(15).fill(1),
+      speechDuration: 480,
+      interruptAt: null,
+    },
+    { name: 'continuous speech', windows: Array(16).fill(1), speechDuration: 512, interruptAt: 16 },
+    {
+      name: 'internal pause',
+      windows: [...Array(8).fill(1), ...Array(4).fill(0), ...Array(4).fill(1)],
+      speechDuration: 512,
+      interruptAt: 16,
+    },
+  ])('excludes trailing silence for $name', async ({ windows, speechDuration, interruptAt }) => {
+    const runSpy = vi
+      .spyOn(OnnxModel.prototype, 'run')
+      .mockImplementation(async (samples) => (samples.some((sample) => sample !== 0) ? 1 : 0));
+    const filterSpy = vi
+      .spyOn(ExpFilter.prototype, 'apply')
+      .mockImplementation((_exp, sample) => sample);
+    const vad = new VAD({} as InferenceSession, {
+      minSpeechDuration: 50,
+      minSilenceDuration: 550,
+      prefixPaddingDuration: 64,
+      maxBufferedSpeech: 2000,
+      activationThreshold: 0.5,
+      sampleRate: TARGET_SAMPLE_RATE,
+      forceCPU: true,
+    });
+    const stream = vad.stream();
+
+    try {
+      for (const value of [...windows, ...Array(18).fill(0)]) {
+        stream.pushFrame(
+          new AudioFrame(
+            new Int16Array(WINDOW_SAMPLES).fill(value),
+            TARGET_SAMPLE_RATE,
+            1,
+            WINDOW_SAMPLES,
+          ),
+        );
+      }
+      const transitions: VADEvent[] = [];
+      let firstInterruption: number | null = null;
+      let inferenceEvents = 0;
+      while (inferenceEvents < windows.length + 18) {
+        const { value: event } = await stream.next();
+        if (event === undefined) throw new Error('stream ended before all windows were processed');
+        if (event.type === VADEventType.INFERENCE_DONE) {
+          inferenceEvents += 1;
+          if (event.speechDuration >= 500 && firstInterruption === null) {
+            firstInterruption = event.samplesIndex / WINDOW_SAMPLES;
+          }
+        } else {
+          transitions.push(event);
+        }
+      }
+      const { value: endEvent } = await stream.next();
+      if (endEvent !== undefined) transitions.push(endEvent);
+
+      expect(transitions.map((event) => event.type)).toEqual([
+        VADEventType.START_OF_SPEECH,
+        VADEventType.END_OF_SPEECH,
+      ]);
+      expect(transitions[0]?.speechDuration).toBeCloseTo(64);
+      expect(transitions[1]?.speechDuration).toBeCloseTo(speechDuration);
+      expect(firstInterruption).toBe(interruptAt);
+    } finally {
+      stream.close();
+      runSpy.mockRestore();
+      filterSpy.mockRestore();
     }
   });
 });
