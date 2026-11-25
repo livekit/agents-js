@@ -488,13 +488,7 @@ class Connection {
         if ('text' in msg) {
           // SynthesizeContent
           const content = msg as SynthesizeContent;
-          if (this.#closingContexts.has(content.contextId)) {
-            this.#logger.debug(
-              { context_id: content.contextId },
-              'dropping elevenlabs text queued after its context was closed',
-            );
-            continue;
-          }
+          if (this.#closingContexts.has(content.contextId)) continue;
           const isNewContext = !this.#activeContexts.has(content.contextId);
 
           if (isNewContext) {

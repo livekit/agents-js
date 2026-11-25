@@ -7,7 +7,7 @@ import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { type WebSocket, WebSocketServer } from 'ws';
 import { isDialogueModel } from './models.js';
-import { TTS } from './tts.js';
+import { type SynthesizeStream, TTS } from './tts.js';
 
 async function startWebSocketServer() {
   const wss = new WebSocketServer({ host: '127.0.0.1', port: 0 });
@@ -682,62 +682,64 @@ describe('ElevenLabs text-to-dialogue', () => {
     }
   });
 
-  it('plays the next reply after a dialogue reply is interrupted', async () => {
+  async function startDialogueServer() {
     const { wss, baseURL } = await startWebSocketServer();
-    const messages: Record<string, unknown>[] = [];
+    const server = {
+      baseURL,
+      received: [] as Record<string, unknown>[],
+      droppedSocket: false,
+      close: () => closeWebSocketServer(wss),
+    };
     wss.on('connection', (ws) => {
       const closedContexts = new Set<unknown>();
-      let rejectedMessage = false;
       ws.on('message', (raw) => {
         const message = JSON.parse(raw.toString()) as Record<string, unknown>;
-        messages.push(message);
-        if (rejectedMessage) {
+        server.received.push(message);
+        if (closedContexts.has(message.context_id)) {
+          server.droppedSocket = true;
           ws.close(1008);
-        } else if (closedContexts.has(message.context_id)) {
-          rejectedMessage = true;
-          ws.send(JSON.stringify({ context_id: message.context_id, error: 'context_closing' }));
         } else if (message.close_context) {
           closedContexts.add(message.context_id);
           ws.send(JSON.stringify({ context_id: message.context_id, audio, is_final: true }));
         }
       });
     });
+    return server;
+  }
+
+  async function synthesize(stream: SynthesizeStream, text: string) {
+    stream.pushText(text);
+    stream.endInput();
+    const events: unknown[] = [];
+    for await (const event of stream) events.push(event);
+    return events;
+  }
+
+  it('keeps the shared socket open for the next reply after an interruption', async () => {
+    const server = await startDialogueServer();
     const elevenlabs = new TTS({
       apiKey: 'test-key',
-      baseURL,
+      baseURL: server.baseURL,
       model: 'eleven_v3_conversational',
     });
-    const errors: unknown[] = [];
-    elevenlabs.on('error', (event) => errors.push(event.error));
     const connOptions = { maxRetry: 0, retryIntervalMs: 0, timeoutMs: 1000 };
     const interrupted = elevenlabs.stream({ connOptions });
     const next = elevenlabs.stream({ connOptions });
-    const nextEvents: unknown[] = [];
-    const interruptedOutput = (async () => {
-      for await (const _event of interrupted) {
-        // Consume the generated audio.
-      }
-    })();
-    const nextOutput = (async () => {
-      for await (const event of next) nextEvents.push(event);
-    })();
 
     try {
       interrupted.pushText('hello world.');
       interrupted.flush();
-      await waitUntil(() => messages.some((message) => message.inputs));
+      await waitUntil(() => server.received.some((message) => message.inputs));
       interrupted.close();
-      await waitFor(interruptedOutput);
-      next.pushText('next reply.');
-      next.endInput();
-      await waitFor(nextOutput);
-      expect(errors).toEqual([]);
-      expect(nextEvents.length).toBeGreaterThan(0);
+
+      const nextAudio = await waitFor(synthesize(next, 'next reply.'));
+
+      expect(server.droppedSocket).toBe(false);
+      expect(nextAudio.length).toBeGreaterThan(0);
     } finally {
-      interrupted.close();
       next.close();
       await elevenlabs.close();
-      await closeWebSocketServer(wss);
+      await server.close();
     }
   });
 
