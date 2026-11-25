@@ -19,6 +19,12 @@ export type SessionOptions = {
   videoWidth?: number;
   /** Output video frame height in pixels. Provide together with videoWidth. */
   videoHeight?: number;
+  /**
+   * Anam's default is not to render an AI avatar disclosure watermark. Set to
+   * `true` to have Anam disclose that the video contains an AI avatar via a
+   * watermark.
+   */
+  showAIAvatarDisclosure?: boolean;
 };
 
 /** @public */
