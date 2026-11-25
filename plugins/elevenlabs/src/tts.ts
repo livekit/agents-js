@@ -383,12 +383,12 @@ class Connection {
   }
 
   registerStream(
+    contextId: string,
     stream: SynthesizeStream,
     waiter: { resolve: (value: void) => void; reject: (error: Error) => void },
     timeoutMs: number,
     terminate: () => void,
   ): void {
-    const contextId = stream.contextId;
     this.#contextData.set(contextId, {
       stream,
       waiter,
@@ -1221,8 +1221,8 @@ export class ChunkedStream extends tts.ChunkedStream {
 export class SynthesizeStream extends tts.SynthesizeStream {
   #tts: TTS;
   #opts: ResolvedTTSOptions;
-  #contextId: string;
-  #attemptStarted = false;
+  readonly #contextId: string;
+  #contextRegistered = false;
   #logger = log();
   #audioQueue: Buffer[] = [];
   #timedTranscriptQueue: TimedString[] = [];
@@ -1260,15 +1260,12 @@ export class SynthesizeStream extends tts.SynthesizeStream {
   protected async run(): Promise<void> {
     if (this.abortSignal.aborted) return;
 
-    if (this.#attemptStarted) this.#contextId = shortuuid();
-    this.#attemptStarted = true;
-    const contextId = this.#contextId;
     this.#audioQueue.length = 0;
     this.#timedTranscriptQueue.length = 0;
     this.#streamDone = false;
 
-    const requestId = contextId;
-    const segmentId = contextId;
+    const requestId = this.#contextId;
+    const segmentId = this.#contextId;
     let connection: Connection;
     try {
       connection = await this.#tts.currentConnection();
@@ -1278,6 +1275,9 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
     if (this.abortSignal.aborted) return;
 
+    // Keep audio correlated with the public stream ID while isolating each provider context.
+    const contextId = this.#contextRegistered ? shortuuid() : this.#contextId;
+    this.#contextRegistered = true;
     const sentTokenizerStream = this.#opts.wordTokenizer.stream();
     const bstream = new AudioByteStream(this.#opts.sampleRate, 1);
 
@@ -1286,12 +1286,18 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     let waiterReject: ((reason: Error) => void) | undefined;
     const waiterPromise = new Promise<void>((resolve, reject) => {
       waiterReject = reject;
-      connection.registerStream(this, { resolve, reject }, this.connOptions.timeoutMs, () => {
-        stopped = true;
-        this.#streamDone = true;
-        sentTokenizerStream.close();
-        if (!this.input.closed) this.input.close();
-      });
+      connection.registerStream(
+        contextId,
+        this,
+        { resolve, reject },
+        this.connOptions.timeoutMs,
+        () => {
+          stopped = true;
+          this.#streamDone = true;
+          sentTokenizerStream.close();
+          if (!this.input.closed) this.input.close();
+        },
+      );
     });
     let contextClosed = false;
 

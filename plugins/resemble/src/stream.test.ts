@@ -32,16 +32,24 @@ let wss: WebSocketServer | undefined;
 /** Starts a Resemble stand-in that handles connection N with `connections[N]`. */
 async function startServer(
   connections: Connection[],
-  rejectHandshakes = 0,
-  rejectionStatus = 503,
+  {
+    rejectHandshakes = 0,
+    rejectionStatus = 503,
+    firstHandshakeDelayMs = 0,
+  }: { rejectHandshakes?: number; rejectionStatus?: number; firstHandshakeDelayMs?: number } = {},
 ): Promise<{ handshakes: () => number; texts: string[][] }> {
   let handshakes = 0;
   const texts: string[][] = [];
   wss = new WebSocketServer({
     host: '127.0.0.1',
     port: 0,
-    verifyClient: (_info, done) => {
+    verifyClient: ({ req }, done) => {
       handshakes++;
+      if (handshakes === 1 && firstHandshakeDelayMs > 0) {
+        const timer = setTimeout(() => done(true), firstHandshakeDelayMs);
+        req.socket.once('close', () => clearTimeout(timer));
+        return;
+      }
       if (handshakes <= rejectHandshakes) done(false, rejectionStatus);
       else done(true);
     },
@@ -95,7 +103,7 @@ describe('Resemble SynthesizeStream retries', () => {
   const text = 'Please read this whole sentence before any audio arrives.';
 
   it('retries a rejected handshake and returns the retry audio', async () => {
-    const server = await startServer([respond], 1);
+    const server = await startServer([respond], { rejectHandshakes: 1 });
     const provider = new TTS({ apiKey: 'test-key' });
     const errors: { recoverable: boolean }[] = [];
     provider.on('error', (error) => errors.push(error));
@@ -108,8 +116,26 @@ describe('Resemble SynthesizeStream retries', () => {
     expect(errors).toEqual([]);
   });
 
+  it('retries when the WebSocket handshake exceeds the configured deadline', async () => {
+    const server = await startServer([respond], { firstHandshakeDelayMs: 750 });
+    const provider = new TTS({ apiKey: 'test-key' });
+    const errors: unknown[] = [];
+    provider.on('error', (error) => errors.push(error));
+
+    const audio = await synthesize(provider, text, {
+      maxRetry: 1,
+      retryIntervalMs: 0,
+      timeoutMs: 150,
+    });
+
+    expect(server.handshakes()).toBe(2);
+    expect(server.texts).toEqual([[text]]);
+    expect(audio.length).toBeGreaterThan(0);
+    expect(errors).toEqual([]);
+  });
+
   it('does not retry a transient handshake failure with maxRetry set to zero', async () => {
-    const server = await startServer([respond], 1);
+    const server = await startServer([respond], { rejectHandshakes: 1 });
     const provider = new TTS({ apiKey: 'test-key' });
     const errors: unknown[] = [];
     provider.on('error', (error) => errors.push(error));
@@ -126,7 +152,7 @@ describe('Resemble SynthesizeStream retries', () => {
   });
 
   it('does not retry a rejected handshake when the credentials are invalid', async () => {
-    const server = await startServer([respond], 1, 401);
+    const server = await startServer([respond], { rejectHandshakes: 1, rejectionStatus: 401 });
     const provider = new TTS({ apiKey: 'test-key' });
     const errors: unknown[] = [];
     provider.on('error', (error) => errors.push(error));

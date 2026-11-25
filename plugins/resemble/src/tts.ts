@@ -344,6 +344,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     };
 
     const ws = new WebSocket(RESEMBLE_WEBSOCKET_URL, {
+      handshakeTimeout: this.connOptions.timeoutMs,
       headers: {
         Authorization: `Bearer ${this.#opts.apiKey}`,
       },

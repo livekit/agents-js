@@ -924,7 +924,7 @@ describe('ElevenLabs text-to-dialogue', () => {
   async function synthesize(stream: SynthesizeStream, text: string) {
     stream.pushText(text);
     stream.endInput();
-    const events: unknown[] = [];
+    const events: (tts.SynthesizedAudio | typeof SynthesizeStreamEnd)[] = [];
     for await (const event of stream) events.push(event);
     return events;
   }
@@ -1064,8 +1064,10 @@ describe('ElevenLabs text-to-dialogue', () => {
       const contextIds = server.received
         .filter((message) => message.voices)
         .map((message) => message.context_id);
-      expect(contextIds).toEqual([initialContextId, stream.contextId]);
-      expect(stream.contextId).not.toBe(initialContextId);
+      expect(contextIds).toHaveLength(2);
+      expect(contextIds[0]).toBe(initialContextId);
+      expect(contextIds[1]).not.toBe(initialContextId);
+      expect(stream.contextId).toBe(initialContextId);
       const inputs = server.received.flatMap(
         (message) => (message.inputs as { text: string }[] | undefined) ?? [],
       );
@@ -1073,7 +1075,12 @@ describe('ElevenLabs text-to-dialogue', () => {
         'hello world.',
         'hello world.',
       ]);
-      expect(events.filter((event) => event !== SynthesizeStreamEnd).length).toBeGreaterThan(0);
+      const frames = events.filter((event) => typeof event !== 'symbol');
+      expect(frames.length).toBeGreaterThan(0);
+      for (const frame of frames) {
+        expect(frame.requestId).toBe(initialContextId);
+        expect(frame.segmentId).toBe(initialContextId);
+      }
       expect(errors).toEqual([]);
     } finally {
       stream.close();
