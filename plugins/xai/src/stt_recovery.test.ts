@@ -17,13 +17,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as ws from 'ws';
 import { STT } from './stt.js';
 
-const endpoint = vi.hoisted(() => ({ url: '' }));
+const endpoint = vi.hoisted(() => ({
+  url: '',
+  requestedUrl: '',
+}));
 vi.mock('ws', async (importOriginal) => {
   const original = await importOriginal<typeof ws>();
   return {
     ...original,
     WebSocket: class extends original.WebSocket {
-      constructor(_url: string, options: ws.ClientOptions) {
+      constructor(url: string | URL, options: ws.ClientOptions) {
+        endpoint.requestedUrl = url.toString();
         super(endpoint.url, options);
       }
     },
@@ -218,5 +222,44 @@ describe('xai STT recovery', () => {
     );
     expect(createStream).toHaveBeenCalledTimes(2);
     expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('includes a custom model in the WebSocket URL', async () => {
+    await startServer();
+
+    const connected = once(server, 'connection');
+    const provider = new STT({
+      apiKey: 'test',
+      model: 'grok-voice-transcribe-2.0',
+    });
+
+    const stream = provider.stream({ connOptions });
+    try {
+      await connected;
+
+      const url = new URL(endpoint.requestedUrl);
+      expect(url.searchParams.get('model')).toBe('grok-voice-transcribe-2.0');
+    } finally {
+      stream.close();
+      await vi.waitFor(() => expect(server.clients.size).toBe(0));
+    }
+  });
+
+  it('omits the model from the WebSocket URL when not specified', async () => {
+    await startServer();
+
+    const connected = once(server, 'connection');
+    const provider = new STT({ apiKey: 'test' });
+
+    const stream = provider.stream({ connOptions });
+    try {
+      await connected;
+
+      const url = new URL(endpoint.requestedUrl);
+      expect(url.searchParams.has('model')).toBe(false);
+    } finally {
+      stream.close();
+      await vi.waitFor(() => expect(server.clients.size).toBe(0));
+    }
   });
 });

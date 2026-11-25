@@ -84,6 +84,10 @@ export interface STTOptions {
    * Key terms/phrases (max 100, 50 chars each) to bias transcription accuracy toward.
    */
   keyterm?: string[];
+  /**
+   * Model to use for speech recognition.
+   */
+  model?: string;
 }
 
 // Ref: python livekit-plugins/livekit-plugins-xai/livekit/plugins/xai/stt.py - 57-79 lines
@@ -218,6 +222,9 @@ export class SpeechStream extends stt.SpeechStream {
       streamURL.searchParams.set('language', this.#opts.language);
       // Ref: python livekit-plugins/livekit-plugins-xai/livekit/plugins/xai/stt.py - 372-375 lines
       streamURL.searchParams.set('endpointing', String(this.#opts.endpointing));
+      if (this.#opts.model !== undefined) {
+        streamURL.searchParams.set('model', this.#opts.model);
+      }
       if (this.#opts.vadThreshold !== undefined) {
         streamURL.searchParams.set('vad_threshold', String(this.#opts.vadThreshold));
       }
