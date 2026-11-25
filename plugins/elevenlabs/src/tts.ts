@@ -1114,6 +1114,11 @@ export class ChunkedStream extends tts.ChunkedStream {
             model_id: this.#opts.model,
             voice_settings: voiceSettings,
             apply_text_normalization: this.#opts.applyTextNormalization,
+            ...(this.#opts.pronunciationDictionaryLocators
+              ? {
+                  pronunciation_dictionary_locators: pronunciationDictionaryLocators(this.#opts),
+                }
+              : {}),
             ...extraParams,
           };
       const response = await fetch(

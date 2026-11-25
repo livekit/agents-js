@@ -184,6 +184,52 @@ describe('ElevenLabs TTS options', () => {
   });
 });
 
+describe('ElevenLabs TTS HTTP synthesis', () => {
+  it('includes pronunciation dictionaries', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(Buffer.alloc(4410), {
+        status: 200,
+        headers: { 'Content-Type': 'audio/pcm' },
+      }),
+    );
+    const elevenlabs = new TTS({
+      apiKey: 'test-key',
+      model: 'eleven_turbo_v2_5',
+      pronunciationDictionaryLocators: [
+        { pronunciation_dictionary_id: 'dict-1', version_id: 'v1' },
+      ],
+    });
+
+    for await (const _event of elevenlabs.synthesize('hello there')) {
+      // Consume the generated audio.
+    }
+
+    const [, init] = fetchSpy.mock.calls[0]!;
+    expect(JSON.parse(String(init?.body)).pronunciation_dictionary_locators).toEqual([
+      { pronunciation_dictionary_id: 'dict-1', version_id: 'v1' },
+    ]);
+    await elevenlabs.close();
+  });
+
+  it('omits pronunciation dictionaries when not set', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(Buffer.alloc(4410), {
+        status: 200,
+        headers: { 'Content-Type': 'audio/pcm' },
+      }),
+    );
+    const elevenlabs = new TTS({ apiKey: 'test-key', model: 'eleven_turbo_v2_5' });
+
+    for await (const _event of elevenlabs.synthesize('hello there')) {
+      // Consume the generated audio.
+    }
+
+    const [, init] = fetchSpy.mock.calls[0]!;
+    expect(JSON.parse(String(init?.body))).not.toHaveProperty('pronunciation_dictionary_locators');
+    await elevenlabs.close();
+  });
+});
+
 describe('ElevenLabs TTS websocket', () => {
   const audio = Buffer.alloc(4410).toString('base64');
 
