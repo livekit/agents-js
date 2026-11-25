@@ -1,5 +1,12 @@
 # @livekit/agents-plugin-hume
 
+## 1.11.0
+
+### Patch Changes
+
+- Updated dependencies [[`462e54b`](https://github.com/livekit/agents-js/commit/462e54b7fc7d5f65e1c39c49f4be61aab003cd3c), [`5fa40c3`](https://github.com/livekit/agents-js/commit/5fa40c3e108ea47487678be8e281183dbd6d0da2), [`54cd068`](https://github.com/livekit/agents-js/commit/54cd068645b4bfb1729dfdbafd55ec36cf4e379e), [`9155a34`](https://github.com/livekit/agents-js/commit/9155a349ce01957374f12758199c4dd54a332df0), [`669d7d1`](https://github.com/livekit/agents-js/commit/669d7d1fcd567e7067b514eab1f0dbecb82b1b16), [`b86ba76`](https://github.com/livekit/agents-js/commit/b86ba76fed1726916c6cee81034c9505366a10e4), [`f170f63`](https://github.com/livekit/agents-js/commit/f170f632142cf71d7e17b99cefff9cac3135ffc7), [`0e78274`](https://github.com/livekit/agents-js/commit/0e78274971de67377615852d6db5831b18fd549a), [`556fcc1`](https://github.com/livekit/agents-js/commit/556fcc1ee285164557a459ca4b0ef7780a88118e), [`e9e8bd7`](https://github.com/livekit/agents-js/commit/e9e8bd72b8a5f54c2dd4e09851afaf63235232b6), [`3b80d1b`](https://github.com/livekit/agents-js/commit/3b80d1b37c5b0ed386ecdebfc150ff4ae4df76e1)]:
+  - @livekit/agents@1.11.0
+
 ## 1.10.1
 
 ### Patch Changes
