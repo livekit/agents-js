@@ -38,6 +38,8 @@ export interface SynthesizedAudio {
   requestId: string;
   /** Segment ID, each segment is separated by a flush */
   segmentId: string;
+  /** @internal The ID used by the provider when it differs from the logical segment ID. */
+  providerRequestId?: string;
   /** Synthesized audio frame */
   frame: AudioFrame;
   /** Current segment of the synthesized audio */
@@ -763,11 +765,10 @@ export abstract class SynthesizeStream
       }
       this.output.put(audio);
       requestId = audio.requestId;
-      // The Python AudioEmitter records each `segment_id` automatically via
-      // `start_segment`. JS plugins emit `segmentId` directly on the audio
-      // frame, so we mirror that behavior here.
-      if (audio.segmentId) {
-        this.noteProviderRequestId(audio.segmentId);
+      // Most providers use the same ID for the provider request and the segment.
+      const providerRequestId = audio.providerRequestId ?? audio.segmentId;
+      if (providerRequestId) {
+        this.noteProviderRequestId(providerRequestId);
       }
       if (ttfb === BigInt(-1) && this.#startedHrTime !== undefined) {
         ttfb = process.hrtime.bigint() - this.#startedHrTime;

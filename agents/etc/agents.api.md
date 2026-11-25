@@ -8346,6 +8346,8 @@ interface SynthesizedAudio {
     deltaText?: string;
     final: boolean;
     frame: AudioFrame;
+    // @internal
+    providerRequestId?: string;
     requestId: string;
     segmentId: string;
     timedTranscripts?: TimedString[];

@@ -1056,6 +1056,10 @@ describe('ElevenLabs text-to-dialogue', () => {
     const stream = elevenlabs.stream({ connOptions: dialogueConnOptions });
 
     const initialContextId = stream.contextId;
+    const recordProviderId = vi.spyOn(
+      stream as unknown as { noteProviderRequestId(id: string): void },
+      'noteProviderRequestId',
+    );
 
     try {
       const events = await waitFor(synthesize(stream, 'hello world.'), 2000);
@@ -1081,6 +1085,8 @@ describe('ElevenLabs text-to-dialogue', () => {
         expect(frame.requestId).toBe(initialContextId);
         expect(frame.segmentId).toBe(initialContextId);
       }
+      expect(recordProviderId).toHaveBeenCalledWith(contextIds[1]);
+      expect(recordProviderId).not.toHaveBeenCalledWith(initialContextId);
       expect(errors).toEqual([]);
     } finally {
       stream.close();

@@ -1398,6 +1398,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
           this.queue.put({
             requestId,
             segmentId,
+            providerRequestId: contextId,
             frame: lastFrame,
             final,
             timedTranscripts:
