@@ -687,16 +687,16 @@ describe('ElevenLabs text-to-dialogue', () => {
     const server = {
       baseURL,
       received: [] as Record<string, unknown>[],
-      droppedSocket: false,
+      connections: 0,
       close: () => closeWebSocketServer(wss),
     };
     wss.on('connection', (ws) => {
+      server.connections += 1;
       const closedContexts = new Set<unknown>();
       ws.on('message', (raw) => {
         const message = JSON.parse(raw.toString()) as Record<string, unknown>;
         server.received.push(message);
         if (closedContexts.has(message.context_id)) {
-          server.droppedSocket = true;
           ws.close(1008);
         } else if (message.close_context) {
           closedContexts.add(message.context_id);
@@ -734,7 +734,7 @@ describe('ElevenLabs text-to-dialogue', () => {
 
       const nextAudio = await waitFor(synthesize(next, 'next reply.'));
 
-      expect(server.droppedSocket).toBe(false);
+      expect(server.connections).toBe(1);
       expect(nextAudio.length).toBeGreaterThan(0);
     } finally {
       next.close();
