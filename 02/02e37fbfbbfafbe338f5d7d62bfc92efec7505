@@ -1,0 +1,23 @@
+agents/src/inference/interruption/ws_transport.ts
+  s_6e33297cdda77e::t_bf353afaefe2b8 91-107,121-123,125,138-139,148-149,152-161,165-166,244-254,269,464-467
+.changeset/interruption-ws-error-guard.md
+  s_6e33297cdda77e::t_96562978051560 1-5
+agents/src/inference/interruption/ws_transport.test.ts
+  s_6e33297cdda77e::t_daae5c5b20ef78 1-290
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0202e37fbfbbfafbe338f5d7d62bfc92efec7505",
+  "prompts": {},
+  "sessions": {
+    "s_6e33297cdda77e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d17b322a-2e4b-4d46-81d8-5d94fa5cd073",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Chenghao Mou <chenghao.mou@livekit.io>"
+    }
+  }
+}
