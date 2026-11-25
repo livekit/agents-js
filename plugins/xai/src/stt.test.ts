@@ -4,7 +4,7 @@
 import { VAD } from '@livekit/agents-plugin-silero';
 import { stt } from '@livekit/agents-plugins-test';
 import { describe, expect, it } from 'vitest';
-import { STT } from './stt.js';
+import { STT, type STTOptions, buildSTTWebSocketURL } from './stt.js';
 
 const hasXAIApiKey = Boolean(process.env.XAI_API_KEY);
 
@@ -19,6 +19,27 @@ if (hasXAIApiKey) {
 }
 
 describe('xAI STT unit', () => {
+  const options: STTOptions = {
+    interimResults: true,
+    sampleRate: 16000,
+    enableDiarization: false,
+    language: 'en',
+    endpointing: 100,
+  };
+
+  it('forwards the selected STT model in the websocket URL', () => {
+    const url = buildSTTWebSocketURL({
+      ...options,
+      model: 'grok-voice-transcribe-2.0',
+    });
+    expect(url.searchParams.get('model')).toBe('grok-voice-transcribe-2.0');
+  });
+
+  it('lets xAI choose its default STT model when none is configured', () => {
+    const url = buildSTTWebSocketURL(options);
+    expect(url.searchParams.has('model')).toBe(false);
+  });
+
   it('throws when no API key is provided', () => {
     const orig = process.env.XAI_API_KEY;
     delete process.env.XAI_API_KEY;
