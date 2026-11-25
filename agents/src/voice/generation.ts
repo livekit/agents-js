@@ -1125,6 +1125,10 @@ export function performTTSInference(
  * Forwarding it alone would leave the turn with no transcript, so the generated text is
  * forwarded instead, without word timings. This matches the Python SDK.
  *
+ * The generated text is only forwarded after a clean synthesis end. When `synthesisFailed`
+ * reports a failure, that text may include words that were never spoken, so nothing is
+ * forwarded.
+ *
  * Neither source is cancelled: the generated text is also written by the segment producer,
  * which must finish independently. Aborting `signal` stops reading and releases both
  * sources without a fallback.
@@ -1133,6 +1137,7 @@ export function alignedTranscriptOrText(
   timedTexts: ReadableStream<TimedString>,
   text: ReadableStream<string>,
   signal: AbortSignal,
+  synthesisFailed: () => boolean = () => false,
 ): ReadableStream<string | TimedString> {
   return toStream(
     (async function* () {
@@ -1141,7 +1146,7 @@ export function alignedTranscriptOrText(
         aligned = true;
         yield timedText;
       }
-      if (aligned || signal.aborted) return;
+      if (aligned || signal.aborted || synthesisFailed()) return;
       log().warn(
         'no aligned transcript was returned from tts, ' +
           'forwarding the generated text without word timings',

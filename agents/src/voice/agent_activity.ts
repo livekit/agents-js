@@ -4279,6 +4279,7 @@ export class AgentActivity implements RecognitionHooks {
               timedTextsStream,
               segment.textStream,
               segmentAbortController.signal,
+              () => segment.ttsGenData?.error != null,
             );
           }
         }

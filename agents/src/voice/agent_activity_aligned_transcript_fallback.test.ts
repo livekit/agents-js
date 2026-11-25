@@ -4,11 +4,11 @@
 import { AudioFrame } from '@livekit/rtc-node';
 import { ReadableStream } from 'node:stream/web';
 import { describe, expect, it, vi } from 'vitest';
-import { initializeLogger, log, tts, voice } from '../index.js';
+import { APIError, initializeLogger, log, tts, voice } from '../index.js';
 import { alignedTranscriptOrText } from './generation.js';
 import { TextOutput, type TimedString } from './io.js';
 
-type SynthesisMode = 'timed' | 'untimed';
+type SynthesisMode = 'timed' | 'untimed' | 'fail-before-audio' | 'fail-after-audio';
 
 const GENERATED = 'The generated reply.';
 const TIMED = 'The timed reply.';
@@ -64,6 +64,18 @@ class TestSynthesis extends tts.SynthesizeStream {
       if (typeof text === 'string') transcript += text;
     }
     if (!transcript.trim()) return;
+    if (this.mode.startsWith('fail')) {
+      if (this.mode === 'fail-after-audio') {
+        this.queue.put({
+          requestId: 'test',
+          segmentId: 'test',
+          final: false,
+          frame: new AudioFrame(new Int16Array(480).fill(1), 24000, 1, 480),
+        });
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      throw new APIError('synthesis failed', { retryable: false });
+    }
     this.queue.put({
       requestId: 'test',
       segmentId: 'test',
@@ -98,7 +110,8 @@ async function runTurn(mode: SynthesisMode) {
   const provider = new TestTts(mode);
   const session = new voice.AgentSession({
     tts: provider,
-    connOptions: { ttsConnOptions: { maxRetry: 0 }, maxUnrecoverableErrors: 0 },
+    // Keep the session open after a failed synthesis so its output can be checked.
+    connOptions: { ttsConnOptions: { maxRetry: 0 }, maxUnrecoverableErrors: 5 },
     llm: new voice.testing.FakeLLM([{ input: 'hello', content: GENERATED }]),
   });
   const errors: unknown[] = [];
@@ -148,6 +161,19 @@ describe('aligned transcript fallback in the pipeline reply', () => {
     expect(alignedWarnings).toHaveLength(0);
     expect(errors).toEqual([]);
   }, 10000);
+
+  it.each(['fail-before-audio', 'fail-after-audio'] as const)(
+    'forwards no generated text when the TTS fails without timings (%s)',
+    async (mode) => {
+      const { transcription, messages, errors, alignedWarnings } = await runTurn(mode);
+
+      expect(transcription.text).toBe('');
+      expect(messages.map((message) => message.content.join(''))).not.toContain(GENERATED);
+      expect(alignedWarnings).toHaveLength(0);
+      expect(errors.length).toBeGreaterThan(0);
+    },
+    10000,
+  );
 });
 
 describe('alignedTranscriptOrText', () => {
