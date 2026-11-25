@@ -87,6 +87,13 @@ export class AvatarSession extends voice.AvatarSession {
     }): Promise<void>;
 }
 
+// @public
+export type DirectorNotes = {
+    expressivity?: number;
+    presetStyle?: string;
+    customStylePrompt?: string;
+};
+
 // @public (undocumented)
 export function mintAvatarJoinToken(input: {
     roomName: string;
@@ -102,6 +109,7 @@ export type PersonaConfig = {
     name?: string;
     avatarId?: string;
     avatarModel?: string;
+    directorNotes?: DirectorNotes;
     personaId?: string;
 };
 

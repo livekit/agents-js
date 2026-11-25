@@ -44,6 +44,8 @@ export class AnamAPI {
         if (redactedHeaders.Authorization) {
           redactedHeaders.Authorization = 'Bearer ****';
         }
+        // The body carries app content such as director-notes style prompts,
+        // so it is logged under an lk.pii. key that log redaction drops.
         const redactedBody = (() => {
           if (body && typeof body === 'object') {
             try {
@@ -63,7 +65,7 @@ export class AnamAPI {
             url,
             method: 'POST',
             headers: redactedHeaders,
-            body: redactedBody,
+            'lk.pii.body': redactedBody,
             attempt: attempt + 1,
           },
           'calling Anam API',
@@ -82,7 +84,7 @@ export class AnamAPI {
               url,
               method: 'POST',
               headers: redactedHeaders,
-              body: redactedBody,
+              'lk.pii.body': redactedBody,
               status: res.status,
               response: text,
             },
@@ -100,7 +102,7 @@ export class AnamAPI {
           {
             url,
             method: 'POST',
-            body:
+            'lk.pii.body':
               body && typeof body === 'object'
                 ? { ...(body as Record<string, unknown>), livekitToken: '****' }
                 : body,
@@ -126,11 +128,24 @@ export class AnamAPI {
     sessionOptions?: SessionOptions;
   }) {
     const pc = params.personaConfig;
+    // Drop unset fields so Anam falls back to its model/cue defaults.
+    const directorNotes = Object.fromEntries(
+      Object.entries(pc.directorNotes ?? {}).filter(([, v]) => v !== undefined && v !== null),
+    );
+    const hasDirectorNotes = Object.keys(directorNotes).length > 0;
+
     // Anam's personaConfig is a `oneOf`: reference a previously created
     // (stateful) persona by `personaId` — the "dev flow" — or configure an
     // ephemeral persona inline with name/avatarId/llmId. The two are mutually
     // exclusive, so when a personaId is given we must not also send the
     // ephemeral fields.
+    if (pc.personaId && hasDirectorNotes) {
+      // A stateful persona uses its stored director notes and Anam silently
+      // drops a per-session override, so fail loudly instead.
+      throw new AnamException(
+        'directorNotes is not supported with personaId; set it on the saved persona instead',
+      );
+    }
     const personaPayload: Record<string, unknown> = pc.personaId
       ? { personaId: pc.personaId }
       : {
@@ -141,6 +156,7 @@ export class AnamAPI {
           // Only forward the avatar model version when set; otherwise let Anam
           // fall back to the avatar's default model.
           ...(pc.avatarModel ? { avatarModel: pc.avatarModel } : {}),
+          ...(hasDirectorNotes ? { directorNotes } : {}),
         };
 
     const payload: Record<string, unknown> = {
