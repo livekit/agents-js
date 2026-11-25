@@ -134,6 +134,10 @@ export class STT extends stt.STT {
     return 'xai';
   }
 
+  get model(): string {
+    return this.#opts.model ?? 'unknown';
+  }
+
   constructor(opts: Partial<STTOptions> = {}) {
     const merged = { ...defaultSTTOptions, ...opts };
     super({
@@ -156,12 +160,13 @@ export class STT extends stt.STT {
     const file = new File([new Uint8Array(wavBuffer)], 'audio.wav', { type: 'audio/wav' });
 
     const formData = new FormData();
-    formData.append('file', file);
     formData.append('language', this.#opts.language);
     formData.append('format', 'true');
     if (this.#opts.model !== undefined) {
       formData.append('model', this.#opts.model);
     }
+    // xAI requires the audio file to be the final multipart field.
+    formData.append('file', file);
 
     const resp = await fetch(XAI_REST_URL, {
       method: 'POST',
