@@ -2,4 +2,4 @@
 '@livekit/agents-plugin-elevenlabs': patch
 ---
 
-Stop sending the final flush to an interrupted ElevenLabs context after closing it. ElevenLabs answered it with `context_closing` and closed the shared WebSocket, so the next reply failed with `tts_error` (#2983).
+Stop sending the final flush to an interrupted ElevenLabs context after closing it, so the server no longer answers `context_closing` and closes the shared WebSocket before the next reply.
