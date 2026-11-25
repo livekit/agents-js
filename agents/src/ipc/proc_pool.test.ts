@@ -77,6 +77,26 @@ describe('ProcPool close', () => {
 });
 
 describe('ProcPool warmed process lock handling', () => {
+  it('allows up to four process initializations to run concurrently', async () => {
+    const pool = createPool(4);
+    const unlocks = await Promise.all(Array.from({ length: 4 }, () => pool.initMutex.lock()));
+
+    let fifthAcquired = false;
+    const fifth = pool.initMutex.lock().then((unlock) => {
+      fifthAcquired = true;
+      return unlock;
+    });
+    await flushMicrotasks();
+    expect(fifthAcquired).toBe(false);
+
+    unlocks[0]!();
+    const fifthUnlock = await fifth;
+    expect(fifthAcquired).toBe(true);
+
+    for (const unlock of unlocks.slice(1)) unlock();
+    fifthUnlock();
+  });
+
   it('releases lock token from the dequeued warmed process entry', async (): Promise<
     Throws<void, Error>
   > => {
