@@ -370,10 +370,13 @@ export abstract class SynthesizeStream
   protected input = new AsyncIterableQueue<string | typeof SynthesizeStream.FLUSH_SENTINEL>();
   protected queue: AsyncIterableQueue<SynthesizedAudio | typeof SynthesizeStream.END_OF_STREAM> =
     new ObservedAsyncIterableQueue((item) => {
-      if (item !== SynthesizeStream.END_OF_STREAM && !this.#attemptAudioPushed) {
+      if (item === SynthesizeStream.END_OF_STREAM) return;
+      if (!this.#attemptAudioPushed) {
         this.#attemptAudioPushed = true;
         this.#inputBuffer.length = 0;
       }
+      // The attempt span can end before the metrics consumer reads the frame.
+      if (item.providerRequestId) this.noteProviderRequestId(item.providerRequestId);
     });
   protected output = new AsyncIterableQueue<
     SynthesizedAudio | typeof SynthesizeStream.END_OF_STREAM
@@ -765,10 +768,9 @@ export abstract class SynthesizeStream
       }
       this.output.put(audio);
       requestId = audio.requestId;
-      // Most providers use the same ID for the provider request and the segment.
-      const providerRequestId = audio.providerRequestId ?? audio.segmentId;
-      if (providerRequestId) {
-        this.noteProviderRequestId(providerRequestId);
+      // For providers without an explicit wire ID, use the segment ID as before.
+      if (!audio.providerRequestId && audio.segmentId) {
+        this.noteProviderRequestId(audio.segmentId);
       }
       if (ttfb === BigInt(-1) && this.#startedHrTime !== undefined) {
         ttfb = process.hrtime.bigint() - this.#startedHrTime;

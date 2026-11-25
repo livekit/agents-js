@@ -1,8 +1,20 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { APITimeoutError, DEFAULT_API_CONNECT_OPTIONS, log, tts, voice } from '@livekit/agents';
+import {
+  APITimeoutError,
+  DEFAULT_API_CONNECT_OPTIONS,
+  log,
+  telemetry,
+  tts,
+  voice,
+} from '@livekit/agents';
 import type { AudioFrame } from '@livekit/rtc-node';
+import {
+  InMemorySpanExporter,
+  NodeTracerProvider,
+  SimpleSpanProcessor,
+} from '@opentelemetry/sdk-trace-node';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import { ReadableStream } from 'node:stream/web';
@@ -1056,10 +1068,12 @@ describe('ElevenLabs text-to-dialogue', () => {
     const stream = elevenlabs.stream({ connOptions: dialogueConnOptions });
 
     const initialContextId = stream.contextId;
-    const recordProviderId = vi.spyOn(
-      stream as unknown as { noteProviderRequestId(id: string): void },
-      'noteProviderRequestId',
-    );
+    const exporter = new InMemorySpanExporter();
+    const tracerProvider = new NodeTracerProvider({
+      spanProcessors: [new SimpleSpanProcessor(exporter)],
+    });
+    const originalTracerProvider = telemetry.tracer.getProvider();
+    telemetry.tracer.setProvider(tracerProvider);
 
     try {
       const events = await waitFor(synthesize(stream, 'hello world.'), 2000);
@@ -1085,10 +1099,20 @@ describe('ElevenLabs text-to-dialogue', () => {
         expect(frame.requestId).toBe(initialContextId);
         expect(frame.segmentId).toBe(initialContextId);
       }
-      expect(recordProviderId).toHaveBeenCalledWith(contextIds[1]);
-      expect(recordProviderId).not.toHaveBeenCalledWith(initialContextId);
+      const attemptSpans = exporter
+        .getFinishedSpans()
+        .filter((span) => span.name === 'tts_request_run');
+      expect(attemptSpans).toHaveLength(2);
+      const retrySpan = attemptSpans.find(
+        (span) => span.attributes[telemetry.traceTypes.ATTR_RETRY_COUNT] === 1,
+      );
+      expect(retrySpan?.attributes[telemetry.traceTypes.ATTR_PROVIDER_REQUEST_IDS]).toEqual([
+        contextIds[1],
+      ]);
       expect(errors).toEqual([]);
     } finally {
+      telemetry.tracer.setProvider(originalTracerProvider);
+      await tracerProvider.shutdown();
       stream.close();
       await elevenlabs.close();
       await server.close();
