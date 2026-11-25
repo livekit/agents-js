@@ -151,23 +151,31 @@ export class AnamAPI {
       livekitToken: params.livekitToken,
     };
 
-    if (
-      params.sessionOptions &&
-      (params.sessionOptions.videoWidth !== undefined ||
-        params.sessionOptions.videoHeight !== undefined)
-    ) {
-      if (
-        params.sessionOptions.videoWidth === undefined ||
-        params.sessionOptions.videoHeight === undefined
-      ) {
+    const so = params.sessionOptions;
+    const sessionOptions: Record<string, unknown> = {};
+    if (so && (so.videoWidth !== undefined || so.videoHeight !== undefined)) {
+      // Anam wants the dimensions as a matched pair and rejects a lone
+      // width/height with an HTTP 400, so fail fast instead of round-tripping.
+      if (so.videoWidth === undefined || so.videoHeight === undefined) {
         throw new AnamException(
           'videoWidth and videoHeight must be set together (both or neither)',
         );
       }
-      payload.sessionOptions = {
-        videoWidth: params.sessionOptions.videoWidth,
-        videoHeight: params.sessionOptions.videoHeight,
-      };
+      sessionOptions.videoWidth = so.videoWidth;
+      sessionOptions.videoHeight = so.videoHeight;
+    }
+    if (so?.regionPolicy === 'strict' && so.region === undefined) {
+      // Anam rejects a strict policy with no region with an HTTP 400.
+      throw new AnamException('regionPolicy "strict" requires a region');
+    }
+    if (so?.region !== undefined) {
+      sessionOptions.region = so.region;
+    }
+    if (so?.regionPolicy !== undefined) {
+      sessionOptions.regionPolicy = so.regionPolicy;
+    }
+    if (Object.keys(sessionOptions).length > 0) {
+      payload.sessionOptions = sessionOptions;
     }
 
     return this.post<{ sessionId: string }>(this.startPath, payload);

@@ -19,6 +19,19 @@ export type SessionOptions = {
   videoWidth?: number;
   /** Output video frame height in pixels. Provide together with videoWidth. */
   videoHeight?: number;
+  /**
+   * Engine region that serves the session's audio and video. Omit to let Anam
+   * route the session. Region selection must be enabled for the Anam
+   * organization; otherwise Anam rejects the request with an HTTP 403. See
+   * https://anam.ai/docs/personas/session/regions
+   */
+  region?: 'eu' | 'us';
+  /**
+   * `'preferred'` (Anam's default) lets Anam fail over to another region;
+   * `'strict'` never does, and the session fails when `region` is unavailable.
+   * `'strict'` requires `region`.
+   */
+  regionPolicy?: 'preferred' | 'strict';
 };
 
 /** @public */
