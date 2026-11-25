@@ -682,34 +682,60 @@ describe('ElevenLabs text-to-dialogue', () => {
     }
   });
 
-  it('sends nothing to a dialogue context after closing it', async () => {
+  it('plays the next reply after a dialogue reply is interrupted', async () => {
     const { wss, baseURL } = await startWebSocketServer();
     const messages: Record<string, unknown>[] = [];
     wss.on('connection', (ws) => {
-      ws.on('message', (raw) => messages.push(JSON.parse(raw.toString())));
+      const closedContexts = new Set<unknown>();
+      let rejectedMessage = false;
+      ws.on('message', (raw) => {
+        const message = JSON.parse(raw.toString()) as Record<string, unknown>;
+        messages.push(message);
+        if (rejectedMessage) {
+          ws.close(1008);
+        } else if (closedContexts.has(message.context_id)) {
+          rejectedMessage = true;
+          ws.send(JSON.stringify({ context_id: message.context_id, error: 'context_closing' }));
+        } else if (message.close_context) {
+          closedContexts.add(message.context_id);
+          ws.send(JSON.stringify({ context_id: message.context_id, audio, is_final: true }));
+        }
+      });
     });
     const elevenlabs = new TTS({
       apiKey: 'test-key',
       baseURL,
       model: 'eleven_v3_conversational',
     });
-    const stream = elevenlabs.stream();
-    const output = (async () => {
-      for await (const _event of stream) {
+    const errors: unknown[] = [];
+    elevenlabs.on('error', (event) => errors.push(event.error));
+    const connOptions = { maxRetry: 0, retryIntervalMs: 0, timeoutMs: 1000 };
+    const interrupted = elevenlabs.stream({ connOptions });
+    const next = elevenlabs.stream({ connOptions });
+    const nextEvents: unknown[] = [];
+    const interruptedOutput = (async () => {
+      for await (const _event of interrupted) {
         // Consume the generated audio.
       }
     })();
+    const nextOutput = (async () => {
+      for await (const event of next) nextEvents.push(event);
+    })();
 
     try {
-      stream.pushText('hello world.');
-      stream.flush();
+      interrupted.pushText('hello world.');
+      interrupted.flush();
       await waitUntil(() => messages.some((message) => message.inputs));
-      stream.close();
-      await waitFor(output);
-      await waitUntil(() => messages.some((message) => message.close_context));
-      await new Promise((resolve) => setTimeout(resolve, 100));
-      expect(messages.at(-1)).toEqual({ context_id: messages[0]?.context_id, close_context: true });
+      interrupted.close();
+      await waitFor(interruptedOutput);
+      next.pushText('next reply.');
+      next.endInput();
+      await waitFor(nextOutput);
+      expect(errors).toEqual([]);
+      expect(nextEvents.length).toBeGreaterThan(0);
     } finally {
+      interrupted.close();
+      next.close();
       await elevenlabs.close();
       await closeWebSocketServer(wss);
     }
