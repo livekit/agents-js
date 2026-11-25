@@ -42,7 +42,7 @@ export type ResembleModel = 'chatterbox' | 'chatterbox-turbo';
 //
 // @public (undocumented)
 export class SynthesizeStream extends tts.SynthesizeStream {
-    constructor(tts: TTS, opts: TTSOptions);
+    constructor(tts: TTS, opts: TTSOptions, connOptions?: APIConnectOptions);
     // (undocumented)
     close(): void;
     // (undocumented)
@@ -59,7 +59,9 @@ export class TTS extends tts.TTS {
     // (undocumented)
     label: string;
     // (undocumented)
-    stream(): tts.SynthesizeStream;
+    stream(options?: {
+        connOptions?: APIConnectOptions;
+    }): tts.SynthesizeStream;
     // (undocumented)
     synthesize(text: string, connOptions?: APIConnectOptions, abortSignal?: AbortSignal): tts.ChunkedStream;
 }

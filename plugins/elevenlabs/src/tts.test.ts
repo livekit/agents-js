@@ -1,9 +1,11 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { APITimeoutError, DEFAULT_API_CONNECT_OPTIONS, log, tts } from '@livekit/agents';
+import { APITimeoutError, DEFAULT_API_CONNECT_OPTIONS, log, tts, voice } from '@livekit/agents';
+import type { AudioFrame } from '@livekit/rtc-node';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
+import { ReadableStream } from 'node:stream/web';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { type WebSocket, WebSocketServer } from 'ws';
 import { isDialogueModel } from './models.js';
@@ -966,7 +968,7 @@ describe('ElevenLabs text-to-dialogue', () => {
     }
   });
 
-  it('closes an interrupted reply once and keeps the socket for the next reply', async () => {
+  it('keeps the shared socket open after the session interrupts a reply', async () => {
     const server = await startDialogueServer();
     const elevenlabs = new TTS({
       apiKey: 'test-key',
@@ -975,18 +977,55 @@ describe('ElevenLabs text-to-dialogue', () => {
     });
     const errors: unknown[] = [];
     elevenlabs.on('error', (error) => errors.push(error));
-    const interrupted = elevenlabs.stream({ connOptions: dialogueConnOptions });
-    const next = elevenlabs.stream({ connOptions: dialogueConnOptions });
+
+    class TestAudioOutput extends voice.AudioOutput {
+      frames: AudioFrame[] = [];
+
+      override async captureFrame(frame: AudioFrame): Promise<void> {
+        const segmentCount = this.capturedPlayoutSegments;
+        await super.captureFrame(frame);
+        this.frames.push(frame);
+        if (this.capturedPlayoutSegments > segmentCount) this.onPlaybackStarted(Date.now());
+      }
+
+      override flush(): void {
+        super.flush();
+        if (this.pendingPlayoutSegments > 0) {
+          this.onPlaybackFinished({ playbackPosition: 0.1, interrupted: false });
+        }
+      }
+
+      override clearBuffer(): void {
+        if (this.pendingPlayoutSegments > 0) {
+          this.onPlaybackFinished({ playbackPosition: 0, interrupted: true });
+        }
+      }
+    }
+
+    const session = new voice.AgentSession({
+      tts: elevenlabs,
+      connOptions: { ttsConnOptions: { ...dialogueConnOptions, maxRetry: 0 } },
+    });
+    const output = new TestAudioOutput();
+    session.output.audio = output;
 
     try {
-      interrupted.pushText('hello world.');
-      interrupted.flush();
+      await session.start({ agent: new voice.Agent({ instructions: 'Read the supplied text.' }) });
+      const text = new ReadableStream<string>({
+        start(controller) {
+          controller.enqueue('This is the first sentence of the reply. The input is still open. ');
+        },
+      });
+      const interrupted = session.say(text, { allowInterruptions: true });
       await waitUntil(() => server.received.some((message) => message.inputs));
       const contextId = server.received.find((message) => message.inputs)?.context_id;
-      interrupted.close();
 
-      const nextAudio = await waitFor(synthesize(next, 'next reply.'));
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await waitFor(session.interrupt().await);
+      await waitFor(interrupted.waitForPlayout());
+      expect(interrupted.interrupted).toBe(true);
+      expect(output.frames).toHaveLength(0);
+
+      await waitFor(session.say('This is the next reply.').waitForPlayout());
 
       const closes = server.received.filter(
         (message) => message.context_id === contextId && message.close_context,
@@ -994,10 +1033,10 @@ describe('ElevenLabs text-to-dialogue', () => {
       expect(closes).toHaveLength(1);
       expect(server.rejected).toEqual([]);
       expect(server.connections).toBe(1);
-      expect(nextAudio.length).toBeGreaterThan(0);
+      expect(output.frames.length).toBeGreaterThan(0);
       expect(errors).toEqual([]);
     } finally {
-      next.close();
+      await session.close();
       await elevenlabs.close();
       await server.close();
     }
@@ -1016,10 +1055,17 @@ describe('ElevenLabs text-to-dialogue', () => {
     elevenlabs.on('error', (error) => errors.push(error));
     const stream = elevenlabs.stream({ connOptions: dialogueConnOptions });
 
+    const initialContextId = stream.contextId;
+
     try {
       const events = await waitFor(synthesize(stream, 'hello world.'), 2000);
 
       expect(server.connections).toBe(2);
+      const contextIds = server.received
+        .filter((message) => message.voices)
+        .map((message) => message.context_id);
+      expect(contextIds).toEqual([initialContextId, stream.contextId]);
+      expect(stream.contextId).not.toBe(initialContextId);
       const inputs = server.received.flatMap(
         (message) => (message.inputs as { text: string }[] | undefined) ?? [],
       );

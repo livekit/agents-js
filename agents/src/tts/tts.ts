@@ -368,8 +368,9 @@ export abstract class SynthesizeStream
   protected input = new AsyncIterableQueue<string | typeof SynthesizeStream.FLUSH_SENTINEL>();
   protected queue: AsyncIterableQueue<SynthesizedAudio | typeof SynthesizeStream.END_OF_STREAM> =
     new ObservedAsyncIterableQueue((item) => {
-      if (item !== SynthesizeStream.END_OF_STREAM) {
+      if (item !== SynthesizeStream.END_OF_STREAM && !this.#attemptAudioPushed) {
         this.#attemptAudioPushed = true;
+        this.#inputBuffer.length = 0;
       }
     });
   protected output = new AsyncIterableQueue<
@@ -835,8 +836,8 @@ export abstract class SynthesizeStream
   }
 
   /**
-   * Send text or a flush marker to the current attempt and keep it for retries. Subclasses that
-   * override `flush` or `endInput` use this instead of writing to `input` directly.
+   * Send text or a flush marker to the current attempt and buffer it while replay is possible.
+   * Subclasses that override `flush` or `endInput` use this instead of writing to `input` directly.
    */
   protected writeInput(item: string | typeof SynthesizeStream.FLUSH_SENTINEL): void {
     if (this.#inputEnded || this.closed) {
@@ -844,7 +845,11 @@ export abstract class SynthesizeStream
       return;
     }
 
-    if (this.inputRetryMode === 'replay') {
+    if (
+      this.inputRetryMode === 'replay' &&
+      !this.#attemptAudioPushed &&
+      this.connOptions.maxRetry > 0
+    ) {
       this.#inputBuffer.push(item);
     }
     // An attempt may have closed its queue while it tears down after a

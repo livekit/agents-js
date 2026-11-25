@@ -69,8 +69,8 @@ export class TTS extends tts.TTS {
     return new ChunkedStream(this, text, this.#opts, connOptions, abortSignal);
   }
 
-  stream(): tts.SynthesizeStream {
-    return new SynthesizeStream(this, this.#opts);
+  stream(options?: { connOptions?: APIConnectOptions }): tts.SynthesizeStream {
+    return new SynthesizeStream(this, this.#opts, options?.connOptions);
   }
 }
 
@@ -200,8 +200,8 @@ export class SynthesizeStream extends tts.SynthesizeStream {
   #websocket: WebSocket | null = null;
   label = 'resemble.SynthesizeStream';
 
-  constructor(tts: TTS, opts: TTSOptions) {
-    super(tts);
+  constructor(tts: TTS, opts: TTSOptions, connOptions?: APIConnectOptions) {
+    super(tts, connOptions);
     this.#opts = opts;
   }
 

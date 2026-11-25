@@ -5069,6 +5069,8 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
     //
     // (undocumented)
     initRecording(options: ResolvedRecordingOptions): Promise<void>;
+    // @internal (undocumented)
+    _initRecording(options: ResolvedRecordingOptions, exportJobLogFile?: boolean): Promise<void>;
     // (undocumented)
     get isFakeJob(): boolean;
     // (undocumented)
@@ -10268,11 +10270,11 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 // src/metrics/base.ts:230:3 - (ae-forgotten-export) The symbol "RealtimeModelMetricsOutputTokenDetails" needs to be exported by the entry point index.d.ts
 // src/stt/stt.ts:396:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "STT"
 // src/utils.ts:468:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "cancelled"
-// src/voice/agent_session.ts:413:3 - (ae-unresolved-link) The @link reference could not be resolved: This type of declaration is not supported yet by the resolver
-// src/voice/agent_session.ts:1090:5 - (ae-forgotten-export) The symbol "RecordingOptions" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1857:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1857:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts
-// src/voice/agent_session.ts:1857:5 - (ae-forgotten-export) The symbol "LLMError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:428:3 - (ae-unresolved-link) The @link reference could not be resolved: This type of declaration is not supported yet by the resolver
+// src/voice/agent_session.ts:1105:5 - (ae-forgotten-export) The symbol "RecordingOptions" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1876:5 - (ae-forgotten-export) The symbol "STTError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1876:5 - (ae-forgotten-export) The symbol "TTSError" needs to be exported by the entry point index.d.ts
+// src/voice/agent_session.ts:1876:5 - (ae-forgotten-export) The symbol "LLMError" needs to be exported by the entry point index.d.ts
 // src/voice/events.ts:468:3 - (ae-forgotten-export) The symbol "InterruptionDetectionError" needs to be exported by the entry point index.d.ts
 // src/voice/room_io/_output.ts:183:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "segmentTags"
 // src/voice/testing/run_result.ts:94:5 - (ae-forgotten-export) The symbol "OutputSchema" needs to be exported by the entry point index.d.ts

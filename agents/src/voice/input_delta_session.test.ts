@@ -87,7 +87,7 @@ describe.sequential('AgentSession input delta recording', () => {
     session.output.setTranscriptionEnabled(false);
 
     const ctx = jobContext();
-    vi.spyOn(ctx, 'initRecording').mockResolvedValue();
+    vi.spyOn(ctx, '_initRecording').mockResolvedValue();
     await runWithJobContextAsync(ctx, () =>
       session.start({
         agent: new Agent({ instructions: 'You are a helpful assistant.' }),

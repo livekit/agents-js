@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { initializeLogger, tts } from '@livekit/agents';
+import { type APIConnectOptions, initializeLogger, tts } from '@livekit/agents';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -66,8 +66,8 @@ const respond: Connection = (ws, { request_id }) => {
   ws.send(JSON.stringify({ request_id, type: 'audio_end' }));
 };
 
-async function synthesize(provider: TTS, text: string) {
-  const stream = provider.stream();
+async function synthesize(provider: TTS, text: string, connOptions?: APIConnectOptions) {
+  const stream = provider.stream({ connOptions });
   const audio: tts.SynthesizedAudio[] = [];
   try {
     stream.pushText(text);
@@ -106,6 +106,23 @@ describe('Resemble SynthesizeStream retries', () => {
     expect(server.texts).toEqual([[text]]);
     expect(audio.length).toBeGreaterThan(0);
     expect(errors).toEqual([]);
+  });
+
+  it('does not retry a transient handshake failure with maxRetry set to zero', async () => {
+    const server = await startServer([respond], 1);
+    const provider = new TTS({ apiKey: 'test-key' });
+    const errors: unknown[] = [];
+    provider.on('error', (error) => errors.push(error));
+
+    const audio = await synthesize(provider, text, {
+      maxRetry: 0,
+      retryIntervalMs: 0,
+      timeoutMs: 1000,
+    });
+
+    expect(server.handshakes()).toBe(1);
+    expect(audio).toEqual([]);
+    expect(errors).toEqual([expect.objectContaining({ recoverable: false })]);
   });
 
   it('does not retry a rejected handshake when the credentials are invalid', async () => {

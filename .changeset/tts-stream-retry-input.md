@@ -12,4 +12,6 @@
 '@livekit/agents-plugin-speechify': patch
 ---
 
-Fix streaming TTS retries by replaying buffered input into isolated provider attempts, rebuilding one-shot provider state, and avoiding retries after audio has already been emitted or the stream was closed. Plugins that read their input once for the whole stream keep their own replay or resume, ElevenLabs sends nothing more to a context that failed or was interrupted, and Resemble retries connection failures that happen before audio.
+Replay buffered input when a streaming TTS attempt fails before audio. Release the buffer once the stream emits audio. Keep provider-owned retries for streams that manage their own input.
+
+ElevenLabs stops sending to interrupted or failed contexts. Sarvam keeps a failed socket from ending the stream before retry. Resemble honors the configured retry budget for pre-audio connection failures.

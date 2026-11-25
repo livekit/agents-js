@@ -151,7 +151,7 @@ describe('AgentSession text-only gating', () => {
 
   it('explicitly disables audio recording for text simulations', async () => {
     const ctx = jobCtxWithMode('SIMULATION_MODE_TEXT');
-    const initRecording = vi.spyOn(ctx, 'initRecording').mockResolvedValue();
+    const initRecording = vi.spyOn(ctx, '_initRecording').mockResolvedValue();
     const session = newSession();
 
     await runWithJobContextAsync(ctx, async () => {
@@ -169,13 +169,13 @@ describe('AgentSession text-only gating', () => {
       redaction: false,
       inputDelta: false,
     });
-    expect(initRecording).toHaveBeenCalledWith(session.sessionOptions.recordingOptions);
+    expect(initRecording).toHaveBeenCalledWith(session.sessionOptions.recordingOptions, true);
     await session.close();
   });
 
   it('initializes recording with recording off, so the hosted log decision is made at start', async () => {
     const ctx = jobCtxWithMode(null);
-    const initRecording = vi.spyOn(ctx, 'initRecording').mockResolvedValue();
+    const initRecording = vi.spyOn(ctx, '_initRecording').mockResolvedValue();
     const session = newSession();
 
     await runWithJobContextAsync(ctx, async () => {
@@ -187,6 +187,7 @@ describe('AgentSession text-only gating', () => {
 
     expect(initRecording).toHaveBeenCalledWith(
       expect.objectContaining({ audio: false, traces: false, logs: false, transcript: false }),
+      false,
     );
     await session.close();
   });
@@ -202,7 +203,7 @@ describe('AgentSession text-only gating', () => {
       const ctx = jobCtxWithMode('SIMULATION_MODE_TEXT');
       ctx.job.enableRedaction = true;
       ctx._redactionEnabled = jobRedaction;
-      vi.spyOn(ctx, 'initRecording').mockResolvedValue();
+      vi.spyOn(ctx, '_initRecording').mockResolvedValue();
       const session = newSession();
 
       await runWithJobContextAsync(ctx, () =>

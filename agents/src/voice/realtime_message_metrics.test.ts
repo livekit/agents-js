@@ -136,7 +136,7 @@ function fakeJobContext(enableRedaction: boolean): JobContext {
     job: { enableRecording: true, enableRedaction },
     _redactionEnabled: enableRedaction,
     simulationContext: () => undefined,
-    initRecording: vi.fn(async () => {}),
+    _initRecording: vi.fn(async () => {}),
     _primaryAgentSession: undefined,
     sessionDirectory: undefined,
   } as unknown as JobContext;

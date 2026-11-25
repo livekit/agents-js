@@ -1222,6 +1222,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
   #tts: TTS;
   #opts: ResolvedTTSOptions;
   #contextId: string;
+  #attemptStarted = false;
   #logger = log();
   #audioQueue: Buffer[] = [];
   #timedTranscriptQueue: TimedString[] = [];
@@ -1259,13 +1260,15 @@ export class SynthesizeStream extends tts.SynthesizeStream {
   protected async run(): Promise<void> {
     if (this.abortSignal.aborted) return;
 
-    this.#contextId = shortuuid();
+    if (this.#attemptStarted) this.#contextId = shortuuid();
+    this.#attemptStarted = true;
+    const contextId = this.#contextId;
     this.#audioQueue.length = 0;
     this.#timedTranscriptQueue.length = 0;
     this.#streamDone = false;
 
-    const requestId = this.#contextId;
-    const segmentId = this.#contextId;
+    const requestId = contextId;
+    const segmentId = contextId;
     let connection: Connection;
     try {
       connection = await this.#tts.currentConnection();
@@ -1300,14 +1303,14 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       if (suppressErrors) {
         contextClosed = true;
         try {
-          connection.closeContext(this.#contextId);
+          connection.closeContext(contextId);
         } catch {
           // The connection may already be closed during cancellation.
         }
         return;
       }
 
-      connection.closeContext(this.#contextId);
+      connection.closeContext(contextId);
       contextClosed = true;
     };
 
@@ -1363,7 +1366,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         const formattedText = `${text} `; // must always end with a space
         this.markStarted();
         connection.sendContent({
-          contextId: this.#contextId,
+          contextId,
           text: formattedText,
           flush: flushOnChunk,
         });
@@ -1373,9 +1376,9 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         this.#logger.warn('ElevenLabs stream ended with incomplete xml content');
       }
 
-      if (stopped || this.abortController.signal.aborted) return;
+      if (stopped || contextClosed || this.abortSignal.aborted) return;
       // Send final empty text to signal end of input
-      connection.sendContent({ contextId: this.#contextId, text: '', flush: true });
+      connection.sendContent({ contextId, text: '', flush: true });
       closeContext();
     };
 
@@ -1447,7 +1450,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       if (!this.input.closed) this.input.close();
       sentTokenizerStream.close();
       this.#streamDone = true;
-      connection.cancelContext(this.#contextId, e instanceof Error ? e : new Error(String(e)));
+      connection.cancelContext(contextId, e instanceof Error ? e : new Error(String(e)));
       await Promise.allSettled(tasks);
 
       // If aborted, this is a normal termination - don't throw
@@ -1460,7 +1463,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       }
       throw new APIStatusError({ message: 'Could not synthesize' });
     } finally {
-      connection.unregisterStream(this.#contextId);
+      connection.unregisterStream(contextId);
       closeContext(true);
       sentTokenizerStream.close();
       // Clean up abort listener
