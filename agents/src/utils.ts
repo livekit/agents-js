@@ -1411,17 +1411,36 @@ export async function* readStream<T>(
   const reader = stream.getReader();
   try {
     if (signal) {
-      const abortPromise = waitForAbort(signal);
-      while (true) {
-        const result = await ThrowsPromise.race([reader.read(), abortPromise]);
-        if (!result) {
-          break;
+      let wakeOnAbort: (() => void) | null = null;
+      const onAbort = () => wakeOnAbort?.();
+      signal.addEventListener('abort', onAbort, { once: true });
+      try {
+        while (!signal.aborted) {
+          const readPromise = reader.read();
+          const result = await new ThrowsPromise<
+            Awaited<ReturnType<typeof reader.read>> | undefined,
+            Error
+          >((resolve, reject) => {
+            if (signal.aborted) {
+              void readPromise.catch(() => {});
+              resolve(undefined);
+              return;
+            }
+            wakeOnAbort = () => resolve(undefined);
+            readPromise.then(resolve, reject);
+          });
+          wakeOnAbort = null;
+          if (!result) {
+            break;
+          }
+          const { done, value } = result;
+          if (done) {
+            break;
+          }
+          yield value;
         }
-        const { done, value } = result;
-        if (done) {
-          break;
-        }
-        yield value;
+      } finally {
+        signal.removeEventListener('abort', onAbort);
       }
     } else {
       while (true) {
