@@ -3,12 +3,14 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { APIConnectOptions } from '@livekit/agents';
 import {
+  APIError,
   AudioByteStream,
   DEFAULT_API_CONNECT_OPTIONS,
   Future,
   type TimedString,
   asError,
   createTimedString,
+  getJobContext,
   llm,
   log,
   shortuuid,
@@ -25,6 +27,8 @@ const PHONIC_NUM_CHANNELS = 1;
 const PHONIC_INPUT_FRAME_MS = 20;
 const DEFAULT_MODEL = 'merritt';
 const WS_CLOSE_NORMAL = 1000;
+const WS_CLOSE_NO_INPUT_TIMEOUT = 4500;
+const WS_CLOSE_TIME_LIMIT_REACHED = 4505;
 const TOOL_CALL_OUTPUT_TIMEOUT_MS = 60_000;
 const TOOL_CALL_OUTPUT_MAX_CHARS_FOR_HISTORY = 16_000;
 const CONVERSATION_HISTORY_PREFIX =
@@ -462,6 +466,24 @@ interface GenerationState {
 /**
  * Realtime session for Phonic (https://docs.phonic.co/)
  */
+/**
+ * Phonic ended the conversation because no input was received within
+ * `noInputEndConversationSec`.
+ */
+export class PhonicNoInputTimeoutError extends APIError {
+  constructor(message: string) {
+    super(message, { retryable: false });
+    this.name = 'PhonicNoInputTimeoutError';
+  }
+}
+
+export type ConversationEndedReason = 'assistant_ended_conversation' | 'time_limit_reached';
+
+/** Emitted as `phonic_conversation_ended` when Phonic ends the conversation normally. */
+export interface PhonicConversationEndedEvent {
+  reason: ConversationEndedReason;
+}
+
 export class RealtimeSession extends llm.RealtimeSession {
   private _tools: llm.ToolContext = llm.ToolContext.empty();
   private _chatCtx = llm.ChatContext.empty();
@@ -481,6 +503,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   private socket?: Awaited<ReturnType<PhonicClient['conversations']['connect']>>;
   #logger = log();
   private closed = false;
+  private conversationEnded = false;
   private configSent = false;
   private optionsResetScheduled = false;
   private instructionsReady = new Future<void>();
@@ -983,10 +1006,17 @@ export class RealtimeSession extends llm.RealtimeSession {
       this.handleServerMessage(message as ServerEvent),
     );
     this.socket.on('error', (error: Error) => this.emitError(error, false));
-    this.socket.on('close', (event: { code?: number }) => {
+    this.socket.on('close', (event: { code?: number; reason?: string }) => {
       this.closeCurrentGeneration({ interrupted: false });
       this.rejectPendingGenerateReply();
-      if (!this.closed && event.code !== WS_CLOSE_NORMAL) {
+      if (this.closed || event.code === WS_CLOSE_NORMAL) {
+        return;
+      }
+      if (event.code === WS_CLOSE_NO_INPUT_TIMEOUT) {
+        this.emitError(new PhonicNoInputTimeoutError(event.reason ?? 'no input received'), false);
+      } else if (event.code === WS_CLOSE_TIME_LIMIT_REACHED) {
+        this.endConversation('time_limit_reached');
+      } else {
         this.emitError(new Error(`Phonic STS socket closed with code ${event.code ?? -1}`), false);
       }
     });
@@ -1053,12 +1083,8 @@ export class RealtimeSession extends llm.RealtimeSession {
         this.emitError(new Error(message.error.message), false);
         break;
       case 'assistant_ended_conversation':
-        this.emitError(
-          new Error(
-            'assistant_ended_conversation is not supported by the Phonic realtime model with LiveKit Agents.',
-          ),
-          false,
-        );
+        this.endConversation('assistant_ended_conversation');
+        this.socket?.close();
         break;
       case 'conversation_created':
         this.conversationId = message.conversation_id;
@@ -1265,6 +1291,39 @@ export class RealtimeSession extends llm.RealtimeSession {
       this.pendingGenerateReplyFut.reject(new Error('session is closed'));
       this.pendingGenerateReplyFut = undefined;
     }
+  }
+
+  private endConversation(reason: ConversationEndedReason): void {
+    if (this.conversationEnded) {
+      return;
+    }
+    this.conversationEnded = true;
+    this.#logger.info(`Phonic ended the conversation: ${reason}`);
+    this.emit('phonic_conversation_ended', { reason } satisfies PhonicConversationEndedEvent);
+
+    // End the agent session the same way an app-initiated shutdown would, letting the final
+    // reply play out. Whether the room is deleted is left to the room options. There is no
+    // public accessor for the job's primary session, so this reads the field
+    // `telemetry.primarySession()` uses.
+    const agentSession = getJobContext(false)?._primaryAgentSession;
+    let ownsConversation = false;
+    try {
+      ownsConversation =
+        agentSession?.currentAgent.getActivityOrThrow().realtimeLLMSession === this;
+    } catch {
+      // no running agent, so nothing owns this conversation yet
+    }
+    if (ownsConversation) {
+      agentSession!.shutdown({ drain: true });
+      return;
+    }
+
+    // Only the job's primary session can be shut down from here. Any other owner, such as a
+    // second session, learns of the end as an error.
+    this.emitError(
+      new APIError(`Phonic ended the conversation: ${reason}`, { retryable: false }),
+      false,
+    );
   }
 
   private emitError(error: Error, recoverable: boolean): void {
