@@ -488,6 +488,7 @@ class Connection {
         if ('text' in msg) {
           // SynthesizeContent
           const content = msg as SynthesizeContent;
+          if (this.#closingContexts.has(content.contextId)) continue;
           const isNewContext = !this.#activeContexts.has(content.contextId);
 
           if (isNewContext) {
@@ -544,7 +545,7 @@ class Connection {
           // CloseContext
           const closeMsg = msg as CloseContext;
           if (this.#activeContexts.has(closeMsg.contextId)) {
-            if (dialogue) this.#closingContexts.add(closeMsg.contextId);
+            this.#closingContexts.add(closeMsg.contextId);
             const closePkt = {
               context_id: closeMsg.contextId,
               close_context: true,
@@ -1327,6 +1328,8 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       if (xmlContent.length > 0) {
         this.#logger.warn('ElevenLabs stream ended with incomplete xml content');
       }
+
+      if (this.abortController.signal.aborted || contextClosed) return;
 
       // Send final empty text to signal end of input
       connection.sendContent({ contextId: this.#contextId, text: '', flush: true });

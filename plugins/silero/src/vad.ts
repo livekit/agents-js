@@ -294,11 +294,16 @@ export class VADStream extends baseStream {
               .warn('VAD inference is slower than realtime');
           }
 
+          const isSpeech = p > this.#opts.activationThreshold;
           if (pubSpeaking) {
             pubSpeechDuration += windowDuration;
           } else {
             pubSilenceDuration += windowDuration;
           }
+
+          // Silence after the last speech window only counts once speech resumes,
+          // so it can't push the speech duration over the interruption threshold.
+          const trailingSilence = isSpeech ? 0 : silenceThresholdDuration + windowDuration;
 
           if (
             !this.sendVADEvent({
@@ -306,7 +311,7 @@ export class VADStream extends baseStream {
               samplesIndex: pubCurrentSample,
               timestamp: pubTimestamp,
               silenceDuration: pubSilenceDuration,
-              speechDuration: pubSpeechDuration,
+              speechDuration: Math.max(0, pubSpeechDuration - trailingSilence),
               probability: p,
               inferenceDuration,
               frames: [
@@ -350,7 +355,7 @@ export class VADStream extends baseStream {
             );
           };
 
-          if (p > this.#opts.activationThreshold) {
+          if (isSpeech) {
             speechThresholdDuration += windowDuration;
             silenceThresholdDuration = 0;
             if (!pubSpeaking && speechThresholdDuration >= this.#opts.minSpeechDuration) {
@@ -386,7 +391,6 @@ export class VADStream extends baseStream {
 
             if (pubSpeaking && silenceThresholdDuration > this.#opts.minSilenceDuration) {
               pubSpeaking = false;
-              pubSpeechDuration = 0;
               pubSilenceDuration = silenceThresholdDuration;
 
               if (
@@ -395,7 +399,7 @@ export class VADStream extends baseStream {
                   samplesIndex: pubCurrentSample,
                   timestamp: pubTimestamp,
                   silenceDuration: pubSilenceDuration,
-                  speechDuration: pubSpeechDuration,
+                  speechDuration: Math.max(0, pubSpeechDuration - silenceThresholdDuration),
                   probability: p,
                   inferenceDuration,
                   frames: [copySpeechBuffer()],
@@ -407,6 +411,7 @@ export class VADStream extends baseStream {
                 continue;
               }
 
+              pubSpeechDuration = 0;
               resetWriteCursor();
             }
           }
