@@ -541,6 +541,22 @@ describe('direct session', () => {
     expect(server.connections).toBe(1);
   });
 
+  it('caps the direct pool lifetime below the server session TTL', async () => {
+    const t = await makeDirectTTS();
+    await collect(t.synthesize('One.', NO_RETRY));
+    // The server ends a direct session ~1h (3_600_000 ms) after it is minted, regardless of use,
+    // so the pool must cap the connection below that and not refresh the clock on reuse -- else a
+    // connection used often enough never ages out and the server kills it mid-reply.
+    const pool = t.poolFor(VOICE) as unknown as {
+      maxSessionDuration?: number;
+      markRefreshedOnGet: boolean;
+    };
+    expect(pool.markRefreshedOnGet).toBe(false);
+    expect(pool.maxSessionDuration).toBeDefined();
+    expect(pool.maxSessionDuration!).toBeGreaterThan(0);
+    expect(pool.maxSessionDuration!).toBeLessThan(3_600_000);
+  });
+
   it('re-mints when the voice changes', async () => {
     const t = await makeDirectTTS();
     await collect(t.synthesize('One.', NO_RETRY));

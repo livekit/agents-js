@@ -31,6 +31,12 @@ const NUM_CHANNELS = 1;
 // expires) the next synthesis mints a fresh one.
 const SESSION_BUDGET_CHARS = 200_000;
 
+// The server ends a direct session roughly an hour after it is minted, regardless of use. A
+// direct pool caps its connection's lifetime below that and does not refresh the clock on reuse,
+// so a long-lived agent recycles the socket (minting a fresh session) before the server would end
+// it mid-reply. Kept comfortably under the ~3_600_000 ms server session TTL to absorb a live turn.
+const DIRECT_MAX_SESSION_DURATION = 3_300_000;
+
 /**
  * Finesse synthesizes at 24 kHz and upsamples above it. Below it, it produces only 8 kHz
  * telephony audio, so the rates it returns are 8000 and 24000 to 48000.
@@ -317,7 +323,8 @@ export class TTS extends tts.TTS {
     }
     this.#streams.clear();
     await this.pool.close();
-    for (const pool of this.#directPools.values()) await pool.close();
+    // Snapshot: a stream closing in the background can evict a pool via releaseDirect mid-loop.
+    for (const pool of [...this.#directPools.values()]) await pool.close();
     this.#directPools.clear();
     this.#directInuse.clear();
   }
@@ -336,8 +343,12 @@ export class TTS extends tts.TTS {
       pool = new ConnectionPool<WebSocket>({
         connectCb: (timeout) => this.connectDirect(timeout, voice),
         closeCb: (ws) => this.closeWs(ws),
-        maxSessionDuration: 300_000,
-        markRefreshedOnGet: true,
+        // A direct connection carries a server session that expires regardless of use, so cap its
+        // lifetime below that TTL and do not refresh the clock on reuse: the pool recycles it
+        // (minting a fresh session) before the server ends it. The base pool closes the retired
+        // socket before opening its replacement, so a rollover never holds two slots for one voice.
+        maxSessionDuration: DIRECT_MAX_SESSION_DURATION,
+        markRefreshedOnGet: false,
         connectTimeout: DEFAULT_API_CONNECT_OPTIONS.timeoutMs,
       });
       this.#directPools.set(voice, pool);
