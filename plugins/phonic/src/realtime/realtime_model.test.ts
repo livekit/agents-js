@@ -8,14 +8,19 @@ import { RealtimeModel, type RealtimeSession } from './realtime_model.js';
 type SentConfig = { system_prompt?: string; tools?: Array<{ tool_schema?: { name?: string } }> };
 
 const sentConfigs = vi.hoisted(() => [] as unknown[]);
+const sentGenerateReplies = vi.hoisted(() => [] as unknown[]);
+const messageHandlers = vi.hoisted(() => [] as Array<(message: unknown) => void>);
 
 vi.mock('phonic', () => ({
   PhonicClient: class {
     conversations = {
       connect: async () => ({
-        on: () => {},
+        on: (event: string, handler: (message: unknown) => void) => {
+          if (event === 'message') messageHandlers.push(handler);
+        },
         waitForOpen: async () => {},
         sendConfig: (config: unknown) => sentConfigs.push(config),
+        sendGenerateReply: (payload: unknown) => sentGenerateReplies.push(payload),
         close: () => {},
       }),
     };
@@ -96,5 +101,101 @@ describe('Phonic initial session options', () => {
 
     await session._updateSession('be brief', llm.ChatContext.empty(), llm.ToolContext.empty());
     await vi.waitFor(() => expect(sentConfigs).toHaveLength(1));
+  });
+});
+
+describe('Phonic modalities', () => {
+  let session: RealtimeSession | undefined;
+
+  afterEach(async () => {
+    await session?.close();
+    session = undefined;
+    sentConfigs.length = 0;
+    sentGenerateReplies.length = 0;
+    messageHandlers.length = 0;
+  });
+
+  const serverSends = (message: unknown) => {
+    for (const handler of messageHandlers) handler(message);
+  };
+
+  it('sends the text modality as top-level config fields', async () => {
+    const model = new RealtimeModel({
+      apiKey: 'test-key',
+      modalities: ['text'],
+      additionalParams: { foo: 1 },
+    });
+    session = model.session({ instructions: 'be brief' });
+
+    await vi.waitFor(() => expect(sentConfigs).toHaveLength(1));
+    const config = sentConfigs[0] as Record<string, unknown>;
+    expect(config.input_modality).toBe('text');
+    expect(config.output_modality).toBe('text');
+    expect(config.additional_params).toEqual({ foo: 1 });
+    expect(model.capabilities.audioOutput).toBe(false);
+    expect(model.capabilities.userTranscription).toBe(false);
+  });
+
+  it('sends no modality fields by default', async () => {
+    const model = new RealtimeModel({ apiKey: 'test-key' });
+    session = model.session({ instructions: 'be brief' });
+
+    await vi.waitFor(() => expect(sentConfigs).toHaveLength(1));
+    const config = sentConfigs[0] as Record<string, unknown>;
+    expect(config).not.toHaveProperty('input_modality');
+    expect(config).not.toHaveProperty('output_modality');
+    expect(config.additional_params).toBeUndefined();
+    expect(model.capabilities.audioOutput).toBe(true);
+    expect(model.capabilities.userTranscription).toBe(true);
+  });
+
+  it('sends typed turns as user messages in text mode', async () => {
+    session = new RealtimeModel({ apiKey: 'test-key', modalities: ['text'] }).session({
+      instructions: 'be brief',
+    });
+    await vi.waitFor(() => expect(sentConfigs).toHaveLength(1));
+    serverSends({ type: 'ready_to_start_conversation' });
+
+    const chatCtx = llm.ChatContext.empty();
+    chatCtx.addMessage({ role: 'user', content: 'What are your hours?' });
+    await session.updateChatCtx(chatCtx);
+    session.generateReply().catch(() => {});
+
+    await vi.waitFor(() => expect(sentGenerateReplies).toHaveLength(1));
+    expect(sentGenerateReplies[0]).toEqual({
+      type: 'generate_reply',
+      system_message: undefined,
+      user_message: 'What are your hours?',
+    });
+  });
+
+  it('ignores input_text in text mode', async () => {
+    session = new RealtimeModel({ apiKey: 'test-key', modalities: ['text'] }).session({
+      instructions: 'be brief',
+    });
+    await vi.waitFor(() => expect(sentConfigs).toHaveLength(1));
+    const transcripts: unknown[] = [];
+    session.on('input_audio_transcription_completed', (ev) => transcripts.push(ev));
+
+    serverSends({ type: 'input_text', text: 'What are your hours?' });
+
+    expect(transcripts).toHaveLength(0);
+    expect(session.chatCtx.items).toHaveLength(0);
+  });
+
+  it('starts text-only generations in text mode', async () => {
+    session = new RealtimeModel({ apiKey: 'test-key', modalities: ['text'] }).session({
+      instructions: 'be brief',
+    });
+    await vi.waitFor(() => expect(sentConfigs).toHaveLength(1));
+    const generations: llm.GenerationCreatedEvent[] = [];
+    session.on('generation_created', (ev) => generations.push(ev));
+
+    serverSends({ type: 'assistant_started_speaking' });
+
+    expect(generations).toHaveLength(1);
+    const { value: message } = await generations[0]!.messageStream.getReader().read();
+    expect(await message!.modalities).toEqual(['text']);
+    expect((await message!.audioStream.getReader().read()).done).toBe(true);
   });
 });
