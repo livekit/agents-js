@@ -160,6 +160,8 @@ export interface STTOptions {
     // (undocumented)
     smartFormat: boolean;
     // (undocumented)
+    tags?: string[];
+    // (undocumented)
     utteranceEndMs?: number | null;
 }
 
