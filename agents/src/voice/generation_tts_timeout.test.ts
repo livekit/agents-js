@@ -346,3 +346,29 @@ describe('TTS stream idle timeout', () => {
     expect(genData.ttfb).toBeDefined();
   }, 10_000);
 });
+
+describe('audio forwarding abort', () => {
+  it('does not capture the resampler tail after abort', async () => {
+    const stream = new ReadableStream<AudioFrame>({
+      start(controller) {
+        controller.enqueue(createSilentFrame(16000));
+        controller.enqueue(createSilentFrame(16000));
+      },
+    });
+    const audioOutput = new MockAudioOutput();
+    const controller = new AbortController();
+    const capture = audioOutput.captureFrame.bind(audioOutput);
+    // Abort while the first resampled frame is being captured, as an interruption would.
+    audioOutput.captureFrame = async (frame) => {
+      controller.abort();
+      await capture(frame);
+    };
+    const [task] = performAudioForwarding(stream, audioOutput, controller, () =>
+      audioOutput.resume(),
+    );
+
+    await task.result;
+
+    expect(audioOutput.capturedFrames).toHaveLength(1);
+  });
+});
