@@ -83,6 +83,74 @@ class MockLLM extends LLM {
   }
 }
 
+class ScriptedLLMStream extends LLMStream {
+  constructor(
+    llm: LLM,
+    opts: {
+      chatCtx: ChatContext;
+      connOptions: APIConnectOptions;
+      response?: string;
+      keepalives?: number;
+    },
+  ) {
+    super(llm, opts);
+    this.llm = llm;
+    this.response = opts.response;
+    this.keepalives = opts.keepalives ?? 0;
+  }
+
+  private llm: LLM;
+  private response?: string;
+  private keepalives: number;
+
+  protected async run(): Promise<void> {
+    if (this.response !== undefined) {
+      this.queue.put({ id: this.llm.model, delta: { role: 'assistant', content: this.response } });
+    }
+    // Usage-only chunks stand in for a provider's SSE keep-alives.
+    for (let i = 0; i < this.keepalives; i++) {
+      await delay(10);
+      this.queue.put({
+        id: this.llm.model,
+        usage: {
+          completionTokens: 0,
+          promptTokens: 1,
+          promptCachedTokens: 0,
+          totalTokens: 1,
+        },
+      });
+    }
+  }
+}
+
+class ScriptedLLM extends LLM {
+  keepalives = 0;
+
+  constructor(
+    private readonly modelName: string,
+    private readonly responses: Array<string | undefined>,
+  ) {
+    super();
+  }
+
+  override get model(): string {
+    return this.modelName;
+  }
+
+  label(): string {
+    return this.modelName;
+  }
+
+  chat(opts: { chatCtx: ChatContext; connOptions?: APIConnectOptions }): LLMStream {
+    return new ScriptedLLMStream(this, {
+      chatCtx: opts.chatCtx,
+      connOptions: opts.connOptions!,
+      response: this.responses.length ? this.responses.shift() : this.model,
+      keepalives: this.keepalives,
+    });
+  }
+}
+
 describe('FallbackAdapter', () => {
   beforeAll(() => {
     initializeLogger({ pretty: false });
@@ -264,6 +332,34 @@ describe('FallbackAdapter', () => {
       }),
     );
   });
+
+  it.each([
+    { firstToken: undefined, expected: 'fallback' },
+    { firstToken: 'primary', expected: 'primary' },
+  ])(
+    'fails over keep-alives without output but not after output: $expected',
+    async ({ firstToken, expected }) => {
+      const primary = new ScriptedLLM('primary', [firstToken]);
+      primary.keepalives = 5;
+      const fallback = new ScriptedLLM('fallback', []);
+      const adapter = new FallbackAdapter({
+        llms: [primary, fallback],
+        firstTokenTimeout: 20,
+      });
+
+      try {
+        const response = await adapter.chat({ chatCtx: {} as ChatContext }).collect();
+        expect(response.text).toBe(expected);
+      } finally {
+        await Promise.all(
+          adapter._status.flatMap(({ recoveringTask }) =>
+            recoveringTask === null ? [] : [recoveringTask],
+          ),
+        );
+        await adapter.aclose();
+      }
+    },
+  );
 
   it('names the instance that served in the usage metrics, not the one preferred next', async () => {
     class NamedMockLLM extends MockLLM {
