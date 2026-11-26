@@ -37,6 +37,23 @@ export interface DuplexOutputTranscriptDelta {
   endMs?: number;
 }
 
+/** One completed response from a model to which a duplex provider delegated work. @internal */
+export interface DelegatedResponse {
+  delegationId: string | null;
+  provider: string;
+  model: string;
+  startedAt: number;
+  endedAt: number;
+  responseId?: string | null;
+  responseModel?: string | null;
+  metrics?: LLMMetrics;
+  instructions?: string;
+  text: string;
+  functionCalls: FunctionCall[];
+  error?: string;
+  final: boolean;
+}
+
 /** Capabilities that vary between duplex providers. */
 export interface DuplexCapabilities {
   /** The provider emits transcripts of the user's audio. */

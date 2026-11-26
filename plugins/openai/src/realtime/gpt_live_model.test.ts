@@ -1,8 +1,10 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { initializeLogger, llm, log, type metrics, voice } from '@livekit/agents';
+import { initializeLogger, llm, log, type metrics, telemetry, voice } from '@livekit/agents';
 import { AudioFrame, AudioResampler } from '@livekit/rtc-node';
+import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base';
+import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import { setTimeout as delay, setImmediate } from 'node:timers/promises';
@@ -19,6 +21,18 @@ import {
 import type * as GPTLive from './gpt_live_types.js';
 
 initializeLogger({ pretty: false, level: 'silent' });
+async function assertTraceWellFormed(
+  spans: ReturnType<InMemorySpanExporter['getFinishedSpans']>,
+): Promise<void> {
+  const modulePath = new URL(
+    '../../../../agents/dist/telemetry/testing/trace_schema.js',
+    import.meta.url,
+  ).href;
+  const schema = (await import(modulePath)) as {
+    assertTraceWellFormed(value: typeof spans): void;
+  };
+  schema.assertTraceWellFormed(spans);
+}
 const weather = llm.tool({
   name: 'getWeather',
   description: 'Get the weather.',
@@ -877,6 +891,59 @@ describe('GPTLiveModel', () => {
     expect(server.events()[3]?.type).toBe('session.thinking.append');
   });
 
+  it('ends a delegation once its answer needs no continuation', async () => {
+    const session = create();
+    const responses: Array<[string | null | undefined, string, string | undefined, boolean]> = [];
+    session.on('_delegated_response', (response) =>
+      responses.push([response.responseId, response.text, response.error, response.final]),
+    );
+    await ready(session);
+    await session._updateTools(tools);
+    await server.response(session, { type: 'response.created' });
+    await server.response(session, callDone('c1'));
+    await server.response(session, completed());
+    await session._appendItems([output('c1')]);
+    await vi.waitFor(() => expect(server.events().at(-1)?.type).toBe('response.create'));
+    await server.response(session, { type: 'response.created' });
+    await server.response(session, {
+      type: 'response.output_item.done',
+      item: {
+        type: 'message',
+        content: [{ type: 'output_text', text: 'It is rainy.' }],
+      },
+    });
+    await server.response(session, {
+      ...completed(),
+      response: { ...completed().response, id: 'resp_2' },
+    });
+
+    expect(responses).toEqual([
+      ['resp_1', '', undefined, false],
+      ['resp_2', 'It is rainy.', undefined, true],
+    ]);
+  });
+
+  it('ends a failed response unless a tool output continues its delegation', async () => {
+    const session = create();
+    const responses: Array<[string | null | undefined, string | undefined, boolean]> = [];
+    session.on('_delegated_response', (response) =>
+      responses.push([response.responseId, response.error, response.final]),
+    );
+    await ready(session);
+    await session._updateTools(tools);
+    await server.response(session, { type: 'response.created' });
+    await server.response(session, callDone('c1'));
+    await session._appendItems([output('c1')]);
+    const failed = { type: 'response.failed', response: { error: { code: 'server_error' } } };
+    await server.response(session, failed);
+    await vi.waitFor(() => expect(server.events().at(-1)?.type).toBe('response.create'));
+    expect(responses).toEqual([[undefined, 'server_error', false]]);
+
+    await server.response(session, { type: 'response.created' });
+    await server.response(session, failed);
+    expect(responses.slice(1)).toEqual([[undefined, 'server_error', true]]);
+  });
+
   it('waits for every result in a parallel batch, including null delegation ids', async () => {
     const session = create();
     await ready(session);
@@ -1619,6 +1686,112 @@ describe('GPTLiveModel', () => {
 });
 
 describe('GPT-Live AgentSession integration', () => {
+  async function withSpans<T>(run: (exporter: InMemorySpanExporter) => Promise<T>): Promise<T> {
+    const previous = telemetry.tracer.getProvider();
+    const exporter = new InMemorySpanExporter();
+    const provider = new NodeTracerProvider({
+      spanProcessors: [new SimpleSpanProcessor(exporter)],
+    });
+    telemetry.setTracerProvider(provider);
+    try {
+      return await run(exporter);
+    } finally {
+      telemetry.setTracerProvider(previous);
+      await provider.shutdown();
+    }
+  }
+
+  it('traces delegated requests and final session usage', async () => {
+    await withSpans(async (exporter) => {
+      const agent = new voice.Agent({ instructions: 'Be concise.' });
+      const session = new voice.AgentSession({
+        llm: new GPTLiveModel({ apiKey: 'test', baseURL: server.url }),
+        vad: null,
+        aecWarmupDuration: null,
+      });
+      try {
+        await session.start({ agent });
+        const live = agent.duplexSession as GPTLiveSession;
+        await vi.waitFor(() => expect(live.sessionId).toBeDefined());
+        await server.send(live, { type: 'session.usage.updated', usage: { seconds: 14 } });
+        await server.response(live, { type: 'response.created' }, 'd1');
+        await server.response(live, completed(), 'd1');
+        await server.response(live, { type: 'response.created' }, 'd2');
+      } finally {
+        await session.close();
+      }
+
+      const spans = exporter.getFinishedSpans();
+      const sessionSpan = spans.find((span) => span.name === 'agent_session')!;
+      const closeSpan = spans.find((span) => span.name === 'session_close')!;
+      const delegations = spans.filter((span) => span.name === 'delegation');
+      const request = spans.find((span) => span.name === 'llm_request')!;
+      const delegation = delegations.find(
+        (span) => span.attributes[telemetry.traceTypes.ATTR_DELEGATION_ID] === 'd1',
+      )!;
+      const cutOff = delegations.find(
+        (span) => span.attributes[telemetry.traceTypes.ATTR_DELEGATION_ID] === 'd2',
+      )!;
+      expect(delegation.parentSpanContext?.spanId).toBe(sessionSpan.spanContext().spanId);
+      expect(request.parentSpanContext?.spanId).toBe(delegation.spanContext().spanId);
+      expect(cutOff.attributes[telemetry.traceTypes.ATTR_ERROR_TYPE]).toBe('session_closed');
+      expect(request.attributes[telemetry.traceTypes.ATTR_GEN_AI_RESPONSE_ID]).toBe('resp_1');
+      expect(request.attributes[telemetry.traceTypes.ATTR_GEN_AI_USAGE_INPUT_TOKENS]).toBe(376);
+
+      const usage = JSON.parse(
+        String(closeSpan.attributes[telemetry.traceTypes.ATTR_SESSION_USAGE]),
+      ) as Array<Record<string, unknown>>;
+      expect(usage.find((row) => row.model === 'gpt-live-1')).toMatchObject({
+        sessionDurationMs: 14000,
+      });
+      expect(usage.find((row) => row.model === 'gpt-5.6-sol')).toMatchObject({ inputTokens: 376 });
+      await assertTraceWellFormed(
+        spans.filter((span) => span.spanContext().traceId === sessionSpan.spanContext().traceId),
+      );
+    });
+  });
+
+  it('keeps a delegation span across a handoff that reuses the session', async () => {
+    await withSpans(async (exporter) => {
+      const first = new voice.Agent({ instructions: 'Be concise.' });
+      const session = new voice.AgentSession({
+        llm: new GPTLiveModel({ apiKey: 'test', baseURL: server.url }),
+        vad: null,
+        aecWarmupDuration: null,
+      });
+      try {
+        await session.start({ agent: first });
+        const live = first.duplexSession as GPTLiveSession;
+        await vi.waitFor(() => expect(live.sessionId).toBeDefined());
+        await server.response(live, { type: 'response.created' }, 'd1');
+        await server.response(live, { type: 'response.created' }, 'd1');
+
+        const second = new voice.Agent({ instructions: 'Be concise.' });
+        session.updateAgent(second);
+        await vi.waitFor(() => expect(second.duplexSession).toBe(live));
+      } finally {
+        await session.close();
+      }
+
+      const spans = exporter.getFinishedSpans();
+      const sessionSpan = spans.find((span) => span.name === 'agent_session')!;
+      const delegation = spans.find((span) => span.name === 'delegation')!;
+      const requests = spans.filter((span) => span.name === 'llm_request');
+      expect(requests.map((span) => span.attributes[telemetry.traceTypes.ATTR_ERROR_TYPE])).toEqual(
+        ['superseded', 'session_closed'],
+      );
+      expect(
+        requests.every(
+          (span) => span.parentSpanContext?.spanId === delegation.spanContext().spanId,
+        ),
+      ).toBe(true);
+      expect(delegation.attributes[telemetry.traceTypes.ATTR_ERROR_TYPE]).toBe('session_closed');
+      await assertTraceWellFormed(
+        spans.filter((span) => span.spanContext().traceId === sessionSpan.spanContext().traceId),
+      );
+    });
+  });
+
   it('runs framework tools and retains final usage through shutdown', async () => {
     const execute = vi.fn(async () => 'rainy');
     const agent = new voice.Agent({

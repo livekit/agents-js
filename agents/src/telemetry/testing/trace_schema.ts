@@ -66,6 +66,7 @@ export const SPAN_PARENTS: ReadonlyMap<string, ReadonlySet<AllowedParent>> = new
   // -- the session (voice/agent_session); ROOT outside a job (tests), or an integrator's own
   // span (the session inherits the current context when it starts)
   ['agent_session', parents('job_entrypoint', ROOT, EXTERNAL)],
+  ['delegation', parents('agent_session')],
   ['session_start', parents('agent_session')],
   ['session_close', parents('agent_session')],
   ['update_agent', parents('agent_session')],
@@ -103,7 +104,13 @@ export const SPAN_PARENTS: ReadonlyMap<string, ReadonlySet<AllowedParent>> = new
   //   llm_request (adapter) → llm_request_run → llm_request (provider) → llm_request_run
   [
     'llm_request',
-    parents('llm_node', 'llm_request_run', 'keyterm_detection', 'answering_machine_detection'),
+    parents(
+      'llm_node',
+      'llm_request_run',
+      'keyterm_detection',
+      'answering_machine_detection',
+      'delegation',
+    ),
   ],
   ['llm_request_run', parents('llm_request')],
   ['tts_request', parents('tts_node', 'tts_request_run')],

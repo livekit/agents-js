@@ -36,6 +36,8 @@ const SAFE_ATTRS: Attributes = {
   [traceTypes.ATTR_SPEECH_ID]: 'speech_1',
   [traceTypes.ATTR_EOU_MODEL]: 'turn-detector-v1',
   [traceTypes.ATTR_EOU_PROVIDER]: 'livekit',
+  [traceTypes.ATTR_DELEGATION_ID]: 'delegation_1',
+  [traceTypes.ATTR_SESSION_USAGE]: '[]',
 };
 
 function emit(options: {

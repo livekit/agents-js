@@ -2,12 +2,14 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { AudioFrame, VideoFrame } from '@livekit/rtc-node';
+import type { EventEmitter } from 'node:events';
 import type { ReadableStreamDefaultReader } from 'node:stream/web';
 import { calculateAudioDurationSeconds } from '../audio.js';
 import { AsyncIterableQueue, Future, shortuuid, toStream } from '../utils.js';
 import { type TimedString, createTimedString } from '../voice/io.js';
 import { ChatContext, ChatMessage, type FunctionCall } from './chat_context.js';
 import type {
+  DelegatedResponse,
   DuplexAudioFrame,
   DuplexModel,
   DuplexOutputTranscriptDelta,
@@ -304,6 +306,10 @@ export class DuplexRealtimeSession extends RealtimeSession {
     this.listen('input_speech_started', (ev) => this.emit('input_speech_started', ev));
     this.listen('input_speech_stopped', (ev) => this.emit('input_speech_stopped', ev));
     this.listen('metrics_collected', (ev) => this.emit('metrics_collected', ev));
+    const onDelegatedResponse = (ev: DelegatedResponse) => this.emit('_delegated_response', ev);
+    const eventEmitter = this.duplexSession as EventEmitter;
+    eventEmitter.on('_delegated_response', onDelegatedResponse);
+    this.unsubscribe.push(() => eventEmitter.off('_delegated_response', onDelegatedResponse));
     this.listen('error', (ev) => this.emit('error', ev));
     this.segmentTask = this.segment().catch(() => {
       this.logger.error('duplex audio consumer failed');

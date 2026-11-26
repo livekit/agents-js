@@ -148,8 +148,10 @@ const SAFE_KEYS = new Set([
   'lk.end_of_turn_delay',
   // Metrics
   'lk.llm_metrics',
+  'lk.delegation_id',
   'lk.tts_metrics',
   'lk.realtime_model_metrics',
+  'lk.session_usage',
   'lk.e2e_latency',
   // join keys, dispatch timeline, room/track ids, lifecycle enums (no content)
   'lk.room_sid',
