@@ -112,9 +112,30 @@ export interface PhonicToolConfig {
   forbid_speech_after_tool_call?: boolean;
   forbid_tool_call_after_speech?: boolean;
   allow_tool_chaining?: boolean;
+  execution_mode?: 'sync' | 'async';
+  wait_for_response?: boolean; // async tools only
+  uninterruptible?: boolean; // sync tools only
+  can_run_during_user_speech?: boolean;
+  tool_call_output_timeout_ms?: number;
   // Built-in tools only (set on the matching `phonicTools` entry):
   respond_after_sec?: number; // choose_not_to_respond: seconds to wait before a follow-up (or omit)
   speech_before_tool_call?: string; // keypad_input / natural_conversation_ending: required|optional|suppressed
+}
+
+/** Throw on per-tool option combinations Phonic rejects, which would otherwise end the session. */
+function checkToolConfigs(configs: PhonicToolConfig[] | undefined): void {
+  for (const cfg of configs ?? []) {
+    const mode = cfg.execution_mode ?? 'sync';
+    if (cfg.wait_for_response && mode !== 'async') {
+      throw new Error(`${cfg.name}: wait_for_response requires execution_mode 'async'`);
+    }
+    if (cfg.wait_for_response && cfg.allow_tool_chaining) {
+      throw new Error(`${cfg.name}: wait_for_response can't be combined with allow_tool_chaining`);
+    }
+    if (cfg.uninterruptible && mode !== 'sync') {
+      throw new Error(`${cfg.name}: uninterruptible requires execution_mode 'sync'`);
+    }
+  }
 }
 
 function toPhonicToolDefinition(tool: llm.FunctionTool): Phonic.ResponsesToolDefinition {
@@ -414,6 +435,8 @@ export class RealtimeModel extends llm.RealtimeModel {
       baseUrl: options.baseUrl,
     };
 
+    checkToolConfigs(options.configsForTools);
+
     if (options.forbidSpeechAfterToolCall) {
       log().warn(
         '`forbidSpeechAfterToolCall` is deprecated and will be removed in a future release; ' +
@@ -574,6 +597,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     let sentToolCallOutput = false;
     let sentAddSystemMessage = false;
     let forbidSpeech = false;
+    let openReplyTurn = false;
     let bufferedUserText = false;
     const lastItemId =
       chatCtx.items.length > 0 ? chatCtx.items[chatCtx.items.length - 1]?.id : undefined;
@@ -589,11 +613,15 @@ export class RealtimeSession extends llm.RealtimeSession {
           output: item.output,
         });
         sentToolCallOutput = true;
-        if (
-          !item.replyRequired ||
-          (item.name && this.configsForTools.get(item.name)?.forbid_speech_after_tool_call)
-        ) {
+        const cfg = item.name ? this.configsForTools.get(item.name) : undefined;
+        if (!item.replyRequired || cfg?.forbid_speech_after_tool_call) {
           forbidSpeech = true;
+        }
+        // Only a sync tool's reply starts right away. The agent may still be talking when an async
+        // tool's output arrives, and opening a turn now would cut it off, so that reply's turn
+        // opens on assistant_started_speaking.
+        if ((cfg?.execution_mode ?? 'sync') === 'sync') {
+          openReplyTurn = true;
         }
       }
       if (item?.type === 'message') {
@@ -628,7 +656,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     // Skip opening a new assistant turn when the tool forbids speech after its call:
     // Phonic will not speak, so the generation would otherwise dangle open (never
     // receiving audio nor a finished-speaking event) until the handoff reset / close.
-    if (sentToolCallOutput && !forbidSpeech) {
+    if (openReplyTurn && !forbidSpeech) {
       this.startNewAssistantTurn({ userInitiated: false });
     }
   }
@@ -676,13 +704,18 @@ export class RealtimeSession extends llm.RealtimeSession {
               strict: true,
             },
           },
-          tool_call_output_timeout_ms: TOOL_CALL_OUTPUT_TIMEOUT_MS,
+          execution_mode: cfg?.execution_mode ?? 'sync',
+          wait_for_response: cfg?.wait_for_response ?? false,
+          tool_call_output_timeout_ms:
+            cfg?.tool_call_output_timeout_ms ?? TOOL_CALL_OUTPUT_TIMEOUT_MS,
           // fixed, not configurable: the plugin does not support tool calls during agent speech
           wait_for_speech_before_tool_call: true,
           require_speech_before_tool_call: cfg?.require_speech_before_tool_call ?? false,
           allow_tool_chaining: cfg?.allow_tool_chaining ?? false,
           forbid_speech_after_tool_call: cfg?.forbid_speech_after_tool_call ?? false,
           forbid_tool_call_after_speech: cfg?.forbid_tool_call_after_speech ?? false,
+          uninterruptible: cfg?.uninterruptible ?? false,
+          can_run_during_user_speech: cfg?.can_run_during_user_speech ?? false,
         };
       });
   }
@@ -789,6 +822,7 @@ export class RealtimeSession extends llm.RealtimeSession {
     if (this.closed || Object.keys(config).length === 0) {
       return;
     }
+    checkToolConfigs(config.configsForTools);
 
     if (
       config.defaultLanguage !== undefined &&
