@@ -82,8 +82,15 @@ export class STT extends stt.STT {
     };
   }
 
-  stream(options: { connOptions?: APIConnectOptions } = {}): SpeechStream {
-    return new SpeechStream(this, this.#opts, options.connOptions);
+  stream(options: { language?: string; connOptions?: APIConnectOptions } = {}): SpeechStream {
+    const opts = {
+      ...this.#opts,
+      audioLanguage:
+        options.language !== undefined
+          ? normalizeLanguage(options.language)
+          : this.#opts.audioLanguage,
+    };
+    return new SpeechStream(this, opts, options.connOptions);
   }
 }
 
