@@ -56,6 +56,7 @@ export type STTLanguages =
 
 export interface STTOptions {
   apiKey?: string;
+  model?: string;
   interimResults: boolean;
   sampleRate: number;
   enableDiarization: boolean;
@@ -95,6 +96,34 @@ const defaultSTTOptions: Omit<STTOptions, 'apiKey'> = {
   endpointing: 100,
 };
 
+export function buildSTTWebSocketURL(opts: STTOptions): URL {
+  const streamURL = new URL(XAI_WEBSOCKET_URL);
+  streamURL.searchParams.set('encoding', 'pcm');
+  streamURL.searchParams.set('sample_rate', String(opts.sampleRate));
+  streamURL.searchParams.set('interim_results', String(opts.interimResults).toLowerCase());
+  streamURL.searchParams.set('diarize', String(opts.enableDiarization).toLowerCase());
+  streamURL.searchParams.set('language', opts.language);
+  streamURL.searchParams.set('endpointing', String(opts.endpointing));
+  if (opts.model !== undefined) {
+    streamURL.searchParams.set('model', opts.model);
+  }
+  if (opts.vadThreshold !== undefined) {
+    streamURL.searchParams.set('vad_threshold', String(opts.vadThreshold));
+  }
+  if (opts.smartTurn !== undefined) {
+    streamURL.searchParams.set('smart_turn', String(opts.smartTurn));
+  }
+  if (opts.smartTurnTimeout !== undefined) {
+    streamURL.searchParams.set('smart_turn_timeout', String(opts.smartTurnTimeout));
+  }
+  if (opts.keyterm !== undefined) {
+    for (const term of opts.keyterm) {
+      streamURL.searchParams.append('keyterm', term);
+    }
+  }
+  return streamURL;
+}
+
 export class STT extends stt.STT {
   #opts: STTOptions;
   #apiKey: string;
@@ -103,6 +132,10 @@ export class STT extends stt.STT {
 
   get provider(): string {
     return 'xai';
+  }
+
+  get model(): string {
+    return this.#opts.model ?? 'unknown';
   }
 
   constructor(opts: Partial<STTOptions> = {}) {
@@ -127,9 +160,13 @@ export class STT extends stt.STT {
     const file = new File([new Uint8Array(wavBuffer)], 'audio.wav', { type: 'audio/wav' });
 
     const formData = new FormData();
-    formData.append('file', file);
     formData.append('language', this.#opts.language);
     formData.append('format', 'true');
+    if (this.#opts.model !== undefined) {
+      formData.append('model', this.#opts.model);
+    }
+    // xAI requires the audio file to be the final multipart field.
+    formData.append('file', file);
 
     const resp = await fetch(XAI_REST_URL, {
       method: 'POST',
@@ -207,31 +244,7 @@ export class SpeechStream extends stt.SpeechStream {
     let ws: WebSocket;
 
     while (!this.input.closed && !this.closed) {
-      const streamURL = new URL(XAI_WEBSOCKET_URL);
-      streamURL.searchParams.set('encoding', 'pcm');
-      streamURL.searchParams.set('sample_rate', String(this.#opts.sampleRate));
-      streamURL.searchParams.set(
-        'interim_results',
-        String(this.#opts.interimResults).toLowerCase(),
-      );
-      streamURL.searchParams.set('diarize', String(this.#opts.enableDiarization).toLowerCase());
-      streamURL.searchParams.set('language', this.#opts.language);
-      // Ref: python livekit-plugins/livekit-plugins-xai/livekit/plugins/xai/stt.py - 372-375 lines
-      streamURL.searchParams.set('endpointing', String(this.#opts.endpointing));
-      if (this.#opts.vadThreshold !== undefined) {
-        streamURL.searchParams.set('vad_threshold', String(this.#opts.vadThreshold));
-      }
-      if (this.#opts.smartTurn !== undefined) {
-        streamURL.searchParams.set('smart_turn', String(this.#opts.smartTurn));
-      }
-      if (this.#opts.smartTurnTimeout !== undefined) {
-        streamURL.searchParams.set('smart_turn_timeout', String(this.#opts.smartTurnTimeout));
-      }
-      if (this.#opts.keyterm !== undefined) {
-        for (const term of this.#opts.keyterm) {
-          streamURL.searchParams.append('keyterm', term);
-        }
-      }
+      const streamURL = buildSTTWebSocketURL(this.#opts);
 
       try {
         ws = new WebSocket(streamURL, {
