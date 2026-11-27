@@ -4020,6 +4020,7 @@ export class AgentActivity implements RecognitionHooks {
         this.agent._chatCtx.insert(message);
         speechHandle._itemAdded([message]);
         this.agentSession._conversationItemAdded(message);
+        speechHandle._itemAdded([message]);
       }
 
       if (this.releaseAgentStateLease(stateLease, 'speaking')) {
