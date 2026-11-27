@@ -1,5 +1,23 @@
 # @livekit/agents-plugin-xai
 
+## 1.11.0
+
+### Patch Changes
+
+- Replace the one-shot answering-machine detection (AMD) with multi-turn AMD, ported from livekit/agents#6202. - [#3008](https://github.com/livekit/agents-js/pull/3008) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+  AMD now classifies each committed user turn through call screening, voicemail, and IVR stages until it completes. `execute()` returns an `AMDCompletedEvent` (`category`, `reason`, `voicemailMessagePlayed`, `lastPrediction`) instead of the first prediction. Start AMD with `await amd.start()` and close it with `await amd.aclose()`. The `amd_prediction` event fires for each turn, and the new `amd_completed` and `amd_menu_observed` events report completion and observed IVR menus. AMD holds machine replies until the participant is silent, adds stage instructions to replies, gives IVR replies the DTMF tool, and tracks voicemail playout. Set `screeningInstructions`, `voicemailInstructions`, or `ivrInstructions` to `null` to complete AMD without a reply when the call enters that stage, for example to hang up at the first voicemail prediction. `humanInstructions: null` keeps the Agent's own instructions. The `llm` option also accepts a `DecisionModel` that supports `choice` decisions; it classifies each turn with one choice, and AMD then skips IVR menu extraction.
+
+  Remote sessions get screening and wait as their own AMD categories, each prediction's turn ID, stage, and inference duration, and a new `amd_completed` event with the run's result. This requires `@livekit/protocol` 1.53.3 or later.
+
+  `AgentSession` gains internal turn hooks that AMD uses to observe committed turns and control their replies. `UserStateChangedEvent` gains `speechTimestamp`, and `FunctionToolsExecutedEvent` gains `hasAgentHandoff` and `cancelAgentHandoff()`. Agent handoffs, `session.say()`, and `session.generateReply()` throw while AMD runs, and entering AMD while an `AgentTask` is the current agent throws. While AMD runs, a tool's deferred update reply is dropped (its updates stay in the chat context), and the user turn limit does not call `onUserTurnExceeded`. Without `participantIdentity`, AMD listens to the participant that room I/O links. `sendDtmfEvents` returns a `ToolResult` that requests no follow-up reply and throws a `ToolError` without provider text when a publish fails. A realtime reply's tool follow-up keeps its instructions and tools, and the agent returns to `listening` when no tool reply follows. A closed `LLMStream` no longer retries.
+
+  AMD's own LiveKit Inference requests include `X-LiveKit-Client-Feature: AMD`. `inference.STT.stream()` accepts `extraHeaders`, which persist across reconnects, and Inference STT connections include SDK metadata headers.
+
+- Updated dependencies [[`462e54b`](https://github.com/livekit/agents-js/commit/462e54b7fc7d5f65e1c39c49f4be61aab003cd3c), [`5fa40c3`](https://github.com/livekit/agents-js/commit/5fa40c3e108ea47487678be8e281183dbd6d0da2), [`54cd068`](https://github.com/livekit/agents-js/commit/54cd068645b4bfb1729dfdbafd55ec36cf4e379e), [`9155a34`](https://github.com/livekit/agents-js/commit/9155a349ce01957374f12758199c4dd54a332df0), [`669d7d1`](https://github.com/livekit/agents-js/commit/669d7d1fcd567e7067b514eab1f0dbecb82b1b16), [`b86ba76`](https://github.com/livekit/agents-js/commit/b86ba76fed1726916c6cee81034c9505366a10e4), [`f170f63`](https://github.com/livekit/agents-js/commit/f170f632142cf71d7e17b99cefff9cac3135ffc7), [`0e78274`](https://github.com/livekit/agents-js/commit/0e78274971de67377615852d6db5831b18fd549a), [`556fcc1`](https://github.com/livekit/agents-js/commit/556fcc1ee285164557a459ca4b0ef7780a88118e), [`e9e8bd7`](https://github.com/livekit/agents-js/commit/e9e8bd72b8a5f54c2dd4e09851afaf63235232b6), [`3b80d1b`](https://github.com/livekit/agents-js/commit/3b80d1b37c5b0ed386ecdebfc150ff4ae4df76e1)]:
+  - @livekit/agents@1.11.0
+  - @livekit/agents-plugin-openai@1.11.0
+
 ## 1.10.1
 
 ### Patch Changes

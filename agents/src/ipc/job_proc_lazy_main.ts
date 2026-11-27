@@ -189,7 +189,7 @@ const startJob = (
 ): JobTask => {
   // Project redaction is the safe choice until the job context applies the simulation rule.
   const hostedOutput = redirectJobOutput(info.job.id, {
-    logs: Boolean(info.job.enableRecording),
+    logs: true,
     redaction: Boolean(info.job.enableRedaction),
   });
   if (hostedOutput) {
@@ -235,10 +235,7 @@ const startJob = (
   ctx._simulationEndFnc = onSimulationEnd;
   ctx._hostedOutput = hostedOutput;
   if (hostedOutput) {
-    hostedOutput.undecidedChoice = {
-      logs: Boolean(info.job.enableRecording),
-      redaction: ctx._redactionEnabled,
-    };
+    hostedOutput.undecidedChoice = { logs: true, redaction: ctx._redactionEnabled };
   }
   // token mode: the job holds no API key or secret, and gets its tokens from the server
   if (!info.apiKey && !info.apiSecret && getWorkerToken()) {

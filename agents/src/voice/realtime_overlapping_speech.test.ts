@@ -247,7 +247,7 @@ describe('realtime overlapping speech', () => {
       expect(output.pauses).toBe(0);
       expect(speech.interrupted).toBe(false);
 
-      activity.onEndOfSpeech();
+      activity.onEndOfSpeech(undefined, Date.now());
       activity.onOverlapSpeech({
         type: 'overlapping_speech',
         isInterruption: false,
@@ -365,7 +365,7 @@ describe('realtime overlapping speech', () => {
         await setImmediate();
         expect(model.activeSession.asks).toBe(0);
         expect(output.frames).toBe(0);
-        activity.onEndOfSpeech();
+        activity.onEndOfSpeech(undefined, Date.now());
         await setImmediate();
         expect(model.activeSession.asks).toBe(1);
         expect(output.frames).toBeGreaterThan(0);

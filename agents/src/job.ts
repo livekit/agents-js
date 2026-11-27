@@ -481,10 +481,8 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
   _onCleanup(): void {
     if (this._hostedOutput && !this._hostedOutput.decided) {
       this._hostedOutput.decide(
-        this._rejectedRecording ?? {
-          logs: Boolean(this.job.enableRecording),
-          redaction: this._redactionEnabled,
-        },
+        // no session decided: export, and LiveKit Cloud applies the project setting
+        this._rejectedRecording ?? { logs: true, redaction: this._redactionEnabled },
       );
     }
     if (!this._recordingInitialized) {
@@ -838,19 +836,31 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
   }
 
   async initRecording(options: ResolvedRecordingOptions) {
+    return this._initRecording(options);
+  }
+
+  /**
+   * @param options - what this SDK uploads to LiveKit Cloud
+   * @param exportJobLogFile - whether the job's hosted log file is exported; follows
+   *   `options.logs` when omitted
+   *
+   * @internal
+   */
+  async _initRecording(options: ResolvedRecordingOptions, exportJobLogFile?: boolean) {
     if (this.isFakeJob) {
       return;
     }
+    const logs = exportJobLogFile ?? options.logs;
 
     const redactionEnabled = Boolean(
       options.redaction || (this.job.enableRedaction && !this.simulationContext()),
     );
     if (redactionEnabled && options.audio && !options.transcript) {
-      this._rejectedRecording = { logs: options.logs, redaction: redactionEnabled };
+      this._rejectedRecording = { logs, redaction: redactionEnabled };
       if (this._hostedOutput) this._hostedOutput.undecidedChoice = this._rejectedRecording;
       throw new Error('audio upload requires transcript upload when redaction is enabled');
     }
-    this._hostedOutput?.decide({ logs: options.logs, redaction: redactionEnabled });
+    this._hostedOutput?.decide({ logs, redaction: redactionEnabled });
     // never lowered: a later session without redaction must not expose an earlier session's data
     this._redactionEnabled ||= redactionEnabled;
 

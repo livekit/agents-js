@@ -36,8 +36,8 @@ import { assertTraceWellFormed } from '../telemetry/testing/trace_schema.js';
 import { Future, delay } from '../utils.js';
 import { VAD, type VADEvent, VADEventType, VADStream } from '../vad.js';
 import { Agent } from './agent.js';
+import { AgentActivity } from './agent_activity.js';
 import { AgentSession } from './agent_session.js';
-import type { AMD } from './amd.js';
 import {
   AudioRecognition,
   type RecognitionHooks,
@@ -763,20 +763,25 @@ describe.sequential('eou_wait span', () => {
     });
 
     it('leaves a skipped turn for recognition to end, transcript included', async () => {
-      // AMD taking over the turn skips the reply: the activity's completion task returns at
-      // once, so it must not adopt the span, or it would end it before recognition stamps it
+      // a turn that skips the reply returns from the activity's completion task at once, so
+      // it must not adopt the span, or it would end it before recognition stamps it
       const hook = vi.fn(async () => {});
-      await runOneTurn(
-        new HookAgent(hook),
-        (session) =>
-          session._setAmd({
-            onUserSpeechStarted: () => {},
-            onUserSpeechEnded: () => {},
-            onTranscript: () => {},
-            onEndOfTurn: () => true,
-          } as unknown as AMD),
-        () => spansNamed(exporter, 'user_turn').length > 0,
-      );
+      const onEndOfTurn = AgentActivity.prototype.onEndOfTurn;
+      const skipReply = vi
+        .spyOn(AgentActivity.prototype, 'onEndOfTurn')
+        .mockImplementation(function (this: AgentActivity, info) {
+          info.skipReply = true;
+          return onEndOfTurn.call(this, info);
+        });
+      try {
+        await runOneTurn(
+          new HookAgent(hook),
+          undefined,
+          () => spansNamed(exporter, 'user_turn').length > 0,
+        );
+      } finally {
+        skipReply.mockRestore();
+      }
 
       const userTurn = only(exporter, 'user_turn');
       expect(userTurn.attributes[traceTypes.ATTR_USER_TRANSCRIPT]).toBe(TRANSCRIPT);

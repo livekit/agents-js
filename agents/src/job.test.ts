@@ -677,6 +677,12 @@ describe('JobContext hosted log decision', () => {
     expect(decide).toHaveBeenCalledWith({ logs: false, redaction: true });
   });
 
+  it('exports the job file when the project recording is off', async () => {
+    const { ctx, decide } = withOutput();
+    await ctx._initRecording({ ...options, redaction: false }, true);
+    expect(decide).toHaveBeenCalledWith({ logs: true, redaction: false });
+  });
+
   it('lets a valid retry decide after rejected options', async () => {
     const { ctx, decide } = withOutput();
     await expect(
@@ -729,12 +735,12 @@ describe('JobContext hosted log decision', () => {
   });
 
   it.each([true, false])(
-    'follows the job recording at cleanup when no session decided (recording %s)',
+    'exports the job file at cleanup when no session decided (project recording %s)',
     (recording) => {
       const { ctx, decide } = withOutput(true, recording);
       ctx._recordingInitialized = true;
       ctx._onCleanup();
-      expect(decide).toHaveBeenCalledWith({ logs: recording, redaction: true });
+      expect(decide).toHaveBeenCalledWith({ logs: true, redaction: true });
     },
   );
 });

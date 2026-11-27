@@ -30,6 +30,7 @@ import {
 } from './api_protos.js';
 import {
   type AnyString,
+  buildMetadataHeaders,
   connectWs,
   createAccessToken,
   getDefaultInferenceUrl,
@@ -762,18 +763,28 @@ export class STT<TModel extends STTModels> extends BaseSTT {
     }
   }
 
+  /**
+   * Create a streaming transcription session.
+   *
+   * `extraHeaders` are sent on every connection the stream opens, reconnects included. SDK
+   * identification headers take precedence.
+   */
   stream(options?: {
     language?: STTLanguages | string;
     connOptions?: APIConnectOptions;
+    extraHeaders?: Record<string, string>;
   }): SpeechStream<TModel> {
-    const { language, connOptions = this.opts.connOptions ?? DEFAULT_API_CONNECT_OPTIONS } =
-      options || {};
+    const {
+      language,
+      connOptions = this.opts.connOptions ?? DEFAULT_API_CONNECT_OPTIONS,
+      extraHeaders,
+    } = options || {};
     const streamOpts = {
       ...this.opts,
       language: language !== undefined ? normalizeLanguage(language) : this.opts.language,
     } as InferenceSTTOptions<TModel>;
 
-    const stream = new SpeechStream(this, streamOpts, connOptions);
+    const stream = new SpeechStream(this, streamOpts, connOptions, extraHeaders);
     this.streams.add(stream);
 
     return stream;
@@ -800,6 +811,7 @@ export class STT<TModel extends STTModels> extends BaseSTT {
     opts: InferenceSTTOptions<TModel> = this.opts,
     sessionKeyterms: string[] = this._sessionKeyterms,
     handoffProbeId?: string,
+    extraHeaders: Record<string, string> = {},
   ): Promise<WebSocket> {
     // a copy of the caller's options: the hint is gated on this frame, never cleared from them
     const extra = {
@@ -857,7 +869,11 @@ export class STT<TModel extends STTModels> extends BaseSTT {
 
     const token = await createAccessToken(opts.apiKey, opts.apiSecret);
     const url = `${baseURL}/stt?model=${encodeURIComponent(opts.model ?? 'auto')}`;
-    const headers = { Authorization: `Bearer ${token}` } as Record<string, string>;
+    const headers: Record<string, string> = {
+      ...extraHeaders,
+      ...buildMetadataHeaders(),
+      Authorization: `Bearer ${token}`,
+    };
 
     const socket = await connectWs(url, headers, timeout);
     const msg = { ...params, type: 'session.create' };
@@ -879,6 +895,7 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
   private stt: STT<TModel>;
   private readonly vad: Promise<VAD | undefined>;
   private connOptions: APIConnectOptions;
+  private extraHeaders: Record<string, string>;
   private activeWs?: WebSocket;
   private requestedHandoffId?: string;
   private handoffId?: string;
@@ -950,12 +967,14 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
     sttImpl: STT<TModel>,
     opts: InferenceSTTOptions<TModel>,
     connOptions: APIConnectOptions,
+    extraHeaders: Record<string, string> = {},
   ) {
     super(sttImpl, opts.sampleRate, connOptions);
     this.opts = opts;
     this.stt = sttImpl;
     this.vad = sttImpl.vadPromise;
     this.connOptions = connOptions;
+    this.extraHeaders = { ...extraHeaders };
     const keyterms = keytermsExtraForModel(opts.model, {
       extraKwargs: opts.modelOptions as Record<string, unknown>,
       sessionKeyterms: sttImpl._sessionKeyterms,
@@ -1324,7 +1343,13 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
           Math.min(this.connOptions.timeoutMs, Math.max(1, handoffDeadline - Date.now()));
         try {
           old.send(JSON.stringify({ type: 'session.handoff.pause', handoff_id: id }));
-          const candidate = await this.stt.connectWs(probeTimeout(), handoffOpts, [], id);
+          const candidate = await this.stt.connectWs(
+            probeTimeout(),
+            handoffOpts,
+            [],
+            id,
+            this.extraHeaders,
+          );
           if (signal.aborted) {
             candidate.close();
             return;
@@ -1655,7 +1680,13 @@ export class SpeechStream<TModel extends STTModels> extends BaseSpeechStream {
         dialOptions = mergeSTTOptions(dialOptions, update);
       }
       try {
-        ws = await this.stt.connectWs(this.connOptions.timeoutMs, dialOptions, []);
+        ws = await this.stt.connectWs(
+          this.connOptions.timeoutMs,
+          dialOptions,
+          [],
+          undefined,
+          this.extraHeaders,
+        );
         // An abort that landed during connectWs has no listener yet: close the socket in cleanup.
         if (this.abortController.signal.aborted) break;
         this.activeWs = ws;
