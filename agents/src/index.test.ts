@@ -12,6 +12,7 @@ import {
   logMetrics,
   tool,
 } from './index.js';
+import * as agents from './index.js';
 
 describe('index exports', () => {
   it('exports voice, llm, and metrics APIs directly from the package root', () => {
@@ -23,5 +24,11 @@ describe('index exports', () => {
     expect(logMetrics).toBeDefined();
     expect(SpeechHandle).toBeDefined();
     expect(SpeechHandleCircularWaitError).toBeDefined();
+  });
+
+  it('exports choose only under the simulation namespace', () => {
+    expect(agents.simulation.choose).toBeDefined();
+    expect(agents.simulation.SimulationContext).toBe(agents.SimulationContext);
+    expect('choose' in agents).toBe(false);
   });
 });
