@@ -290,9 +290,11 @@ describe('OpenAI Responses WS incomplete handling', () => {
         strictToolSchema: true,
       });
 
-      for await (const _chunk of llmStream) void _chunk;
+      const thrown = await llmStream.collect().catch((e: unknown) => e);
       const error = await errorEvent;
 
+      // the consumer gets the same error the 'error' event carries
+      expect(thrown).toBe(error);
       expect(error).toBeInstanceOf(APIStatusError);
       expect(error.message).toContain(expectedMessage);
       expect((error as APIStatusError).statusCode).toBe(-1);

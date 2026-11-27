@@ -550,12 +550,21 @@ describe('Google Gemini 4 stream checkpoints', () => {
     const error = new Promise<Error>((resolve) => {
       model.once('error', (event) => resolve(event.error));
     });
-    const result = await model.chat({ chatCtx: llm.ChatContext.empty() }).collect();
-    expect(result.text).toBe('AB');
+    const text: string[] = [];
+    const thrown = await (async () => {
+      for await (const chunk of model.chat({ chatCtx: llm.ChatContext.empty() })) {
+        if (chunk.delta?.content) {
+          text.push(chunk.delta.content);
+        }
+      }
+    })().catch((e: unknown) => e);
+    expect(text.join('')).toBe('AB');
     expect(configs).toHaveLength(1);
     await expect(error).resolves.toMatchObject({
       message: expect.stringContaining('connection reset'),
     });
+    // the consumer gets the same error the 'error' event carries
+    expect(thrown).toBe(await error);
   });
 
   it('does not replay output after a continuation without a fresh token', async () => {
@@ -600,10 +609,15 @@ describe('Google Gemini 4 stream checkpoints', () => {
     const error = new Promise<Error>((resolve) => {
       model.once('error', (event) => resolve(event.error));
     });
-    await model.chat({ chatCtx: llm.ChatContext.empty() }).collect();
+    const thrown = await model
+      .chat({ chatCtx: llm.ChatContext.empty() })
+      .collect()
+      .catch((e: unknown) => e);
     await expect(error).resolves.toMatchObject({
       message: expect.stringContaining('connection reset'),
     });
+    // the consumer gets the same error the 'error' event carries
+    expect(thrown).toBe(await error);
   });
 });
 

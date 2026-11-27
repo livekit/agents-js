@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { APIStatusError, ChatContext, initializeLogger } from '@livekit/agents';
-import { llm, llmStrict } from '@livekit/agents-plugins-test';
+import { APIStatusError, ChatContext, initializeLogger, llm } from '@livekit/agents';
+import { llmStrict, llm as testLLM } from '@livekit/agents-plugins-test';
 import type OpenAI from 'openai';
 import { describe, expect, it } from 'vitest';
 import { wsServerEventSchema } from '../ws/types.js';
@@ -80,9 +80,6 @@ async function attemptsUntilStall(events: ResponsesEvent[], maxRetry: number): P
     useWebSocket: false,
     client: client as unknown as OpenAI,
   });
-  // the stream emits 'error' on every failed attempt; without a listener the
-  // EventEmitter turns it into an unhandled error and fails the run
-  model.on('error', () => {});
 
   const chatCtx = ChatContext.empty();
   chatCtx.addMessage({ role: 'user', content: 'hi' });
@@ -96,7 +93,7 @@ async function attemptsUntilStall(events: ResponsesEvent[], maxRetry: number): P
       void _chunk;
     }
   } catch {
-    // the stall surfaces through the 'error' event; the iterator just ends
+    // iteration throws the stall's final error; only the attempt count matters here
   }
 
   return attempts;
@@ -158,9 +155,11 @@ describe('OpenAI Responses HTTP incomplete handling', () => {
       chatCtx,
       connOptions: { maxRetry: 2, retryIntervalMs: 0, timeoutMs: 5000 },
     });
-    for await (const _chunk of stream) void _chunk;
+    const thrown = await stream.collect().catch((e: unknown) => e);
     const error = await errorEvent;
 
+    // the consumer gets the same error the 'error' event carries
+    expect(thrown).toBe(error);
     expect(error).toBeInstanceOf(APIStatusError);
     expect(error.message).toContain(expectedMessage);
     expect((error as APIStatusError).statusCode).toBe(-1);
@@ -170,9 +169,54 @@ describe('OpenAI Responses HTTP incomplete handling', () => {
   });
 });
 
+describe('OpenAI Responses under FallbackAdapter', () => {
+  it('retries a failed request when nobody listens for error events', async () => {
+    let attempts = 0;
+    const client = {
+      responses: {
+        create: async () => {
+          attempts++;
+          if (attempts === 1) {
+            throw new Error('connection reset');
+          }
+          return {
+            async *[Symbol.asyncIterator]() {
+              yield RESPONSE_CREATED;
+              yield TEXT_DELTA;
+            },
+          };
+        },
+      },
+    };
+    // no 'error' listener on the model: FallbackAdapter does not install one on its children
+    const model = new LLM({
+      model: 'gpt-4.1',
+      apiKey: 'test-key',
+      useWebSocket: false,
+      client: client as unknown as OpenAI,
+    });
+    const fallback = new llm.FallbackAdapter({
+      llms: [model],
+      maxRetryPerLLM: 1,
+      retryInterval: 0,
+    });
+    const chatCtx = ChatContext.empty();
+    chatCtx.addMessage({ role: 'user', content: 'hi' });
+
+    let text = '';
+    for await (const chunk of fallback.chat({ chatCtx })) {
+      text += chunk.delta?.content ?? '';
+    }
+
+    expect(text).toBe('hello');
+    expect(attempts).toBe(2);
+    await fallback.aclose();
+  });
+});
+
 if (hasOpenAIApiKey) {
   describe('OpenAI Responses', async () => {
-    await llm(
+    await testLLM(
       new LLM({
         temperature: 0,
         strictToolSchema: false,

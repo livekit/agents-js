@@ -9,6 +9,7 @@ import {
 } from '@opentelemetry/sdk-trace-base';
 import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { APIConnectionError, APIError } from '../_exceptions.js';
 import { initializeLogger } from '../log.js';
 import type { LLMMetrics } from '../metrics/base.js';
 import { genAI, inputDelta, setTracerProvider, traceTypes, tracer } from '../telemetry/index.js';
@@ -471,5 +472,133 @@ describe('LLMStream.collect', () => {
     expect(response.toolCalls).toHaveLength(0);
     expect(response.usage).toBeUndefined();
     expect(response.extra).toEqual({});
+  });
+});
+
+describe('LLMStream failures', () => {
+  // each run() attempt takes the next entry: put its chunks, wait, then throw its error if any
+  type Attempt = { chunks?: string[]; delayMs?: number; error?: Error };
+
+  class ScriptedLLM extends LLM {
+    attempts = 0;
+
+    constructor(readonly script: Attempt[]) {
+      super();
+    }
+
+    label(): string {
+      return 'scripted-llm';
+    }
+
+    chat(opts: {
+      chatCtx: ChatContext;
+      toolCtx?: ToolCtxInput;
+      connOptions?: APIConnectOptions;
+      parallelToolCalls?: boolean;
+      toolChoice?: ToolChoice;
+      extraKwargs?: Record<string, unknown>;
+    }): LLMStream {
+      // eslint-disable-next-line @typescript-eslint/no-this-alias
+      const llm = this;
+      return new (class extends LLMStream {
+        protected async run(): Promise<void> {
+          const attempt = llm.script[llm.attempts++] ?? {};
+          for (const content of attempt.chunks ?? []) {
+            this.queue.put({ id: 'scripted', delta: { role: 'assistant', content } });
+          }
+          if (attempt.delayMs) await delay(attempt.delayMs);
+          if (attempt.error) throw attempt.error;
+        }
+      })(this, {
+        chatCtx: opts.chatCtx,
+        connOptions: opts.connOptions ?? { maxRetry: 1, retryIntervalMs: 0, timeoutMs: 1000 },
+      });
+    }
+  }
+
+  const recordErrors = (llm: LLM) => {
+    const events: { message: string; recoverable: boolean }[] = [];
+    llm.on('error', (ev) =>
+      events.push({ message: ev.error.message, recoverable: ev.recoverable }),
+    );
+    return events;
+  };
+
+  it('throws the failure to the consumer after the chunks produced before it', async () => {
+    const llm = new ScriptedLLM([
+      { chunks: ['Hel'], error: new APIError('provider failed', { retryable: false }) },
+    ]);
+    const events = recordErrors(llm);
+    const received: string[] = [];
+
+    const consume = async () => {
+      for await (const chunk of llm.chat({ chatCtx: new ChatContext() })) {
+        received.push(chunk.delta?.content ?? '');
+      }
+    };
+
+    await expect(consume()).rejects.toThrow('provider failed');
+    expect(received).toEqual(['Hel']);
+    // listeners still get the error event
+    expect(events).toEqual([{ message: 'provider failed', recoverable: false }]);
+  });
+
+  it('throws the final error once the retries are used up', async () => {
+    const llm = new ScriptedLLM([
+      { error: new APIError('first attempt') },
+      { error: new APIError('second attempt') },
+    ]);
+    const events = recordErrors(llm);
+
+    await expect(llm.chat({ chatCtx: new ChatContext() }).collect()).rejects.toBeInstanceOf(
+      APIConnectionError,
+    );
+    expect(events).toEqual([
+      { message: 'first attempt', recoverable: true },
+      { message: 'second attempt', recoverable: false },
+    ]);
+  });
+
+  it('does not throw when a retry succeeds', async () => {
+    const llm = new ScriptedLLM([{ error: new APIError('transient') }, { chunks: ['hello'] }]);
+    recordErrors(llm);
+
+    const response = await llm.chat({ chatCtx: new ChatContext() }).collect();
+
+    expect(response.text).toBe('hello');
+  });
+
+  it('retries and throws the provider error when nobody listens for error events', async () => {
+    // Node's EventEmitter throws on an unheard `error` event; that must not replace the
+    // provider's error or end the retries
+    const failing = new ScriptedLLM([
+      { error: new APIError('provider failed', { retryable: false }) },
+    ]);
+    await expect(failing.chat({ chatCtx: new ChatContext() }).collect()).rejects.toThrow(
+      'provider failed',
+    );
+
+    const flaky = new ScriptedLLM([{ error: new APIError('transient') }, { chunks: ['hello'] }]);
+    const response = await flaky.chat({ chatCtx: new ChatContext() }).collect();
+    expect(response.text).toBe('hello');
+    expect(flaky.attempts).toBe(2);
+  });
+
+  it('does not throw to a consumer that closed the stream', async () => {
+    const llm = new ScriptedLLM([
+      {
+        chunks: ['Hel'],
+        delayMs: 20,
+        error: new APIError('provider failed', { retryable: false }),
+      },
+    ]);
+    recordErrors(llm);
+    const stream = llm.chat({ chatCtx: new ChatContext() });
+
+    expect((await stream.next()).value?.delta?.content).toBe('Hel');
+    stream.close();
+    await delay(40);
+
+    expect((await stream.next()).done).toBe(true);
   });
 });
