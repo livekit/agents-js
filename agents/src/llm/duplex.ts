@@ -43,6 +43,8 @@ export interface DuplexCapabilities {
   userTranscription: boolean;
   /** The provider starts its next reply after receiving tool results. */
   autoToolReplyGeneration: boolean;
+  /** The provider accepts each tool output as soon as its tool returns and decides when to reply. */
+  eagerToolOutputs?: boolean;
   /** The provider accepts appended chat items after startup. Defaults to false. */
   midSessionChatCtxUpdate?: boolean;
   /** The provider accepts instruction changes after startup. Defaults to false. */

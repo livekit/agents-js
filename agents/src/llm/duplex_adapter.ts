@@ -232,6 +232,7 @@ export class DuplexRealtimeAdapter extends RealtimeModel {
       supportsOverlappingSpeech: true,
       userTranscription: caps.userTranscription,
       autoToolReplyGeneration: caps.autoToolReplyGeneration,
+      eagerToolOutputs: caps.eagerToolOutputs ?? false,
       audioOutput: true,
       manualFunctionCalls: false,
       midSessionChatCtxUpdate: caps.midSessionChatCtxUpdate ?? false,

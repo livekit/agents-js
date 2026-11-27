@@ -3324,6 +3324,7 @@ export interface DuplexAudioFrame {
 // @public
 export interface DuplexCapabilities {
     autoToolReplyGeneration: boolean;
+    eagerToolOutputs?: boolean;
     midSessionChatCtxUpdate?: boolean;
     midSessionInstructionsUpdate?: boolean;
     midSessionToolsUpdate?: boolean;
@@ -6511,6 +6512,7 @@ export interface RealtimeCapabilities {
     audioOutput: boolean;
     autoToolReplyGeneration: boolean;
     canDisableTurnDetection?: boolean;
+    eagerToolOutputs?: boolean;
     manualFunctionCalls: boolean;
     messageTruncation: boolean;
     midSessionChatCtxUpdate?: boolean;

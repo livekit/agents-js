@@ -56,6 +56,12 @@ export interface RealtimeCapabilities {
   userTranscription: boolean;
   /** Whether the model automatically generates a reply after receiving tool results. */
   autoToolReplyGeneration: boolean;
+  /**
+   * Whether the model wants each tool output as soon as its tool returns, rather than after the
+   * speech that carried the call, and decides itself when to reply. Applies with
+   * `autoToolReplyGeneration` only.
+   */
+  eagerToolOutputs?: boolean;
   /** Whether the model can produce audio output directly. */
   audioOutput: boolean;
   /** Whether function call items already in the chat context can be resumed. */

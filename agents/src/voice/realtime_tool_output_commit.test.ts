@@ -102,6 +102,7 @@ class FakeRealtimeSession extends RealtimeSession {
   private generationCount = 0;
   includeTool = true;
   toolName = 'lookup_order';
+  toolCalls?: FunctionCall[];
   emitAudio = false;
   readonly generatedToolChoices: (ToolChoice | null)[] = [];
 
@@ -142,11 +143,13 @@ class FakeRealtimeSession extends RealtimeSession {
       functionStream:
         this.includeTool && this.toolChoice !== 'none'
           ? stream(
-              FunctionCall.create({
-                callId: generation === 0 ? TOOL_CALL_ID : `${TOOL_CALL_ID}-${generation}`,
-                name: this.toolName,
-                args: '{}',
-              }),
+              ...(this.toolCalls ?? [
+                FunctionCall.create({
+                  callId: generation === 0 ? TOOL_CALL_ID : `${TOOL_CALL_ID}-${generation}`,
+                  name: this.toolName,
+                  args: '{}',
+                }),
+              ]),
             )
           : stream<FunctionCall>(),
       userInitiated: generation === 0,
@@ -167,16 +170,38 @@ class InterruptibleAudioOutput extends AudioOutput {
   }
 }
 
+class TimedAudioOutput extends AudioOutput {
+  finishedAt?: number;
+
+  override async captureFrame(audioFrame: AudioFrame): Promise<void> {
+    await super.captureFrame(audioFrame);
+    this.onPlaybackStarted(Date.now());
+  }
+
+  override flush(): void {
+    super.flush();
+    setTimeout(() => {
+      this.finishedAt = Date.now();
+      this.onPlaybackFinished({ playbackPosition: 1, interrupted: false });
+    }, 1000);
+  }
+
+  override clearBuffer(): void {
+    this.flush();
+  }
+}
+
 class FakeRealtimeModel extends RealtimeModel {
   readonly activeSession = new FakeRealtimeSession(this);
 
-  constructor(autoToolReplyGeneration = true) {
+  constructor(autoToolReplyGeneration = true, eagerToolOutputs = false) {
     // autoToolReplyGeneration keeps the run to a single generation.
     super({
       messageTruncation: false,
       turnDetection: false,
       userTranscription: false,
       autoToolReplyGeneration,
+      eagerToolOutputs,
       audioOutput: false,
       manualFunctionCalls: false,
       midSessionChatCtxUpdate: true,
@@ -193,6 +218,139 @@ class FakeRealtimeModel extends RealtimeModel {
 }
 
 describe('Realtime tool output commit', () => {
+  it.each([true, false])(
+    'sends an eager tool output before the speech plays out (eager: %s)',
+    async (eager) => {
+      const model = new FakeRealtimeModel(true, eager);
+      model.activeSession.emitAudio = true;
+      const output = new TimedAudioOutput(24_000);
+      const session = new AgentSession({
+        llm: model,
+        vad: null,
+        turnHandling: { turnDetection: null },
+      });
+      session.output.audio = output;
+      const agent = new Agent({
+        instructions: 'test',
+        tools: { lookup_order: tool({ description: 'x', execute: async () => 'ok' }) },
+      });
+      const sentAt: number[] = [];
+      session.on(AgentSessionEventTypes.FunctionToolsExecuted, () => sentAt.push(Date.now()));
+
+      await session.start({ agent });
+      try {
+        await session.generateReply().waitForPlayout();
+        await vi.waitFor(() => expect(sentAt).toHaveLength(1));
+      } finally {
+        await session.close();
+      }
+
+      const synced = model.activeSession.chatCtx.items.filter(
+        (item) => item.type === 'function_call_output',
+      );
+      expect(synced.map((item) => item.callId)).toEqual([TOOL_CALL_ID]);
+      expect(output.finishedAt).toBeDefined();
+      expect(output.finishedAt! - sentAt[0]! > 500).toBe(eager);
+    },
+  );
+
+  it('leaves the agent listening after an early tool result', async () => {
+    const model = new FakeRealtimeModel(true, true);
+    model.activeSession.emitAudio = true;
+    const session = new AgentSession({
+      llm: model,
+      vad: null,
+      turnHandling: { turnDetection: null },
+    });
+    session.output.audio = new TimedAudioOutput(24_000);
+    const agent = new Agent({
+      instructions: 'test',
+      tools: { lookup_order: tool({ description: 'x', execute: async () => 'ok' }) },
+    });
+
+    await session.start({ agent });
+    try {
+      await session.generateReply().waitForPlayout();
+      await vi.waitFor(() => expect(session.agentState).toBe('listening'));
+    } finally {
+      await session.close();
+    }
+  });
+
+  it.each([
+    { name: 'eager', delays: [0] },
+    { name: 'batch', delays: [2000] },
+    { name: 'mixed', delays: [0, 5500] },
+  ])(
+    'includes the model reply to $name tool results in the run',
+    async ({ delays }) => {
+      const model = new FakeRealtimeModel(true, true);
+      model.activeSession.emitAudio = true;
+      model.activeSession.toolCalls = delays.map((delay, index) =>
+        FunctionCall.create({
+          callId: String(index),
+          name: 'lookup_order',
+          args: JSON.stringify({ delay }),
+        }),
+      );
+      const session = new AgentSession({
+        llm: model,
+        vad: null,
+        turnHandling: { turnDetection: null },
+      });
+      session.output.audio = new TimedAudioOutput(24_000);
+      const agent = new Agent({
+        instructions: 'test',
+        tools: {
+          lookup_order: tool({
+            description: 'x',
+            execute: async ({ delay }: { delay: number }) => {
+              await new Promise<void>((resolve) => setTimeout(resolve, delay));
+              return 'found';
+            },
+          }),
+        },
+      });
+
+      await session.start({ agent });
+      try {
+        const run = session.run({ userInput: 'look it up' });
+        await vi.waitFor(
+          () => {
+            const outputs = model.activeSession.chatCtx.items.filter(
+              (item) => item.type === 'function_call_output',
+            );
+            expect(outputs).toHaveLength(delays.length);
+          },
+          { timeout: 10_000 },
+        );
+        await new Promise<void>((resolve) => setTimeout(resolve, 1500));
+        model.activeSession.includeTool = false;
+        model.activeSession.emit('generation_created', {
+          messageStream: stream({
+            messageId: 'reply',
+            textStream: stream('found it'),
+            audioStream: stream(new AudioFrame(new Int16Array(12_000), 24_000, 1, 12_000)),
+            modalities: Promise.resolve(['audio', 'text'] as const),
+          }),
+          functionStream: stream<FunctionCall>(),
+          userInitiated: false,
+          responseId: 'reply',
+        });
+
+        const result = await run.wait();
+        expect(
+          result.events
+            .filter((event) => event.type === 'message')
+            .map((event) => event.item.textContent),
+        ).toEqual(['Let me check that.', 'found it']);
+      } finally {
+        await session.close();
+      }
+    },
+    20_000,
+  );
+
   it('runs realtime tool replies on one handle until maxToolSteps disables tools', async () => {
     const model = new FakeRealtimeModel(false);
     const session = new AgentSession({
