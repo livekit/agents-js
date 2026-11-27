@@ -63,6 +63,19 @@ describe('Google Provider Format - toChatCtx', () => {
     expect(formatData.systemMessages).toEqual(['You are a helpful assistant']);
   });
 
+  it('should use a developer preamble as the system prompt', async () => {
+    const ctx = ChatContext.empty();
+    ctx.addMessage({ role: 'developer', content: 'You are a helpful assistant.' });
+    ctx.addMessage({ role: 'user', content: 'hi' });
+
+    const [messages, formatData] = await toChatCtx(ctx, false);
+
+    expect(formatData.systemMessages).toEqual(['You are a helpful assistant.']);
+    expect(messages).toHaveLength(1);
+    expect(messages[0]?.role).toBe('user');
+    expect(JSON.stringify(messages[0])).not.toContain('You are a helpful assistant.');
+  });
+
   it('should render Instructions as their resolved value', async () => {
     const ctx = ChatContext.empty();
     ctx.addMessage({

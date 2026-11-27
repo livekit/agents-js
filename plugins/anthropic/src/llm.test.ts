@@ -271,6 +271,21 @@ describe('Anthropic LLM', () => {
     expect(messages[0].content).toBe('Hello, world!');
   });
 
+  it('uses a developer preamble as the system prompt', () => {
+    const anthropicLlm = new LLM({ apiKey: 'dummy', model: 'claude-3-5-sonnet-20241022' });
+    const chatCtx = new llm.ChatContext();
+    chatCtx.addMessage({ role: 'developer', content: 'You are a helpful assistant.' });
+    chatCtx.addMessage({ role: 'user', content: 'hi' });
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { system, messages } = (anthropicLlm as any)._buildAnthropicContext(chatCtx);
+
+    expect(system).toEqual([{ type: 'text', text: 'You are a helpful assistant.' }]);
+    expect(messages).toHaveLength(1);
+    expect(messages[0].role).toBe('user');
+    expect(JSON.stringify(messages[0])).not.toContain('You are a helpful assistant.');
+  });
+
   it('merges consecutive same-role messages', () => {
     const anthropicLlm = new LLM({ apiKey: 'dummy', model: 'claude-3-5-sonnet-20241022' });
 
