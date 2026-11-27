@@ -18,7 +18,7 @@ import { request } from 'node:https';
 import { type RawData, WebSocket } from 'ws';
 import type { LatencyMode, MP3Bitrate, OpusBitrate, TTSModels } from './models.js';
 
-const DEFAULT_MODEL: TTSModels = 's2.1-pro';
+const DEFAULT_MODEL: TTSModels = 's3-pro';
 const DEFAULT_VOICE_ID = '933563129e564b19a115bedd57b7406a';
 const DEFAULT_BASE_URL = 'https://api.fish.audio';
 const NUM_CHANNELS = 1;
@@ -30,7 +30,7 @@ const connectionPools = new WeakMap<TTS, ConnectionPool<WebSocket>>();
 /** @public */
 export interface TTSOptions {
   apiKey?: string;
-  /** TTS model to use: `s1`, `s2-pro`, `s2.1-pro`, or `drama-3`. Defaults to `s2.1-pro`. */
+  /** TTS model to use: `s1`, `s2-pro`, `s2.1-pro`, `s3-pro`, or `drama-3`. Defaults to `s3-pro`. */
   model?: TTSModels | string;
   voiceId?: string;
   sampleRate?: number;

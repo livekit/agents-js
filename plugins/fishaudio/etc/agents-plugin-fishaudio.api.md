@@ -84,7 +84,7 @@ export class TTS extends tts.TTS {
 }
 
 // @public (undocumented)
-export type TTSModels = 's1' | 's2-pro' | 's2.1-pro' | 'drama-3';
+export type TTSModels = 's1' | 's2-pro' | 's2.1-pro' | 's3-pro' | 'drama-3';
 
 // @public (undocumented)
 export interface TTSOptions {
