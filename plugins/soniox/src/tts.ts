@@ -327,14 +327,6 @@ export class SynthesizeStream extends tts.SynthesizeStream {
   #connection?: _Connection;
   #streamId = '';
   #cancelled = false;
-  /**
-   * Everything pushed so far. One reader fills it for the stream's whole life, so a retry
-   * replays it and then keeps sending what the caller pushes next.
-   */
-  #inputCache: Array<string | typeof SynthesizeStream.FLUSH_SENTINEL> = [];
-  #inputDone = false;
-  #inputReader?: Promise<void>;
-  #inputWaiters: Array<() => void> = [];
   label = 'soniox.SynthesizeStream';
 
   constructor(tts: TTS, opts: TTSOptions, connOptions?: APIConnectOptions) {
@@ -359,7 +351,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     const bstream = new AudioByteStream(this.#opts.sampleRate, NUM_CHANNELS);
     const waiter = new Future<void>();
     let inputTask: Promise<void> | undefined;
-    const attemptState = { cancelled: false };
+    const inputAbort = new AbortController();
 
     let lastFrame: AudioFrame | undefined;
     const emitFrame = (final: boolean) => {
@@ -397,7 +389,13 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       if (this.#cancelled || this.abortSignal.aborted) {
         this.#connection.cancelStream(this.#streamId);
       } else {
-        inputTask = this.#sendInput(attemptState);
+        inputTask = this.#sendInput(this.#connection, this.#streamId, inputAbort.signal).catch(
+          (error) => {
+            if (!inputAbort.signal.aborted && !waiter.done) {
+              waiter.reject(error instanceof Error ? error : new Error(String(error)));
+            }
+          },
+        );
       }
       await waiter.await;
     } catch (error) {
@@ -409,8 +407,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       }
       throw new APIConnectionError({ message: `Soniox TTS connection error: ${error}` });
     } finally {
-      attemptState.cancelled = true;
-      this.#wakeInputWaiters();
+      inputAbort.abort();
       await inputTask;
       if (this.#connection !== undefined && this.#streamId) {
         this.#connection.unregisterStream(this.#streamId);
@@ -426,51 +423,20 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     }
   }
 
-  /** Starts the one reader of the caller's input, the first time an attempt needs it. */
-  #readInput(): void {
-    this.#inputReader ??= (async () => {
-      for await (const data of this.input) {
-        this.#inputCache.push(data);
-        this.#wakeInputWaiters();
-      }
-      this.#inputDone = true;
-      this.#wakeInputWaiters();
-    })();
-  }
-
-  #wakeInputWaiters(): void {
-    for (const wake of this.#inputWaiters.splice(0)) {
-      wake();
-    }
-  }
-
-  /** Sends everything pushed so far, then what follows, until the input ends. */
-  async #sendInput(attemptState: { cancelled: boolean }): Promise<void> {
-    this.#readInput();
-    let sent = 0;
-    for (;;) {
-      if (this.#cancelled || attemptState.cancelled || this.#connection === undefined) {
+  async #sendInput(connection: _Connection, streamId: string, signal: AbortSignal): Promise<void> {
+    const input = this.input;
+    while (!signal.aborted && !this.abortSignal.aborted) {
+      const { value, done } = await input.next({ signal });
+      if (signal.aborted || this.abortSignal.aborted) return;
+      if (done) {
+        connection.sendText(streamId, '', true);
         return;
       }
-      if (sent < this.#inputCache.length) {
-        this.#sendInputItem(this.#inputCache[sent]!);
-        sent += 1;
-        continue;
+      if (value !== SynthesizeStream.FLUSH_SENTINEL) {
+        this.markStarted();
+        connection.sendText(streamId, value, false);
       }
-      if (this.#inputDone) {
-        this.#connection.sendText(this.#streamId, '', true);
-        return;
-      }
-      await new Promise<void>((resolve) => this.#inputWaiters.push(resolve));
     }
-  }
-
-  #sendInputItem(data: string | typeof SynthesizeStream.FLUSH_SENTINEL): void {
-    if (data === SynthesizeStream.FLUSH_SENTINEL || this.#connection === undefined) {
-      return;
-    }
-    this.markStarted();
-    this.#connection.sendText(this.#streamId, data, false);
   }
 }
 

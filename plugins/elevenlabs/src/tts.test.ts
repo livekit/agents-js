@@ -1,9 +1,23 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { APITimeoutError, log } from '@livekit/agents';
+import {
+  APITimeoutError,
+  DEFAULT_API_CONNECT_OPTIONS,
+  log,
+  telemetry,
+  tts,
+  voice,
+} from '@livekit/agents';
+import type { AudioFrame } from '@livekit/rtc-node';
+import {
+  InMemorySpanExporter,
+  NodeTracerProvider,
+  SimpleSpanProcessor,
+} from '@opentelemetry/sdk-trace-node';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
+import { ReadableStream } from 'node:stream/web';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { type WebSocket, WebSocketServer } from 'ws';
 import { isDialogueModel } from './models.js';
@@ -135,6 +149,8 @@ async function synthesizeWithMessages(
 afterEach(() => {
   vi.restoreAllMocks();
 });
+
+const SynthesizeStreamEnd = tts.SynthesizeStream.END_OF_STREAM;
 
 const hasElevenlabsConfig = Boolean(process.env.ELEVEN_API_KEY && process.env.OPENAI_API_KEY);
 
@@ -269,6 +285,206 @@ describe('ElevenLabs TTS websocket', () => {
     });
 
     expect(events.length).toBeGreaterThan(0);
+  });
+
+  it('replays complete input with a fresh context after a retryable failure', async () => {
+    const { wss, baseURL } = await startWebSocketServer();
+    const contextTexts = new Map<string, string[]>();
+    const failedContexts = new Set<string>();
+    const closedContexts: string[] = [];
+    const audio = Buffer.alloc(4410).toString('base64');
+
+    wss.on('connection', (ws) => {
+      ws.on('message', (raw) => {
+        const message = JSON.parse(raw.toString()) as {
+          context_id?: string;
+          text?: string;
+          flush?: boolean;
+        };
+        const contextId = message.context_id;
+        if (!contextId) return;
+        if (message.text === undefined) {
+          if ((message as { close_context?: boolean }).close_context) {
+            closedContexts.push(contextId);
+          }
+          return;
+        }
+
+        const text = message.text.trim();
+        if (text) {
+          const texts = contextTexts.get(contextId) ?? [];
+          texts.push(text);
+          contextTexts.set(contextId, texts);
+        }
+
+        if (message.text !== '' || !message.flush) return;
+        if (failedContexts.size === 0) {
+          failedContexts.add(contextId);
+          ws.send(JSON.stringify({ context_id: contextId, error: 'temporary provider failure' }));
+          return;
+        }
+
+        ws.send(JSON.stringify({ context_id: contextId, audio, isFinal: true }));
+      });
+    });
+
+    const elevenlabs = new TTS({ apiKey: 'test-key', baseURL });
+    const stream = elevenlabs.stream({
+      connOptions: {
+        ...DEFAULT_API_CONNECT_OPTIONS,
+        maxRetry: 1,
+        retryIntervalMs: 0,
+      },
+    });
+    const events: tts.SynthesizedAudio[] = [];
+
+    try {
+      stream.pushText('replay this complete sentence.');
+      stream.endInput();
+      for await (const event of stream) {
+        if (event !== tts.SynthesizeStream.END_OF_STREAM) events.push(event);
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(events).not.toHaveLength(0);
+      expect(contextTexts.size).toBe(2);
+      expect(new Set(contextTexts.keys()).size).toBe(2);
+      // Only the end-of-input close, sent before the error arrived; no second, forced close.
+      const failed = [...failedContexts][0];
+      expect(closedContexts.filter((contextId) => contextId === failed)).toHaveLength(1);
+      expect([...contextTexts.values()]).toEqual([
+        ['replay this complete sentence.'],
+        ['replay this complete sentence.'],
+      ]);
+    } finally {
+      stream.close();
+      await elevenlabs.close();
+      await closeWebSocketServer(wss);
+    }
+  });
+});
+
+describe('ElevenLabs TTS context lifecycle', () => {
+  const audio = Buffer.alloc(4410).toString('base64');
+
+  async function startServer(onText: (ws: WebSocket, contextId: string, text: string) => void) {
+    const { wss, baseURL } = await startWebSocketServer();
+    const server = {
+      baseURL,
+      messages: [] as Record<string, unknown>[],
+      close: () => closeWebSocketServer(wss),
+    };
+    wss.on('connection', (ws) => {
+      ws.on('message', (raw) => {
+        const message = JSON.parse(raw.toString()) as Record<string, unknown>;
+        server.messages.push(message);
+        if (typeof message.text === 'string' && message.text.trim()) {
+          onText(ws, message.context_id as string, message.text.trim());
+        } else if (message.close_context) {
+          ws.send(JSON.stringify({ context_id: message.context_id, audio, isFinal: true }));
+        }
+      });
+    });
+    return server;
+  }
+
+  it('sends nothing more to a context the provider failed while input was open', async () => {
+    let failedContext: string | undefined;
+    const server = await startServer((ws, contextId) => {
+      if (failedContext) return;
+      failedContext = contextId;
+      ws.send(JSON.stringify({ context_id: contextId, error: 'temporary provider failure' }));
+    });
+    const elevenlabs = new TTS({ apiKey: 'test-key', baseURL: server.baseURL });
+    const stream = elevenlabs.stream({
+      connOptions: { maxRetry: 1, retryIntervalMs: 0, timeoutMs: 1000 },
+    });
+    const output = (async () => {
+      const events: unknown[] = [];
+      for await (const event of stream) events.push(event);
+      return events;
+    })();
+
+    try {
+      stream.pushText('first sentence.');
+      stream.flush();
+      await waitUntil(() => failedContext !== undefined);
+      // Let the failed attempt wind down while input is still open.
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      stream.endInput();
+      const events = await waitFor(output);
+
+      const failed = server.messages.filter((message) => message.context_id === failedContext);
+      // Only the init and the text that failed: no re-init, late flush, or forced close.
+      expect(failed).toEqual([
+        expect.objectContaining({ text: ' ' }),
+        expect.objectContaining({ text: 'first sentence. ' }),
+      ]);
+      expect(events.filter((event) => event !== SynthesizeStreamEnd).length).toBeGreaterThan(0);
+    } finally {
+      stream.close();
+      await elevenlabs.close();
+      await server.close();
+    }
+  });
+
+  it('closes an interrupted context once and sends nothing after the close', async () => {
+    let contextId: string | undefined;
+    const server = await startServer((_ws, id) => {
+      contextId ??= id;
+    });
+    const elevenlabs = new TTS({ apiKey: 'test-key', baseURL: server.baseURL });
+    const errors: unknown[] = [];
+    elevenlabs.on('error', (error) => errors.push(error));
+    const stream = elevenlabs.stream({
+      connOptions: { maxRetry: 1, retryIntervalMs: 0, timeoutMs: 1000 },
+    });
+
+    try {
+      stream.pushText('interrupt me.');
+      stream.flush();
+      await waitUntil(() => contextId !== undefined);
+      stream.close();
+      await new Promise((resolve) => setTimeout(resolve, 150));
+
+      const sent = server.messages.filter((message) => message.context_id === contextId);
+      expect(sent.at(-1)).toEqual({ context_id: contextId, close_context: true });
+      expect(sent.filter((message) => message.close_context)).toHaveLength(1);
+      expect(sent.filter((message) => message.text === '')).toEqual([]);
+      expect(new Set(server.messages.map((message) => message.context_id))).toEqual(
+        new Set([contextId]),
+      );
+      expect(errors).toEqual([]);
+    } finally {
+      stream.close();
+      await elevenlabs.close();
+      await server.close();
+    }
+  });
+
+  it('sends no close for a context interrupted before it was opened', async () => {
+    const server = await startServer(() => {});
+    const elevenlabs = new TTS({ apiKey: 'test-key', baseURL: server.baseURL });
+    const stream = elevenlabs.stream({
+      connOptions: { maxRetry: 1, retryIntervalMs: 0, timeoutMs: 1000 },
+    });
+
+    try {
+      // Text without a sentence end stays in the tokenizer, so the context never opens.
+      stream.pushText('no sentence end yet');
+      await (
+        elevenlabs as unknown as { currentConnection(): Promise<unknown> }
+      ).currentConnection();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      stream.close();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      expect(server.messages).toEqual([]);
+    } finally {
+      stream.close();
+      await elevenlabs.close();
+      await server.close();
+    }
   });
 });
 
@@ -682,7 +898,13 @@ describe('ElevenLabs text-to-dialogue', () => {
     }
   });
 
-  async function startDialogueServer() {
+  /**
+   * A dialogue stand-in that, like ElevenLabs, closes the socket with 1008 when a message reaches a
+   * context it already closed. `onInputs` handles text for an open context.
+   */
+  async function startDialogueServer(
+    onInputs: (ws: WebSocket, contextId: unknown, connection: number) => void = () => {},
+  ) {
     const { wss, baseURL } = await startWebSocketServer();
     const server = {
       baseURL,
@@ -692,7 +914,7 @@ describe('ElevenLabs text-to-dialogue', () => {
       close: () => closeWebSocketServer(wss),
     };
     wss.on('connection', (ws) => {
-      server.connections += 1;
+      const connection = ++server.connections;
       const closedContexts = new Set<unknown>();
       ws.on('message', (raw) => {
         const message = JSON.parse(raw.toString()) as Record<string, unknown>;
@@ -703,6 +925,8 @@ describe('ElevenLabs text-to-dialogue', () => {
         } else if (message.close_context) {
           closedContexts.add(message.context_id);
           ws.send(JSON.stringify({ context_id: message.context_id, audio, is_final: true }));
+        } else if (message.inputs) {
+          onInputs(ws, message.context_id, connection);
         }
       });
     });
@@ -712,36 +936,212 @@ describe('ElevenLabs text-to-dialogue', () => {
   async function synthesize(stream: SynthesizeStream, text: string) {
     stream.pushText(text);
     stream.endInput();
-    const events: unknown[] = [];
+    const events: (tts.SynthesizedAudio | typeof SynthesizeStreamEnd)[] = [];
     for await (const event of stream) events.push(event);
     return events;
   }
 
-  it('keeps the shared socket open for the next reply after an interruption', async () => {
+  const dialogueConnOptions = { maxRetry: 1, retryIntervalMs: 0, timeoutMs: 1000 };
+
+  it('finishes an interrupted stream when its pending connection becomes ready', async () => {
     const server = await startDialogueServer();
     const elevenlabs = new TTS({
       apiKey: 'test-key',
       baseURL: server.baseURL,
       model: 'eleven_v3_conversational',
     });
-    const connOptions = { maxRetry: 0, retryIntervalMs: 0, timeoutMs: 1000 };
-    const interrupted = elevenlabs.stream({ connOptions });
-    const next = elevenlabs.stream({ connOptions });
+    const currentConnection = elevenlabs.currentConnection.bind(elevenlabs);
+    let releaseConnection!: () => void;
+    const held = new Promise<void>((resolve) => (releaseConnection = resolve));
+    const acquire = vi.spyOn(elevenlabs, 'currentConnection').mockImplementation(async () => {
+      const connection = await currentConnection();
+      await held;
+      return connection;
+    });
+    const stream = elevenlabs.stream({ connOptions: dialogueConnOptions });
+    const done = vi.spyOn(stream as unknown as { onStreamDone(): void }, 'onStreamDone');
 
     try {
-      interrupted.pushText('hello world.');
-      interrupted.flush();
+      stream.pushText('hello world.');
+      await waitUntil(() => server.connections === 1);
+      stream.close();
+      releaseConnection();
+
+      await waitUntil(() => done.mock.calls.length === 1);
+      expect(server.received).toEqual([]);
+      acquire.mockRestore();
+      expect(await waitFor(synthesize(elevenlabs.stream(), 'next reply.'))).not.toHaveLength(0);
+      expect(server.connections).toBe(1);
+    } finally {
+      releaseConnection();
+      stream.close();
+      await elevenlabs.close();
+      await server.close();
+    }
+  });
+
+  it('keeps the shared socket open after the session interrupts a reply', async () => {
+    const server = await startDialogueServer();
+    const elevenlabs = new TTS({
+      apiKey: 'test-key',
+      baseURL: server.baseURL,
+      model: 'eleven_v3_conversational',
+    });
+    const errors: unknown[] = [];
+    elevenlabs.on('error', (error) => errors.push(error));
+
+    class TestAudioOutput extends voice.AudioOutput {
+      frames: AudioFrame[] = [];
+
+      override async captureFrame(frame: AudioFrame): Promise<void> {
+        const segmentCount = this.capturedPlayoutSegments;
+        await super.captureFrame(frame);
+        this.frames.push(frame);
+        if (this.capturedPlayoutSegments > segmentCount) this.onPlaybackStarted(Date.now());
+      }
+
+      override flush(): void {
+        super.flush();
+        if (this.pendingPlayoutSegments > 0) {
+          this.onPlaybackFinished({ playbackPosition: 0.1, interrupted: false });
+        }
+      }
+
+      override clearBuffer(): void {
+        if (this.pendingPlayoutSegments > 0) {
+          this.onPlaybackFinished({ playbackPosition: 0, interrupted: true });
+        }
+      }
+    }
+
+    const session = new voice.AgentSession({
+      tts: elevenlabs,
+      connOptions: { ttsConnOptions: { ...dialogueConnOptions, maxRetry: 0 } },
+    });
+    const output = new TestAudioOutput();
+    session.output.audio = output;
+
+    try {
+      await session.start({ agent: new voice.Agent({ instructions: 'Read the supplied text.' }) });
+      const text = new ReadableStream<string>({
+        start(controller) {
+          controller.enqueue('This is the first sentence of the reply. The input is still open. ');
+        },
+      });
+      const interrupted = session.say(text, { allowInterruptions: true });
       await waitUntil(() => server.received.some((message) => message.inputs));
-      interrupted.close();
+      const contextId = server.received.find((message) => message.inputs)?.context_id;
 
-      const nextAudio = await waitFor(synthesize(next, 'next reply.'));
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await waitFor(session.interrupt().await);
+      await waitFor(interrupted.waitForPlayout());
+      expect(interrupted.interrupted).toBe(true);
+      expect(output.frames).toHaveLength(0);
 
+      await waitFor(session.say('This is the next reply.').waitForPlayout());
+
+      const closes = server.received.filter(
+        (message) => message.context_id === contextId && message.close_context,
+      );
+      expect(closes).toHaveLength(1);
       expect(server.rejected).toEqual([]);
       expect(server.connections).toBe(1);
-      expect(nextAudio.length).toBeGreaterThan(0);
+      expect(output.frames.length).toBeGreaterThan(0);
+      expect(errors).toEqual([]);
     } finally {
-      next.close();
+      await session.close();
+      await elevenlabs.close();
+      await server.close();
+    }
+  });
+
+  it('retries on a new socket when it closes with 1008 before audio', async () => {
+    const server = await startDialogueServer((ws, _contextId, connection) => {
+      if (connection === 1) ws.close(1008);
+    });
+    const elevenlabs = new TTS({
+      apiKey: 'test-key',
+      baseURL: server.baseURL,
+      model: 'eleven_v3_conversational',
+    });
+    const errors: unknown[] = [];
+    elevenlabs.on('error', (error) => errors.push(error));
+    const stream = elevenlabs.stream({ connOptions: dialogueConnOptions });
+
+    const initialContextId = stream.contextId;
+    const exporter = new InMemorySpanExporter();
+    const tracerProvider = new NodeTracerProvider({
+      spanProcessors: [new SimpleSpanProcessor(exporter)],
+    });
+    const originalTracerProvider = telemetry.tracer.getProvider();
+    telemetry.tracer.setProvider(tracerProvider);
+
+    try {
+      const events = await waitFor(synthesize(stream, 'hello world.'), 2000);
+
+      expect(server.connections).toBe(2);
+      const contextIds = server.received
+        .filter((message) => message.voices)
+        .map((message) => message.context_id);
+      expect(contextIds).toHaveLength(2);
+      expect(contextIds[0]).toBe(initialContextId);
+      expect(contextIds[1]).not.toBe(initialContextId);
+      expect(stream.contextId).toBe(initialContextId);
+      const inputs = server.received.flatMap(
+        (message) => (message.inputs as { text: string }[] | undefined) ?? [],
+      );
+      expect(inputs.map((input) => input.text.trim()).filter(Boolean)).toEqual([
+        'hello world.',
+        'hello world.',
+      ]);
+      const frames = events.filter((event) => typeof event !== 'symbol');
+      expect(frames.length).toBeGreaterThan(0);
+      for (const frame of frames) {
+        expect(frame.requestId).toBe(initialContextId);
+        expect(frame.segmentId).toBe(initialContextId);
+      }
+      const attemptSpans = exporter
+        .getFinishedSpans()
+        .filter((span) => span.name === 'tts_request_run');
+      expect(attemptSpans).toHaveLength(2);
+      const retrySpan = attemptSpans.find(
+        (span) => span.attributes[telemetry.traceTypes.ATTR_RETRY_COUNT] === 1,
+      );
+      expect(retrySpan?.attributes[telemetry.traceTypes.ATTR_PROVIDER_REQUEST_IDS]).toEqual([
+        contextIds[1],
+      ]);
+      expect(errors).toEqual([]);
+    } finally {
+      telemetry.tracer.setProvider(originalTracerProvider);
+      await tracerProvider.shutdown();
+      stream.close();
+      await elevenlabs.close();
+      await server.close();
+    }
+  });
+
+  it('fails without a retry when it closes with 1008 after audio', async () => {
+    const server = await startDialogueServer((ws, contextId) => {
+      // Close before the final response, so the context ends after its audio but unfinished.
+      ws.send(JSON.stringify({ context_id: contextId, audio }));
+      ws.close(1008);
+    });
+    const elevenlabs = new TTS({
+      apiKey: 'test-key',
+      baseURL: server.baseURL,
+      model: 'eleven_v3_conversational',
+    });
+    const errors: { recoverable: boolean }[] = [];
+    elevenlabs.on('error', (error) => errors.push(error));
+    const stream = elevenlabs.stream({ connOptions: dialogueConnOptions });
+
+    try {
+      const events = await waitFor(synthesize(stream, 'hello world.'), 2000);
+
+      expect(server.connections).toBe(1);
+      expect(events.filter((event) => event !== SynthesizeStreamEnd).length).toBeGreaterThan(0);
+      expect(errors.map((error) => error.recoverable)).toEqual([false]);
+    } finally {
+      stream.close();
       await elevenlabs.close();
       await server.close();
     }

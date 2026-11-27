@@ -32,6 +32,8 @@ import type { TTS } from './tts.js';
 
 export class SynthesizeStream extends tts.SynthesizeStream {
   label = 'rime-tts.SynthesizeStream';
+  // One input pump feeds every attempt, which replays sentences from its own history.
+  protected override readonly inputRetryMode = 'stream';
   private sentences = new AsyncIterableQueue<string>();
   private history: string[] = [];
   private inputTask?: Promise<void>;

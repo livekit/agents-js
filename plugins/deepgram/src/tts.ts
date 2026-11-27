@@ -233,7 +233,6 @@ export class ChunkedStream extends tts.ChunkedStream {
 
 export class SynthesizeStream extends tts.SynthesizeStream {
   private opts: TTSOptions;
-  private tokenizer: tokenize.SentenceStream;
   #logger = log();
   label = 'deepgram.SynthesizeStream';
 
@@ -243,7 +242,6 @@ export class SynthesizeStream extends tts.SynthesizeStream {
   constructor(tts: TTS, opts: TTSOptions, connOptions?: APIConnectOptions) {
     super(tts, connOptions);
     this.opts = opts;
-    this.tokenizer = opts.sentenceTokenizer.stream();
   }
 
   private async closeWebSocket(ws: WebSocket): Promise<void> {
@@ -293,6 +291,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
   protected async run() {
     const requestId = shortuuid();
     const segmentId = shortuuid();
+    const tokenizer = this.opts.sentenceTokenizer.stream();
 
     const wsUrl = this.opts.baseUrl!.replace(/^http/, 'ws');
     const url = new URL(`${wsUrl}/v1/speak`);
@@ -322,13 +321,13 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     const inputTask = async () => {
       for await (const data of this.input) {
         if (data === SynthesizeStream.FLUSH_SENTINEL) {
-          this.tokenizer.flush();
+          tokenizer.flush();
           continue;
         }
-        this.tokenizer.pushText(data);
+        tokenizer.pushText(data);
       }
-      this.tokenizer.endInput();
-      this.tokenizer.close();
+      tokenizer.endInput();
+      tokenizer.close();
     };
 
     let markInputSent: () => void = () => {};
@@ -338,7 +337,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
     const sendTask = async () => {
       try {
-        for await (const event of this.tokenizer) {
+        for await (const event of tokenizer) {
           if (this.abortController.signal.aborted) break;
 
           let text = event.token;
@@ -464,15 +463,26 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       });
     };
 
+    const tasks = [inputTask(), sendTask(), recvTask()];
     try {
-      await Promise.all([inputTask(), sendTask(), recvTask()]);
+      await Promise.all(tasks);
     } catch (e) {
+      // A failed attempt must fully release its one-shot input and socket
+      // resources before the base class replays text into the next attempt.
+      if (!this.input.closed) this.input.close();
+      tokenizer.close();
+      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+        ws.close();
+      }
+      await Promise.allSettled(tasks);
+
       if (this.abortController.signal.aborted) return;
       if (e instanceof APIError) throw e;
       throw new APIConnectionError({
         message: `Deepgram TTS WebSocket failed: ${(e as Error).message ?? 'unknown error'}`,
       });
     } finally {
+      tokenizer.close();
       await this.closeWebSocket(ws);
     }
   }

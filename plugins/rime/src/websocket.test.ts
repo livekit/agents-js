@@ -282,6 +282,57 @@ describe.each(['binary', 'json'] as const)('Rime v1 %s', (protocol) => {
     expect(errors).toEqual([]);
   });
 
+  it('keeps text pushed after a retried failure while input is open', async () => {
+    let attempt = 0;
+    let retried!: () => void;
+    const retryStarted = new Promise<void>((resolve) => (retried = resolve));
+    const peer = await server({
+      onRequest(request, send) {
+        if (request.payload.case === 'start') {
+          attempt++;
+          if (attempt === 2) retried();
+          send(
+            {
+              case: 'started',
+              value: { $typeName: 'rime.WebSocketStarted', requestId: `request-${attempt}` },
+            },
+            request.contextId,
+          );
+        }
+        if (request.payload.case === 'text' && attempt === 1) {
+          send(
+            {
+              case: 'error',
+              value: { $typeName: 'rime.WebSocketError', kind: 'unavailable', message: 'busy' },
+            },
+            request.contextId,
+          );
+        } else if (request.payload.case === 'text') {
+          send({ case: 'audio', value: Buffer.alloc(4800) }, request.contextId);
+        }
+        if (attempt > 1 && request.payload.case === 'end')
+          send({ case: 'done', value: { $typeName: 'rime.WebSocketDone' } }, request.contextId);
+      },
+    });
+    const { value, errors } = client(peer.url, protocol);
+    const stream = value.stream({ connOptions: { ...options, maxRetry: 1 } });
+    const output = collect(stream);
+    stream.pushText('Hello.');
+    stream.flush();
+    await retryStarted;
+    stream.pushText('World.');
+    stream.endInput();
+
+    expect((await output).length).toBeGreaterThan(0);
+    expect(attempt).toBe(2);
+    expect(
+      peer.requests
+        .filter((request) => request.payload.case === 'text')
+        .map((request) => request.payload.value),
+    ).toEqual(['Hello. ', 'Hello. ', 'World. ']);
+    expect(errors).toEqual([]);
+  });
+
   it.each(['cancelled', 'failed'])(
     'records pending metrics when %s after audio delivery',
     async (mode) => {

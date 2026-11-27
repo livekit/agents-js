@@ -38,6 +38,8 @@ export interface SynthesizedAudio {
   requestId: string;
   /** Segment ID, each segment is separated by a flush */
   segmentId: string;
+  /** @internal The ID used by the provider when it differs from the logical segment ID. */
+  providerRequestId?: string;
   /** Synthesized audio frame */
   frame: AudioFrame;
   /** Current segment of the synthesized audio */
@@ -160,6 +162,18 @@ export type TTSCallbacks = {
   ['error']: (error: TTSError) => void;
   ['fallback_activated']: (event: FallbackActivatedEvent) => void;
 };
+
+/** Internal queue hook used to observe output synchronously at the producer boundary. */
+class ObservedAsyncIterableQueue<T> extends AsyncIterableQueue<T> {
+  constructor(private readonly onPut: (item: T) => void) {
+    super();
+  }
+
+  override put(item: T): void {
+    super.put(item);
+    this.onPut(item);
+  }
+}
 
 /**
  * Time at which text was first sent to the TTS provider, captured on both
@@ -354,15 +368,37 @@ export abstract class SynthesizeStream
   protected static readonly FLUSH_SENTINEL = Symbol('FLUSH_SENTINEL');
   static readonly END_OF_STREAM = Symbol('END_OF_STREAM');
   protected input = new AsyncIterableQueue<string | typeof SynthesizeStream.FLUSH_SENTINEL>();
-  protected queue = new AsyncIterableQueue<
-    SynthesizedAudio | typeof SynthesizeStream.END_OF_STREAM
-  >();
+  protected queue: AsyncIterableQueue<SynthesizedAudio | typeof SynthesizeStream.END_OF_STREAM> =
+    new ObservedAsyncIterableQueue((item) => {
+      if (item === SynthesizeStream.END_OF_STREAM) return;
+      if (!this.#attemptAudioPushed) {
+        this.#attemptAudioPushed = true;
+        this.#inputBuffer.length = 0;
+      }
+      // The attempt span can end before the metrics consumer reads the frame.
+      if (item.providerRequestId) this.noteProviderRequestId(item.providerRequestId);
+    });
   protected output = new AsyncIterableQueue<
     SynthesizedAudio | typeof SynthesizeStream.END_OF_STREAM
   >();
   protected closed = false;
   /** Wrappers forward provider metrics instead of emitting their own usage. */
   protected emitMetrics = true;
+  /**
+   * How a retry after a retryable failure gets the caller's input back.
+   *
+   * - `'replay'` (default): every retry gets a fresh `input` queue holding all text, flushes, and
+   *   end of input accepted so far, and later input follows it. `run` must read `this.input`
+   *   again for each attempt. No retry happens once the failed attempt emitted audio, since the
+   *   replay would speak that audio twice.
+   * - `'stream'`: the subclass reads `input` once for the whole stream and replays it to each
+   *   attempt itself. `input` is left alone between attempts, and no retry happens once the failed
+   *   attempt emitted audio.
+   * - `'resume'`: the subclass reads `input` once for the whole stream and resumes after the audio
+   *   it already delivered. `input` is left alone, and a retry may follow audio; the subclass must
+   *   raise a non-retryable error when a resume would repeat audio.
+   */
+  protected readonly inputRetryMode: 'replay' | 'stream' | 'resume' = 'replay';
   protected connOptions: APIConnectOptions;
   protected abortController = new AbortController();
 
@@ -388,6 +424,9 @@ export abstract class SynthesizeStream
   #startedTime?: number;
   #startedHrTime?: bigint;
   #error?: Error;
+  #attemptAudioPushed = false;
+  #inputBuffer: Array<string | typeof SynthesizeStream.FLUSH_SENTINEL> = [];
+  #inputEnded = false;
 
   constructor(tts: TTS, connOptions: APIConnectOptions = DEFAULT_API_CONNECT_OPTIONS) {
     this.#tts = tts;
@@ -416,6 +455,7 @@ export abstract class SynthesizeStream
       } catch {
         // already surfaced via emitError; swallow to avoid unhandled rejection.
       } finally {
+        this.#inputBuffer.length = 0;
         this.queue.close();
         try {
           this.onStreamDone();
@@ -462,6 +502,7 @@ export abstract class SynthesizeStream
     });
 
     for (let i = 0; i < this.connOptions.maxRetry + 1; i++) {
+      this.#attemptAudioPushed = false;
       try {
         return await tracer.startActiveSpan(
           async (attemptSpan) => {
@@ -480,6 +521,8 @@ export abstract class SynthesizeStream
           { name: 'tts_request_run' },
         );
       } catch (error) {
+        // A closed stream wants no more audio, so its failed attempt is not retried or reported.
+        if (this.abortSignal.aborted) return;
         if (error instanceof APIError) {
           const retryInterval = intervalForRetry(this.connOptions, i);
 
@@ -492,9 +535,17 @@ export abstract class SynthesizeStream
               message: `failed to generate TTS completion after ${this.connOptions.maxRetry + 1} attempts`,
               options: { retryable: false },
             });
+          } else if (this.#attemptAudioPushed && this.inputRetryMode !== 'resume') {
+            this.emitError({ error, recoverable: false });
+            this.logger.warn(
+              { tts: this.#tts.label, attempt: i + 1, error },
+              'failed to synthesize speech after emitting audio, not retrying',
+            );
+            throw error;
           } else {
             // Don't emit error event for recoverable errors during retry loop
             // to avoid ERR_UNHANDLED_ERROR or premature session termination
+            this.resetInputForRetry();
             this.logger.warn(
               { tts: this.#tts.label, attempt: i + 1, error },
               `failed to synthesize speech, retrying in ${retryInterval}ms`,
@@ -502,8 +553,9 @@ export abstract class SynthesizeStream
           }
 
           if (retryInterval > 0) {
-            await delay(retryInterval);
+            await delay(retryInterval, { signal: this.abortSignal }).catch(() => {});
           }
+          if (this.abortSignal.aborted) return;
         } else {
           this.emitError({ error: toError(error), recoverable: false });
           throw error;
@@ -527,6 +579,27 @@ export abstract class SynthesizeStream
       error,
       recoverable,
     });
+  }
+
+  private resetInputForRetry() {
+    if (this.closed || this.inputRetryMode !== 'replay') {
+      return;
+    }
+
+    // Release any provider task that is still waiting on the failed attempt's
+    // input before installing the replay queue. Provider implementations keep
+    // the iterator they started with, so replacing this.input alone would
+    // strand that task on the old queue.
+    if (!this.input.closed) {
+      this.input.close();
+    }
+    this.input = new AsyncIterableQueue<string | typeof SynthesizeStream.FLUSH_SENTINEL>();
+    for (const item of this.#inputBuffer) {
+      this.input.put(item);
+    }
+    if (this.#inputEnded) {
+      this.input.close();
+    }
   }
 
   /**
@@ -695,10 +768,8 @@ export abstract class SynthesizeStream
       }
       this.output.put(audio);
       requestId = audio.requestId;
-      // The Python AudioEmitter records each `segment_id` automatically via
-      // `start_segment`. JS plugins emit `segmentId` directly on the audio
-      // frame, so we mirror that behavior here.
-      if (audio.segmentId) {
+      // For providers without an explicit wire ID, use the segment ID as before.
+      if (!audio.providerRequestId && audio.segmentId) {
         this.noteProviderRequestId(audio.segmentId);
       }
       if (ttfb === BigInt(-1) && this.#startedHrTime !== undefined) {
@@ -744,13 +815,7 @@ export abstract class SynthesizeStream
       this.#monitorMetricsTask.finally(() => this.output.close());
     }
     this.#metricsText += text;
-
-    if (this.input.closed || this.closed) {
-      // Stream was aborted/closed, silently skip
-      return;
-    }
-
-    this.input.put(text);
+    this.writeInput(text);
   }
 
   /** Flush the TTS, causing it to process all pending text */
@@ -760,24 +825,57 @@ export abstract class SynthesizeStream
       this.#metricsText = '';
     }
 
-    if (this.input.closed || this.closed) {
-      // Stream was aborted/closed, silently skip
-      return;
-    }
-
-    this.input.put(SynthesizeStream.FLUSH_SENTINEL);
+    this.writeInput(SynthesizeStream.FLUSH_SENTINEL);
   }
 
   /** Mark the input as ended and forbid additional pushes */
   endInput() {
-    this.flush();
+    if (this.#inputEnded || this.closed) {
+      return;
+    }
 
-    if (this.input.closed || this.closed) {
+    this.flush();
+    this.closeInput();
+  }
+
+  /**
+   * Send text or a flush marker to the current attempt and buffer it while replay is possible.
+   * Subclasses that override `flush` or `endInput` use this instead of writing to `input` directly.
+   */
+  protected writeInput(item: string | typeof SynthesizeStream.FLUSH_SENTINEL): void {
+    if (this.#inputEnded || this.closed) {
       // Stream was aborted/closed, silently skip
       return;
     }
 
-    this.input.close();
+    if (
+      this.inputRetryMode === 'replay' &&
+      !this.#attemptAudioPushed &&
+      this.connOptions.maxRetry > 0
+    ) {
+      this.#inputBuffer.push(item);
+    }
+    // An attempt may have closed its queue while it tears down after a
+    // retryable failure. Keep accepting logical stream input into the replay
+    // buffer; resetInputForRetry() will place it on the next attempt's queue.
+    if (!this.input.closed) {
+      this.input.put(item);
+    }
+  }
+
+  /**
+   * End the input of the current attempt and of any retry. Subclasses that override `endInput`
+   * use this instead of closing `input` directly.
+   */
+  protected closeInput(): void {
+    if (this.#inputEnded || this.closed) {
+      return;
+    }
+
+    this.#inputEnded = true;
+    if (!this.input.closed) {
+      this.input.close();
+    }
   }
 
   next(): Promise<IteratorResult<SynthesizedAudio | typeof SynthesizeStream.END_OF_STREAM>> {

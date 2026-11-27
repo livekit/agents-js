@@ -8346,6 +8346,8 @@ interface SynthesizedAudio {
     deltaText?: string;
     final: boolean;
     frame: AudioFrame;
+    // @internal
+    providerRequestId?: string;
     requestId: string;
     segmentId: string;
     timedTranscripts?: TimedString[];
@@ -8363,6 +8365,7 @@ abstract class SynthesizeStream implements AsyncIterableIterator<SynthesizedAudi
     close(): void;
     // (undocumented)
     protected closed: boolean;
+    protected closeInput(): void;
     // (undocumented)
     protected connOptions: APIConnectOptions;
     protected emitMetrics: boolean;
@@ -8379,6 +8382,7 @@ abstract class SynthesizeStream implements AsyncIterableIterator<SynthesizedAudi
     //
     // (undocumented)
     protected input: AsyncIterableQueue<string | typeof SynthesizeStream.FLUSH_SENTINEL>;
+    protected readonly inputRetryMode: 'replay' | 'stream' | 'resume';
     // (undocumented)
     abstract label: string;
     // Warning: (ae-forgotten-export) The symbol "SynthesizeStreamStartedTime" needs to be exported by the entry point index.d.ts
@@ -8418,6 +8422,7 @@ abstract class SynthesizeStream implements AsyncIterableIterator<SynthesizedAudi
     protected get ttsRequestSpan(): Span | undefined;
     // (undocumented)
     updateInputStream(text: ReadableStream_2<string>): void;
+    protected writeInput(item: string | typeof SynthesizeStream.FLUSH_SENTINEL): void;
 }
 
 // @public (undocumented)

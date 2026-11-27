@@ -155,13 +155,14 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
   /** Send buffered text while retaining the stream's logical audio segment. */
   override flush(): void {
-    if (!this.input.closed && !this.closed) this.input.put(SynthesizeStream.FLUSH_SENTINEL);
+    // Kept for retries like the base flush, without committing the segment's metric text.
+    this.writeInput(SynthesizeStream.FLUSH_SENTINEL);
   }
 
   override endInput(): void {
-    if (this.input.closed || this.closed) return;
+    if (this.closed) return;
     super.flush();
-    this.input.close();
+    this.closeInput();
   }
 
   protected override onStreamDone(): void {
@@ -212,8 +213,8 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       const [, error] = await Promise.all(tasks);
       output.end();
       if (error && !this.abortSignal.aborted) {
-        // The stream already consumed its input, so a retry would have no text to send.
-        throw new APIConnectionError({ message: error.message, options: { retryable: false } });
+        // synthesizeSentences only returns an error when the attempt produced no audio.
+        throw error;
       }
       this.queue.put(SynthesizeStream.END_OF_STREAM);
     } finally {

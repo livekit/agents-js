@@ -132,6 +132,7 @@ interface SynthesizeContent {
 
 interface CloseContext {
   contextId: string;
+  force?: boolean;
 }
 
 interface StreamData {
@@ -382,12 +383,12 @@ class Connection {
   }
 
   registerStream(
+    contextId: string,
     stream: SynthesizeStream,
     waiter: { resolve: (value: void) => void; reject: (error: Error) => void },
     timeoutMs: number,
     terminate: () => void,
   ): void {
-    const contextId = stream.contextId;
     this.#contextData.set(contextId, {
       stream,
       waiter,
@@ -465,6 +466,27 @@ class Connection {
     });
   }
 
+  /**
+   * Stop a context whose stream failed or was interrupted, dropping its unsent messages. A context
+   * the provider opened and was not yet asked to close gets one close_context so it stops
+   * generating. A context that was never opened, was already closed, or already ended on the
+   * provider side gets nothing more.
+   */
+  cancelContext(contextId: string, error: Error): void {
+    const context = this.#contextData.get(contextId);
+    this.#inputQueue = this.#inputQueue.filter((message) => message.contextId !== contextId);
+    const needsClose = this.#activeContexts.has(contextId) && !this.#closingContexts.has(contextId);
+
+    context?.waiter.reject(error);
+    this.#cleanupContext(contextId);
+
+    if (needsClose && !this.#closed && this.#ws?.readyState === WebSocket.OPEN) {
+      // Cleanup detached the context, so the close must bypass the active-context check.
+      this.#inputQueue.push({ contextId, force: true });
+      this.#inputQueueResolver?.();
+    }
+  }
+
   async #sendLoop(): Promise<void> {
     const dialogue = isDialogueModel(this.#opts.model);
     try {
@@ -488,7 +510,13 @@ class Connection {
         if ('text' in msg) {
           // SynthesizeContent
           const content = msg as SynthesizeContent;
-          if (this.#closingContexts.has(content.contextId)) continue;
+          // A context that ended, failed, or was asked to close must not be opened again.
+          if (
+            !this.#contextData.has(content.contextId) ||
+            this.#closingContexts.has(content.contextId)
+          ) {
+            continue;
+          }
           const isNewContext = !this.#activeContexts.has(content.contextId);
 
           if (isNewContext) {
@@ -544,8 +572,12 @@ class Connection {
         } else {
           // CloseContext
           const closeMsg = msg as CloseContext;
-          if (this.#activeContexts.has(closeMsg.contextId)) {
-            this.#closingContexts.add(closeMsg.contextId);
+          if (
+            closeMsg.force ||
+            (this.#activeContexts.has(closeMsg.contextId) &&
+              !this.#closingContexts.has(closeMsg.contextId))
+          ) {
+            if (!closeMsg.force) this.#closingContexts.add(closeMsg.contextId);
             const closePkt = {
               context_id: closeMsg.contextId,
               close_context: true,
@@ -1189,8 +1221,8 @@ export class ChunkedStream extends tts.ChunkedStream {
 export class SynthesizeStream extends tts.SynthesizeStream {
   #tts: TTS;
   #opts: ResolvedTTSOptions;
-  #contextId: string;
-  #sentTokenizerStream: tokenize.SentenceStream | tokenize.WordStream;
+  readonly #contextId: string;
+  #contextRegistered = false;
   #logger = log();
   #audioQueue: Buffer[] = [];
   #timedTranscriptQueue: TimedString[] = [];
@@ -1203,7 +1235,6 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     this.#tts = tts;
     this.#opts = opts;
     this.#contextId = shortuuid();
-    this.#sentTokenizerStream = this.#opts.wordTokenizer.stream();
   }
 
   get contextId(): string {
@@ -1227,10 +1258,14 @@ export class SynthesizeStream extends tts.SynthesizeStream {
   }
 
   protected async run(): Promise<void> {
+    if (this.abortSignal.aborted) return;
+
+    this.#audioQueue.length = 0;
+    this.#timedTranscriptQueue.length = 0;
+    this.#streamDone = false;
+
     const requestId = this.#contextId;
     const segmentId = this.#contextId;
-    const bstream = new AudioByteStream(this.#opts.sampleRate, 1);
-
     let connection: Connection;
     try {
       connection = await this.#tts.currentConnection();
@@ -1238,14 +1273,31 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       throw new APIConnectionError({ message: 'could not connect to ElevenLabs' });
     }
 
+    if (this.abortSignal.aborted) return;
+
+    // Keep audio correlated with the public stream ID while isolating each provider context.
+    const contextId = this.#contextRegistered ? shortuuid() : this.#contextId;
+    this.#contextRegistered = true;
+    const sentTokenizerStream = this.#opts.wordTokenizer.stream();
+    const bstream = new AudioByteStream(this.#opts.sampleRate, 1);
+
+    // Set once this attempt failed or was interrupted: nothing more may be sent for its context.
+    let stopped = false;
     let waiterReject: ((reason: Error) => void) | undefined;
     const waiterPromise = new Promise<void>((resolve, reject) => {
       waiterReject = reject;
-      connection.registerStream(this, { resolve, reject }, this.connOptions.timeoutMs, () => {
-        this.#streamDone = true;
-        this.#sentTokenizerStream.close();
-        if (!this.input.closed) this.input.close();
-      });
+      connection.registerStream(
+        contextId,
+        this,
+        { resolve, reject },
+        this.connOptions.timeoutMs,
+        () => {
+          stopped = true;
+          this.#streamDone = true;
+          sentTokenizerStream.close();
+          if (!this.input.closed) this.input.close();
+        },
+      );
     });
     let contextClosed = false;
 
@@ -1257,14 +1309,14 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       if (suppressErrors) {
         contextClosed = true;
         try {
-          connection.closeContext(this.#contextId);
+          connection.closeContext(contextId);
         } catch {
           // The connection may already be closed during cancellation.
         }
         return;
       }
 
-      connection.closeContext(this.#contextId);
+      connection.closeContext(contextId);
       contextClosed = true;
     };
 
@@ -1280,12 +1332,12 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       for await (const data of this.input) {
         if (this.abortController.signal.aborted) break;
         if (data === SynthesizeStream.FLUSH_SENTINEL) {
-          this.#sentTokenizerStream.flush();
+          sentTokenizerStream.flush();
           continue;
         }
-        this.#sentTokenizerStream.pushText(data);
+        sentTokenizerStream.pushText(data);
       }
-      this.#sentTokenizerStream.endInput();
+      sentTokenizerStream.endInput();
     };
 
     const sentenceStreamTask = async () => {
@@ -1294,7 +1346,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
       let xmlContent: string[] = [];
 
-      for await (const data of this.#sentTokenizerStream) {
+      for await (const data of sentTokenizerStream) {
         if (this.abortController.signal.aborted) break;
 
         let text = data.token;
@@ -1316,10 +1368,11 @@ export class SynthesizeStream extends tts.SynthesizeStream {
           }
         }
 
+        if (stopped) return;
         const formattedText = `${text} `; // must always end with a space
         this.markStarted();
         connection.sendContent({
-          contextId: this.#contextId,
+          contextId,
           text: formattedText,
           flush: flushOnChunk,
         });
@@ -1329,10 +1382,9 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         this.#logger.warn('ElevenLabs stream ended with incomplete xml content');
       }
 
-      if (this.abortController.signal.aborted || contextClosed) return;
-
+      if (stopped || contextClosed || this.abortSignal.aborted) return;
       // Send final empty text to signal end of input
-      connection.sendContent({ contextId: this.#contextId, text: '', flush: true });
+      connection.sendContent({ contextId, text: '', flush: true });
       closeContext();
     };
 
@@ -1346,6 +1398,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
           this.queue.put({
             requestId,
             segmentId,
+            providerRequestId: contextId,
             frame: lastFrame,
             final,
             timedTranscripts:
@@ -1394,9 +1447,19 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       sendLastFrame(true);
     };
 
+    const tasks = [inputTask(), sentenceStreamTask(), audioProcessTask(), waiterPromise];
     try {
-      await Promise.all([inputTask(), sentenceStreamTask(), audioProcessTask(), waiterPromise]);
+      await Promise.all(tasks);
     } catch (e) {
+      stopped = true;
+      // cancelContext sends the only close this context still needs.
+      contextClosed = true;
+      if (!this.input.closed) this.input.close();
+      sentTokenizerStream.close();
+      this.#streamDone = true;
+      connection.cancelContext(contextId, e instanceof Error ? e : new Error(String(e)));
+      await Promise.allSettled(tasks);
+
       // If aborted, this is a normal termination - don't throw
       if (this.abortController.signal.aborted) {
         return;
@@ -1407,8 +1470,9 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       }
       throw new APIStatusError({ message: 'Could not synthesize' });
     } finally {
-      connection.unregisterStream(this.#contextId);
+      connection.unregisterStream(contextId);
       closeContext(true);
+      sentTokenizerStream.close();
       // Clean up abort listener
       this.abortController.signal.removeEventListener('abort', abortHandler);
     }
@@ -1419,7 +1483,6 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     this.#audioQueue.length = 0;
     this.#timedTranscriptQueue.length = 0;
     this.#streamDone = true;
-    this.#sentTokenizerStream.close();
     super.close();
   }
 }

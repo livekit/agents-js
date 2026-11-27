@@ -2,14 +2,17 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { AudioFrame } from '@livekit/rtc-node';
+import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base';
+import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { APIConnectionError } from '../_exceptions.js';
 import { initializeLogger } from '../log.js';
 import type { TTSMetrics } from '../metrics/base.js';
+import { setTracerProvider, traceTypes, tracer } from '../telemetry/index.js';
 import type { APIConnectOptions } from '../types.js';
 import { AsyncIterableQueue } from '../utils.js';
 import { ChunkedStream, SynthesizeStream, TTS } from './tts.js';
-import type { SynthesizedAudio } from './tts.js';
+import type { SynthesizedAudio, TTSError } from './tts.js';
 
 type AttemptResult = 'success' | 'retryable-error' | 'nonretryable-error' | 'pending';
 
@@ -226,6 +229,357 @@ class TestTTS extends TTS {
     throw new Error('not used');
   }
 }
+
+class RetrySynthesizeStream extends SynthesizeStream {
+  label = 'test.RetrySynthesizeStream';
+  attempts: Array<Array<string | '<flush>'>> = [];
+
+  constructor(
+    tts: TTS,
+    connOptions: APIConnectOptions,
+    private readonly emitAudioBeforeFailure = false,
+  ) {
+    super(tts, connOptions);
+  }
+
+  protected async run(): Promise<void> {
+    const input: Array<string | '<flush>'> = [];
+    for await (const item of this.input) {
+      input.push(typeof item === 'string' ? item : '<flush>');
+    }
+    this.attempts.push(input);
+
+    if (this.attempts.length === 1) {
+      if (this.emitAudioBeforeFailure) {
+        this.queue.put({
+          requestId: 'request-1',
+          segmentId: 'segment',
+          frame: audioFrame(1),
+          final: false,
+        });
+      }
+      throw new APIConnectionError({
+        message: 'connection dropped after consuming input',
+        options: { retryable: true },
+      });
+    }
+  }
+}
+
+class MidInputRetrySynthesizeStream extends SynthesizeStream {
+  label = 'test.MidInputRetrySynthesizeStream';
+  attempts: Array<Array<string | '<flush>'>> = [];
+  firstInputConsumed: Promise<void>;
+  #resolveFirstInputConsumed!: () => void;
+
+  constructor(tts: TTS, connOptions: APIConnectOptions) {
+    super(tts, connOptions);
+    this.firstInputConsumed = new Promise((resolve) => {
+      this.#resolveFirstInputConsumed = resolve;
+    });
+  }
+
+  protected async run(): Promise<void> {
+    const attempt: Array<string | '<flush>'> = [];
+    this.attempts.push(attempt);
+
+    for await (const item of this.input) {
+      attempt.push(typeof item === 'string' ? item : '<flush>');
+      if (this.attempts.length === 1) {
+        this.#resolveFirstInputConsumed();
+        throw new APIConnectionError({ message: 'connection dropped while input was open' });
+      }
+    }
+  }
+}
+
+type InputRetryMode = 'replay' | 'stream' | 'resume';
+
+/** Fails its first attempt as scripted, then turns each input item into one audio frame. */
+class ModeRetrySynthesizeStream extends SynthesizeStream {
+  label = 'test.ModeRetrySynthesizeStream';
+  protected override readonly inputRetryMode: InputRetryMode;
+  attempts: Array<Array<string | '<flush>'>> = [];
+  firstFailed: Promise<void>;
+  #resolveFirstFailed!: () => void;
+
+  constructor(
+    tts: TTS,
+    connOptions: APIConnectOptions,
+    mode: InputRetryMode,
+    private readonly firstAttempt: { audioBeforeFailure: boolean; failAfterItems: number },
+  ) {
+    super(tts, connOptions);
+    this.inputRetryMode = mode;
+    this.firstFailed = new Promise((resolve) => {
+      this.#resolveFirstFailed = resolve;
+    });
+  }
+
+  protected async run(): Promise<void> {
+    // Like the Rime pump, read whatever `input` currently is for every item.
+    const attempt: Array<string | '<flush>'> = [];
+    this.attempts.push(attempt);
+    const first = this.attempts.length === 1;
+    if (first && this.firstAttempt.audioBeforeFailure) this.#emit('pre-failure audio');
+
+    for (;;) {
+      if (first && attempt.length === this.firstAttempt.failAfterItems) {
+        this.#resolveFirstFailed();
+        throw new APIConnectionError({ message: 'retryable failure' });
+      }
+      const item = await this.input.next();
+      if (item.done) break;
+      attempt.push(typeof item.value === 'string' ? item.value : '<flush>');
+      if (!first && typeof item.value === 'string') this.#emit(item.value);
+    }
+    this.queue.put(SynthesizeStream.END_OF_STREAM);
+  }
+
+  #emit(segmentId: string) {
+    this.queue.put({ requestId: 'request', segmentId, frame: audioFrame(1), final: false });
+  }
+}
+
+/** Throws a retryable error when the stream is closed, like a provider whose socket was torn down. */
+class FailOnCloseSynthesizeStream extends SynthesizeStream {
+  label = 'test.FailOnCloseSynthesizeStream';
+  attempts = 0;
+  started: Promise<void>;
+  #resolveStarted!: () => void;
+
+  constructor(tts: TTS, connOptions: APIConnectOptions) {
+    super(tts, connOptions);
+    this.started = new Promise((resolve) => {
+      this.#resolveStarted = resolve;
+    });
+  }
+
+  protected async run(): Promise<void> {
+    this.attempts += 1;
+    this.#resolveStarted();
+    if (!this.abortSignal.aborted) {
+      await new Promise((resolve) =>
+        this.abortSignal.addEventListener('abort', resolve, { once: true }),
+      );
+    }
+    throw new APIConnectionError({ message: 'socket closed' });
+  }
+}
+
+async function collectSegments(stream: SynthesizeStream): Promise<string[]> {
+  const segments: string[] = [];
+  for await (const event of stream) {
+    if (event !== SynthesizeStream.END_OF_STREAM) segments.push(event.segmentId);
+  }
+  return segments;
+}
+
+describe('SynthesizeStream retries', () => {
+  it('returns audio from the retry, including text pushed during the retry delay', async () => {
+    const tts = new TestTTS();
+    const errors: TTSError[] = [];
+    tts.on('error', (error) => errors.push(error));
+    const stream = new ModeRetrySynthesizeStream(
+      tts,
+      { ...RETRY_OPTIONS, retryIntervalMs: 50 },
+      'replay',
+      { audioBeforeFailure: false, failAfterItems: 2 },
+    );
+    const output = collectSegments(stream);
+    stream.pushText('hello');
+    stream.flush();
+
+    await stream.firstFailed;
+    stream.pushText('world');
+    stream.endInput();
+
+    expect(await output).toEqual(['hello', 'world']);
+    expect(stream.attempts).toEqual([
+      ['hello', '<flush>'],
+      ['hello', '<flush>', 'world', '<flush>'],
+    ]);
+    expect(errors).toEqual([]);
+  });
+
+  it('does not retry or report an attempt that fails because the stream closed', async () => {
+    const tts = new TestTTS();
+    const errors: TTSError[] = [];
+    tts.on('error', (error) => errors.push(error));
+    const stream = new FailOnCloseSynthesizeStream(tts, { ...RETRY_OPTIONS, maxRetry: 2 });
+    stream.pushText('hello');
+
+    await stream.started;
+    stream.close();
+    await new Promise((resolve) => setTimeout(resolve, 250));
+
+    expect(stream.attempts).toBe(1);
+    expect(errors).toEqual([]);
+  });
+
+  it('does not start a retry when the stream closes during the retry delay', async () => {
+    const tts = new TestTTS();
+    const errors: TTSError[] = [];
+    tts.on('error', (error) => errors.push(error));
+    const stream = new MidInputRetrySynthesizeStream(tts, {
+      ...RETRY_OPTIONS,
+      retryIntervalMs: 50,
+    });
+    stream.pushText('hello');
+
+    await stream.firstInputConsumed;
+    stream.close();
+    await new Promise((resolve) => setTimeout(resolve, 250));
+
+    expect(stream.attempts).toEqual([['hello']]);
+    expect(errors).toEqual([]);
+  });
+
+  it.each([
+    ['stream', false],
+    ['resume', true],
+  ] as const)(
+    'leaves input to a %s-mode subclass; retries after audio: %s',
+    async (mode, retriesAfterAudio) => {
+      const stream = new ModeRetrySynthesizeStream(new TestTTS(), RETRY_OPTIONS, mode, {
+        audioBeforeFailure: true,
+        failAfterItems: 1,
+      });
+      const output = collectSegments(stream);
+      stream.pushText('hello');
+      stream.pushText('world');
+      stream.endInput();
+
+      const segments = await output;
+      if (retriesAfterAudio) {
+        // The subclass resumes with the input it has not read yet.
+        expect(stream.attempts).toEqual([['hello'], ['world', '<flush>']]);
+        expect(segments).toEqual(['pre-failure audio', 'world']);
+      } else {
+        expect(stream.attempts).toEqual([['hello']]);
+        expect(segments).toEqual(['pre-failure audio']);
+      }
+    },
+  );
+
+  it('retries a stream-mode subclass before audio without replacing its input', async () => {
+    const stream = new ModeRetrySynthesizeStream(new TestTTS(), RETRY_OPTIONS, 'stream', {
+      audioBeforeFailure: false,
+      failAfterItems: 1,
+    });
+    const output = collectSegments(stream);
+    stream.pushText('hello');
+    stream.pushText('world');
+    stream.endInput();
+
+    expect(await output).toEqual(['world']);
+    expect(stream.attempts).toEqual([['hello'], ['world', '<flush>']]);
+  });
+
+  it('replays buffered input into a fresh queue', async () => {
+    const stream = new RetrySynthesizeStream(new TestTTS(), RETRY_OPTIONS);
+    stream.pushText('hello');
+    stream.flush();
+    stream.pushText('world');
+    stream.endInput();
+
+    await consume(stream);
+
+    expect(stream.attempts).toEqual([
+      ['hello', '<flush>', 'world', '<flush>'],
+      ['hello', '<flush>', 'world', '<flush>'],
+    ]);
+  });
+
+  it('keeps accepting input while a failed attempt is replaced', async () => {
+    const stream = new MidInputRetrySynthesizeStream(new TestTTS(), RETRY_OPTIONS);
+    const outputTask = consume(stream);
+    stream.pushText('hello');
+
+    await stream.firstInputConsumed;
+    stream.pushText('world');
+    stream.endInput();
+    await outputTask;
+
+    expect(stream.attempts).toEqual([['hello'], ['hello', 'world', '<flush>']]);
+  });
+
+  it('does not retry after emitting partial audio', async () => {
+    const tts = new TestTTS();
+    const errors: TTSError[] = [];
+    tts.on('error', (error) => errors.push(error));
+    const stream = new RetrySynthesizeStream(tts, RETRY_OPTIONS, true);
+    stream.pushText('hello');
+    stream.endInput();
+
+    await consume(stream);
+
+    expect(stream.attempts).toHaveLength(1);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]?.recoverable).toBe(false);
+  });
+});
+
+/** Queues one frame, and keeps the metrics consumer from reading it until the attempt ended. */
+class EndedAttemptSynthesizeStream extends SynthesizeStream {
+  label = 'test.EndedAttemptSynthesizeStream';
+  #resolveAttemptEnded!: () => void;
+  #attemptEnded = new Promise<void>((resolve) => (this.#resolveAttemptEnded = resolve));
+
+  protected async run(): Promise<void> {
+    this.queue.put({
+      requestId: 'logical-id',
+      segmentId: 'logical-id',
+      providerRequestId: 'wire-id',
+      frame: audioFrame(1),
+      final: true,
+    });
+  }
+
+  protected override onStreamDone(): void {
+    this.#resolveAttemptEnded();
+  }
+
+  protected override async monitorMetrics(): Promise<void> {
+    await this.#attemptEnded;
+    await super.monitorMetrics();
+  }
+}
+
+describe('SynthesizeStream provider request IDs', () => {
+  it('records the wire ID of a frame read after its attempt ended', async () => {
+    const exporter = new InMemorySpanExporter();
+    const tracerProvider = new NodeTracerProvider({
+      spanProcessors: [new SimpleSpanProcessor(exporter)],
+    });
+    const originalTracerProvider = tracer.getProvider();
+    setTracerProvider(tracerProvider);
+
+    try {
+      const stream = new EndedAttemptSynthesizeStream(new TestTTS(), RETRY_OPTIONS);
+      stream.pushText('hello');
+      stream.endInput();
+      const frames: SynthesizedAudio[] = [];
+      for await (const event of stream) {
+        if (event !== SynthesizeStream.END_OF_STREAM) frames.push(event);
+      }
+
+      expect(frames.map((frame) => [frame.requestId, frame.segmentId])).toEqual([
+        ['logical-id', 'logical-id'],
+      ]);
+      const attemptSpans = exporter
+        .getFinishedSpans()
+        .filter((span) => span.name === 'tts_request_run');
+      expect(attemptSpans).toHaveLength(1);
+      expect(attemptSpans[0]!.attributes[traceTypes.ATTR_PROVIDER_REQUEST_IDS]).toEqual([
+        'wire-id',
+      ]);
+    } finally {
+      setTracerProvider(originalTracerProvider);
+      await tracerProvider.shutdown();
+    }
+  });
+});
 
 class RetryChunkedStream extends ChunkedStream {
   label = 'test.RetryChunkedStream';

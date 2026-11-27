@@ -45,8 +45,6 @@ export const DEFAULT_VOICE_ID: TTSVoice;
 export class SynthesizeStream extends tts.SynthesizeStream {
     constructor(tts: TTS, opts: ResolvedTTSOptions, connOptions?: APIConnectOptions);
     // (undocumented)
-    close(): void;
-    // (undocumented)
     label: string;
     // (undocumented)
     protected run(): Promise<void>;

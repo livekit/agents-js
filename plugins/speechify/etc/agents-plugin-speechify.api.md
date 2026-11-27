@@ -29,6 +29,8 @@ export class ChunkedStream extends tts.ChunkedStream {
 export class SynthesizeStream extends tts.SynthesizeStream {
     constructor(tts: TTS, opts: TTSOptions, connOptions?: APIConnectOptions);
     // (undocumented)
+    protected readonly inputRetryMode = "resume";
+    // (undocumented)
     label: string;
     // (undocumented)
     protected run(): Promise<void>;

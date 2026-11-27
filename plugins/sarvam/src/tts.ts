@@ -5,6 +5,7 @@ import {
   type APIConnectOptions,
   APIConnectionError,
   AudioByteStream,
+  Future,
   log,
   normalizeLanguage,
   shortuuid,
@@ -458,14 +459,12 @@ export class ChunkedStream extends tts.ChunkedStream {
 
 export class SynthesizeStream extends tts.SynthesizeStream {
   private opts: ResolvedTTSOptions;
-  private tokenizer: tokenize.SentenceStream;
   #logger = log();
   label = 'sarvam.SynthesizeStream';
 
   constructor(tts: TTS, opts: ResolvedTTSOptions) {
     super(tts);
     this.opts = opts;
-    this.tokenizer = opts.sentenceTokenizer.stream();
   }
 
   private async closeWebSocket(ws: WebSocket): Promise<void> {
@@ -506,6 +505,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
   protected async run() {
     const requestId = shortuuid();
     const segmentId = shortuuid();
+    const tokenizer = this.opts.sentenceTokenizer.stream();
 
     // Build WS URL: wss://api.sarvam.ai/text-to-speech/ws?model=...&send_completion_event=true
     const wsBaseUrl = this.opts.baseURL.replace(/^http/, 'ws');
@@ -549,17 +549,17 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     const inputTask = async () => {
       for await (const data of this.input) {
         if (data === SynthesizeStream.FLUSH_SENTINEL) {
-          this.tokenizer.flush();
+          tokenizer.flush();
           continue;
         }
-        this.tokenizer.pushText(data);
+        tokenizer.pushText(data);
       }
-      this.tokenizer.endInput();
-      this.tokenizer.close();
+      tokenizer.endInput();
+      tokenizer.close();
     };
 
     const sendTask = async () => {
-      for await (const event of this.tokenizer) {
+      for await (const event of tokenizer) {
         if (this.abortController.signal.aborted) break;
 
         const text = event.token;
@@ -572,102 +572,123 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       }
     };
 
-    const recvTask = async () => {
-      const bstream = new AudioByteStream(this.opts.sampleRate, SARVAM_TTS_CHANNELS);
-      let finalReceived = false;
-      let lastFrame: AudioFrame | undefined;
+    const receiveDone = new Future<void>();
+    const bstream = new AudioByteStream(this.opts.sampleRate, SARVAM_TTS_CHANNELS);
+    let lastFrame: AudioFrame | undefined;
+    let audioQueued = false;
 
-      const sendLastFrame = (final: boolean) => {
-        if (lastFrame && !this.queue.closed) {
-          this.queue.put({ requestId, segmentId, frame: lastFrame, final });
-          lastFrame = undefined;
+    const sendLastFrame = (final: boolean) => {
+      if (lastFrame && !this.queue.closed) {
+        this.queue.put({ requestId, segmentId, frame: lastFrame, final });
+        audioQueued = true;
+        lastFrame = undefined;
+      }
+    };
+
+    const drain = () => {
+      if (receiveDone.done) return;
+      if (!this.abortSignal.aborted) {
+        for (const frame of bstream.flush()) {
+          sendLastFrame(false);
+          lastFrame = frame;
         }
-      };
+        sendLastFrame(true);
 
-      return new Promise<void>((resolve, reject) => {
-        ws.on('message', (data: RawData) => {
-          let msg: { type: string; data?: Record<string, unknown> };
+        if (!this.queue.closed) {
+          this.queue.put(SynthesizeStream.END_OF_STREAM);
+        }
+      }
+      receiveDone.resolve();
+    };
+
+    const onMessage = (data: RawData) => {
+      if (receiveDone.done || this.abortSignal.aborted) return;
+      let msg: { type: string; data?: Record<string, unknown> };
+      try {
+        msg = JSON.parse(data.toString());
+      } catch {
+        this.#logger.warn('Sarvam WS: received non-JSON message');
+        return;
+      }
+
+      switch (msg.type) {
+        case 'audio': {
+          const audioB64 = (msg.data?.audio as string) ?? '';
+          if (!audioB64) break;
+
           try {
-            msg = JSON.parse(data.toString());
-          } catch {
-            this.#logger.warn('Sarvam WS: received non-JSON message');
-            return;
-          }
-
-          switch (msg.type) {
-            case 'audio': {
-              const audioB64 = (msg.data?.audio as string) ?? '';
-              if (!audioB64) break;
-
-              const raw = Buffer.from(audioB64, 'base64');
-              const pcm = decodeAudio(this.opts.outputAudioCodec, raw);
-
-              for (const frame of bstream.write(pcm)) {
-                sendLastFrame(false);
-                lastFrame = frame;
-              }
-              break;
-            }
-
-            case 'event': {
-              const eventType = msg.data?.event_type as string | undefined;
-              if (eventType === 'final') {
-                finalReceived = true;
-                for (const frame of bstream.flush()) {
-                  sendLastFrame(false);
-                  lastFrame = frame;
-                }
-                sendLastFrame(true);
-
-                if (!this.queue.closed) {
-                  this.queue.put(SynthesizeStream.END_OF_STREAM);
-                }
-                resolve();
-              }
-              break;
-            }
-
-            case 'error': {
-              const errMsg = (msg.data?.message as string) ?? 'Unknown Sarvam WS error';
-              const errCode = msg.data?.code as number | undefined;
-              reject(new Error(`Sarvam WS error ${errCode ?? ''}: ${errMsg}`));
-              break;
-            }
-          }
-        });
-
-        ws.on('close', () => {
-          if (!finalReceived) {
-            for (const frame of bstream.flush()) {
+            const raw = Buffer.from(audioB64, 'base64');
+            const pcm = decodeAudio(this.opts.outputAudioCodec, raw);
+            for (const frame of bstream.write(pcm)) {
               sendLastFrame(false);
               lastFrame = frame;
             }
-            sendLastFrame(true);
-
-            if (!this.queue.closed) {
-              this.queue.put(SynthesizeStream.END_OF_STREAM);
-            }
+          } catch (error) {
+            receiveDone.reject(error instanceof Error ? error : new Error(String(error)));
           }
-          resolve();
-        });
+          break;
+        }
 
-        ws.on('error', (error) => {
-          if (this.abortController.signal.aborted && isClosedTransportError(error)) {
-            resolve();
-            return;
-          }
-          reject(error);
-        });
-      });
+        case 'event':
+          if (msg.data?.event_type === 'final') drain();
+          break;
+
+        case 'error': {
+          const errMsg = (msg.data?.message as string) ?? 'Unknown Sarvam WS error';
+          const errCode = msg.data?.code as number | undefined;
+          receiveDone.reject(new Error(`Sarvam WS error ${errCode ?? ''}: ${errMsg}`));
+          break;
+        }
+      }
     };
 
+    ws.on('message', onMessage);
+    ws.once('close', (code) => {
+      if (receiveDone.done) return;
+      if (audioQueued) {
+        drain();
+        return;
+      }
+      // Nothing reached the output, so fail the attempt and let the base class replay the input.
+      receiveDone.reject(new Error(`Sarvam TTS WS closed before audio: ${code}`));
+    });
+    ws.on('error', (error) => {
+      if (receiveDone.done) return;
+      if (this.abortSignal.aborted && isClosedTransportError(error)) {
+        receiveDone.resolve();
+        return;
+      }
+      receiveDone.reject(error);
+    });
+
+    // A closed stream wants no more audio: stop waiting for the provider and drop the socket.
+    const onAbort = () => {
+      if (!receiveDone.done) receiveDone.resolve();
+      if (ws.readyState === WebSocket.OPEN) ws.close();
+    };
+    if (this.abortSignal.aborted) onAbort();
+    else this.abortSignal.addEventListener('abort', onAbort, { once: true });
+
+    const tasks = [inputTask(), sendTask(), receiveDone.await];
     try {
-      await Promise.all([inputTask(), sendTask(), recvTask()]);
+      await Promise.all(tasks);
     } catch (e) {
+      // Disable output from this attempt before the socket acknowledges the close.
+      if (!receiveDone.done) receiveDone.resolve();
+      if (!this.input.closed) this.input.close();
+      tokenizer.close();
+      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+        ws.close();
+      }
+      await Promise.allSettled(tasks);
+
       if (this.abortController.signal.aborted) return;
       const msg = e instanceof Error ? e.message : String(e);
       throw new APIConnectionError({ message: `Sarvam TTS streaming failed: ${msg}` });
     } finally {
+      this.abortSignal.removeEventListener('abort', onAbort);
+      ws.off('message', onMessage);
+      tokenizer.close();
       await this.closeWebSocket(ws);
     }
   }
