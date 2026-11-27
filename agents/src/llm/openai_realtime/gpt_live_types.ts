@@ -110,6 +110,11 @@ export interface ResponsesEvent {
     call_id?: string | null;
     name?: string | null;
     arguments?: string | null;
+    content?: Array<{
+      type?: string;
+      text?: string | null;
+      refusal?: string | null;
+    }> | null;
   } | null;
 }
 /** Provider error details. Messages can contain customer content. @public */

@@ -1239,6 +1239,9 @@ const ATTR_CLOUD_AGENT_ID = "lk.cloud_agent_id";
 const ATTR_CONNECTION_STATE = "lk.connection_state";
 
 // @public (undocumented)
+const ATTR_DELEGATION_ID = "lk.delegation_id";
+
+// @public (undocumented)
 const ATTR_DEPLOYMENT_ID = "lk.deployment_id";
 
 // @public (undocumented)
@@ -1642,6 +1645,9 @@ const ATTR_RPC_RESPONSE_TIMEOUT = "lk.rpc.response_timeout";
 
 // @public (undocumented)
 const ATTR_SESSION_OPTIONS = "lk.session_options";
+
+// @public (undocumented)
+const ATTR_SESSION_USAGE = "lk.session_usage";
 
 // @public
 const ATTR_SHUTDOWN_REASON = "lk.shutdown.reason";
@@ -9134,6 +9140,8 @@ declare namespace traceTypes {
         ATTR_LLM_METRICS,
         ATTR_TTS_METRICS,
         ATTR_REALTIME_MODEL_METRICS,
+        ATTR_SESSION_USAGE,
+        ATTR_DELEGATION_ID,
         ATTR_E2E_LATENCY,
         ATTR_BLOCKING_DURATION,
         ATTR_BLOCKING_THRESHOLD,

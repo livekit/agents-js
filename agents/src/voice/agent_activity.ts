@@ -28,6 +28,7 @@ import {
   instructionsEqual,
   renderInstructions,
 } from '../llm/chat_context.js';
+import type { DelegatedResponse } from '../llm/duplex.js';
 import { DuplexRealtimeAdapter, DuplexRealtimeSession } from '../llm/duplex_adapter.js';
 import { AsyncToolset, type Toolset } from '../llm/index.js';
 import {
@@ -237,6 +238,7 @@ interface OnEnterData {
 export interface ReusableResources {
   sttPipeline?: STTPipeline;
   rtSession?: RealtimeSession;
+  delegationSpans?: Map<string | null, Span>;
   turnDetectorStream?: BaseStreamingTurnDetectorStream;
 }
 
@@ -281,6 +283,11 @@ export async function cleanupReusableResources(
       }
     }
   }
+  for (const span of resources.delegationSpans?.values() ?? []) {
+    genAI.setErrorType(span, 'session_closed');
+    span.end();
+  }
+  resources.delegationSpans?.clear();
 }
 
 interface PreemptiveGeneration {
@@ -616,6 +623,7 @@ export class AgentActivity implements RecognitionHooks {
   private realtimeSession?: RealtimeSession;
   private realtimeOnEnterScopes = new Set<{ toolsUpdated: boolean }>();
   private realtimeSpans?: Map<string, Span>; // Maps response_id to OTEL span for metrics recording
+  private delegationSpans = new Map<string | null, Span>();
   private turnDetectionMode?: TurnDetectionMode;
   private rtTurnDetectionEnabled = false;
   private rtOverlappingSpeechEnabled = false;
@@ -693,6 +701,72 @@ export class AgentActivity implements RecognitionHooks {
   private readonly onRealtimeInputAudioTranscriptionCompleted = (
     ev: InputTranscriptionCompleted,
   ): void => this.onInputAudioTranscriptionCompleted(ev);
+
+  private readonly onDelegatedResponse = (ev: DelegatedResponse): void => {
+    let delegation = this.delegationSpans.get(ev.delegationId);
+    if (!delegation) {
+      delegation = tracer.startSpan({
+        name: 'delegation',
+        context: this.agentSession.rootSpanContext,
+        startTime: ev.startedAt,
+        attributes: { [traceTypes.ATTR_AGENT_LABEL]: this.agent.id },
+      });
+      if (ev.delegationId) delegation.setAttribute(traceTypes.ATTR_DELEGATION_ID, ev.delegationId);
+      this.delegationSpans.set(ev.delegationId, delegation);
+    }
+
+    const span = tracer.startSpan({
+      name: 'llm_request',
+      context: trace.setSpan(this.agentSession.rootSpanContext ?? ROOT_CONTEXT, delegation),
+      startTime: ev.startedAt,
+    });
+    try {
+      genAI.setRequestAttributes(span, {
+        operation: traceTypes.GenAIOperationName.CHAT,
+        provider: ev.provider,
+        model: ev.model,
+        stream: true,
+        outputType: traceTypes.GenAIOutputType.TEXT,
+      });
+      if (ev.delegationId) span.setAttribute(traceTypes.ATTR_DELEGATION_ID, ev.delegationId);
+      if (ev.error) genAI.setErrorType(span, ev.error);
+      const finishReason = ev.functionCalls.length
+        ? traceTypes.GenAIFinishReason.TOOL_CALL
+        : traceTypes.GenAIFinishReason.STOP;
+      genAI.setResponseAttributes(span, {
+        responseId: ev.responseId ?? undefined,
+        model: ev.responseModel ?? undefined,
+        finishReasons: ev.error ? undefined : [finishReason],
+      });
+      if (ev.metrics) {
+        genAI.setUsageAttributes(span, ev.metrics);
+        span.setAttribute(traceTypes.ATTR_LLM_METRICS, JSON.stringify(ev.metrics));
+      }
+      const toolDefinitions = genAI.toToolDefinitions(this.tools.flatten());
+      genAI.setContentAttributes(span, {
+        systemInstructions: ev.instructions
+          ? [{ type: 'text', content: ev.instructions }]
+          : undefined,
+        outputMessages: genAI.toOutputMessages({
+          text: ev.text || undefined,
+          functionCalls: ev.functionCalls,
+          finishReason,
+        }),
+        toolDefinitions,
+      });
+      if (span.isRecording() && genAI.captureContentEnabled())
+        span.setAttribute(traceTypes.ATTR_GEN_AI_TOOL_DEFINITIONS, JSON.stringify(toolDefinitions));
+    } catch (error) {
+      this.logger.error({ error }, 'failed to record a delegated response');
+    } finally {
+      span.end(ev.endedAt);
+      if (ev.final) {
+        if (ev.error) genAI.setErrorType(delegation, ev.error);
+        this.delegationSpans.delete(ev.delegationId);
+        delegation.end(ev.endedAt);
+      }
+    }
+  };
 
   private readonly onModelError = (ev: RealtimeModelError | STTError | TTSError | LLMError): void =>
     this.onError(ev);
@@ -961,6 +1035,8 @@ export class AgentActivity implements RecognitionHooks {
         this.logger.debug('reusing realtime session from previous activity');
         this.realtimeSession = reuseResources!.rtSession;
         reuseResources!.rtSession = undefined; // ownership transferred
+        this.delegationSpans = reuseResources!.delegationSpans ?? new Map();
+        reuseResources!.delegationSpans = undefined;
 
         // clear any stale audio/generation state
         await this.realtimeSession!.interrupt();
@@ -985,6 +1061,7 @@ export class AgentActivity implements RecognitionHooks {
         this.onRealtimeInputAudioTranscriptionCompleted,
       );
       this.realtimeSession!.on('metrics_collected', this.onMetricsCollected);
+      this.realtimeSession!.on('_delegated_response', this.onDelegatedResponse);
       this.realtimeSession!.on('error', this.onModelError);
 
       // skip the update if the session is reused and no mid-session update is supported
@@ -1238,8 +1315,11 @@ export class AgentActivity implements RecognitionHooks {
             this.onRealtimeInputAudioTranscriptionCompleted,
           );
           this.realtimeSession.off('metrics_collected', this.onMetricsCollected);
+          this.realtimeSession.off('_delegated_response', this.onDelegatedResponse);
           this.realtimeSession.off('error', this.onModelError);
           resources.rtSession = this.realtimeSession;
+          resources.delegationSpans = this.delegationSpans;
+          this.delegationSpans = new Map();
           this.realtimeSession = undefined; // prevent _closeSessionResources from closing it
         }
       }
@@ -6617,7 +6697,13 @@ export class AgentActivity implements RecognitionHooks {
     } finally {
       // Providers can report final usage while closing the connection.
       this.realtimeSession?.off('metrics_collected', this.onMetricsCollected);
+      this.realtimeSession?.off('_delegated_response', this.onDelegatedResponse);
       this.realtimeSession?.off('error', this.onModelError);
+      for (const span of this.delegationSpans.values()) {
+        genAI.setErrorType(span, 'session_closed');
+        span.end();
+      }
+      this.delegationSpans.clear();
       this.realtimeSpans?.clear();
     }
     await this.audioRecognition?.close();

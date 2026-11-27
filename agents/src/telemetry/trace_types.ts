@@ -256,6 +256,8 @@ export const ATTR_INTERRUPTION_DETECTION_DELAY = 'lk.interruption.detection_dela
 export const ATTR_LLM_METRICS = 'lk.llm_metrics';
 export const ATTR_TTS_METRICS = 'lk.tts_metrics';
 export const ATTR_REALTIME_MODEL_METRICS = 'lk.realtime_model_metrics';
+export const ATTR_SESSION_USAGE = 'lk.session_usage';
+export const ATTR_DELEGATION_ID = 'lk.delegation_id';
 
 /** End-to-end latency in seconds. */
 export const ATTR_E2E_LATENCY = 'lk.e2e_latency';

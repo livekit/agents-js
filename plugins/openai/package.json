@@ -39,6 +39,8 @@
     "@livekit/agents-plugins-test": "workspace:*",
     "@livekit/rtc-node": "catalog:",
     "@microsoft/api-extractor": "^7.58.12",
+    "@opentelemetry/sdk-trace-base": "^2.8.0",
+    "@opentelemetry/sdk-trace-node": "^2.8.0",
     "@types/ws": "catalog:",
     "tsup": "^8.3.5",
     "typescript": "^5.0.0"

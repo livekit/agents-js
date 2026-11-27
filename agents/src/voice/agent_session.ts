@@ -2451,6 +2451,7 @@ export class AgentSession<
         this.agentSpeakingSpan = undefined;
       }
 
+      closeSpan.setAttribute(traceTypes.ATTR_SESSION_USAGE, JSON.stringify(this.usage.modelUsage));
       closeSpan.end();
       if (this.sessionSpan) {
         this.sessionSpan.end();

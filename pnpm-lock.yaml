@@ -1222,6 +1222,12 @@ importers:
       '@microsoft/api-extractor':
         specifier: ^7.58.12
         version: 7.58.12(@types/node@25.6.0)
+      '@opentelemetry/sdk-trace-base':
+        specifier: ^2.8.0
+        version: 2.9.0(@opentelemetry/api@1.9.0)
+      '@opentelemetry/sdk-trace-node':
+        specifier: ^2.8.0
+        version: 2.9.0(@opentelemetry/api@1.9.0)
       '@types/ws':
         specifier: 'catalog:'
         version: 8.18.1
