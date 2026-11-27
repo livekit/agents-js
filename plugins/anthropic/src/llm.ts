@@ -46,7 +46,6 @@ const defaultLLMOptions: LLMOptions = {
   model: 'claude-sonnet-4-6',
   /* eslint-disable-next-line turbo/no-undeclared-env-vars */
   apiKey: process.env.ANTHROPIC_API_KEY,
-  parallelToolCalls: true,
 };
 
 /**
