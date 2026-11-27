@@ -1,5 +1,16 @@
 # @livekit/agents-plugin-deepgram
 
+## 1.11.1
+
+### Patch Changes
+
+- Replay buffered input when a streaming TTS attempt fails before audio. Release the buffer once the stream emits audio. Keep provider-owned retries for streams that manage their own input. - [#2578](https://github.com/livekit/agents-js/pull/2578) ([@bogdanovich](https://github.com/bogdanovich))
+
+  ElevenLabs stops sending to interrupted or failed contexts. Sarvam keeps a failed socket from ending the stream before retry. Resemble honors the configured retry budget for pre-audio connection failures.
+
+- Updated dependencies [[`b6698de`](https://github.com/livekit/agents-js/commit/b6698de37bb1dcdf00d5635acf1067de693e7551), [`d510466`](https://github.com/livekit/agents-js/commit/d510466c341398903e1dc5a34433b8cf0996b9e6)]:
+  - @livekit/agents@1.11.1
+
 ## 1.11.0
 
 ### Patch Changes
