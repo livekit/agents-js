@@ -4,7 +4,8 @@
 import { type APIError, APIStatusError, stt } from '@livekit/agents';
 import { AudioFrame } from '@livekit/rtc-node';
 import { EventEmitter } from 'node:events';
-import { afterEach, describe, expect, it } from 'vitest';
+import { performance } from 'node:perf_hooks';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ClientOptions, WebSocket } from 'ws';
 import {
   DEFAULT_MODEL,
@@ -58,17 +59,19 @@ class FakeWebSocket extends EventEmitter {
 
   constructor(
     incoming: Incoming[] = [],
-    options: { blockAudio?: boolean; sendError?: Error } = {},
+    options: { blockAudio?: boolean; deferOpen?: boolean; sendError?: Error } = {},
   ) {
     super();
     this.#incoming = [...incoming];
     this.#blockAudio = options.blockAudio ?? false;
     this.sendError = options.sendError;
-    queueMicrotask(() => {
-      if (this.closed) return;
-      this.readyState = 1;
-      this.emit('open');
-    });
+    if (!options.deferOpen) queueMicrotask(() => this.open());
+  }
+
+  open() {
+    if (this.closed || this.readyState === 1) return;
+    this.readyState = 1;
+    this.emit('open');
   }
 
   send(data: string | Buffer | ArrayBuffer | ArrayBufferView, callback?: (error?: Error) => void) {
@@ -227,6 +230,8 @@ function summaries(events: stt.SpeechEvent[]) {
 const originalModelKey = process.env.MODEL_API_KEY;
 const originalMetaKey = process.env.META_API_KEY;
 afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
   if (originalModelKey === undefined) delete process.env.MODEL_API_KEY;
   else process.env.MODEL_API_KEY = originalModelKey;
   if (originalMetaKey === undefined) delete process.env.META_API_KEY;
@@ -413,6 +418,116 @@ describe('Meta Muse STT', () => {
     expect(ws.sentAt).toHaveLength(3);
     expect(ws.sentAt[1]! - ws.sentAt[0]!).toBeGreaterThanOrEqual(45);
     expect(ws.sentAt[2]! - ws.sentAt[1]!).toBeGreaterThanOrEqual(45);
+  });
+
+  it('does not pace audio queued while connecting late', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
+    let now = 0;
+    vi.spyOn(performance, 'now').mockImplementation(() => now);
+    const ws = new FakeWebSocket([{ sessionId: 'session-1' }, CLOSE_AFTER_END], {
+      deferOpen: true,
+    });
+    const provider = new STT({
+      apiKey: 'test-key',
+      webSocketFactory: new FakeFactory([ws]).create,
+    });
+    const stream = provider.stream({ connOptions: { ...TEST_OPTIONS, timeoutMs: 1000 } });
+
+    stream.pushFrame(frame(3840 * 3));
+    now = 240;
+    await vi.advanceTimersByTimeAsync(240);
+    ws.open();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(ws.sentBytes).toHaveLength(3);
+
+    for (let i = 0; i < 3; i++) {
+      now += 80;
+      await vi.advanceTimersByTimeAsync(80);
+      stream.pushFrame(frame(3840));
+      await vi.advanceTimersByTimeAsync(0);
+    }
+    stream.endInput();
+    await vi.advanceTimersByTimeAsync(0);
+    await collectEvents(stream);
+    expect(ws.sentBytes).toHaveLength(6);
+  });
+
+  it('does not use idle time before the first frame to allow a burst', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
+    let now = 0;
+    vi.spyOn(performance, 'now').mockImplementation(() => now);
+    const ws = websocket();
+    const provider = new STT({
+      apiKey: 'test-key',
+      webSocketFactory: new FakeFactory([ws]).create,
+    });
+    const stream = provider.stream({ connOptions: TEST_OPTIONS });
+    now = 10_000;
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    stream.pushFrame(frame(3840 * 3));
+    stream.endInput();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(ws.sentBytes).toHaveLength(1);
+    now += 79;
+    await vi.advanceTimersByTimeAsync(79);
+    expect(ws.sentBytes).toHaveLength(1);
+    now += 1;
+    await vi.advanceTimersByTimeAsync(1);
+    expect(ws.sentBytes).toHaveLength(2);
+    now += 80;
+    await vi.advanceTimersByTimeAsync(80);
+    await collectEvents(stream);
+    expect(ws.sentBytes).toHaveLength(3);
+  });
+
+  it('anchors pacing when the first frame is pushed after the sender starts', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
+    let now = 0;
+    vi.spyOn(performance, 'now').mockImplementation(() => now);
+    const ws = websocket();
+    const provider = new STT({
+      apiKey: 'test-key',
+      webSocketFactory: new FakeFactory([ws]).create,
+    });
+    const stream = provider.stream({ connOptions: TEST_OPTIONS });
+    await vi.advanceTimersByTimeAsync(0);
+
+    now = 10_000;
+    stream.pushFrame(frame(3840 * 4));
+    now = 10_240;
+    vi.advanceTimersByTime(240);
+    stream.endInput();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(ws.sentBytes).toHaveLength(4);
+    await collectEvents(stream);
+  });
+
+  it('records the first frame time once', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
+    let now = 0;
+    vi.spyOn(performance, 'now').mockImplementation(() => now);
+    const ws = websocket();
+    const provider = new STT({
+      apiKey: 'test-key',
+      webSocketFactory: new FakeFactory([ws]).create,
+    });
+    const stream = provider.stream({ connOptions: TEST_OPTIONS });
+    expect(speechStreamTestState(stream).firstFrameAt).toBeUndefined();
+
+    stream.pushFrame(frame(3840));
+    const first = speechStreamTestState(stream).firstFrameAt;
+    expect(first).toBeDefined();
+    now = 10;
+    await vi.advanceTimersByTimeAsync(10);
+    stream.pushFrame(frame(3840));
+    expect(speechStreamTestState(stream).firstFrameAt).toBe(first);
+
+    stream.endInput();
+    await vi.advanceTimersByTimeAsync(80);
+    await collectEvents(stream);
   });
 
   it('uses audio progress without duplicating sent-byte usage', async () => {
