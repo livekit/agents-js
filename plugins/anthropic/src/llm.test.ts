@@ -78,11 +78,11 @@ const namedToolChoice: llm.ToolChoice = {
   function: { name: 'getWeather' },
 };
 
-async function toolChoice(
+async function requestParams(
   model: string,
   choice: llm.ToolChoice,
   options: { parallelToolCalls?: boolean } = {},
-): Promise<Anthropic.MessageCreateParamsStreaming['tool_choice']> {
+): Promise<Anthropic.MessageCreateParamsStreaming> {
   let capturedParams: Anthropic.MessageCreateParamsStreaming | undefined;
   const client = {
     messages: {
@@ -104,7 +104,15 @@ async function toolChoice(
   for await (const _ of stream) {
     // drain
   }
-  return capturedParams!.tool_choice;
+  return capturedParams!;
+}
+
+async function toolChoice(
+  model: string,
+  choice: llm.ToolChoice,
+  options: { parallelToolCalls?: boolean } = {},
+): Promise<Anthropic.MessageCreateParamsStreaming['tool_choice']> {
+  return (await requestParams(model, choice, options)).tool_choice;
 }
 
 async function collectTextFromEvents(
@@ -165,6 +173,14 @@ describe('Anthropic LLM', () => {
         name: 'getWeather',
       });
     }
+  });
+
+  it('sends tool choice none with the tool definitions kept', async () => {
+    // The chat history can still hold tool_use blocks, which the API rejects when no tools are defined.
+    const params = await requestParams('claude-sonnet-5', 'none', { parallelToolCalls: false });
+
+    expect(params.tool_choice).toEqual({ type: 'none' });
+    expect(params.tools?.map((tool) => tool.name)).toEqual(['getWeather']);
   });
 
   it('logs the forced tool choice warning once', async () => {

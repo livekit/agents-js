@@ -204,7 +204,7 @@ export class LLM extends llm.LLM {
    * @remarks
    * Maps `toolChoice` to Anthropic's format:
    * - `"required"` → `{ type: "any" }`
-   * - `"none"` → clears tools
+   * - `"none"` → `{ type: "none" }`, keeping the tool definitions
    * - `{ type: "function", function: { name } }` → `{ type: "tool", name }`
    */
   chat({
@@ -254,9 +254,8 @@ export class LLM extends llm.LLM {
         if (resolvedToolChoice === 'required') {
           anthropicToolChoice = { type: 'any' };
         } else if (resolvedToolChoice === 'none') {
-          // Clear tools entirely when none is requested
-          anthropicTools.length = 0;
-          anthropicToolChoice = undefined;
+          // Keep the tools: the history can hold tool_use blocks, which the API rejects without tool definitions
+          anthropicToolChoice = { type: 'none' };
         }
       } else if (
         typeof resolvedToolChoice === 'object' &&
@@ -283,8 +282,8 @@ export class LLM extends llm.LLM {
           anthropicToolChoice = { type: 'auto' };
         }
 
-        // Map parallelToolCalls
-        if (resolvedParallel !== undefined) {
+        // Map parallelToolCalls (not accepted together with type "none")
+        if (resolvedParallel !== undefined && anthropicToolChoice.type !== 'none') {
           anthropicToolChoice.disable_parallel_tool_use = !resolvedParallel;
         }
         extras.tool_choice = anthropicToolChoice;
