@@ -147,6 +147,7 @@ import {
   type _TextOut,
   _injectRunningToolCalls,
   _stripRunningToolCalls,
+  alignedTranscriptOrText,
   applyInstructionsModality,
   forwardedTextFor,
   hasExpressiveInstructions,
@@ -4388,7 +4389,14 @@ export class AgentActivity implements RecognitionHooks {
           ]);
           if (timedTextsStream) {
             this.logger.debug('Using TTS aligned transcripts for transcription node input');
-            transcriptionInput = timedTextsStream;
+            // A server-side fallback can serve the turn without word timings; the timed
+            // stream then ends empty and the generated text is forwarded instead.
+            transcriptionInput = alignedTranscriptOrText(
+              timedTextsStream,
+              segment.textStream,
+              segmentAbortController.signal,
+              () => segment.ttsGenData?.error != null,
+            );
           }
         }
 

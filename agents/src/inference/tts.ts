@@ -259,6 +259,13 @@ export function normalizeTTSFallback(
   return [makeFallback(fallback)];
 }
 
+/** Builds the "code: detail" text of a LiveKit Inference error frame; an empty `data` falls back to `message`. */
+function formatErrorFrame(frame: { code?: string; data?: unknown; message?: string }): string {
+  const detail = frame.data || frame.message;
+  const text = typeof detail === 'string' || detail === undefined ? detail : JSON.stringify(detail);
+  return [frame.code, text].filter(Boolean).join(': ') || 'unknown error';
+}
+
 /**
  * Whether every model the gateway may serve the request from emits aligned timestamps.
  *
@@ -597,6 +604,19 @@ export class TTS<TModel extends TTSModels> extends BaseTTS {
         if (event.type === 'session.created') {
           const parsed = ttsKnownServerEventSchema.parse(event);
           if (parsed.type === 'session.created') state.sessionCreated = parsed;
+        }
+        if (event.type === 'error' && !state.onMessage) {
+          // The gateway keeps the session usable after an error, so the idle socket stays pooled.
+          const { code, data, message } = event as {
+            code?: string;
+            data?: unknown;
+            message?: string;
+          };
+          this.#logger.warn(
+            { code, data, message },
+            'inference.TTS received a gateway error on an idle connection',
+          );
+          return;
         }
         state.onMessage?.(event);
       } catch (error) {
@@ -961,7 +981,10 @@ export class SynthesizeStream<TModel extends TTSModels> extends BaseSynthesizeSt
               );
               await resourceCleanup();
               completionFuture.reject(
-                new APIError(`LiveKit TTS returned error: ${serverEvent.message}`),
+                new APIError(`LiveKit TTS returned error: ${formatErrorFrame(serverEvent)}`, {
+                  body: serverEvent,
+                  retryable: serverEvent.retryable ?? true,
+                }),
               );
               return;
           }

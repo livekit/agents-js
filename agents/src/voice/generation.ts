@@ -45,8 +45,10 @@ import {
   Future,
   IdleTimeoutError,
   Task,
+  readStream,
   shortuuid,
   toError,
+  toStream,
   waitForAbort,
   waitUntilTimeout,
 } from '../utils.js';
@@ -1131,6 +1133,46 @@ export function performTTSInference(
     Task.from((controller) => inferenceTask(controller.signal), controller, 'performTTSInference'),
     genData,
   ];
+}
+
+/**
+ * Forward the TTS-aligned transcript, falling back to the generated text.
+ *
+ * `alignedTranscript` says the TTS was asked for word timings, not that the provider that
+ * served this turn returned any. A server-side fallback in LiveKit Inference can serve a
+ * turn without the requested options, so the timed stream can end without a single item.
+ * Forwarding it alone would leave the turn with no transcript, so the generated text is
+ * forwarded instead, without word timings. This matches the Python SDK.
+ *
+ * The generated text is only forwarded after a clean synthesis end. When `synthesisFailed`
+ * reports a failure, that text may include words that were never spoken, so nothing is
+ * forwarded.
+ *
+ * Neither source is cancelled: the generated text is also written by the segment producer,
+ * which must finish independently. Aborting `signal` stops reading and releases both
+ * sources without a fallback.
+ */
+export function alignedTranscriptOrText(
+  timedTexts: ReadableStream<TimedString>,
+  text: ReadableStream<string>,
+  signal: AbortSignal,
+  synthesisFailed: () => boolean = () => false,
+): ReadableStream<string | TimedString> {
+  return toStream(
+    (async function* () {
+      let aligned = false;
+      for await (const timedText of readStream(timedTexts, signal)) {
+        aligned = true;
+        yield timedText;
+      }
+      if (aligned || signal.aborted || synthesisFailed()) return;
+      log().warn(
+        'no aligned transcript was returned from tts, ' +
+          'forwarding the generated text without word timings',
+      );
+      yield* readStream(text, signal);
+    })(),
+  );
 }
 
 export interface _TextOut {

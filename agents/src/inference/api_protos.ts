@@ -72,7 +72,15 @@ export const ttsFallbackActivatedEventSchema = z.object({
 
 export const ttsErrorEventSchema = z.object({
   type: z.literal('error'),
+  // LiveKit Inference sends `code`, `data` and `retryable`; `message` is kept for older senders.
+  code: z
+    .union([z.string(), z.number()])
+    .transform((c) => String(c))
+    .optional(),
+  data: z.unknown().optional(),
   message: z.string().optional(),
+  // `null` is treated like an absent field
+  retryable: z.boolean().nullish(),
   session_id: z.string().optional(),
 });
 
