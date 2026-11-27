@@ -9,6 +9,7 @@ import {
   log,
   normalizeLanguage,
   shortuuid,
+  toError,
   tokenize,
   tts,
 } from '@livekit/agents';
@@ -121,40 +122,48 @@ export class ChunkedStream extends tts.ChunkedStream {
       },
       (res) => {
         res.on('data', (chunk) => {
-          buffer += chunk.toString();
-          const messages = buffer.split('\n'); // wait until a full message has been received
+          try {
+            buffer += chunk.toString();
+            const messages = buffer.split('\n'); // wait until a full message has been received
 
-          if (messages.length > 1) {
-            buffer = messages.pop() || '';
+            if (messages.length > 1) {
+              buffer = messages.pop() || '';
 
-            for (const message of messages) {
-              if (message) {
-                const parsedMessage = parseSSEMessage(message);
+              for (const message of messages) {
+                if (message) {
+                  const parsedMessage = parseSSEMessage(message);
 
-                if (parsedMessage?.data?.audio) {
-                  for (const frame of bstream.write(parsedMessage.data.audio)) {
-                    this.queue.put({
-                      requestId,
-                      frame,
-                      final: false,
-                      segmentId: requestId,
-                    });
+                  if (parsedMessage?.data?.audio) {
+                    for (const frame of bstream.write(parsedMessage.data.audio)) {
+                      this.queue.put({
+                        requestId,
+                        frame,
+                        final: false,
+                        segmentId: requestId,
+                      });
+                    }
                   }
                 }
               }
             }
+          } catch (error) {
+            this.queue.close();
+            doneFut.reject(toError(error));
+            req.destroy();
           }
         });
         res.on('close', () => {
-          for (const frame of bstream.flush()) {
-            this.queue.put({
-              requestId,
-              frame,
-              final: false,
-              segmentId: requestId,
-            });
+          if (!this.queue.closed) {
+            for (const frame of bstream.flush()) {
+              this.queue.put({
+                requestId,
+                frame,
+                final: false,
+                segmentId: requestId,
+              });
+            }
+            this.queue.close();
           }
-          this.queue.close();
           doneFut.resolve();
         });
         res.on('error', (err) => {
