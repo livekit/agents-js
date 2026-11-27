@@ -173,8 +173,12 @@ if (hasFishAudioConfig) {
 }
 
 describe('FishAudio options', () => {
+  it('defaults to the s3-pro model', () => {
+    expect(new TTS({ apiKey: 'test-key' }).model).toBe('s3-pro');
+  });
+
   it('accepts all supported model variants', () => {
-    for (const model of ['s1', 's2-pro', 's2.1-pro', 'drama-3'] as const) {
+    for (const model of ['s1', 's2-pro', 's2.1-pro', 's3-pro', 'drama-3'] as const) {
       expect(new TTS({ apiKey: 'test-key', model }).model).toBe(model);
     }
   });
