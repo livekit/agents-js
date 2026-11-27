@@ -9,7 +9,6 @@ import { AgentSession as AgentSession_2 } from '@livekit/protocol';
 import { AudioFrame } from '@livekit/rtc-node';
 import { AudioResampler } from '@livekit/rtc-node';
 import { Context } from '@opentelemetry/api';
-import { default as default_2 } from 'ws';
 import { EventEmitter } from 'events';
 import { EventEmitter as EventEmitter_2 } from 'node:events';
 import type { EventMap } from '@livekit/typed-emitter';
@@ -1407,6 +1406,8 @@ export type RealtimeModels = 'gpt-realtime' | 'gpt-realtime-1.5' | 'gpt-realtime
 // @public
 class RealtimeSession_2 extends llm_2.RealtimeSession {
     constructor(realtimeModel: RealtimeModel_3, options?: llm_2.RealtimeSessionOptions);
+    // @internal (undocumented)
+    protected get acceptsEmptyDeleteAcknowledgement(): boolean;
     // (undocumented)
     get chatCtx(): llm_2.ChatContext;
     // (undocumented)
@@ -1462,8 +1463,17 @@ class RealtimeSession_2 extends llm_2.RealtimeSession {
     protected remoteChatCtx: llm_2.RemoteChatContext;
     // (undocumented)
     protected resetInputTurnState(): void;
+    // @internal (undocumented)
+    protected resolveDeletedItemId(itemId: string): string;
     // (undocumented)
     sendEvent(command: api_proto.ClientEvent): void;
+    // @internal (undocumented)
+    protected get socketHandoffState(): {
+        canObserveTurns: boolean;
+        transcribesInput: boolean;
+        responsePending: boolean;
+        timeoutMs: number;
+    };
     // (undocumented)
     get tools(): llm_2.ToolContext<unknown>;
     // (undocumented)
@@ -1477,12 +1487,15 @@ class RealtimeSession_2 extends llm_2.RealtimeSession {
     updateChatCtx(_chatCtx: llm_2.ChatContext): Promise<void>;
     // (undocumented)
     updateInstructions(_instructions: string): Promise<void>;
-    // (undocumented)
-    updateOptions(input: {
+    updateOptions(options: {
         toolChoice?: llm_2.ToolChoice;
+        speed?: number;
+        turnDetection?: api_proto.TurnDetectionType;
     }): void;
     // (undocumented)
     updateTools(_tools: llm_2.ToolContext): Promise<void>;
+    // @internal (undocumented)
+    protected waitForSocketRecycle?(ws: WebSocket_2, signal: AbortSignal): Promise<void>;
 }
 
 // Warning: (ae-missing-release-tag) "Reasoning" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
