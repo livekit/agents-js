@@ -95,7 +95,7 @@ Kickstart a complete voice AI pipeline (LLM, STT, TTS) with the LiveKit Agents S
 
 - [livekit-examples/agent-starter-node](https://github.com/livekit-examples/agent-starter-node)
 
-It includes a ready-made assistant, multilingual turn detection, background noise cancellation, metrics/logging, and a production-ready Dockerfile. Start fast, then tailor it with your preferred models and plugins.
+It includes a ready-made assistant on LiveKit Inference, the LiveKit turn detector, noise cancellation, an end call tool, simulation scenarios, and a production-ready Dockerfile. Create a project from it with `lk agent init my-agent --template agent-starter-node`, then tailor it with your preferred models and plugins. [`examples/src/basic_agent.ts`](examples/src/basic_agent.ts) is a copy of the starter's agent.
 
 ## Core concepts
 
@@ -112,59 +112,60 @@ Checkout the [quickstart guide](https://docs.livekit.io/agents/start/voice-ai/)
 
 ---
 
+This is a trimmed version of the [starter agent](examples/src/basic_agent.ts). For a complete project with tests, simulation scenarios, and a Dockerfile, start from [agent-starter-node](https://github.com/livekit-examples/agent-starter-node) with `lk agent init my-agent --template agent-starter-node`.
+
 ```ts
 import {
   type JobContext,
-  type JobProcess,
-  WorkerOptions,
+  ServerOptions,
+  beta,
   cli,
   defineAgent,
+  inference,
   llm,
   voice,
-  inference,
 } from '@livekit/agents';
-import * as silero from '@livekit/agents-plugin-silero';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
 const lookupWeather = llm.tool({
+  name: 'lookupWeather',
   description: 'Used to look up weather information.',
   parameters: z.object({
     location: z.string().describe('The location to look up weather information for'),
   }),
-  execute: async ({ location }, { ctx }) => {
+  execute: async ({ location }) => {
     return { weather: 'sunny', temperature: 70 };
   },
 });
 
 export default defineAgent({
-  prewarm: async (proc: JobProcess) => {
-    proc.userData.vad = await silero.VAD.load();
-  },
   entry: async (ctx: JobContext) => {
-    const agent = new voice.Agent({
+    const agent = voice.Agent.create({
       instructions: 'You are a friendly voice assistant built by LiveKit.',
-      tools: { lookupWeather },
+      // The end call tool lets the agent hang up when the user is done
+      tools: [lookupWeather, beta.createEndCallTool()],
     });
 
     const session = new voice.AgentSession({
       // Speech-to-text (STT) is your agent's ears, turning the user's speech into text that the LLM can understand
       // See all available models at https://docs.livekit.io/agents/models/stt/
-      stt: new inference.STT({ model: 'deepgram/nova-3', language: 'en' }),
+      stt: new inference.STT({ model: 'assemblyai/assemblyai-stt-3-7-realtime-agent' }),
       // A Large Language Model (LLM) is your agent's brain, processing user input and generating a response
       // See all available models at https://docs.livekit.io/agents/models/llm/
-      llm: new inference.LLM({ model: 'openai/gpt-4.1-mini' }),
+      llm: new inference.LLM({ model: 'google/gemma-4-31b-it' }),
       // Text-to-speech (TTS) is your agent's voice, turning the LLM's text into speech that the user can hear
       // See all available models as well as voice selections at https://docs.livekit.io/agents/models/tts/
-      tts: new inference.TTS({ model: 'cartesia/sonic-3', voice: '9626c31c-bec5-4cca-baa8-f8ba9e84c8bc' }),
-      // VAD and turn detection are used to determine when the user is speaking and when the agent should respond
-      // See more at https://docs.livekit.io/agents/build/turns
-      vad: ctx.proc.userData.vad! as silero.VAD,
-      turnDetection: new livekit.turnDetector.MultilingualModel(),
-      // To use hosted OpenAI Realtime or xAI Grok Voice, replace stt, llm, tts and vad with the
-      // following. Use the provider plugin's RealtimeModel instead when supplying credentials directly.
-      // llm: new inference.RealtimeModel({ model: 'openai/gpt-realtime' }),
-      // or, for OpenAI's full-duplex GPT-Live: llm: 'openai/gpt-live-1',
+      tts: new inference.TTS({
+        model: 'fishaudio/s2.1-pro',
+        voice: 'fa4c9eb3dccc4806b382b40d61c6b10a',
+      }),
+      // The LiveKit turn detector determines when the user is done speaking
+      // See more at https://docs.livekit.io/agents/logic/turns/turn-detector/
+      turnHandling: { turnDetection: new inference.TurnDetector() },
+      // To use OpenAI GPT-Live, a speech-to-speech model, instead of the pipeline above,
+      // remove stt, tts, and turnHandling, and set:
+      // llm: new inference.DuplexModel({ model: 'openai/gpt-live-1', voice: 'marin' }),
     });
 
     await session.start({
@@ -172,13 +173,15 @@ export default defineAgent({
       room: ctx.room,
     });
 
-    await session.generateReply({
-      instructions: 'greet the user and ask about their day',
+    await ctx.connect();
+
+    session.generateReply({
+      instructions: 'greet the user and offer to help',
     });
   },
 });
 
-cli.runApp(new WorkerOptions({ agent: fileURLToPath(import.meta.url) }));
+cli.runApp(new ServerOptions({ agent: fileURLToPath(import.meta.url) }));
 ```
 
 No third-party API keys are required for this example. It runs out of the box via the [LiveKit Inference Gateway](https://docs.livekit.io/agents/models/#inference).
@@ -351,7 +354,7 @@ To test any changes or plugins:
    pnpm build
    ```
 
-2. Edit `./examples/src/basic_agent.ts` as necessary for any plugin changes
+2. Point an example at your change. `examples/src/basic_agent.ts` mirrors the official starter, so edit it only locally; commit feature and plugin demos as their own example file instead
 
 3. Run the basic agent with debug logging:
    ```bash

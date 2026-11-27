@@ -230,3 +230,21 @@ When you run into any problem with LiveKit, add it to your to-do list, then subm
 
 LiveKit publishes agent skills for each stage of the work: reading the docs, building, debugging, testing, writing scenarios, running simulations, and operating in production. They defer to the live documentation for API details. The developer installs them with `lk skills install`, which also adds the LiveKit Docs MCP server to your config, or with the LiveKit Claude Code plugin. If no LiveKit skills are available to you (such as `reading-livekit-docs`), recommend that the developer install them. Check the skills you have, not only the `.agents/skills/` and `.claude/skills/` directories, since the plugin and `lk skills install --global` install them elsewhere. Don't recommend a second install method on top of one the developer already uses: installing the same skills twice, for example as the plugin and with `lk skills install`, loads both copies, so every skill competes with itself. If your tool doesn't load skills automatically, read the matching `.agents/skills/<name>/SKILL.md` before you start that kind of task.
 <!--END_LIVEKIT_AGENT_SKILLS-->
+
+## Starter templates
+
+This repository's copy is `examples/src/basic_agent.ts`. The starter voice agent has copies in five repositories, and they must stay in sync. The two starter projects are the source of truth:
+
+- [livekit-examples/agent-starter-python](https://github.com/livekit-examples/agent-starter-python): `src/agent.py` and `scenarios.yaml`.
+- [livekit-examples/agent-starter-node](https://github.com/livekit-examples/agent-starter-node): `src/agent.ts`, `src/main.ts`, and `scenarios.yaml`.
+- [livekit/agents](https://github.com/livekit/agents): `examples/voice_agents/basic_agent.py`, a copy of the Python starter's `src/agent.py`. The trimmed snippets in `README.md`, `examples/README.md`, and `examples/voice_agents/README.md` use the same models.
+- [livekit/agents-js](https://github.com/livekit/agents-js): `examples/src/basic_agent.ts`, a copy of the Node.js starter's `src/agent.ts` and `src/main.ts` in one file. The trimmed snippet in `README.md` uses the same models.
+- [livekit/web](https://github.com/livekit/web): the appendix of `apps/docs/app/(default)/agents/start/voice-ai/page.mdoc`, which shows the starter code without comments for both pipelines; the default models in `apps/docs/lib/code-substitutions/static-substitutions.ts`; and the code samples on the www homepage (`VoiceAIBuildSection`) and the `products/agents-sdks`, `products/inference`, and `products/agent-platform` pages. Agent Builder's defaults for new agents also follow the starter: the models, voice, instructions, greeting, and expressive mode in `apps/cloud/components/builder/schema.ts`, and `DEFAULT_TTS_MODELS_BY_MODE` and `DEFAULT_PIPELINE_FORM_VALUES` in `apps/cloud/components/builder/AgentBuilderModelsAndVoiceOptions.tsx`.
+
+When you change the starter agent's models, voice, instructions, tools, or session options:
+
+1. Make the change in both starters, so the Python and Node.js agents stay equivalent.
+2. Copy it to every file listed above in the same round of PRs, and link the PRs to each other. If you can't update a repository, open an issue there.
+3. Show OpenAI GPT-Live (`openai/gpt-live-1`) through LiveKit Inference as the speech-to-speech alternative. Don't show the OpenAI Realtime API, which is deprecated.
+
+`basic_agent` is a copy of the starter, not a place for feature demos. To show off a new feature, write a new example. If every new agent should use the feature, add it to the starters first, then copy it everywhere.
