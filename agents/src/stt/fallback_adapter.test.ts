@@ -10,7 +10,12 @@ import { type AudioBuffer, delay } from '../utils.js';
 import { VAD, VADStream } from '../vad.js';
 import { FallbackAdapter } from './fallback_adapter.js';
 import { STT, type SpeechEvent, SpeechEventType, SpeechStream } from './stt.js';
-import { FakeSTT, RecognizeSentinel, emptyAudioFrame } from './testing/fake_stt.js';
+import {
+  FakeRecognizeStream,
+  FakeSTT,
+  RecognizeSentinel,
+  emptyAudioFrame,
+} from './testing/fake_stt.js';
 
 type RetryTimelineMode = 'outer' | 'child';
 
@@ -325,6 +330,47 @@ describe('FallbackSpeechStream (streaming path)', () => {
   beforeAll(() => {
     initializeLogger({ pretty: false });
     process.on('unhandledRejection', () => {});
+  });
+
+  it("reports the live child's manual flush setting", async () => {
+    class FixedFlushStream extends FakeRecognizeStream {
+      readonly #manualFlush: boolean;
+
+      constructor(stt: FakeSTT, connOptions?: APIConnectOptions) {
+        super(stt, connOptions);
+        this.#manualFlush = stt.capabilities.manualFlush === true;
+      }
+
+      override get manualFlush(): boolean {
+        return this.#manualFlush;
+      }
+    }
+    class FixedFlushSTT extends FakeSTT {
+      setManualFlush(manualFlush: boolean): void {
+        this.updateCapabilities({ manualFlush });
+      }
+
+      override stream(options?: { connOptions?: APIConnectOptions }): FakeRecognizeStream {
+        const stream = new FixedFlushStream(this, options?.connOptions);
+        this.streamCh.put(stream);
+        return stream;
+      }
+    }
+
+    const instances = [new FixedFlushSTT(), new FixedFlushSTT()];
+    for (const instance of instances) instance.setManualFlush(true);
+    const adapter = new FallbackAdapter({ sttInstances: instances });
+    const stream = adapter.stream();
+    try {
+      await instances[0]!.streamCh.next();
+      instances[0]!.setManualFlush(false);
+      expect(adapter.capabilities.manualFlush).toBe(false);
+      expect(stream.manualFlush).toBe(true);
+      stream.endInput();
+    } finally {
+      stream.close();
+      await adapter.close();
+    }
   });
 
   it('forwards events from the primary without triggering fallback when it succeeds', async () => {

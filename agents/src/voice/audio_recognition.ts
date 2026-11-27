@@ -300,7 +300,8 @@ export class STTPipeline {
 
   /** Whether the open STT stream finalizes a segment only when it is flushed. */
   get manualFlush(): boolean {
-    return this.activeStream?.stt.capabilities.manualFlush === true;
+    const active = this.activeStream;
+    return (active?.stream.manualFlush ?? active?.stt.capabilities.manualFlush) === true;
   }
 
   /** Ask the open STT stream to finalize, after the audio already queued. */

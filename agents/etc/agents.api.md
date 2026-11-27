@@ -1066,7 +1066,8 @@ interface AssemblyAIOptions {
     language_detection?: boolean;
     max_turn_silence?: number;
     min_end_of_turn_silence_when_confident?: number;
-    mode?: 'min_latency' | 'balanced' | 'max_accuracy';
+    min_turn_silence?: number;
+    mode?: 'min_latency' | 'balanced' | 'max_accuracy' | 'manual';
     previous_context_n_turns?: number;
     prompt?: string;
     speaker_labels?: boolean;
@@ -4677,6 +4678,8 @@ interface InferenceSTTOptions<TModel extends STTModels> {
     // (undocumented)
     encoding: STTEncoding;
     // (undocumented)
+    externalEndpointing: boolean;
+    // (undocumented)
     fallback?: STTFallbackModel[];
     // (undocumented)
     language?: LanguageCode;
@@ -7912,6 +7915,7 @@ abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent> {
     protected input: AsyncIterableQueue<AudioFrame | typeof SpeechStream.FLUSH_SENTINEL>;
     // (undocumented)
     abstract label: string;
+    get manualFlush(): boolean;
     protected markProviderProgress(): void;
     // (undocumented)
     protected monitorMetrics(): Promise<void>;
@@ -7948,9 +7952,17 @@ abstract class SpeechStream implements AsyncIterableIterator<SpeechEvent> {
 class SpeechStream_2<TModel extends STTModels> extends SpeechStream {
     constructor(sttImpl: STT_2<TModel>, opts: InferenceSTTOptions<TModel>, connOptions: APIConnectOptions, extraHeaders?: Record<string, string>);
     // (undocumented)
+    endInput(): void;
+    // (undocumented)
+    flush(): void;
+    // (undocumented)
     get label(): string;
+    // (undocumented)
+    get manualFlush(): boolean;
     // @internal (undocumented)
     _pendingExtra?: Record<string, unknown>;
+    // (undocumented)
+    pushFrame(frame: AudioFrame): void;
     // (undocumented)
     protected run(): Promise<void>;
     // @internal (undocumented)
@@ -8208,6 +8220,7 @@ class STT_2<TModel extends STTModels> extends STT {
         fallback?: STTFallbackModelType | STTFallbackModelType[];
         connOptions?: APIConnectOptions;
         vad?: VAD;
+        externalEndpointing?: boolean;
     });
     // (undocumented)
     connectWs(timeout: number, opts?: InferenceSTTOptions<TModel>, sessionKeyterms?: string[], handoffProbeId?: string, extraHeaders?: Record<string, string>): Promise<WebSocket_2>;
