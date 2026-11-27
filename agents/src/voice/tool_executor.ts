@@ -95,7 +95,7 @@ export function renderTemplate<Args extends Record<string, unknown>>(
 ): string {
   if (typeof template === 'function') return template(args);
   return Object.entries(args).reduce(
-    (result, [key, value]) => result.replaceAll(`{${key}}`, String(value)),
+    (result, [key, value]) => result.replaceAll(`{${key}}`, () => String(value)),
     template,
   );
 }

@@ -57,6 +57,25 @@ describe('RunContext async updates', () => {
     expect(enqueued[0]![1].output).toContain('halfway');
   });
 
+  it('keeps dollar signs in the update message as written', async () => {
+    const { ctx } = buildContext();
+    const firstUpdate = new Future<unknown>();
+
+    ctx._attachExecutor(
+      {
+        toolOptions: { updateTemplate: 'Tool {functionName}: {message}' },
+        enqueueReply: async () => {},
+      },
+      firstUpdate,
+    );
+
+    await ctx.update("Found 3 places priced $$ and one $& or $'");
+
+    expect(await firstUpdate.await).toBe(
+      "Tool slow_lookup: Found 3 places priced $$ and one $& or $'",
+    );
+  });
+
   it('detached contexts record updates without enqueueing replies', async () => {
     const { ctx } = buildContext();
 

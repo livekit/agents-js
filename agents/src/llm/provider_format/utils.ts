@@ -122,7 +122,7 @@ export function convertMidConversationInstructions(
       items.push(
         ChatMessage.create({
           role,
-          content: template.replace('{instructions}', item.rawTextContent),
+          content: template.replace('{instructions}', () => item.rawTextContent!),
           id: item.id,
           createdAt: item.createdAt,
         }),
