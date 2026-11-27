@@ -19,7 +19,7 @@ import {
   stt,
   waitForAbort,
 } from '@livekit/agents';
-import type { AudioFrame } from '@livekit/rtc-node';
+import { AudioFrame } from '@livekit/rtc-node';
 import type { RawData } from 'ws';
 import { WebSocket } from 'ws';
 import type { PiiRedactionSubstitution, STTEncoding, STTModels, VoiceFocus } from './models.js';
@@ -32,6 +32,15 @@ const U3_PRO_MODELS = [
   'universal-3-6-pro',
   'assemblyai-stt-3-7-realtime-agent',
 ] as const;
+
+// Speech models that support mode="manual", where the client ends every turn with
+// ForceEndpoint. The server closes the connection (code 3006) for any other model.
+const MANUAL_MODE_MODELS = ['assemblyai-stt-3-7-realtime-agent'] as const;
+
+const FORCE_ENDPOINT_MSG = JSON.stringify({ type: 'ForceEndpoint' });
+
+// AssemblyAI rejects audio chunks shorter than this (close code 3007).
+const MIN_CHUNK_DURATION_MS = 20;
 
 const U3_PRO_ONLY_PARAMS = [
   'prompt',
@@ -98,6 +107,15 @@ function validateRedactionOptions(opts: Partial<STTOptions>): void {
   }
 }
 
+function padFrame(frame: AudioFrame, samplesPerChannel: number, encoding: STTEncoding): AudioFrame {
+  if (frame.samplesPerChannel >= samplesPerChannel) return frame;
+
+  const silence = encoding === 'pcm_mulaw' ? 0xff : 0x00;
+  const data = new Uint8Array(samplesPerChannel * 2).fill(silence);
+  data.set(new Uint8Array(frame.data.buffer, frame.data.byteOffset, frame.data.byteLength));
+  return new AudioFrame(new Int16Array(data.buffer), frame.sampleRate, 1, samplesPerChannel);
+}
+
 function emitsPartialTurns(opts: Pick<STTOptions, 'includePartialTurns' | 'redactPii'>): boolean {
   return opts.includePartialTurns ?? opts.redactPii !== true;
 }
@@ -115,6 +133,11 @@ function normalizeUpdateOptions(
     throw new Error('speechModel cannot be changed via updateOptions; create a new STT instead.');
   }
   delete nextOpts.speechModel;
+  for (const param of ['mode', 'speakerLabels'] as const) {
+    if (nextOpts[param] !== undefined) {
+      throw new Error(`${param} cannot be changed via updateOptions; create a new STT instead.`);
+    }
+  }
   validateModelOptions(nextOpts, speechModel);
   validateAgentContext(nextOpts.agentContext);
   if (nextOpts.languageCodes !== undefined) {
@@ -215,9 +238,16 @@ export interface STTOptions {
   voiceFocusThreshold?: number;
   /**
    * Accuracy/latency preset for the Universal-3 Pro model family: `min_latency`, `balanced`,
-   * or `max_accuracy`. Explicit turn-silence values still take precedence over mode defaults.
+   * `max_accuracy`, or `manual`. In manual mode, LiveKit ends each turn with `ForceEndpoint`.
+   * Explicit turn-silence values still take precedence over mode defaults. Set at construction
+   * time only.
+   *
+   * Manual mode requires `assemblyai-stt-3-7-realtime-agent`, does not support `speakerLabels`,
+   * and should be used with a LiveKit turn detector or VAD turn detection. Leave
+   * `minTurnSilence` unset so short pauses do not end the turn. The server's 10-second default
+   * `maxTurnSilence` remains as a fallback when LiveKit does not end the turn.
    */
-  mode?: 'min_latency' | 'balanced' | 'max_accuracy';
+  mode?: 'min_latency' | 'balanced' | 'max_accuracy' | 'manual';
   /** Languages to steer transcription toward. Universal-3 Pro only. */
   languageCodes?: string | string[];
   /**
@@ -300,6 +330,7 @@ export class STT extends stt.STT {
       keyterms: true,
       diarization: opts.speakerLabels === true,
       chatContext: (opts.agentContextCarryover ?? true) && supportsCarryover,
+      manualFlush: opts.mode === 'manual',
     });
 
     if (opts.speechModel === 'u3-pro') {
@@ -309,6 +340,16 @@ export class STT extends stt.STT {
 
     const speechModel = opts.speechModel ?? defaultSTTOptions.speechModel;
     validateModelOptions(opts, speechModel);
+    if (opts.mode === 'manual') {
+      if (!MANUAL_MODE_MODELS.includes(speechModel as (typeof MANUAL_MODE_MODELS)[number])) {
+        throw new Error(
+          `mode='manual' is only supported with the ${MANUAL_MODE_MODELS.join(', ')} model.`,
+        );
+      }
+      if (opts.speakerLabels === true) {
+        throw new Error("mode='manual' can't be combined with speakerLabels yet.");
+      }
+    }
 
     const apiKey = opts.apiKey ?? defaultSTTOptions.apiKey;
     if (!apiKey) {
@@ -616,6 +657,8 @@ export class SpeechStream extends stt.SpeechStream {
     const sendTask = async () => {
       const samplesPerBuffer = Math.floor((this.#opts.sampleRate * this.#opts.bufferSizeMs) / 1000);
       const audioStream = new AudioByteStream(this.#opts.sampleRate, 1, samplesPerBuffer);
+      const minChunkSamples = Math.ceil((this.#opts.sampleRate * MIN_CHUNK_DURATION_MS) / 1000);
+      const manualMode = this.#opts.mode === 'manual';
 
       const abortPromise = waitForAbort(this.abortSignal);
       const sessionAbort = waitForAbort(sessionController.signal);
@@ -625,13 +668,27 @@ export class SpeechStream extends stt.SpeechStream {
           const result = await Promise.race([this.input.next(), abortPromise, sessionAbort]);
 
           if (result === undefined) return; // aborted
-          if (result.done) break;
+          if (result.done) {
+            const frames = audioStream
+              .flush()
+              .map((frame) => padFrame(frame, minChunkSamples, this.#opts.encoding));
+            for (const frame of frames) {
+              this.#speechDurationInS += frame.samplesPerChannel / frame.sampleRate;
+              ws.send(frame.data.buffer);
+            }
+            break;
+          }
 
           const data = result.value;
 
           let frames: AudioFrame[];
           if (data === SpeechStream.FLUSH_SENTINEL) {
             frames = audioStream.flush();
+            const tail = frames[0];
+            if (tail && tail.samplesPerChannel < minChunkSamples) {
+              audioStream.write(tail.data);
+              frames = [];
+            }
           } else if (data.sampleRate === this.#opts.sampleRate && data.channels === 1) {
             // AssemblyAI expects mono PCM. The base SpeechStream only resamples
             // sample rate, so reject any frame that is not already downmixed.
@@ -643,6 +700,11 @@ export class SpeechStream extends stt.SpeechStream {
           for (const frame of frames) {
             this.#speechDurationInS += frame.samplesPerChannel / frame.sampleRate;
             ws.send(frame.data.buffer);
+          }
+
+          // Keep ForceEndpoint in this send loop so it follows all audio for the turn.
+          if (manualMode && data === SpeechStream.FLUSH_SENTINEL) {
+            ws.send(FORCE_ENDPOINT_MSG);
           }
         }
       } finally {

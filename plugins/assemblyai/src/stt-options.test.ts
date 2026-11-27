@@ -121,6 +121,27 @@ describe('AssemblyAI streaming configuration', () => {
     });
   });
 
+  it('leaves turn silence to the server in manual mode', async () => {
+    await withProvider({ mode: 'manual' }, async (_provider, query) => {
+      expect(query.get('mode')).toBe('manual');
+      expect(query.has('min_turn_silence')).toBe(false);
+      expect(query.has('max_turn_silence')).toBe(false);
+    });
+  });
+
+  it('does not copy manual min turn silence into max turn silence', async () => {
+    await withProvider({ mode: 'manual', minTurnSilence: 400 }, async (_provider, query) => {
+      expect(query.get('min_turn_silence')).toBe('400');
+      expect(query.has('max_turn_silence')).toBe(false);
+    });
+  });
+
+  it('sends explicit max turn silence in manual mode', async () => {
+    await withProvider({ mode: 'manual', maxTurnSilence: 5000 }, async (_provider, query) => {
+      expect(query.get('max_turn_silence')).toBe('5000');
+    });
+  });
+
   it('defaults both turn silences to 100ms without a mode preset', async () => {
     await withProvider({}, async (_p, query) => {
       expect(query.get('min_turn_silence')).toBe('100');
