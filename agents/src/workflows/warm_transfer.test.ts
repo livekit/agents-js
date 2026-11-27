@@ -715,6 +715,23 @@ describe('human agent room token', () => {
     expect(claims).not.toHaveProperty('name');
     expect(claims.exp! - claims.nbf!).toBe(6 * 3600); // the AccessToken default
   });
+
+  it("signs the SIP call with the job's credentials in key mode", async () => {
+    // the credentials come from CLI flags, not the environment
+    vi.stubEnv('LIVEKIT_API_KEY', '');
+    vi.stubEnv('LIVEKIT_API_SECRET', '');
+    const fetch = vi.fn(async () => new Response('{}'));
+    vi.stubGlobal('fetch', fetch);
+    const ctx = createJobContext({ apiKey: 'devkey', apiSecret: secret });
+
+    await dialHumanAgent(ctx);
+
+    expect(fetch).toHaveBeenCalledOnce();
+    const [, init] = fetch.mock.calls[0]! as unknown as [URL, RequestInit];
+    const auth = (init.headers as Record<string, string>).Authorization!;
+    const claims = await new TokenVerifier('devkey', secret).verify(auth.slice('Bearer '.length));
+    expect(claims.sip).toEqual({ call: true });
+  });
 });
 
 function completedSpeechHandle(): SpeechHandle {

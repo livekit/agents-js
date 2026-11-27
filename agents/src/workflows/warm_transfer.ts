@@ -828,7 +828,8 @@ function createSipOriginateHumanAgent(options: {
   }
 
   return async ({ roomName, identity, jobCtx }) => {
-    const sip = new SipClient(jobCtx.info.url, undefined, undefined, apiClientOptions(jobCtx));
+    const { url, apiKey, apiSecret } = jobCtx.info;
+    const sip = new SipClient(url, apiKey, apiSecret, apiClientOptions(jobCtx));
     await sip.createSipParticipant(
       sipTrunkId ?? '',
       sipCallTo,
