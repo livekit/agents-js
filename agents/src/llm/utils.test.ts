@@ -424,7 +424,7 @@ describe('executeToolCall', () => {
     expect(JSON.parse(toolCall.args)).toEqual({ orderId: ['O_WAAB70'] });
   });
 
-  it('should preserve valid argument structure during execution', async () => {
+  it('should preserve valid arguments exactly as the model wrote them', async () => {
     const echo = tool({
       name: 'echo',
       description: 'echo',
@@ -432,7 +432,7 @@ describe('executeToolCall', () => {
       execute: async ({ arg1, optArg2 }) => ({ arg1, optArg2 }),
     });
 
-    const originalArgs = '{"arg1": "hello", "optArg2": "<|safe|>"}';
+    const originalArgs = '{"arg1":"hello","optArg2":"<|safe|>"}';
     const toolCall = FunctionCall.create({
       callId: 'call-valid-1',
       name: 'echo',
@@ -443,7 +443,7 @@ describe('executeToolCall', () => {
 
     expect(result.isError).toBe(false);
     expect(JSON.parse(result.output)).toEqual({ arg1: 'hello', optArg2: '<|safe|>' });
-    expect(JSON.parse(toolCall.args)).toEqual({ arg1: 'hello', optArg2: '<|safe|>' });
+    expect(toolCall.args).toBe(originalArgs);
   });
 
   it('should use defaults for null non-nullable arguments', async () => {

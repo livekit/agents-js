@@ -5,6 +5,8 @@ import {
   APIStatusError,
   ChatContext,
   ConnectionPool,
+  FunctionCall,
+  FunctionCallOutput,
   initializeLogger,
   stream,
 } from '@livekit/agents';
@@ -208,7 +210,6 @@ async function attemptsUntilStall(frames: WsServerEvent[], maxRetry: number): Pr
     pool,
     model: 'gpt-4.1',
     chatCtx,
-    fullChatCtx: chatCtx,
     connOptions: { maxRetry, retryIntervalMs: 0, timeoutMs: 5000 },
     modelOptions: {},
     strictToolSchema: true,
@@ -284,7 +285,6 @@ describe('OpenAI Responses WS incomplete handling', () => {
         pool,
         model: 'gpt-4.1',
         chatCtx,
-        fullChatCtx: chatCtx,
         connOptions: { maxRetry: 2, retryIntervalMs: 0, timeoutMs: 5000 },
         modelOptions: {},
         strictToolSchema: true,
@@ -307,6 +307,127 @@ describe('OpenAI Responses WS incomplete handling', () => {
       await model.aclose();
     },
   );
+});
+
+class ScriptedResponsesConnection {
+  payloads: WsResponseCreateEvent[] = [];
+
+  constructor(private readonly outputs: Record<string, unknown>[][]) {}
+
+  sendRequest(payload: WsResponseCreateEvent): stream.StreamChannel<WsServerEvent> {
+    this.payloads.push(payload);
+    const responseId = `resp_${this.payloads.length}`;
+    const output = this.outputs[this.payloads.length - 1] ?? [];
+    const channel = stream.createStreamChannel<WsServerEvent>();
+    void (async () => {
+      await channel.write({ type: 'response.created', response: { id: responseId } });
+      await channel.write({
+        type: 'response.completed',
+        response: { id: responseId, output },
+      });
+      await channel.close();
+    })();
+    return channel;
+  }
+
+  close(): void {}
+}
+
+function outputMessage(text: string): Record<string, unknown> {
+  return {
+    type: 'message',
+    id: 'msg_1',
+    role: 'assistant',
+    status: 'completed',
+    content: [{ type: 'output_text', text, annotations: [] }],
+  };
+}
+
+function outputFunctionCall(callId: string, name: string): Record<string, unknown> {
+  return {
+    type: 'function_call',
+    id: `fc_${callId}`,
+    call_id: callId,
+    name,
+    arguments: '{"city": "Paris"}',
+    status: 'completed',
+  };
+}
+
+it('sends only items after the previous response when chaining requests', async () => {
+  const conn = new ScriptedResponsesConnection([
+    [
+      outputFunctionCall('call_1', 'get_weather'),
+      outputMessage('Let me check.'),
+      outputFunctionCall('call_2', 'get_time'),
+    ],
+    [outputMessage("It's sunny and 3pm, and tomorrow looks fine.")],
+    [outputMessage("You're welcome.")],
+    [],
+  ]);
+  const withConnection = vi
+    .spyOn(ConnectionPool.prototype, 'withConnection')
+    .mockImplementation(async (callback) => callback(conn as unknown as ResponsesWebSocket));
+  const model = new WSLLM({ model: 'gpt-4.1', apiKey: 'test-key' });
+  const chatCtx = ChatContext.empty();
+
+  async function turn(): Promise<void> {
+    for await (const _chunk of model.chat({
+      chatCtx,
+      connOptions: { maxRetry: 0, retryIntervalMs: 0, timeoutMs: 5000 },
+    })) {
+      void _chunk;
+    }
+  }
+
+  try {
+    chatCtx.addMessage({ role: 'user', content: 'Weather and time in Paris?' });
+    await turn();
+
+    chatCtx.addMessage({ role: 'assistant', content: 'Let me check.', id: 'item_a' });
+    for (const [index, callId, name, output] of [
+      [0, 'call_1', 'get_weather', 'sunny'],
+      [1, 'call_2', 'get_time', '3pm'],
+    ] as const) {
+      chatCtx.items.push(
+        FunctionCall.create({
+          id: `item_a/fnc_${index}`,
+          callId,
+          name,
+          args: '{"city": "Paris"}',
+        }),
+        FunctionCallOutput.create({ callId, name, output, isError: false }),
+      );
+    }
+    await turn();
+
+    chatCtx.addMessage({
+      role: 'assistant',
+      content: "It's sunny and 3pm,",
+      interrupted: true,
+    });
+    chatCtx.addMessage({ role: 'user', content: 'Thanks!' });
+    await turn();
+
+    chatCtx.addMessage({ role: 'assistant', content: "You're welcome." });
+    chatCtx.addMessage({ role: 'user', content: 'Bye' });
+    await turn();
+  } finally {
+    withConnection.mockRestore();
+    await model.aclose();
+  }
+
+  const [first, tools, interrupted, last] = conn.payloads;
+  expect(first).not.toHaveProperty('previous_response_id');
+  expect(tools?.previous_response_id).toBe('resp_1');
+  expect(tools?.input).toEqual([
+    { type: 'function_call_output', call_id: 'call_1', output: 'sunny' },
+    { type: 'function_call_output', call_id: 'call_2', output: '3pm' },
+  ]);
+  expect(interrupted).not.toHaveProperty('previous_response_id');
+  expect(interrupted?.input).toHaveLength(8);
+  expect(last?.previous_response_id).toBe('resp_3');
+  expect(last?.input).toEqual([{ role: 'user', content: 'Bye' }]);
 });
 
 if (hasOpenAIApiKey) {
