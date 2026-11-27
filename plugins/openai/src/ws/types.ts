@@ -40,6 +40,7 @@ export const wsFunctionCallItemSchema = z.object({
   call_id: z.string(),
   name: z.string(),
   arguments: z.string(),
+  status: z.string().optional(),
 });
 
 export const wsOutputItemSchema = z.discriminatedUnion('type', [

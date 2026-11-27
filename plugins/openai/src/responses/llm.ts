@@ -323,6 +323,15 @@ class ResponsesHttpLLMStream extends llm.LLMStream {
     let chunk: llm.ChatChunk | undefined;
 
     if (event.item.type === 'function_call') {
+      // output_item.done also closes calls cut off by limits, before response.incomplete arrives.
+      // Preserve calls without a status for Responses-compatible providers.
+      if (event.item.status !== undefined && event.item.status !== 'completed') {
+        this.logger.debug(
+          { function: event.item.name, status: event.item.status },
+          'ignoring function call that did not complete',
+        );
+        return undefined;
+      }
       chunk = {
         id: this.responseId,
         delta: {
