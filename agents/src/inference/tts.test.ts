@@ -147,6 +147,74 @@ describe('Inference TTS connection', () => {
   });
 });
 
+describe('Inference TTS input streaming', () => {
+  it.each([
+    ['gradium/default', false, true],
+    ['gradium/gradium-tts-beta', false, true],
+    ['gradium/default', true, false],
+    ['xai/tts-1', false, false],
+  ] as const)(
+    'streams words for plain Gradium speech: %s expressive=%s',
+    async (model, expressive, streamWords) => {
+      const server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+      await once(server, 'listening');
+      const { port } = server.address() as AddressInfo;
+      const packets: Array<{ type: string; transcript?: string }> = [];
+      server.on('connection', (socket) => {
+        socket.on('message', (raw) => {
+          const event = JSON.parse(raw.toString()) as { type: string; transcript?: string };
+          packets.push(event);
+          if (event.type === 'session.create') {
+            socket.send(JSON.stringify({ type: 'session.created', session_id: 'session-1' }));
+          } else if (event.type === 'session.flush') {
+            socket.send(JSON.stringify({ type: 'done', session_id: 'session-1' }));
+          }
+        });
+      });
+      const tts = makeTts({
+        model,
+        baseURL: `http://127.0.0.1:${port}`,
+        connOptions: { maxRetry: 0, retryIntervalMs: 0, timeoutMs: 1_000 },
+      });
+      tts._setExpressive(expressive);
+      const stream = tts.stream();
+      let input!: ReadableStreamDefaultController<string>;
+      stream.updateInputStream(
+        new ReadableStream<string>({
+          start(controller) {
+            input = controller;
+          },
+        }),
+      );
+
+      try {
+        input.enqueue('Hel');
+        input.enqueue('lo, how are ');
+        if (streamWords) {
+          await vi.waitFor(() =>
+            expect(packets.some(({ type }) => type === 'input_transcript')).toBe(true),
+          );
+        }
+        input.enqueue('you?');
+        input.close();
+        for await (const _event of stream) {
+          // Drain the stream to completion.
+        }
+        expect(
+          packets
+            .filter(({ type }) => type === 'input_transcript')
+            .map(({ transcript }) => transcript),
+        ).toEqual(streamWords ? ['Hello, ', 'how ', 'are ', 'you? '] : ['Hello, how are you? ']);
+      } finally {
+        await stream.close();
+        await tts.close();
+        for (const client of server.clients) client.terminate();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      }
+    },
+  );
+});
+
 describe('Inference TTS session.create fallback', () => {
   const basePayload = {
     type: 'session.create',
