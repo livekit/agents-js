@@ -300,6 +300,37 @@ const USAGE_CHUNK: CompletionChunk = {
   usage: { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18 },
 };
 
+describe('inference.LLM cache write usage', () => {
+  it('reports cache write tokens from prompt token details', async () => {
+    const chunks = await collectChatChunks([
+      {
+        id: 'chatcmpl_test',
+        choices: [],
+        usage: {
+          prompt_tokens: 2596,
+          completion_tokens: 40,
+          total_tokens: 2636,
+          prompt_tokens_details: { cached_tokens: 1024, cache_write_tokens: 1536 },
+        },
+      },
+    ]);
+
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0]!.usage).toMatchObject({
+      cacheCreationTokens: 1536,
+      promptCachedTokens: 1024,
+      promptTokens: 2596,
+      totalTokens: 2636,
+    });
+  });
+
+  it('defaults cache write tokens to zero without prompt token details', async () => {
+    const chunks = await collectChatChunks([USAGE_CHUNK]);
+
+    expect(chunks[0]!.usage?.cacheCreationTokens).toBe(0);
+  });
+});
+
 // A model told to end the call without speaking answers with no content at all.
 async function runResponseThatGeneratesNothing(): Promise<{
   attempts: number;
