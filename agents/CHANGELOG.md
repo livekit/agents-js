@@ -1,5 +1,15 @@
 # @livekit/agents
 
+## 1.11.1
+
+### Patch Changes
+
+- Exclude trailing VAD silence from speech duration when evaluating interruptions. - [#3078](https://github.com/livekit/agents-js/pull/3078) ([@rosetta-livekit-bot](https://github.com/apps/rosetta-livekit-bot))
+
+- Replay buffered input when a streaming TTS attempt fails before audio. Release the buffer once the stream emits audio. Keep provider-owned retries for streams that manage their own input. - [#2578](https://github.com/livekit/agents-js/pull/2578) ([@bogdanovich](https://github.com/bogdanovich))
+
+  ElevenLabs stops sending to interrupted or failed contexts. Sarvam keeps a failed socket from ending the stream before retry. Resemble honors the configured retry budget for pre-audio connection failures.
+
 ## 1.11.0
 
 ### Minor Changes
