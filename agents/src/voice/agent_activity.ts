@@ -1157,11 +1157,26 @@ export class AgentActivity implements RecognitionHooks {
       this._onEnterTask = this.createSpeechTask({
         taskFn: () =>
           onEnterStorage.run({ session: this.agentSession, agent: this.agent }, () =>
-            tracer.startActiveSpan(async () => this.agent.onEnter(), {
-              name: 'on_enter',
-              context: trace.setSpan(ROOT_CONTEXT, startSpan),
-              attributes: { [traceTypes.ATTR_AGENT_LABEL]: this.agent.id },
-            }),
+            tracer.startActiveSpan(
+              async () => {
+                try {
+                  await this.agent.onEnter();
+                } catch (error) {
+                  // as python's log_exceptions on `_traceable_on_enter`: when the agent was
+                  // activated by start(), updateAgent() or a tool handoff nothing awaits this
+                  // task, and its rejection is swallowed, so this is the failure's only report
+                  if ((error as Error | undefined)?.name !== 'AbortError') {
+                    this.logger.error({ error, agentId: this.agent.id }, 'error in onEnter');
+                  }
+                  throw error;
+                }
+              },
+              {
+                name: 'on_enter',
+                context: trace.setSpan(ROOT_CONTEXT, startSpan),
+                attributes: { [traceTypes.ATTR_AGENT_LABEL]: this.agent.id },
+              },
+            ),
           ),
         inlineTask: true,
         name: 'AgentActivity_onEnter',
