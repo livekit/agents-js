@@ -72,6 +72,8 @@ export interface RealtimeModelOptions {
   configurationEndpoint?: Phonic.ConfigOptions['configuration_endpoint'];
   additionalParams?: NonNullable<Phonic.ConfigOptions['additional_params']>;
   externalId?: string;
+  dataRetentionPolicy?: Phonic.ConfigOptions['data_retention_policy'];
+  externalStoragePolicy?: Phonic.ConfigOptions['external_storage_policy'];
   configsForTools?: PhonicToolConfig[];
   /** @deprecated Use `configsForTools` with `forbid_speech_after_tool_call` per tool instead. */
   forbidSpeechAfterToolCall?: string[];
@@ -83,13 +85,21 @@ export interface RealtimeModelOptions {
 /**
  * Phonic config fields that can be changed mid-session via `RealtimeModel.updateOptions` /
  * `RealtimeSession.updateOptions` — every field is optional so an update carries only what changes.
- * Connection-level fields (`apiKey`, `model`, `connOptions`, `baseUrl`), `externalId` (fixed for the
- * conversation) and `instructions` (managed through the Agent handoff) are excluded.
+ * Connection-level fields (`apiKey`, `model`, `connOptions`, `baseUrl`), fields fixed for the
+ * conversation (`externalId`, `dataRetentionPolicy`, `externalStoragePolicy`) and `instructions`
+ * (managed through the Agent handoff) are excluded.
  */
 export type PhonicConfig = Partial<
   Omit<
     RealtimeModelOptions,
-    'apiKey' | 'model' | 'connOptions' | 'baseUrl' | 'externalId' | 'instructions'
+    | 'apiKey'
+    | 'model'
+    | 'connOptions'
+    | 'baseUrl'
+    | 'externalId'
+    | 'dataRetentionPolicy'
+    | 'externalStoragePolicy'
+    | 'instructions'
   >
 >;
 
@@ -315,6 +325,18 @@ export class RealtimeModel extends llm.RealtimeModel {
        */
       externalId?: string;
       /**
+       * When Phonic deletes the conversation's transcripts and audio. Set `zero_data_retention` to
+       * true to retain nothing, or to false with a `delete_after_hours` for `transcripts` and
+       * `audio_recordings` (`null` = never delete). Defaults to the Phonic agent's policy
+       */
+      dataRetentionPolicy?: Phonic.ConfigOptions['data_retention_policy'];
+      /**
+       * Name of an external storage policy in the project that the conversation's transcripts and
+       * audio are delivered to (your own bucket). Requires zero data retention. Pass `null` to
+       * disable. Defaults to the Phonic agent's policy
+       */
+      externalStoragePolicy?: Phonic.ConfigOptions['external_storage_policy'];
+      /**
        * Per-tool behavior overrides, one `PhonicToolConfig` per tool (keyed by `name`); omitted
        * fields fall back to the plugin defaults. See the README for the available fields.
        */
@@ -406,6 +428,8 @@ export class RealtimeModel extends llm.RealtimeModel {
       configurationEndpoint: options.configurationEndpoint,
       additionalParams: options.additionalParams,
       externalId: options.externalId,
+      dataRetentionPolicy: options.dataRetentionPolicy,
+      externalStoragePolicy: options.externalStoragePolicy,
       configsForTools: options.configsForTools,
       forbidSpeechAfterToolCall: options.forbidSpeechAfterToolCall,
       onConversationCreated: options.onConversationCreated,
@@ -1331,6 +1355,8 @@ export class RealtimeSession extends llm.RealtimeSession {
       configuration_endpoint: this.options.configurationEndpoint,
       additional_params: this.options.additionalParams,
       external_id: this.options.externalId,
+      data_retention_policy: this.options.dataRetentionPolicy,
+      external_storage_policy: this.options.externalStoragePolicy,
       stream_ahead_of_real_time: true,
     };
   }
