@@ -732,6 +732,53 @@ describe('human agent room token', () => {
     const claims = await new TokenVerifier('devkey', secret).verify(auth.slice('Bearer '.length));
     expect(claims.sip).toEqual({ call: true });
   });
+
+  /**
+   * Token mode: aborts the transfer while job token request `held` is pending, then lets the
+   * token arrive. Request 1 is the human agent room token, request 2 is the SIP call token.
+   */
+  async function abortWhileJobTokenPending(held: number) {
+    vi.stubEnv('LIVEKIT_API_KEY', '');
+    vi.stubEnv('LIVEKIT_API_SECRET', '');
+    const fetch = vi.fn(async () => new Response('{}'));
+    vi.stubGlobal('fetch', fetch);
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => (release = resolve));
+    let requests = 0;
+    const createJobToken = vi.fn(async () => {
+      if (++requests === held) await released;
+      return { token: 'job-token', expiresAt: Date.now() + 1e6 };
+    });
+    const ctx = createJobContext({});
+    ctx._jobTokens = new JobTokenClient(createJobToken);
+    const connect = vi.spyOn(Room.prototype, 'connect').mockResolvedValue();
+    vi.spyOn(Room.prototype, 'disconnect').mockResolvedValue();
+    vi.spyOn(AgentSession.prototype, 'start').mockResolvedValue();
+    vi.spyOn(AgentSession.prototype, 'shutdown').mockImplementation(() => {});
+    const controller = new AbortController();
+    const task = createWarmTransferTask({
+      abortSignal: controller.signal,
+      sipCallTo: '+15551234567',
+      sipTrunkId: 'ST_dummy',
+      holdAudio: null,
+    });
+    task._agentActivity = { agentSession: new AgentSession() } as never;
+    vi.spyOn(task, 'complete').mockImplementation(() => {});
+
+    const entering = job.runWithJobContextAsync(ctx, () => task.onEnter());
+    await vi.waitFor(() => expect(createJobToken).toHaveBeenCalledTimes(held));
+    controller.abort(new Error('caller hung up'));
+    release();
+    await entering;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    return { connect, fetch };
+  }
+
+  it('does not join the human agent room when the transfer ends while its token is pending', async () => {
+    const { connect } = await abortWhileJobTokenPending(1);
+
+    expect(connect).not.toHaveBeenCalled();
+  });
 });
 
 function completedSpeechHandle(): SpeechHandle {

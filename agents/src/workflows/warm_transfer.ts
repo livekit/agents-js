@@ -541,17 +541,26 @@ export function createWarmTransferTask({
     let completed = false;
 
     try {
-      const jwt = await ctx.createParticipantToken({
-        identity: localIdentity,
-        kind: 'agent',
-        grant: {
-          roomJoin: true,
-          room: humanAgentRoomName,
-          canUpdateOwnMetadata: true,
-          canPublish: true,
-          canSubscribe: true,
-        },
-      });
+      // In token mode, the token comes from the server.
+      // The transfer can end while we wait for it. Then we must not join the room.
+      const issued = await waitUntilAborted(
+        ctx.createParticipantToken({
+          identity: localIdentity,
+          kind: 'agent',
+          grant: {
+            roomJoin: true,
+            room: humanAgentRoomName,
+            canUpdateOwnMetadata: true,
+            canPublish: true,
+            canSubscribe: true,
+          },
+        }),
+        signal,
+      );
+      if (issued.isAborted) {
+        throw new Error('dial cancelled');
+      }
+      const jwt = issued.result;
 
       logger.debug({ wsUrl: ctx.info.url, humanAgentRoomName }, 'connecting to human agent room');
 
