@@ -16,6 +16,8 @@ import type OpenAI from 'openai';
 import { WebSocket } from 'ws';
 import type { ChatModels, Reasoning } from '../models.js';
 import { defaultReasoningEffort } from '../models.js';
+import type { ResponsesMetadata } from '../responses/metadata.js';
+import { accumulateResponsesMetadata } from '../responses/metadata.js';
 import { toResponsesTools } from '../tool_utils.js';
 import type {
   WsOutputItemDoneEvent,
@@ -172,6 +174,8 @@ export interface WSLLMOptions {
   toolChoice?: llm.ToolChoice;
   store?: boolean;
   metadata?: Record<string, string>;
+  /** Additional response fields to request, such as full web-search sources. */
+  include?: OpenAI.Responses.ResponseIncludable[];
   strictToolSchema?: boolean;
   /** Specifies the processing tier (e.g. 'auto', 'default', 'priority', 'flex'). */
   serviceTier?: string;
@@ -306,6 +310,10 @@ export class WSLLM extends llm.LLM {
       modelOptions.temperature = this.#opts.temperature;
     }
 
+    if (this.#opts.include !== undefined && modelOptions.include === undefined) {
+      modelOptions.include = this.#opts.include;
+    }
+
     if (this.#opts.store !== undefined) {
       modelOptions.store = this.#opts.store;
     }
@@ -394,6 +402,7 @@ export class WSLLMStream extends llm.LLMStream {
   /** Full chat context — used as fallback when previous_response_id is stale. */
   #fullChatCtx: llm.ChatContext;
   #responseId = '';
+  #responseMetadata: ResponsesMetadata = {};
   #pendingToolCalls = new Set<string>();
   /**
    * Whether this attempt may still be retried. Cleared once generation reaches the
@@ -496,6 +505,7 @@ export class WSLLMStream extends llm.LLMStream {
       delete requestOptions.tool_choice;
     }
 
+    this.#responseMetadata = {};
     const payload: WsResponseCreateEvent = {
       type: 'response.create',
       model: this.#model as string,
@@ -555,7 +565,7 @@ export class WSLLMStream extends llm.LLMStream {
 
         if (chunk) {
           this.queue.put(chunk);
-          if (llm.hasResponse(chunk)) {
+          if (llm.hasResponse(chunk) || this.#responseMetadata.output?.length) {
             this.#retryable = false;
           }
         }
@@ -621,17 +631,14 @@ export class WSLLMStream extends llm.LLMStream {
           ],
         },
       };
-    } else if (event.item.type === 'message' && event.item.phase !== undefined) {
-      return {
-        id: this.#responseId,
-        delta: {
-          role: 'assistant',
-          content: undefined,
-          extra: { openai: { phase: event.item.phase } },
-        },
-      };
     }
-    return undefined;
+    const metadata = accumulateResponsesMetadata(this.#responseMetadata, event.item);
+    if (metadata === this.#responseMetadata) return undefined;
+    this.#responseMetadata = metadata;
+    return {
+      id: this.#responseId,
+      delta: { role: 'assistant', extra: { openai: metadata } },
+    };
   }
 
   #handleOutputTextDelta(event: WsOutputTextDeltaEvent): llm.ChatChunk {

@@ -16,6 +16,8 @@ import type { ChatModels, Reasoning } from '../models.js';
 import { defaultReasoningEffort } from '../models.js';
 import { toResponsesTools } from '../tool_utils.js';
 import { WSLLM } from '../ws/llm.js';
+import type { ResponsesMetadata } from './metadata.js';
+import { accumulateResponsesMetadata } from './metadata.js';
 
 export interface LLMOptions {
   model: string | ChatModels;
@@ -27,6 +29,8 @@ export interface LLMOptions {
   toolChoice?: llm.ToolChoice;
   store?: boolean;
   metadata?: Record<string, string>;
+  /** Additional response fields to request, such as full web-search sources. */
+  include?: OpenAI.Responses.ResponseIncludable[];
   strictToolSchema?: boolean;
   /** Specifies the processing tier (e.g. 'auto', 'default', 'priority', 'flex'). */
   serviceTier?: string;
@@ -127,6 +131,10 @@ class ResponsesHttpLLM extends llm.LLM {
       modelOptions.temperature = this.#opts.temperature;
     }
 
+    if (this.#opts.include !== undefined && modelOptions.include === undefined) {
+      modelOptions.include = this.#opts.include;
+    }
+
     if (this.#opts.store !== undefined) {
       modelOptions.store = this.#opts.store;
     }
@@ -165,6 +173,7 @@ class ResponsesHttpLLMStream extends llm.LLMStream {
   private modelOptions: Record<string, unknown>;
   private strictToolSchema: boolean;
   private responseId: string;
+  private responseMetadata: ResponsesMetadata = {};
 
   constructor(
     llm: ResponsesHttpLLM,
@@ -195,6 +204,7 @@ class ResponsesHttpLLMStream extends llm.LLMStream {
   }
 
   protected async run(): Promise<void> {
+    this.responseMetadata = {};
     let retryable = true;
 
     try {
@@ -256,7 +266,7 @@ class ResponsesHttpLLMStream extends llm.LLMStream {
           this.queue.put(chunk);
           // a retry only duplicates output the caller has already seen; the
           // stream-opening event and the usage-bearing one are neither
-          if (llm.hasResponse(chunk)) {
+          if (llm.hasResponse(chunk) || this.responseMetadata.output?.length) {
             retryable = false;
           }
         }
@@ -337,18 +347,13 @@ class ResponsesHttpLLMStream extends llm.LLMStream {
           ],
         },
       };
-    } else if (event.item.type === 'message') {
-      const phase = (event.item as OpenAI.Responses.ResponseOutputMessage & { phase?: string })
-        .phase;
-      if (phase === undefined) return undefined;
-
+    } else {
+      const metadata = accumulateResponsesMetadata(this.responseMetadata, event.item);
+      if (metadata === this.responseMetadata) return undefined;
+      this.responseMetadata = metadata;
       chunk = {
         id: this.responseId,
-        delta: {
-          role: 'assistant',
-          content: undefined,
-          extra: { openai: { phase } },
-        },
+        delta: { role: 'assistant', extra: { openai: metadata } },
       };
     }
     return chunk;

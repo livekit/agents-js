@@ -23,6 +23,7 @@ class MockLLMStream extends LLMStream {
     },
     private shouldFail: boolean = false,
     private failAfterChunks: number = 0,
+    private chunk?: ChatChunk,
   ) {
     super(llm, opts);
     this.myLLM = llm;
@@ -33,7 +34,7 @@ class MockLLMStream extends LLMStream {
       throw new APIError('Mock LLM failed immediately');
     }
 
-    const chunk: ChatChunk = {
+    const chunk: ChatChunk = this.chunk ?? {
       id: 'test-id',
       delta: { role: 'assistant', content: 'chunk' },
     };
@@ -51,6 +52,7 @@ class MockLLMStream extends LLMStream {
 class MockLLM extends LLM {
   shouldFail: boolean = false;
   failAfterChunks: number = 0;
+  chunk?: ChatChunk;
   private _label: string;
 
   constructor(label: string) {
@@ -79,6 +81,7 @@ class MockLLM extends LLM {
       },
       this.shouldFail,
       this.failAfterChunks,
+      this.chunk,
     );
   }
 }
@@ -210,6 +213,73 @@ describe('FallbackAdapter', () => {
     // 1 chunk from failed llm1 + 3 chunks from llm2
     expect(chunks).toHaveLength(4);
   });
+
+  it.each([
+    {
+      name: 'search output',
+      extra: { openai: { output: [{ type: 'web_search_call' }] } },
+      fallback: false,
+    },
+    {
+      name: 'annotated output',
+      extra: {
+        openai: {
+          output: [
+            {
+              type: 'message',
+              content: [{ annotations: [{ type: 'url_citation', url: 'https://example.com' }] }],
+            },
+          ],
+        },
+      },
+      fallback: false,
+    },
+    {
+      name: 'explicit retry',
+      extra: { openai: { output: [{ type: 'web_search_call' }] } },
+      retry: true,
+      fallback: true,
+    },
+    { name: 'phase only', extra: { openai: { phase: 'commentary' } }, fallback: true },
+    { name: 'empty output', extra: { openai: { output: [] } }, fallback: true },
+    {
+      name: 'other metadata',
+      extra: { google: { thoughtSignature: 'signature' } },
+      fallback: true,
+    },
+  ])(
+    'handles failure after $name according to the fallback policy',
+    async ({ extra, retry, fallback }) => {
+      const primary = new MockLLM('primary');
+      primary.shouldFail = true;
+      primary.failAfterChunks = 1;
+      primary.chunk = { id: 'primary', delta: { role: 'assistant', extra } };
+      const secondary = new MockLLM('secondary');
+      const secondaryChat = vi.spyOn(secondary, 'chat');
+      const adapter = new FallbackAdapter({ llms: [primary, secondary], retryOnChunkSent: retry });
+      const metrics = vi.fn();
+      adapter.on('metrics_collected', metrics);
+      const errors: Error[] = [];
+      adapter.on('error', (event) => errors.push(event.error));
+
+      const result = await adapter.chat({ chatCtx: {} as ChatContext }).collect();
+
+      expect(result.extra).toEqual(extra);
+      if (fallback) {
+        expect(result.text).toBe('chunkchunkchunk');
+        expect(secondaryChat).toHaveBeenCalledOnce();
+        expect(errors).toHaveLength(0);
+      } else {
+        expect(result.text).toBe('');
+        expect(secondaryChat).not.toHaveBeenCalled();
+        expect(errors).toHaveLength(1);
+        expect(errors[0]).toBeInstanceOf(APIError);
+        await vi.waitFor(() =>
+          expect(metrics).toHaveBeenCalledWith(expect.objectContaining({ ttftMs: -1 })),
+        );
+      }
+    },
+  );
 
   it('should initiate recovery on mid-stream failure with retryOnChunkSent=false', async () => {
     const llm1 = new MockLLM('llm1');

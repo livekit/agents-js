@@ -398,6 +398,7 @@ class FallbackLLMStream extends LLMStream {
       if (status.available || allFailed) {
         let textSent = '';
         const toolCallsSent: string[] = [];
+        let responsesOutputSent = false;
 
         try {
           this._log.info({ llm: llm.label() }, 'FallbackAdapter: Attempting provider');
@@ -407,6 +408,17 @@ class FallbackLLMStream extends LLMStream {
             chunkCount++;
             // Track what's been sent
             if (chunk.delta) {
+              // Sources count as delivered output without starting the first-token clock.
+              const openai = chunk.delta.extra?.openai;
+              if (
+                openai &&
+                typeof openai === 'object' &&
+                'output' in openai &&
+                Array.isArray(openai.output) &&
+                openai.output.length > 0
+              ) {
+                responsesOutputSent = true;
+              }
               if (chunk.delta.content) {
                 textSent += chunk.delta.content;
               }
@@ -441,7 +453,7 @@ class FallbackLLMStream extends LLMStream {
           this.tryRecovery(llm, i);
 
           // Check if we sent data before failing
-          if (textSent || toolCallsSent.length > 0) {
+          if (textSent || toolCallsSent.length > 0 || responsesOutputSent) {
             const extra = {
               'lk.pii.response.text': textSent,
               'lk.pii.response.function_calls': toolCallsSent,
