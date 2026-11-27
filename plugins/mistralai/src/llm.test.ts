@@ -4,14 +4,20 @@
 import { llm } from '@livekit/agents';
 import { llm as llmTest } from '@livekit/agents-plugins-test';
 import type { Mistral } from '@mistralai/mistralai';
+import type { ConversationEvents } from '@mistralai/mistralai/models/components';
 import { describe, expect, it, vi } from 'vitest';
-import { LLM } from './llm.js';
+import { LLM, type LLMOptions } from './llm.js';
 
-function createModel(opts: { store?: boolean } = {}) {
+function createModel(
+  opts: Omit<LLMOptions, 'apiKey' | 'client' | 'model'> = {},
+  events: ConversationEvents[] = [],
+) {
   const requests: Record<string, unknown>[] = [];
   const startStream = vi.fn(async (request: Record<string, unknown>) => {
     requests.push(request);
-    return (async function* () {})();
+    return (async function* () {
+      yield* events;
+    })();
   });
   const client = {
     beta: { conversations: { startStream } },
@@ -91,6 +97,125 @@ describe('Mistral LLM store', () => {
     try {
       await run(model, { store: true });
       expect(requests[0]?.store).toBe(true);
+    } finally {
+      await model.aclose();
+    }
+  });
+});
+
+describe('Mistral LLM reasoning effort', () => {
+  it('does not send reasoning effort by default', async () => {
+    const { model, requests } = createModel();
+
+    try {
+      await run(model);
+      expect(requests[0]).not.toHaveProperty('completionArgs');
+    } finally {
+      await model.aclose();
+    }
+  });
+
+  it('sends reasoning effort in completion args', async () => {
+    const { model, requests } = createModel({ reasoningEffort: 'none' });
+
+    try {
+      await run(model);
+      expect(requests[0]?.completionArgs).toMatchObject({ reasoningEffort: 'none' });
+    } finally {
+      await model.aclose();
+    }
+  });
+
+  it('updates reasoning effort through updateOptions', async () => {
+    const { model, requests } = createModel();
+
+    try {
+      model.updateOptions({ reasoningEffort: 'none' });
+      await run(model);
+      model.updateOptions({ reasoningEffort: 'high' });
+      await run(model);
+      expect(
+        requests.map(
+          (request) => (request.completionArgs as { reasoningEffort: string }).reasoningEffort,
+        ),
+      ).toEqual(['none', 'high']);
+    } finally {
+      await model.aclose();
+    }
+  });
+
+  it('sends reasoning effort with other completion args', async () => {
+    const { model, requests } = createModel({ temperature: 0.2, reasoningEffort: 'high' });
+
+    try {
+      await run(model);
+      expect(requests[0]?.completionArgs).toMatchObject({
+        temperature: 0.2,
+        reasoningEffort: 'high',
+      });
+    } finally {
+      await model.aclose();
+    }
+  });
+
+  it('does not emit thinking chunks', async () => {
+    const events = [
+      {
+        event: 'message.output.delta',
+        data: {
+          type: 'message.output.delta',
+          outputIndex: 0,
+          id: 'msg_1',
+          contentIndex: 0,
+          role: 'assistant',
+          content: { type: 'thinking', thinking: [{ type: 'text', text: 'let me think' }] },
+        },
+      },
+      {
+        event: 'message.output.delta',
+        data: {
+          type: 'message.output.delta',
+          outputIndex: 0,
+          id: 'msg_1',
+          contentIndex: 0,
+          role: 'assistant',
+          content: 'Hello',
+        },
+      },
+    ] as ConversationEvents[];
+    const { model } = createModel({ reasoningEffort: 'high' }, events);
+
+    try {
+      const response = await model.chat({ chatCtx: llm.ChatContext.empty() }).collect();
+      expect(response.text).toBe('Hello');
+    } finally {
+      await model.aclose();
+    }
+  });
+
+  it('merges extra completion args', async () => {
+    const { model, requests } = createModel({ reasoningEffort: 'high' });
+
+    try {
+      await run(model, { completionArgs: { maxTokens: 50 } });
+      expect(requests[0]?.completionArgs).toMatchObject({
+        maxTokens: 50,
+        reasoningEffort: 'high',
+      });
+    } finally {
+      await model.aclose();
+    }
+  });
+
+  it('gives extra completion args precedence', async () => {
+    const { model, requests } = createModel({ temperature: 0.2, reasoningEffort: 'high' });
+
+    try {
+      await run(model, { completionArgs: { reasoningEffort: 'none' } });
+      expect(requests[0]?.completionArgs).toMatchObject({
+        temperature: 0.2,
+        reasoningEffort: 'none',
+      });
     } finally {
       await model.aclose();
     }

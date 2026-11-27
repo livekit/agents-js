@@ -23,6 +23,7 @@ import { ParticipantKind } from '@livekit/rtc-node';
 import { ReadableStream as ReadableStream_2 } from 'node:stream/web';
 import type { ReadableStreamDefaultReader as ReadableStreamDefaultReader_2 } from 'node:stream/web';
 import type { RealtimeConnection } from '@mistralai/mistralai/extra/realtime';
+import type { ReasoningEffort } from '@mistralai/mistralai/models/components';
 import { RemoteParticipant } from '@livekit/rtc-node';
 import { Room } from '@livekit/rtc-node';
 import { Span } from '@opentelemetry/api';
@@ -95,6 +96,7 @@ export class LLM extends llm.LLM {
         randomSeed?: number;
         toolChoice?: llm.ToolChoice;
         store?: boolean;
+        reasoningEffort?: ReasoningEffort;
     }): void;
 }
 
@@ -116,6 +118,7 @@ export interface LLMOptions {
     presencePenalty?: number;
     // (undocumented)
     randomSeed?: number;
+    reasoningEffort?: ReasoningEffort;
     store?: boolean;
     // (undocumented)
     temperature?: number;
@@ -333,7 +336,7 @@ export interface TurnDetection {
 
 // Warnings were encountered during analysis:
 //
-// src/llm.ts:199:7 - (ae-forgotten-export) The symbol "LLMOpts" needs to be exported by the entry point index.d.ts
+// src/llm.ts:213:7 - (ae-forgotten-export) The symbol "LLMOpts" needs to be exported by the entry point index.d.ts
 
 // (No @packageDocumentation comment for this package)
 
