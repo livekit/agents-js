@@ -84,7 +84,15 @@ export class CreateJobTokenRequests {
           ),
         );
       }, this.#timeout);
-      this.#pending.set(requestId, { resolve, reject, timer });
+      const resolveAndLog = (token: JobToken) => {
+        // The claims are not secret. The token is, so it is not logged.
+        log().debug(
+          { jobId, claims, validFor: `${Math.round((token.expiresAt - Date.now()) / 1000)}s` },
+          'token mode: got a job token from the LiveKit server',
+        );
+        resolve(token);
+      };
+      this.#pending.set(requestId, { resolve: resolveAndLog, reject, timer });
       const sent = this.#send(
         new WorkerMessage({
           message: {
