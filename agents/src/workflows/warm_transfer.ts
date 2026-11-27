@@ -799,8 +799,19 @@ export class WarmTransferTask extends AgentTask<WarmTransferResult> {
 }
 
 // token mode: the server issues the token for each API call
-function apiClientOptions(ctx: JobContext): ClientOptions | undefined {
-  return ctx._jobTokens ? { tokenProvider: ctx._jobTokens.tokenProvider } : undefined;
+function apiClientOptions(ctx: JobContext, signal?: AbortSignal): ClientOptions | undefined {
+  const jobTokens = ctx._jobTokens;
+  if (!jobTokens) return undefined;
+  return {
+    tokenProvider: async (grants) => {
+      const token = await jobTokens.tokenProvider(grants);
+      // The client sends its request after this returns.
+      // Example: the caller hangs up while the SIP token is pending, then the token arrives.
+      // Without this check, the client still dials the human agent.
+      signal?.throwIfAborted();
+      return token;
+    },
+  };
 }
 
 /**
@@ -836,9 +847,9 @@ function createSipOriginateHumanAgent(options: {
     );
   }
 
-  return async ({ roomName, identity, jobCtx }) => {
+  return async ({ roomName, identity, jobCtx, signal }) => {
     const { url, apiKey, apiSecret } = jobCtx.info;
-    const sip = new SipClient(url, apiKey, apiSecret, apiClientOptions(jobCtx));
+    const sip = new SipClient(url, apiKey, apiSecret, apiClientOptions(jobCtx, signal));
     await sip.createSipParticipant(
       sipTrunkId ?? '',
       sipCallTo,

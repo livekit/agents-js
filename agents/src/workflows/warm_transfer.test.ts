@@ -779,6 +779,13 @@ describe('human agent room token', () => {
 
     expect(connect).not.toHaveBeenCalled();
   });
+
+  it('does not dial when the transfer ends while the SIP token is pending', async () => {
+    const { connect, fetch } = await abortWhileJobTokenPending(2);
+
+    expect(connect).toHaveBeenCalledOnce();
+    expect(fetch).not.toHaveBeenCalled();
+  });
 });
 
 function completedSpeechHandle(): SpeechHandle {
