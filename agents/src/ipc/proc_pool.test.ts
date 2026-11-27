@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import type { Throws } from '@livekit/throws-transformer/throws';
+import { availableParallelism } from 'node:os';
 import { describe, expect, it, vi } from 'vitest';
 import type { RunningJobInfo } from '../job.js';
 import { type JobExecutor, JobStatus } from './job_executor.js';
@@ -77,6 +78,29 @@ describe('ProcPool close', () => {
 });
 
 describe('ProcPool warmed process lock handling', () => {
+  it('allows the configured number of process initializations to run concurrently', async () => {
+    const pool = createPool(4);
+    const concurrency = Math.min(availableParallelism(), 4);
+    const unlocks = await Promise.all(
+      Array.from({ length: concurrency }, () => pool.initMutex.lock()),
+    );
+
+    let nextAcquired = false;
+    const next = pool.initMutex.lock().then((unlock) => {
+      nextAcquired = true;
+      return unlock;
+    });
+    await flushMicrotasks();
+    expect(nextAcquired).toBe(false);
+
+    unlocks[0]!();
+    const nextUnlock = await next;
+    expect(nextAcquired).toBe(true);
+
+    for (const unlock of unlocks.slice(1)) unlock();
+    nextUnlock();
+  });
+
   it('releases lock token from the dequeued warmed process entry', async (): Promise<
     Throws<void, Error>
   > => {

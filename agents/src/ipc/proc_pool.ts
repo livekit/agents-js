@@ -1,15 +1,18 @@
 // SPDX-FileCopyrightText: 2024 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { MultiMutex, Mutex } from '@livekit/mutex';
+import { MultiMutex } from '@livekit/mutex';
 import type { JobJoinTiming } from '@livekit/protocol';
 import { type Throws, ThrowsPromise } from '@livekit/throws-transformer/throws';
+import { availableParallelism } from 'node:os';
 import type { RunningJobInfo } from '../job.js';
 import { Queue } from '../utils.js';
 import type { InferenceExecutor } from './inference_executor.js';
 import type { JobExecutor } from './job_executor.js';
 import { JobProcExecutor } from './job_proc_executor.js';
 import { monotonicUs } from './job_trace.js';
+
+const MAX_CONCURRENT_INITIALIZATIONS = 4;
 
 type ProcPoolOptions = {
   agent: string;
@@ -34,7 +37,7 @@ export class ProcPool {
   started = false;
   closed = false;
   controller = new AbortController();
-  initMutex = new Mutex();
+  initMutex = new MultiMutex(Math.min(availableParallelism(), MAX_CONCURRENT_INITIALIZATIONS));
   procMutex?: MultiMutex;
   // Keep each lock token paired with its warmed process so MultiMutex slots are always released correctly.
   warmedProcQueue = new Queue<{ proc: JobExecutor; unlock: () => void }>();
