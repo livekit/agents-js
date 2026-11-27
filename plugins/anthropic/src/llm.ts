@@ -366,7 +366,21 @@ export class LLMStream extends llm.LLMStream {
           this.#cacheCreationTokens = event.message.usage.cache_creation_input_tokens ?? 0;
           this.#cacheReadTokens = event.message.usage.cache_read_input_tokens ?? 0;
         } else if (event.type === 'message_delta') {
-          this.#outputTokens = event.usage.output_tokens;
+          // message_delta usage is cumulative. With server tools (e.g. web search) the input and cache
+          // counts only show up here, so take them whenever they are reported. The SDK version this
+          // plugin pins does not type those fields on MessageDeltaUsage yet.
+          const usage = event.usage as Anthropic.MessageDeltaUsage &
+            Partial<
+              Pick<
+                Anthropic.Usage,
+                'input_tokens' | 'cache_creation_input_tokens' | 'cache_read_input_tokens'
+              >
+            >;
+          this.#outputTokens = usage.output_tokens;
+          this.#inputTokens = usage.input_tokens ?? this.#inputTokens;
+          this.#cacheCreationTokens =
+            usage.cache_creation_input_tokens ?? this.#cacheCreationTokens;
+          this.#cacheReadTokens = usage.cache_read_input_tokens ?? this.#cacheReadTokens;
         } else if (
           event.type === 'content_block_start' &&
           event.content_block.type === 'tool_use'

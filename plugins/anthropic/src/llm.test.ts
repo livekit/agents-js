@@ -137,6 +137,28 @@ async function collectTextFromEvents(
   return textChunks.join('');
 }
 
+async function collectUsage(events: Anthropic.MessageStreamEvent[]): Promise<llm.ChatChunk> {
+  const client = {
+    messages: {
+      create: async () =>
+        (async function* (): AsyncGenerator<Anthropic.MessageStreamEvent> {
+          yield* events;
+        })(),
+    },
+  } as unknown as Anthropic;
+  const anthropicLlm = new LLM({ apiKey: 'dummy', client, model: 'claude-3-5-sonnet-20241022' });
+  const chatCtx = new llm.ChatContext();
+  chatCtx.addMessage({ role: 'user', content: 'Hello, world!' });
+
+  let last: llm.ChatChunk | undefined;
+  for await (const chunk of anthropicLlm.chat({ chatCtx })) {
+    if (chunk.usage) {
+      last = chunk;
+    }
+  }
+  return last!;
+}
+
 describe('Anthropic LLM', () => {
   it('sends forced tool choice as auto only for rejecting models', async () => {
     for (const model of [
@@ -387,6 +409,76 @@ describe('Anthropic LLM', () => {
       promptCachedTokens: 0,
       cacheCreationTokens: 0,
       totalTokens: 0,
+    });
+  });
+
+  it('takes the cumulative input and cache counts from message_delta when it reports them', async () => {
+    const events = [
+      {
+        type: 'message_start',
+        message: {
+          id: 'msg_123',
+          usage: {
+            input_tokens: 0,
+            output_tokens: 1,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+          },
+        },
+      },
+      {
+        type: 'message_delta',
+        delta: { stop_reason: 'end_turn' },
+        usage: {
+          input_tokens: 10682,
+          output_tokens: 510,
+          cache_creation_input_tokens: 20,
+          cache_read_input_tokens: 5000,
+        },
+      },
+    ] as Anthropic.MessageStreamEvent[];
+
+    expect((await collectUsage(events)).usage).toEqual({
+      completionTokens: 510,
+      promptTokens: 15702,
+      promptCachedTokens: 5000,
+      cacheCreationTokens: 20,
+      totalTokens: 16212,
+    });
+  });
+
+  it('keeps the message_start input and cache counts when message_delta reports none', async () => {
+    const events = [
+      {
+        type: 'message_start',
+        message: {
+          id: 'msg_123',
+          usage: {
+            input_tokens: 100,
+            output_tokens: 1,
+            cache_creation_input_tokens: 10,
+            cache_read_input_tokens: 40,
+          },
+        },
+      },
+      {
+        type: 'message_delta',
+        delta: { stop_reason: 'end_turn' },
+        usage: {
+          input_tokens: null,
+          output_tokens: 25,
+          cache_creation_input_tokens: null,
+          cache_read_input_tokens: null,
+        },
+      },
+    ] as Anthropic.MessageStreamEvent[];
+
+    expect((await collectUsage(events)).usage).toEqual({
+      completionTokens: 25,
+      promptTokens: 150,
+      promptCachedTokens: 40,
+      cacheCreationTokens: 10,
+      totalTokens: 175,
     });
   });
 
