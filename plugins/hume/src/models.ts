@@ -25,7 +25,7 @@ export interface Utterance {
   text: string;
   description?: string;
   speed?: number;
-  voice?: VoiceById | VoiceByName;
+  voice?: VoiceById | VoiceByName | null;
   trailing_silence?: number;
 }
 
@@ -36,7 +36,7 @@ export type ModelVersion = '1' | '2';
 export interface TTSOptions {
   apiKey?: string;
   baseUrl?: string;
-  voice?: VoiceById | VoiceByName;
+  voice?: VoiceById | VoiceByName | null;
   modelVersion?: ModelVersion;
   description?: string;
   speed?: number;
