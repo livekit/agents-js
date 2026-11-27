@@ -43,7 +43,7 @@
     "zod": "^3.25.76 || ^4.1.8"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.33.1"
+    "@anthropic-ai/sdk": "^0.52.0"
   },
   "peerDependencies": {
     "@livekit/agents": "workspace:*",

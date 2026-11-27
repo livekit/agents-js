@@ -3,8 +3,9 @@
 // SPDX-License-Identifier: Apache-2.0
 import { Plugin } from '@livekit/agents';
 
-export { LLM, LLMStream, type LLMOptions } from './llm.js';
+export { LLM, LLMStream, type LLMOptions, type AnthropicResponseData } from './llm.js';
 export * from './models.js';
+export { WebSearch, type WebSearchOptions } from './tools.js';
 
 class AnthropicPlugin extends Plugin {
   constructor() {
