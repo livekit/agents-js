@@ -6,7 +6,7 @@ packages:
 minimumReleaseAge: 2880
 minimumReleaseAgeExclude:
   # Explicitly approved Rime protocol release.
-  - '@rimelabs/api@0.0.1'
+  - '@rimelabs/api@0.4.0'
   # Voxtral 3 support from the authoritative Mistral port.
   - '@mistralai/mistralai@3.4.0'
   - encodeurl@2.0.1

@@ -141,6 +141,26 @@ it('keeps sample rates coherent after updates and preserves explicit rates', asy
 });
 
 it.each([
+  { modelId: 'mistv3' },
+  { modelId: 'coda', useWebsocket: true },
+  { modelId: 'mistv3', websocketURL: 'wss://mist.api.rime.ai/ws' },
+])('rejects custom lexicon for unsupported configuration %#', (opts) => {
+  expect(() => resolveOptions({ apiKey: 'key', customLexicon: [], ...opts })).toThrow(
+    opts.modelId === 'mistv3' ? 'customLexicon requires the coda model' : 'legacy Rime WebSocket',
+  );
+});
+
+it.each([{ modelId: 'mistv3' }, { modelId: 'coda', useWebsocket: true }])(
+  'rejects custom lexicon updates for unsupported configuration %#',
+  (opts) => {
+    const value = new TTS({ apiKey: 'key', ...opts });
+    expect(() => value.updateOptions({ customLexicon: [] })).toThrow(
+      opts.modelId === 'mistv3' ? 'customLexicon requires the coda model' : 'legacy Rime WebSocket',
+    );
+  },
+);
+
+it.each([
   { websocketURL: 'wss://api.rime.ai/ws' },
   { websocketURL: 'wss://coda.api.rime.ai/ws', modelId: 'coda', baseURL: 'https://api.rime.ai' },
   { websocketURL: 'wss://coda.api.rime.ai/ws', modelId: 'coda', useWebsocket: true },
