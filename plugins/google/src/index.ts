@@ -13,6 +13,7 @@ export {
   type GoogleCredentials,
 } from './aiplatform_llm.js';
 export { beta };
+export { DecisionModel, type DecisionModelOptions } from './decision_model.js';
 export { LLM, LLMStream, type LLMOptions } from './llm.js';
 export * from './models.js';
 export * from './tools.js';
