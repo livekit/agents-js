@@ -164,6 +164,7 @@ export interface TTSOptions {
     audioFormat: string;
     // (undocumented)
     bitrate?: number | null;
+    clientReferenceId?: string;
     // (undocumented)
     language: string;
     // (undocumented)
