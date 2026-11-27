@@ -37,7 +37,7 @@ import { z } from 'zod';
 // Warning: (ae-missing-release-tag) "PhonicConfig" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
 // @public
-type PhonicConfig = Partial<Omit<RealtimeModelOptions, 'apiKey' | 'model' | 'connOptions' | 'baseUrl' | 'externalId' | 'instructions'>>;
+type PhonicConfig = Partial<Omit<RealtimeModelOptions, 'apiKey' | 'model' | 'connOptions' | 'baseUrl' | 'externalId' | 'dataRetentionPolicy' | 'externalStoragePolicy' | 'instructions'>>;
 
 // Warning: (ae-missing-release-tag) "PhonicToolConfig" is part of the package's API, but it is missing a release tag (@alpha, @beta, @public, or @internal)
 //
@@ -114,6 +114,8 @@ class RealtimeModel extends llm.RealtimeModel {
         configurationEndpoint?: Phonic.ConfigOptions['configuration_endpoint'];
         additionalParams?: NonNullable<Phonic.ConfigOptions['additional_params']>;
         externalId?: string;
+        dataRetentionPolicy?: Phonic.ConfigOptions['data_retention_policy'];
+        externalStoragePolicy?: Phonic.ConfigOptions['external_storage_policy'];
         configsForTools?: PhonicToolConfig[];
         forbidSpeechAfterToolCall?: string[];
         onConversationCreated?: (conversationId: string) => void;
@@ -163,6 +165,8 @@ interface RealtimeModelOptions {
     // (undocumented)
     connOptions: APIConnectOptions;
     // (undocumented)
+    dataRetentionPolicy?: Phonic.ConfigOptions['data_retention_policy'];
+    // (undocumented)
     defaultLanguage?: string;
     // (undocumented)
     enableAssistantBackchannel?: boolean;
@@ -172,6 +176,8 @@ interface RealtimeModelOptions {
     enableWatermarking?: boolean;
     // (undocumented)
     externalId?: string;
+    // (undocumented)
+    externalStoragePolicy?: Phonic.ConfigOptions['external_storage_policy'];
     // @deprecated (undocumented)
     forbidSpeechAfterToolCall?: string[];
     // (undocumented)
@@ -241,7 +247,7 @@ type Voice = 'sabrina' | 'grant' | 'virginia' | 'landon' | 'eleanor' | 'shelby' 
 
 // Warnings were encountered during analysis:
 //
-// src/realtime/realtime_model.ts:335:7 - (ae-forgotten-export) The symbol "APIConnectOptions" needs to be exported by the entry point index.d.ts
+// src/realtime/realtime_model.ts:357:7 - (ae-forgotten-export) The symbol "APIConnectOptions" needs to be exported by the entry point index.d.ts
 
 // (No @packageDocumentation comment for this package)
 

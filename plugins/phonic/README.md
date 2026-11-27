@@ -115,8 +115,30 @@ Set the `PHONIC_API_KEY` environment variable, or pass `apiKey` directly to `Rea
 | `configurationEndpoint`              | `{ url, headers?, timeout_ms? }` \| `null` | Endpoint the agent calls to fetch per-conversation configuration                                                                                                                                                                                            |
 | `additionalParams`                   | `Record<string, unknown>`                  | Additional runtime parameters forwarded to Phonic                                                                                                                                                                                                           |
 | `externalId`                         | `string`                                   | Your own identifier for the conversation, stored on the Phonic conversation                                                                                                                                                                                 |
+| `dataRetentionPolicy`                | `object`                                   | Zero data retention, or when transcripts and audio are deleted (see [Data retention and external storage](#data-retention-and-external-storage))                                                                                                            |
+| `externalStoragePolicy`              | `string \| null`                           | Name of an external storage policy that receives the transcript and audio. Requires zero data retention (see [Data retention and external storage](#data-retention-and-external-storage))                                                                   |
 | `configsForTools`                    | `PhonicToolConfig[]`                       | Per-tool behavior overrides (see [Per-tool configuration](#per-tool-configuration))                                                                                                                                                                         |
 | `onConversationCreated`              | `(conversationId: string) => void`         | Callback invoked with the Phonic conversation ID when the conversation is created                                                                                                                                                                           |
+
+### Data retention and external storage
+
+`dataRetentionPolicy` takes one of two shapes:
+
+| Value                                                                                                                     | Behavior                                                                                                    |
+| ------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `{ zero_data_retention: true }`                                                                                           | Phonic retains no transcripts or audio for the conversation                                                 |
+| `{ zero_data_retention: false, transcripts: { delete_after_hours: 24 }, audio_recordings: { delete_after_hours: null } }` | Phonic deletes each after the given number of hours (a positive whole number). `null` keeps it indefinitely |
+
+`externalStoragePolicy` is the snake_case name of an [external storage policy](https://docs.phonic.ai/api-reference/external-storage-policies/create) in the same project. Phonic delivers the conversation's transcript and audio to that policy's bucket. It requires `{ zero_data_retention: true }`. `null` turns delivery off.
+
+Both default to the Phonic agent's settings (`phonicAgent`), or to no retention limit and no external storage without one. Both are fixed for the conversation, so they can't be changed through `updateOptions`. A workspace without data retention enabled can only use the never-delete policy. See [Data Retention](https://docs.phonic.ai/docs/platform/retention).
+
+```typescript
+new phonic.realtime.RealtimeModel({
+  dataRetentionPolicy: { zero_data_retention: true },
+  externalStoragePolicy: 'my_storage_policy',
+});
+```
 
 ### Per-tool configuration
 
