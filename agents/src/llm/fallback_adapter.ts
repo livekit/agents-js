@@ -9,7 +9,7 @@ import * as traceTypes from '../telemetry/trace_types.js';
 import { type APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS } from '../types.js';
 import type { ChatContext } from './chat_context.js';
 import type { ChatChunk } from './llm.js';
-import { LLM, LLMStream } from './llm.js';
+import { LLM, LLMStream, hasResponse } from './llm.js';
 import type { ToolChoice, ToolContextLike } from './tool_context.js';
 
 /**
@@ -46,6 +46,12 @@ export interface FallbackAdapterOptions {
   llms: LLM[];
   /** Timeout for each LLM attempt in seconds. Defaults to 5.0. */
   attemptTimeout?: number;
+  /**
+   * Fail over when an attempt yields no text or tool call within this many milliseconds, even if
+   * the provider keeps the connection alive. Time the model spends reasoning counts against it.
+   * Defaults to null (disabled).
+   */
+  firstTokenTimeout?: number | null;
   /** Internal retries per LLM before moving to next. Defaults to 0. */
   maxRetryPerLLM?: number;
   /** Interval between retries in seconds. Defaults to 0.5. */
@@ -69,6 +75,7 @@ export interface FallbackAdapterOptions {
 export class FallbackAdapter extends LLM {
   readonly llms: LLM[];
   readonly attemptTimeout: number;
+  readonly firstTokenTimeout: number | null;
   readonly maxRetryPerLLM: number;
   readonly retryInterval: number;
   readonly retryOnChunkSent: boolean;
@@ -87,6 +94,7 @@ export class FallbackAdapter extends LLM {
 
     this.llms = options.llms;
     this.attemptTimeout = options.attemptTimeout ?? 5.0;
+    this.firstTokenTimeout = options.firstTokenTimeout ?? null;
     this.maxRetryPerLLM = options.maxRetryPerLLM ?? 0;
     this.retryInterval = options.retryInterval ?? 0.5;
     this.retryOnChunkSent = options.retryOnChunkSent ?? false;
@@ -295,12 +303,49 @@ class FallbackLLMStream extends LLMStream {
 
     try {
       let shouldSetCurrent = !checkRecovery;
-      for await (const chunk of stream) {
-        if (shouldSetCurrent) {
-          shouldSetCurrent = false;
-          this._currentStream = stream;
+      let deadline =
+        this.adapter.firstTokenTimeout === null
+          ? null
+          : Date.now() + this.adapter.firstTokenTimeout;
+      while (true) {
+        let timeout: NodeJS.Timeout | undefined;
+        let onAbort: (() => void) | undefined;
+        try {
+          const next = stream.next();
+          const pending: Array<Promise<IteratorResult<ChatChunk>>> = [next];
+          if (deadline !== null) {
+            const remaining = Math.max(0, deadline - Date.now());
+            pending.push(
+              new Promise((_, reject) => {
+                timeout = setTimeout(
+                  () => reject(new DOMException('first token timed out', 'TimeoutError')),
+                  remaining,
+                );
+              }),
+              new Promise((_, reject) => {
+                onAbort = () => reject(this.abortController.signal.reason);
+                this.abortController.signal.addEventListener('abort', onAbort, { once: true });
+              }),
+            );
+          }
+
+          const result = await Promise.race(pending);
+          if (result.done) break;
+          const chunk = result.value;
+          if (hasResponse(chunk)) deadline = null;
+
+          if (shouldSetCurrent) {
+            shouldSetCurrent = false;
+            this._currentStream = stream;
+          }
+          yield chunk;
+        } catch (error) {
+          if (this.abortController.signal.aborted) return;
+          throw error;
+        } finally {
+          if (timeout) clearTimeout(timeout);
+          if (onAbort) this.abortController.signal.removeEventListener('abort', onAbort);
         }
-        yield chunk;
       }
 
       // If an error was emitted but not thrown through iteration, throw it now
@@ -318,7 +363,10 @@ class FallbackLLMStream extends LLMStream {
       }
 
       // Handle timeout errors
-      if (error instanceof Error && error.name === 'AbortError') {
+      if (
+        error instanceof Error &&
+        (error.name === 'AbortError' || error.name === 'TimeoutError')
+      ) {
         if (checkRecovery) {
           this._log.warn({ llm: llm.label() }, 'recovery timed out');
         } else {
@@ -335,6 +383,7 @@ class FallbackLLMStream extends LLMStream {
       }
       throw error;
     } finally {
+      stream.close();
       llm.off('error', errorHandler);
     }
   }

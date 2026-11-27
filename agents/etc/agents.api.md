@@ -3944,6 +3944,8 @@ export class FallbackAdapter extends LLM {
     // @internal
     _emitAvailabilityChanged(llm: LLM, available: boolean): void;
     // (undocumented)
+    readonly firstTokenTimeout: number | null;
+    // (undocumented)
     label(): string;
     // (undocumented)
     readonly llms: LLM[];
@@ -4042,6 +4044,7 @@ class FallbackAdapter_3 extends TTS {
 // @public
 export interface FallbackAdapterOptions {
     attemptTimeout?: number;
+    firstTokenTimeout?: number | null;
     llms: LLM[];
     maxRetryPerLLM?: number;
     retryInterval?: number;
