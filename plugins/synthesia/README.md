@@ -38,6 +38,20 @@ await avatar.swapAvatar('<another-id-from-avatarIds>');
 await avatar.swapAvatar('default');
 ```
 
+## Faster first words
+
+By default, `start()` returns once the avatar has joined the room, so the agent's greeting is only generated after the session request completes. Set `waitForAvatar` to `false` to return immediately and launch the avatar in the background. The greeting is generated while the avatar starts, held until the avatar's video is up, and spoken as soon as it is.
+
+```typescript
+await avatar.start(session, ctx.room, { waitForAvatar: false });
+await session.start({ agent: new Agent(/* ... */), room: ctx.room });
+session.generateReply({ instructions: 'Greet the user.' });
+
+await avatar.waitUntilReady(); // optional: raises SynthesiaError if the avatar failed to start
+```
+
+With `waitForAvatar: false`, a failed launch no longer rejects `start()`. It closes the avatar session, is logged, and is raised by `waitUntilReady()`. The agent's audio may remain routed to the avatar until the session ends, so its speech won't be heard: end or restart the session when `waitUntilReady()` rejects.
+
 ## Parameters
 
 | Parameter                   | Default                    | Description                                                                                     |
