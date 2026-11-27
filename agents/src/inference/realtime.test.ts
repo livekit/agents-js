@@ -194,6 +194,24 @@ describe('inference RealtimeModel', () => {
     expect(new TestRealtimeSession(model).fatal({ code })).toBe(true);
   });
 
+  it.each([
+    ['some_new_code', 'unsupported_audio_format', true],
+    ['some_new_code', 'insufficient_quota', true],
+    [null, 'unsupported_audio_transport', true],
+    ['', 'insufficient_quota', true],
+    ['invalid_audio_payload', 'invalid_request_error', false],
+    ['', '', false],
+    [null, null, false],
+  ])('matches fatal errors in either gateway code or type', (code, type, fatal) => {
+    stubTaskRuntime();
+    const model = new RealtimeModel({
+      model: 'openai/gpt-realtime',
+      apiKey: 'key',
+      apiSecret: 'secret',
+    });
+    expect(new TestRealtimeSession(model).fatal({ code, type })).toBe(fatal);
+  });
+
   it('treats malformed and invalid-audio gateway errors as recoverable', () => {
     stubTaskRuntime();
     const model = new RealtimeModel({
