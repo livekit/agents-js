@@ -14,7 +14,8 @@ export const FRAMES_PER_SECOND = 40;
 export const FRAME_DURATION_IN_S = 0.025; // 25ms per frame
 
 export const apiConnectDefaults: ApiConnectOptions = {
-  maxRetries: 3,
+  // Fall back to VAD instead of reconnecting to a slow interruption backend.
+  maxRetries: 0,
   retryInterval: 2_000,
   timeout: 10_000,
 } as const;
