@@ -40,6 +40,7 @@ import { ATTR_SERVICE_NAME } from '@opentelemetry/semantic-conventions';
 import FormData from 'form-data';
 import { AccessToken } from 'livekit-server-sdk';
 import fs from 'node:fs/promises';
+import { getWorkerToken, observabilityToken } from '../job_token.js';
 import type { ChatItem } from '../llm/index.js';
 import { enableOtelLogging, log } from '../log.js';
 import { filterZeroValues } from '../metrics/model_usage.js';
@@ -397,7 +398,7 @@ function setupCloudMetrics(
 
   const exporter = new UploadGateMetricExporter({
     url: `${observabilityUrl}/observability/metrics/otlp/v0`,
-    headers,
+    headers: cloudExporterHeaders(headers),
     compression: CompressionAlgorithm.GZIP,
     temporalityPreference: AggregationTemporality.DELTA,
   });
@@ -582,7 +583,20 @@ interface PreparedCloudPipeline {
 
 let preparedCloud: PreparedCloudPipeline | undefined;
 
+/**
+ * The headers option of a cloud exporter. In token mode the job renews its token while it runs,
+ * so the exporter gets the current one for each request.
+ */
+function cloudExporterHeaders(
+  headers: Record<string, string>,
+): Record<string, string> | (() => Promise<Record<string, string>>) {
+  return getWorkerToken() ? cloudAuthHeaders : headers;
+}
+
 async function cloudAuthHeaders(): Promise<Record<string, string>> {
+  // token mode: the job's current token
+  if (getWorkerToken()) return { Authorization: `Bearer ${observabilityToken()}` };
+
   const apiKey = process.env.LIVEKIT_API_KEY;
   const apiSecret = process.env.LIVEKIT_API_SECRET;
   if (!apiKey || !apiSecret) {
@@ -650,11 +664,12 @@ export async function prepareCloudTracer(
   }
   if (!(current instanceof ProxyTracerProvider)) return; // the user's provider records
 
-  const headers = await cloudAuthHeaders();
+  // token mode: the exporter asks for the job's current token on each request
+  const headers = getWorkerToken() ? {} : await cloudAuthHeaders();
   const gate = new JobSpanGateExporter(
     new UploadGateTraceExporter({
       url: `${observabilityUrl}/observability/traces/otlp/v0`,
-      headers,
+      headers: cloudExporterHeaders(headers),
       compression: CompressionAlgorithm.GZIP,
     }),
   );
@@ -746,7 +761,8 @@ export async function setupCloudTracer(
   const observabilityUrl = resolveObservabilityUrl(options);
 
   try {
-    const headers = await cloudAuthHeaders();
+    // token mode: the exporters ask for the job's current token on each request
+    const headers = getWorkerToken() ? {} : await cloudAuthHeaders();
     const baseMetadata = cloudBaseMetadata(roomId, jobId, agentName);
     const cloudAgentId = baseMetadata[ATTR_CLOUD_AGENT_ID] as string | undefined;
     const deploymentId = baseMetadata[ATTR_DEPLOYMENT_ID] as string | undefined;
@@ -787,7 +803,7 @@ export async function setupCloudTracer(
       const createCloudExporter = () =>
         new UploadGateTraceExporter({
           url,
-          headers,
+          headers: cloudExporterHeaders(headers),
           compression: CompressionAlgorithm.GZIP,
         });
 
@@ -1152,16 +1168,20 @@ export async function uploadSessionReport(
     return;
   }
 
-  const apiKey = process.env.LIVEKIT_API_KEY;
-  const apiSecret = process.env.LIVEKIT_API_SECRET;
+  // token mode: the job's current token
+  let jwt = getWorkerToken() ? observabilityToken() : undefined;
+  if (!jwt) {
+    const apiKey = process.env.LIVEKIT_API_KEY;
+    const apiSecret = process.env.LIVEKIT_API_SECRET;
 
-  if (!apiKey || !apiSecret) {
-    throw new Error('LIVEKIT_API_KEY and LIVEKIT_API_SECRET must be set for session upload');
+    if (!apiKey || !apiSecret) {
+      throw new Error('LIVEKIT_API_KEY and LIVEKIT_API_SECRET must be set for session upload');
+    }
+
+    const token = new AccessToken(apiKey, apiSecret, { ttl: '6h' });
+    token.addObservabilityGrant({ write: true });
+    jwt = await token.toJwt();
   }
-
-  const token = new AccessToken(apiKey, apiSecret, { ttl: '6h' });
-  token.addObservabilityGrant({ write: true });
-  const jwt = await token.toJwt();
 
   const audioStartTime = report.audioRecordingStartedAt ?? 0;
   const headerMsg = new MetricsRecordingHeader({

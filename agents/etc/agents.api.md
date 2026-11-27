@@ -58,6 +58,7 @@ import type { SpanProcessor } from '@opentelemetry/sdk-trace-base';
 import type { TextStreamInfo } from '@livekit/rtc-node';
 import { Throws } from '@livekit/throws-transformer/throws';
 import { ThrowsPromise } from '@livekit/throws-transformer/throws';
+import { TokenProvider } from 'livekit-server-sdk';
 import { Tracer } from '@opentelemetry/api';
 import { TracerProvider } from '@opentelemetry/api';
 import { TrackKind } from '@livekit/rtc-node';
@@ -67,6 +68,7 @@ import { TranscriptionSegment } from '@livekit/protocol';
 import { TransformStream as TransformStream_2 } from 'node:stream/web';
 import type { TypedEventEmitter } from '@livekit/typed-emitter';
 import type { VideoFrame as VideoFrame_2 } from '@livekit/rtc-node';
+import { VideoGrant } from 'livekit-server-sdk';
 import { WebSocket as WebSocket_2 } from 'ws';
 import type { WritableStreamDefaultWriter as WritableStreamDefaultWriter_2 } from 'node:stream/web';
 import { z } from 'zod';
@@ -448,6 +450,8 @@ export class AgentServer {
     run(): Promise<void>;
     // (undocumented)
     simulateJob(roomName: string, participantIdentity?: string): Promise<void>;
+    // @internal
+    _updateWorkerToken(token: string): void;
 }
 
 // Warning: (ae-forgotten-export) The symbol "UnknownUserData" needs to be exported by the entry point index.d.ts
@@ -5047,6 +5051,7 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
     _connectCalledMonoUs: number;
     // @internal
     _connectedMonoUs: number;
+    createParticipantToken(options: ParticipantTokenOptions): Promise<string>;
     deleteRoom(roomName?: string): Promise<void>;
     // @internal
     _hostedOutput?: {
@@ -5077,6 +5082,11 @@ export class JobContext<ProcessUserData = Record<string, unknown>> {
     get job(): proto.Job;
     // @internal
     _jobSpanContext?: Context;
+    // Warning: (ae-forgotten-export) The symbol "JobTokenClient" needs to be exported by the entry point index.d.ts
+    //
+    // @internal
+    _jobTokens?: JobTokenClient;
+    get localParticipantIdentity(): string;
     // (undocumented)
     makeSessionReport(session?: AgentSession): SessionReport;
     // @internal
@@ -5415,6 +5425,8 @@ class LLM_2 extends llm_2.LLM {
     label(): string;
     // (undocumented)
     get model(): string;
+    // (undocumented)
+    prewarm(): void;
     // (undocumented)
     protected _prewarmImpl(signal: AbortSignal): Promise<void>;
     // (undocumented)
@@ -6227,6 +6239,21 @@ export class ParticipantLegacyTranscriptionOutput extends BaseParticipantTranscr
     publishTranscription(id: string, text: string, final: boolean, signal?: AbortSignal): Promise<void>;
     // (undocumented)
     protected resetState(): void;
+}
+
+// @public
+export interface ParticipantTokenOptions {
+    apiKey?: string;
+    apiSecret?: string;
+    // (undocumented)
+    attributes?: Record<string, string>;
+    grant?: VideoGrant;
+    // (undocumented)
+    identity: string;
+    kind?: string;
+    // (undocumented)
+    name?: string;
+    ttl?: number | string;
 }
 
 // @public (undocumented)
@@ -7301,6 +7328,7 @@ export class ServerOptions {
         wsURL?: string;
         apiKey?: string;
         apiSecret?: string;
+        token?: string;
         workerToken?: string;
         host?: string;
         port?: number;
@@ -7355,6 +7383,7 @@ export class ServerOptions {
     shutdownProcessTimeout: number;
     // (undocumented)
     simulation: boolean;
+    token?: string;
     // (undocumented)
     workerToken?: string;
     // (undocumented)
@@ -10259,7 +10288,7 @@ export const zipFunctionCallsAndOutputs: (event: FunctionToolsExecutedEvent) => 
 //
 // src/_exceptions.ts:90:5 - (ae-forgotten-export) The symbol "APIStatusErrorOptions" needs to be exported by the entry point index.d.ts
 // src/_exceptions.ts:128:5 - (ae-forgotten-export) The symbol "APIErrorOptions" needs to be exported by the entry point index.d.ts
-// src/inference/tts.ts:348:5 - (ae-forgotten-export) The symbol "TTSEncoding" needs to be exported by the entry point index.d.ts
+// src/inference/tts.ts:354:5 - (ae-forgotten-export) The symbol "TTSEncoding" needs to be exported by the entry point index.d.ts
 // src/llm/chat_context.ts:80:3 - (ae-unresolved-link) The @link reference could not be resolved: The package "@livekit/agents" does not have an export "audio"
 // src/llm/tool_context.ts:740:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "ToolFlag" has more than one declaration; you need to add a TSDoc member reference selector
 // src/llm/tool_context.ts:787:3 - (ae-unresolved-link) The @link reference could not be resolved: The reference is ambiguous because "ToolFlag" has more than one declaration; you need to add a TSDoc member reference selector

@@ -8,6 +8,7 @@ import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { APIError } from '../../_exceptions.js';
 import * as inference from '../../inference/index.js';
+import { inferenceTokenMode } from '../../inference/utils.js';
 import type { ChatContext } from '../../llm/chat_context.js';
 import { type ChatItem, ChatMessage } from '../../llm/chat_context.js';
 import { DecisionModel } from '../../llm/decisions.js';
@@ -442,7 +443,8 @@ export class AMD extends (EventEmitter as new () => TypedEmitter<AMDCallbacks>) 
       let autoSelect = false;
       try {
         autoSelect =
-          isCloud(new URL(process.env.LIVEKIT_URL ?? '')) && Boolean(apiKey) && Boolean(apiSecret);
+          isCloud(new URL(process.env.LIVEKIT_URL ?? '')) &&
+          ((Boolean(apiKey) && Boolean(apiSecret)) || inferenceTokenMode());
       } catch {
         // an invalid URL is not LiveKit Cloud
       }

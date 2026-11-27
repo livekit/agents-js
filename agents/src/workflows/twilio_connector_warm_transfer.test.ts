@@ -100,7 +100,8 @@ function setupTransfer(options: SetupOptions = {}) {
       {
         room: callerRoom,
         info: { url: 'wss://example.livekit.cloud', apiKey: 'api-key', apiSecret: 'api-secret' },
-      } as JobContext,
+        createParticipantToken: async () => 'token',
+      } as unknown as JobContext,
       () => task.onEnter(),
     );
   return { task, connect, fetch, complete, logError, logWarn, enter };

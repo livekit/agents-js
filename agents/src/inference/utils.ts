@@ -7,6 +7,7 @@ import type { IncomingMessage } from 'node:http';
 import { WebSocket } from 'ws';
 import { APIConnectionError, APIStatusError, APITimeoutError } from '../_exceptions.js';
 import { getJobContext } from '../job.js';
+import { INFERENCE_CLAIMS, getWorkerToken, jobToken } from '../job_token.js';
 import { version } from '../version.js';
 
 export type AnyString = string & NonNullable<unknown>;
@@ -51,10 +52,25 @@ export function getDefaultInferenceUrl(): string {
   return DEFAULT_INFERENCE_URL;
 }
 
+/**
+ * Whether inference runs in token mode: no API key or secret was passed or set for inference,
+ * and the agent was given `LIVEKIT_TOKEN` in their place.
+ */
+export function inferenceTokenMode(apiKey?: string, apiSecret?: string): boolean {
+  if (apiKey || apiSecret) return false;
+  if (process.env.LIVEKIT_INFERENCE_API_KEY || process.env.LIVEKIT_INFERENCE_API_SECRET) {
+    return false;
+  }
+  return getWorkerToken() !== undefined;
+}
+
+/** In token mode, both are empty: {@link createAccessToken} then returns the job's token. */
 export function resolveCredentials(
   apiKey?: string,
   apiSecret?: string,
 ): { apiKey: string; apiSecret: string } {
+  if (inferenceTokenMode(apiKey, apiSecret)) return { apiKey: '', apiSecret: '' };
+
   const resolvedApiKey =
     apiKey || process.env.LIVEKIT_INFERENCE_API_KEY || process.env.LIVEKIT_API_KEY;
   if (!resolvedApiKey) {
@@ -70,11 +86,28 @@ export function resolveCredentials(
   return { apiKey: resolvedApiKey, apiSecret: resolvedApiSecret };
 }
 
+/** False in token mode outside a running job, where {@link createAccessToken} throws. */
+export function accessTokenAvailable(apiKey?: string, apiSecret?: string): boolean {
+  return !inferenceTokenMode(apiKey, apiSecret) || jobToken(INFERENCE_CLAIMS) !== undefined;
+}
+
 export async function createAccessToken(
   apiKey: string,
   apiSecret: string,
   ttl: number = 600,
 ): Promise<string> {
+  if (inferenceTokenMode(apiKey, apiSecret)) {
+    // token mode: no secret to sign with, the job keeps a token from the server current
+    const token = jobToken(INFERENCE_CLAIMS);
+    if (!token) {
+      throw new Error(
+        'LiveKit Inference in token mode (LIVEKIT_TOKEN without an API key and secret) needs a ' +
+          'running job: the job gets its inference token from the LiveKit server',
+      );
+    }
+    return token;
+  }
+
   const token = new AccessToken(apiKey, apiSecret, { identity: 'agent', ttl });
   token.addInferenceGrant({ perform: true });
 

@@ -128,7 +128,13 @@ export class AvatarSession extends voice.AvatarSession {
       const livekitUrl = options.livekitUrl ?? process.env.LIVEKIT_URL;
       const livekitApiKey = options.livekitApiKey ?? process.env.LIVEKIT_API_KEY;
       const livekitApiSecret = options.livekitApiSecret ?? process.env.LIVEKIT_API_SECRET;
-      if (![livekitUrl, livekitApiKey, livekitApiSecret].every(isPresent)) {
+      // a blank key or secret is refused; in a job, a missing one is left to
+      // createParticipantToken (token mode)
+      if (
+        !isPresent(livekitUrl) ||
+        [livekitApiKey, livekitApiSecret].some((v) => v && !isPresent(v)) ||
+        (!getJobContext(false) && !(livekitApiKey && livekitApiSecret))
+      ) {
         throw new SynthesiaError(
           'LiveKit url, API key, and API secret are required: pass them or set LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET',
         );
@@ -149,7 +155,7 @@ export class AvatarSession extends voice.AvatarSession {
           {
             avatarIds: this.avatarIds,
             livekitUrl: normalizedUrl,
-            livekitToken: await this.mintToken(room, livekitApiKey!, livekitApiSecret!),
+            livekitToken: await this.mintToken(room, livekitApiKey, livekitApiSecret),
           },
           { ...DEFAULT_API_CONNECT_OPTIONS, timeoutMs: this.joinTimeout, maxRetry: 0 },
         );
@@ -307,7 +313,7 @@ export class AvatarSession extends voice.AvatarSession {
     }
   }
 
-  private async mintToken(room: Room, apiKey: string, apiSecret: string): Promise<string> {
+  private async mintToken(room: Room, apiKey?: string, apiSecret?: string): Promise<string> {
     const jobContext = getJobContext(false);
     const agentIdentity =
       jobContext?.agent?.identity ??
@@ -323,6 +329,24 @@ export class AvatarSession extends voice.AvatarSession {
       throw new SynthesiaError(
         'failed to get room name; connect the room before starting outside a job context',
       );
+    }
+    if (jobContext) {
+      return jobContext.createParticipantToken({
+        identity: this.avatarIdentity,
+        name: this.avatarParticipantName,
+        kind: 'agent',
+        ttl: TOKEN_TTL,
+        grant: {
+          roomJoin: true,
+          room: roomName,
+          canPublish: true,
+          canSubscribe: true,
+          canPublishData: true,
+        },
+        attributes: { [ATTRIBUTE_PUBLISH_ON_BEHALF]: agentIdentity },
+        apiKey,
+        apiSecret,
+      });
     }
     const token = new AccessToken(apiKey, apiSecret, {
       identity: this.avatarIdentity,

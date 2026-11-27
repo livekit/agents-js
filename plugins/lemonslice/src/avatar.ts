@@ -294,7 +294,9 @@ export class AvatarSession extends voice.AvatarSession {
     const livekitApiKey = options.livekitApiKey || process.env.LIVEKIT_API_KEY;
     const livekitApiSecret = options.livekitApiSecret || process.env.LIVEKIT_API_SECRET;
 
-    if (!livekitUrl || !livekitApiKey || !livekitApiSecret) {
+    // in a job, a missing key and secret are left to createParticipantToken (token mode)
+    const jobCtx = getJobContext(false);
+    if (!livekitUrl || (!jobCtx && (!livekitApiKey || !livekitApiSecret))) {
       throw new LemonSliceException(
         'livekitUrl, livekitApiKey, and livekitApiSecret must be set ' +
           'by arguments or environment variables',
@@ -303,13 +305,12 @@ export class AvatarSession extends voice.AvatarSession {
 
     this.agentSession = agentSession;
     this.livekitUrl = livekitUrl;
-    this.livekitApiKey = livekitApiKey;
-    this.livekitApiSecret = livekitApiSecret;
+    this.livekitApiKey = livekitApiKey ?? null;
+    this.livekitApiSecret = livekitApiSecret ?? null;
     this.livekitRoom = room.name ?? null;
 
     let localParticipantIdentity: string;
     let livekitSessionId: string | undefined;
-    const jobCtx = getJobContext(false);
     if (jobCtx) {
       localParticipantIdentity = jobCtx.agent?.identity || '';
       if (!localParticipantIdentity && room.localParticipant) {
@@ -327,23 +328,37 @@ export class AvatarSession extends voice.AvatarSession {
       throw new LemonSliceException('failed to get local participant identity');
     }
 
-    const at = new AccessToken(livekitApiKey, livekitApiSecret, {
-      identity: this.avatarIdentity,
-      name: this.avatarParticipantName,
-    });
-    at.kind = 'agent';
+    let livekitToken: string;
+    if (jobCtx) {
+      livekitToken = await jobCtx.createParticipantToken({
+        identity: this.avatarIdentity,
+        name: this.avatarParticipantName,
+        kind: 'agent',
+        grant: { roomJoin: true, room: room.name },
+        // allow the avatar agent to publish audio and video on behalf of your local agent
+        attributes: { [ATTRIBUTE_PUBLISH_ON_BEHALF]: localParticipantIdentity },
+        apiKey: livekitApiKey,
+        apiSecret: livekitApiSecret,
+      });
+    } else {
+      const at = new AccessToken(livekitApiKey, livekitApiSecret, {
+        identity: this.avatarIdentity,
+        name: this.avatarParticipantName,
+      });
+      at.kind = 'agent';
 
-    at.addGrant({
-      roomJoin: true,
-      room: room.name,
-    } as VideoGrant);
+      at.addGrant({
+        roomJoin: true,
+        room: room.name,
+      } as VideoGrant);
 
-    // allow the avatar agent to publish audio and video on behalf of your local agent
-    at.attributes = {
-      [ATTRIBUTE_PUBLISH_ON_BEHALF]: localParticipantIdentity,
-    };
+      // allow the avatar agent to publish audio and video on behalf of your local agent
+      at.attributes = {
+        [ATTRIBUTE_PUBLISH_ON_BEHALF]: localParticipantIdentity,
+      };
 
-    const livekitToken = await at.toJwt();
+      livekitToken = await at.toJwt();
+    }
 
     this.#logger.debug('starting avatar session');
     const sessionId = await this.startAgent(livekitUrl, livekitToken, livekitSessionId);
@@ -694,23 +709,40 @@ export class AvatarSession extends voice.AvatarSession {
   }
 
   private async mintBroadcastToken(): Promise<string> {
-    if (!this.livekitApiKey || !this.livekitApiSecret || !this.livekitRoom) {
+    if (!this.livekitRoom) {
       throw new LemonSliceException('call start() before joinMeeting()');
     }
 
-    const at = new AccessToken(this.livekitApiKey, this.livekitApiSecret, {
-      identity: MEETING_BROADCAST_IDENTITY,
-      name: MEETING_BROADCAST_IDENTITY,
-      ttl: '4h',
-    });
-
-    at.addGrant({
+    const grant = {
       roomJoin: true,
       room: this.livekitRoom,
       canSubscribe: true,
       canPublish: false,
       canPublishData: false,
-    } as VideoGrant);
+    };
+    const jobCtx = getJobContext(false);
+    if (jobCtx) {
+      return jobCtx.createParticipantToken({
+        identity: MEETING_BROADCAST_IDENTITY,
+        name: MEETING_BROADCAST_IDENTITY,
+        ttl: '4h',
+        grant,
+        apiKey: this.livekitApiKey ?? undefined,
+        apiSecret: this.livekitApiSecret ?? undefined,
+      });
+    }
+
+    const at = new AccessToken(
+      this.livekitApiKey ?? undefined,
+      this.livekitApiSecret ?? undefined,
+      {
+        identity: MEETING_BROADCAST_IDENTITY,
+        name: MEETING_BROADCAST_IDENTITY,
+        ttl: '4h',
+      },
+    );
+
+    at.addGrant(grant as VideoGrant);
 
     return at.toJwt();
   }

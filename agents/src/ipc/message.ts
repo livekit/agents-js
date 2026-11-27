@@ -53,6 +53,16 @@ export type IPCMessage =
       value: { requestId: string; data: unknown; error?: Error };
     }
   | {
+      // the job asks the worker for a token with these claims (token mode)
+      case: 'createJobTokenRequest';
+      value: { requestId: string; claims: string };
+    }
+  | {
+      // expiresAt in epoch milliseconds; error is set when there is no token
+      case: 'createJobTokenResponse';
+      value: { requestId: string; token?: string; expiresAt?: number; error?: string };
+    }
+  | {
       case: 'exiting';
       value: { reason: string };
     }

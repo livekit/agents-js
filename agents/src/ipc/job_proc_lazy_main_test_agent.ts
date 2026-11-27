@@ -3,7 +3,9 @@
 // SPDX-License-Identifier: Apache-2.0
 import { type DisconnectReason, Room } from '@livekit/rtc-node';
 import { defineAgent } from '../generator.js';
+import { createAccessToken } from '../inference/utils.js';
 import { JobContext } from '../job.js';
+import { observabilityToken } from '../job_token.js';
 import { tracer } from '../telemetry/index.js';
 
 export default defineAgent({
@@ -49,6 +51,30 @@ export default defineAgent({
     });
 
     const scenario = ctx.job.metadata;
+    if (scenario === 'job tokens') {
+      // reports the tokens inference and telemetry would send, as the entrypoint starts
+      return (async () => {
+        process.send!({
+          case: 'testJobTokens',
+          inference: await createAccessToken('', ''),
+          observability: observabilityToken(),
+        });
+        ctx.shutdown();
+      })();
+    }
+    if (scenario === 'job api') {
+      return (async () => {
+        // the server API is the only external service replaced
+        globalThis.fetch = async (_input, init) => {
+          const authorization = new Headers(init?.headers).get('Authorization');
+          process.send!({ case: 'testFetch', authorization });
+          return new Response('{}', { headers: { 'Content-Type': 'application/json' } });
+        };
+        await ctx.deleteRoom('myroom');
+        await ctx.deleteRoom('myroom');
+        ctx.shutdown();
+      })();
+    }
     if (scenario === 'synchronous throw') throw new Error('synchronous entrypoint failure');
 
     return (async () => {

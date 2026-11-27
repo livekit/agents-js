@@ -160,19 +160,20 @@ export class AvatarSession extends voice.AvatarSession {
     const livekitUrl = options.livekitUrl || process.env.LIVEKIT_URL;
     const livekitApiKey = options.livekitApiKey || process.env.LIVEKIT_API_KEY;
     const livekitApiSecret = options.livekitApiSecret || process.env.LIVEKIT_API_SECRET;
-    if (!livekitUrl || !livekitApiKey || !livekitApiSecret) {
+    // in a job, a missing key and secret are left to createParticipantToken (token mode)
+    const jobCtx = getJobContext(false);
+    if (!livekitUrl || (!jobCtx && (!livekitApiKey || !livekitApiSecret))) {
       throw new LiveAvatarException(
         'livekit_url, livekit_api_key, and livekit_api_secret must be set',
       );
     }
 
-    try {
-      const jobCtx = getJobContext();
+    if (jobCtx) {
       this.localParticipantIdentity = jobCtx.agent?.identity || '';
       if (!this.localParticipantIdentity && room.localParticipant) {
         this.localParticipantIdentity = room.localParticipant.identity;
       }
-    } catch {
+    } else {
       if (!room.isConnected || !room.localParticipant) {
         throw new LiveAvatarException('failed to get local participant identity');
       }
@@ -182,23 +183,44 @@ export class AvatarSession extends voice.AvatarSession {
       throw new LiveAvatarException('failed to get local participant identity');
     }
 
-    const at = new AccessToken(livekitApiKey, livekitApiSecret, {
-      identity: this.avatarIdentity,
-      name: this.avatarParticipantName,
-    });
-    at.kind = 'agent';
-    at.attributes = { [ATTRIBUTE_PUBLISH_ON_BEHALF]: this.localParticipantIdentity };
-    at.addGrant({
-      roomJoin: true,
-      room: room.name,
-      canPublish: true,
-      canSubscribe: true,
-      canPublishData: true,
-      canUpdateOwnMetadata: true,
-      canSubscribeMetrics: true,
-    } as VideoGrant);
+    let livekitToken: string;
+    if (jobCtx) {
+      livekitToken = await jobCtx.createParticipantToken({
+        identity: this.avatarIdentity,
+        name: this.avatarParticipantName,
+        kind: 'agent',
+        grant: {
+          roomJoin: true,
+          room: room.name,
+          canPublish: true,
+          canSubscribe: true,
+          canPublishData: true,
+          canUpdateOwnMetadata: true,
+          canSubscribeMetrics: true,
+        },
+        attributes: { [ATTRIBUTE_PUBLISH_ON_BEHALF]: this.localParticipantIdentity },
+        apiKey: livekitApiKey,
+        apiSecret: livekitApiSecret,
+      });
+    } else {
+      const at = new AccessToken(livekitApiKey, livekitApiSecret, {
+        identity: this.avatarIdentity,
+        name: this.avatarParticipantName,
+      });
+      at.kind = 'agent';
+      at.attributes = { [ATTRIBUTE_PUBLISH_ON_BEHALF]: this.localParticipantIdentity };
+      at.addGrant({
+        roomJoin: true,
+        room: room.name,
+        canPublish: true,
+        canSubscribe: true,
+        canPublishData: true,
+        canUpdateOwnMetadata: true,
+        canSubscribeMetrics: true,
+      } as VideoGrant);
 
-    const livekitToken = await at.toJwt();
+      livekitToken = await at.toJwt();
+    }
 
     if (!this.avatarId) {
       throw new LiveAvatarException('avatar_id must be set');

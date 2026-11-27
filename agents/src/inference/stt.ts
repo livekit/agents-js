@@ -34,6 +34,7 @@ import {
   connectWs,
   createAccessToken,
   getDefaultInferenceUrl,
+  resolveCredentials,
 } from './utils.js';
 import { VAD as InferenceVAD } from './vad.js';
 
@@ -599,16 +600,7 @@ export class STT<TModel extends STTModels> extends BaseSTT {
     } = opts || {};
 
     const lkBaseURL = baseURL || getDefaultInferenceUrl();
-    const lkApiKey = apiKey || process.env.LIVEKIT_INFERENCE_API_KEY || process.env.LIVEKIT_API_KEY;
-    if (!lkApiKey) {
-      throw new Error('apiKey is required: pass apiKey or set LIVEKIT_API_KEY');
-    }
-
-    const lkApiSecret =
-      apiSecret || process.env.LIVEKIT_INFERENCE_API_SECRET || process.env.LIVEKIT_API_SECRET;
-    if (!lkApiSecret) {
-      throw new Error('apiSecret is required: pass apiSecret or set LIVEKIT_API_SECRET');
-    }
+    const { apiKey: lkApiKey, apiSecret: lkApiSecret } = resolveCredentials(apiKey, apiSecret);
 
     // Parse language from model string if provided: "provider/model:language"
     let nextModel = model;
