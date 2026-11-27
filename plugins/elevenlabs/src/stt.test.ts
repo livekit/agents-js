@@ -2543,6 +2543,29 @@ describe('ElevenLabs STT', () => {
     }
   });
 
+  it('sets a request timeout for batch recognition', async () => {
+    const timeoutSignal = new AbortController().signal;
+    const timeout = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(timeoutSignal);
+    const fetch = vi.fn<typeof globalThis.fetch>(async () =>
+      Response.json({ text: 'hello', words: [] }),
+    );
+
+    try {
+      const eleven = new STT({ apiKey: 'test-key', httpSession: { fetch } });
+      await eleven.recognize(makeFrame(), {
+        connOptions: { maxRetry: 0, retryIntervalMs: 1, timeoutMs: 2500 },
+      });
+
+      expect(timeout).toHaveBeenCalledWith(30_000);
+      expect(fetch).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({ signal: timeoutSignal }),
+      );
+    } finally {
+      timeout.mockRestore();
+    }
+  });
+
   it.each([
     {
       body: JSON.stringify({
