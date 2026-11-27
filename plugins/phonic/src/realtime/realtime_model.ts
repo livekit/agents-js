@@ -482,6 +482,9 @@ export class RealtimeSession extends llm.RealtimeSession {
   #logger = log();
   private closed = false;
   private configSent = false;
+  // Caller audio pushed before the config is sent, flushed right after it. Phonic queues audio that
+  // arrives after the config until the conversation is ready, so nothing said at startup is lost.
+  private pendingAudio: Phonic.AudioChunkPayload[] = [];
   private optionsResetScheduled = false;
   private instructionsReady = new Future<void>();
   private toolsReady = new Future<void>();
@@ -837,7 +840,7 @@ export class RealtimeSession extends llm.RealtimeSession {
   }
 
   pushAudio(frame: AudioFrame): void {
-    if (this.closed || !this.readyToStart.done) {
+    if (this.closed) {
       return;
     }
 
@@ -849,7 +852,8 @@ export class RealtimeSession extends llm.RealtimeSession {
           audio: bytes.toString('base64'),
         };
 
-        if (!this.socket) {
+        if (!this.configSent || !this.socket) {
+          this.pendingAudio.push(payload);
           continue;
         }
         this.socket.sendAudioChunk(payload);
@@ -956,6 +960,7 @@ export class RealtimeSession extends llm.RealtimeSession {
       this.phonicModel._activeSession = undefined;
     }
     this.closedFuture.resolve();
+    this.pendingAudio = [];
     this.instructionsReady.resolve();
     this.toolsReady.resolve();
     this.readyToStart.resolve();
@@ -1018,6 +1023,10 @@ export class RealtimeSession extends llm.RealtimeSession {
         toolsPayload: [...this.serializePhonicTools(), ...this.toolDefinitions],
       }),
     });
+    for (const payload of this.pendingAudio) {
+      this.socket.sendAudioChunk(payload);
+    }
+    this.pendingAudio = [];
   }
 
   private handleServerMessage(message: ServerEvent): void {
