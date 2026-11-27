@@ -575,15 +575,17 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     const receiveDone = new Future<void>();
     const bstream = new AudioByteStream(this.opts.sampleRate, SARVAM_TTS_CHANNELS);
     let lastFrame: AudioFrame | undefined;
+    let audioQueued = false;
 
     const sendLastFrame = (final: boolean) => {
       if (lastFrame && !this.queue.closed) {
         this.queue.put({ requestId, segmentId, frame: lastFrame, final });
+        audioQueued = true;
         lastFrame = undefined;
       }
     };
 
-    const finishReceiving = () => {
+    const drain = () => {
       if (receiveDone.done) return;
       if (!this.abortSignal.aborted) {
         for (const frame of bstream.flush()) {
@@ -628,7 +630,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
         }
 
         case 'event':
-          if (msg.data?.event_type === 'final') finishReceiving();
+          if (msg.data?.event_type === 'final') drain();
           break;
 
         case 'error': {
@@ -641,7 +643,15 @@ export class SynthesizeStream extends tts.SynthesizeStream {
     };
 
     ws.on('message', onMessage);
-    ws.once('close', finishReceiving);
+    ws.once('close', (code) => {
+      if (receiveDone.done) return;
+      if (audioQueued) {
+        drain();
+        return;
+      }
+      // Nothing reached the output, so fail the attempt and let the base class replay the input.
+      receiveDone.reject(new Error(`Sarvam TTS WS closed before audio: ${code}`));
+    });
     ws.on('error', (error) => {
       if (receiveDone.done) return;
       if (this.abortSignal.aborted && isClosedTransportError(error)) {
@@ -650,6 +660,14 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       }
       receiveDone.reject(error);
     });
+
+    // A closed stream wants no more audio: stop waiting for the provider and drop the socket.
+    const onAbort = () => {
+      if (!receiveDone.done) receiveDone.resolve();
+      if (ws.readyState === WebSocket.OPEN) ws.close();
+    };
+    if (this.abortSignal.aborted) onAbort();
+    else this.abortSignal.addEventListener('abort', onAbort, { once: true });
 
     const tasks = [inputTask(), sendTask(), receiveDone.await];
     try {
@@ -668,6 +686,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       const msg = e instanceof Error ? e.message : String(e);
       throw new APIConnectionError({ message: `Sarvam TTS streaming failed: ${msg}` });
     } finally {
+      this.abortSignal.removeEventListener('abort', onAbort);
       ws.off('message', onMessage);
       tokenizer.close();
       await this.closeWebSocket(ws);

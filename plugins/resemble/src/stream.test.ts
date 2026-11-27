@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 LiveKit, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
-import { type APIConnectOptions, initializeLogger, tts } from '@livekit/agents';
+import { type APIConnectOptions, APIConnectionError, initializeLogger, tts } from '@livekit/agents';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -9,7 +9,7 @@ import type * as ws from 'ws';
 import { type ClientOptions, type WebSocket, WebSocketServer } from 'ws';
 import { TTS } from './tts.js';
 
-const endpoint = vi.hoisted(() => ({ url: '' }));
+const endpoint = vi.hoisted(() => ({ url: '', coalesced: undefined as string | undefined }));
 vi.mock('ws', async (importOriginal) => {
   const original = await importOriginal<typeof ws>();
   return {
@@ -17,6 +17,17 @@ vi.mock('ws', async (importOriginal) => {
     WebSocket: class extends original.WebSocket {
       constructor(_url: string, options: ClientOptions) {
         super(endpoint.url, options);
+      }
+
+      /** Emits `endpoint.coalesced` in the same turn as the next message, as one socket read. */
+      override emit(event: string | symbol, ...args: unknown[]): boolean {
+        const handled = super.emit(event, ...args);
+        if (event === 'message' && endpoint.coalesced !== undefined) {
+          const next = Buffer.from(endpoint.coalesced);
+          endpoint.coalesced = undefined;
+          super.emit('message', next, false);
+        }
+        return handled;
       }
     },
   };
@@ -94,6 +105,7 @@ beforeAll(() => {
 });
 
 afterEach(async () => {
+  endpoint.coalesced = undefined;
   for (const client of wss?.clients ?? []) client.terminate();
   await new Promise<void>((resolve) => (wss ? wss.close(() => resolve()) : resolve()));
   wss = undefined;
@@ -212,4 +224,36 @@ describe('Resemble SynthesizeStream retries', () => {
     expect(server.texts).toEqual([[text]]);
     expect(errors).toEqual([]);
   });
+
+  it.each(['open', 'ended'] as const)(
+    'reports a provider error read together with audio, with %s input',
+    async (input) => {
+      const server = await startServer([
+        (ws, { request_id }) => ws.send(JSON.stringify({ request_id, audio_content: AUDIO })),
+        respond,
+      ]);
+      endpoint.coalesced = JSON.stringify({ success: false, error_name: 'InvalidVoice' });
+      const provider = new TTS({ apiKey: 'test-key' });
+      const errors: { error: Error; recoverable: boolean }[] = [];
+      provider.on('error', (error) => errors.push(error));
+      const stream = provider.stream();
+      try {
+        stream.pushText(text);
+        if (input === 'ended') stream.endInput();
+        else stream.flush();
+        for await (const _event of stream) {
+          // Drain until the failure closes the output.
+        }
+
+        expect(server.texts).toEqual([[text]]);
+        expect(errors).toHaveLength(1);
+        expect(errors[0]!.recoverable).toBe(false);
+        expect(errors[0]!.error.message).toBe('Resemble API error: InvalidVoice');
+        expect(errors[0]!.error).not.toBeInstanceOf(APIConnectionError);
+        expect(stream.error).toBe(errors[0]!.error);
+      } finally {
+        stream.close();
+      }
+    },
+  );
 });

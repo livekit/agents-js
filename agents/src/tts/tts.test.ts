@@ -2,10 +2,13 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 import { AudioFrame } from '@livekit/rtc-node';
+import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base';
+import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { APIConnectionError } from '../_exceptions.js';
 import { initializeLogger } from '../log.js';
 import type { TTSMetrics } from '../metrics/base.js';
+import { setTracerProvider, traceTypes, tracer } from '../telemetry/index.js';
 import type { APIConnectOptions } from '../types.js';
 import { AsyncIterableQueue } from '../utils.js';
 import { ChunkedStream, SynthesizeStream, TTS } from './tts.js';
@@ -514,6 +517,67 @@ describe('SynthesizeStream retries', () => {
     expect(stream.attempts).toHaveLength(1);
     expect(errors).toHaveLength(1);
     expect(errors[0]?.recoverable).toBe(false);
+  });
+});
+
+/** Queues one frame, and keeps the metrics consumer from reading it until the attempt ended. */
+class EndedAttemptSynthesizeStream extends SynthesizeStream {
+  label = 'test.EndedAttemptSynthesizeStream';
+  #resolveAttemptEnded!: () => void;
+  #attemptEnded = new Promise<void>((resolve) => (this.#resolveAttemptEnded = resolve));
+
+  protected async run(): Promise<void> {
+    this.queue.put({
+      requestId: 'logical-id',
+      segmentId: 'logical-id',
+      providerRequestId: 'wire-id',
+      frame: audioFrame(1),
+      final: true,
+    });
+  }
+
+  protected override onStreamDone(): void {
+    this.#resolveAttemptEnded();
+  }
+
+  protected override async monitorMetrics(): Promise<void> {
+    await this.#attemptEnded;
+    await super.monitorMetrics();
+  }
+}
+
+describe('SynthesizeStream provider request IDs', () => {
+  it('records the wire ID of a frame read after its attempt ended', async () => {
+    const exporter = new InMemorySpanExporter();
+    const tracerProvider = new NodeTracerProvider({
+      spanProcessors: [new SimpleSpanProcessor(exporter)],
+    });
+    const originalTracerProvider = tracer.getProvider();
+    setTracerProvider(tracerProvider);
+
+    try {
+      const stream = new EndedAttemptSynthesizeStream(new TestTTS(), RETRY_OPTIONS);
+      stream.pushText('hello');
+      stream.endInput();
+      const frames: SynthesizedAudio[] = [];
+      for await (const event of stream) {
+        if (event !== SynthesizeStream.END_OF_STREAM) frames.push(event);
+      }
+
+      expect(frames.map((frame) => [frame.requestId, frame.segmentId])).toEqual([
+        ['logical-id', 'logical-id'],
+      ]);
+      const attemptSpans = exporter
+        .getFinishedSpans()
+        .filter((span) => span.name === 'tts_request_run');
+      expect(attemptSpans).toHaveLength(1);
+      expect(attemptSpans[0]!.attributes[traceTypes.ATTR_PROVIDER_REQUEST_IDS]).toEqual([
+        'wire-id',
+      ]);
+    } finally {
+      setTracerProvider(originalTracerProvider);
+      await tracerProvider.shutdown();
+    }
   });
 });
 

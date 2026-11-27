@@ -250,6 +250,7 @@ export class SynthesizeStream extends tts.SynthesizeStream {
       const bstream = new AudioByteStream(this.#opts.sampleRate, NUM_CHANNELS);
 
       let lastFrame: AudioFrame | undefined;
+      let providerError: APIError | undefined;
       const sendLastFrame = (segmentId: string, final: boolean) => {
         if (lastFrame) {
           this.queue.put({ requestId, segmentId, frame: lastFrame, final });
@@ -304,7 +305,10 @@ export class SynthesizeStream extends tts.SynthesizeStream {
 
                   closing = true;
                   ws.close();
-                  reject(new APIError(`Resemble API error: ${errorName}`, { retryable: false }));
+                  providerError = new APIError(`Resemble API error: ${errorName}`, {
+                    retryable: false,
+                  });
+                  reject(providerError);
                   return;
                 }
                 resolve();
@@ -340,6 +344,8 @@ export class SynthesizeStream extends tts.SynthesizeStream {
           if (this.abortSignal.aborted) break;
           throw err;
         }
+        // One socket read can deliver the error after a message that already settled this wait.
+        if (providerError && !this.abortSignal.aborted) throw providerError;
       }
     };
 
