@@ -3329,12 +3329,15 @@ export class AgentActivity implements RecognitionHooks {
     const stateLease = this.createAgentStateLease(handle);
 
     if (this.llm instanceof RealtimeModel) {
+      const userInput = userMessage?.rawTextContent;
+      const userExtra = userMessage ? { ...userMessage.extra } : undefined;
       this.createSpeechTask({
         taskFn: (abortController: AbortController) =>
           this.realtimeReplyTask({
             stateLease,
             // TODO(brian): support llm.ChatMessage for the realtime model
-            userInput: userMessage?.rawTextContent,
+            userInput,
+            userExtra,
             instructions,
             tools: resolvedTools,
             modelSettings: {
@@ -5701,6 +5704,7 @@ export class AgentActivity implements RecognitionHooks {
     modelSettings: { toolChoice },
     tools,
     userInput,
+    userExtra,
     instructions,
     abortController,
   }: {
@@ -5709,6 +5713,7 @@ export class AgentActivity implements RecognitionHooks {
     abortController: AbortController;
     tools?: ToolContextEntry[];
     userInput?: string;
+    userExtra?: Record<string, unknown>;
     instructions?: string | Instructions;
   }): Promise<void> {
     const { speechHandle } = stateLease;
@@ -5732,6 +5737,7 @@ export class AgentActivity implements RecognitionHooks {
       const message = chatCtx.addMessage({
         role: 'user',
         content: userInput,
+        extra: userExtra,
       });
       try {
         await this.realtimeSession.updateChatCtx(chatCtx);
