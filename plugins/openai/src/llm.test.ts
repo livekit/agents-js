@@ -3,7 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import { llm } from '@livekit/agents';
 import { llmStrict, llm as testLLM } from '@livekit/agents-plugins-test';
-import OpenAI from 'openai';
+import { type Socket, createServer } from 'node:net';
+import { AzureOpenAI, default as OpenAI } from 'openai';
 import { describe, expect, it, vi } from 'vitest';
 import { LLM } from './llm.js';
 
@@ -43,6 +44,74 @@ describe('OpenAI LLM prewarm', () => {
     expect(prewarmSignal?.aborted).toBe(true);
   });
 });
+
+it('withAzure keeps its connection between turns', async () => {
+  const chatConnections = new Set();
+  const modelConnections = new Set();
+  const sockets = new Set<Socket>();
+  const server = createServer((socket) => {
+    sockets.add(socket);
+    let pending = Buffer.alloc(0);
+    socket.on('data', (data) => {
+      pending = Buffer.concat([pending, data]);
+      let headerEnd = pending.indexOf('\r\n\r\n');
+      while (headerEnd !== -1) {
+        const headers = pending.subarray(0, headerEnd).toString();
+        const contentLength = Number(/\r\ncontent-length: (\d+)/i.exec(headers)?.[1] ?? 0);
+        const requestEnd = headerEnd + 4 + contentLength;
+        if (pending.length < requestEnd) break;
+        pending = pending.subarray(requestEnd);
+        const isChat = headers.startsWith('POST ') && headers.includes('/chat/completions');
+        (isChat ? chatConnections : modelConnections).add(socket);
+        const body = isChat
+          ? 'data: {"id":"chatcmpl-test","choices":[{"delta":{"content":"ok","role":"assistant"},"finish_reason":"stop","index":0}],"created":0,"model":"gpt-4.1","object":"chat.completion.chunk"}\n\ndata: [DONE]\n\n'
+          : JSON.stringify({ object: 'list', data: [] });
+        socket.write(
+          `HTTP/1.1 200 OK\r\ncontent-type: ${isChat ? 'text/event-stream' : 'application/json'}\r\ncontent-length: ${Buffer.byteLength(body)}\r\n\r\n${body}`,
+        );
+        headerEnd = pending.indexOf('\r\n\r\n');
+      }
+    });
+    socket.on('close', () => sockets.delete(socket));
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('server did not bind to a port');
+
+  const model = LLM.withAzure({
+    apiKey: 'k',
+    apiVersion: '2025-04-01-preview',
+    baseURL: `http://127.0.0.1:${address.port}/openai`,
+    model: 'gpt-4.1',
+  });
+  const defaultClient = new AzureOpenAI({
+    apiKey: 'k',
+    apiVersion: '2025-04-01-preview',
+    baseURL: `http://127.0.0.1:${address.port}/openai`,
+  });
+  const chatCtx = new llm.ChatContext();
+  chatCtx.addMessage({ role: 'user', content: 'hi' });
+  const chat = async () => {
+    for await (const _chunk of model.chat({ chatCtx })) {
+      // Consume the stream so the connection becomes idle again.
+    }
+  };
+
+  try {
+    await Promise.all([chat(), defaultClient.models.list()]);
+    await new Promise((resolve) => setTimeout(resolve, 10_000));
+    await Promise.all([chat(), defaultClient.models.list()]);
+
+    expect(chatConnections.size).toBe(1);
+    expect(modelConnections.size).toBe(2);
+  } finally {
+    await model.aclose();
+    for (const socket of sockets) socket.destroy();
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+  }
+}, 15_000);
 
 it('does not crash the stream when usage token counts are null', async () => {
   // Null fields inside a non-null usage object must not terminate the stream. Missing counts

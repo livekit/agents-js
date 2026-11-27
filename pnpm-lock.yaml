@@ -1200,6 +1200,9 @@ importers:
       openai:
         specifier: ^6.8.1
         version: 6.8.1(ws@8.21.3)(zod@4.3.6)
+      undici:
+        specifier: ^7.16.0
+        version: 7.30.2
       ws:
         specifier: 'catalog:'
         version: 8.21.3
@@ -6005,6 +6008,10 @@ packages:
 
   undici-types@7.19.2:
     resolution: {integrity: sha512-qYVnV5OEm2AW8cJMCpdV20CDyaN3g0AjDlOGf1OW4iaDEx8MwdtChUp4zu4H0VP3nDRF/8RKWH+IPp9uW0YGZg==}
+
+  undici@7.30.2:
+    resolution: {integrity: sha512-mLyPQnHwUxaM/rideoK/+KL8DaAJLRl4aBCfmX444aCSLnIaomqPLtNRe2jdCYcsk5wZzXrDIQC8ZeYNRAYyIA==}
+    engines: {node: '>=20.18.1'}
 
   uniffi-bindgen-react-native@0.29.3-1:
     resolution: {integrity: sha512-o6gXZsAh55yuvhwF2WSFdIHV4phyfWcCmg4DuyfJWJ7CvUz1UcIz2S4u9SmXAz1jsuqvu6Xc9hexrRBB0a5osg==}
@@ -10882,6 +10889,8 @@ snapshots:
 
   undici-types@7.19.2:
     optional: true
+
+  undici@7.30.2: {}
 
   uniffi-bindgen-react-native@0.29.3-1: {}
 

@@ -45,6 +45,7 @@
   },
   "dependencies": {
     "openai": "^6.8.1",
+    "undici": "^7.16.0",
     "ws": "catalog:"
   },
   "peerDependencies": {

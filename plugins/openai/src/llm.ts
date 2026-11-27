@@ -4,6 +4,7 @@
 import type { APIConnectOptions } from '@livekit/agents';
 import { DEFAULT_API_CONNECT_OPTIONS, inference, llm } from '@livekit/agents';
 import { AzureOpenAI, OpenAI } from 'openai';
+import { Agent } from 'undici';
 import type {
   CerebrasChatModels,
   ChatModels,
@@ -138,11 +139,22 @@ export class LLM extends llm.LLM {
       throw new Error('Azure API key is required, whether as an argument or as $AZURE_API_KEY');
     }
 
-    return new LLM({
-      temperature: opts.temperature,
-      user: opts.user,
-      client: new AzureOpenAI({ ...opts, maxRetries: 0 }),
+    const dispatcher = new Agent({
+      connections: 50,
+      keepAliveTimeout: 120_000,
     });
+    return new AzureLLM(
+      {
+        temperature: opts.temperature,
+        user: opts.user,
+        client: new AzureOpenAI({
+          ...opts,
+          maxRetries: 0,
+          fetchOptions: { dispatcher },
+        }),
+      },
+      dispatcher,
+    );
   }
 
   /**
@@ -556,3 +568,17 @@ export class LLM extends llm.LLM {
 }
 
 export class LLMStream extends inference.LLMStream {}
+
+class AzureLLM extends LLM {
+  constructor(
+    opts: Partial<LLMOptions>,
+    private readonly dispatcher: Agent,
+  ) {
+    super(opts);
+  }
+
+  override async aclose(): Promise<void> {
+    await super.aclose();
+    await this.dispatcher.close();
+  }
+}
