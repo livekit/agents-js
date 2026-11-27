@@ -642,6 +642,7 @@ export class AgentActivity implements RecognitionHooks {
   private autoToolReplyTurn = new AutoToolReplyTurnHold();
   private lock = new Mutex();
   private inlineTaskLock = new Mutex();
+  private realtimeChatCtxLock?: Mutex;
   private audioStream = new MultiInputStream<AudioFrame>();
   private audioStreamId?: string;
   private readonly inputDeltaTracker = new inputDelta.InputDeltaTracker();
@@ -1399,19 +1400,23 @@ export class AgentActivity implements RecognitionHooks {
   }
 
   async updateChatCtx(chatCtx: ChatContext): Promise<void> {
-    chatCtx = chatCtx.copy({ toolCtx: this.toolCtx });
+    const unlock = await (this.realtimeChatCtxLock ??= new Mutex()).lock();
+    try {
+      chatCtx = chatCtx.copy({ toolCtx: this.toolCtx });
+      this.agent._chatCtx = chatCtx;
 
-    this.agent._chatCtx = chatCtx;
-
-    if (this.realtimeSession) {
-      removeInstructions(chatCtx);
-      await this.realtimeSession.updateChatCtx(chatCtx);
-    } else {
-      updateInstructions({
-        chatCtx,
-        instructions: this.agent.instructions,
-        addIfMissing: true,
-      });
+      if (this.realtimeSession) {
+        removeInstructions(chatCtx);
+        await this.realtimeSession.updateChatCtx(chatCtx);
+      } else {
+        updateInstructions({
+          chatCtx,
+          instructions: this.agent.instructions,
+          addIfMissing: true,
+        });
+      }
+    } finally {
+      unlock();
     }
   }
 
@@ -2200,6 +2205,49 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     this.scheduleSpeech(handle, SpeechHandle.SPEECH_PRIORITY_NORMAL);
+  }
+
+  private expectAutoToolReply(after?: Promise<unknown>): Future<void, never> | undefined {
+    const runState = this.agentSession._globalRunState;
+    if (this.pendingAutoToolReplyFut !== undefined || !runState || runState.done()) {
+      return undefined;
+    }
+
+    const fut = new Future<void, never>();
+    this.pendingAutoToolReplyFut = fut;
+    const llmLabel = this.realtimeSession!.realtimeModel.label();
+    const waitTask = Task.from(
+      async () => {
+        try {
+          if (after) await after;
+          await waitUntilTimeout(fut.await, 5000);
+        } catch (error) {
+          if (error instanceof IdleTimeoutError) {
+            this.logger.warn({ llm: llmLabel }, 'timed out waiting for realtime auto tool reply');
+            return;
+          }
+          throw error;
+        } finally {
+          if (this.pendingAutoToolReplyFut === fut) {
+            this.pendingAutoToolReplyFut = undefined;
+          }
+        }
+      },
+      undefined,
+      'AgentActivity.waitForAutoToolReply',
+    );
+    runState._watchHandle(waitTask);
+    return fut;
+  }
+
+  private restoreRealtimeToolChoice(): void {
+    if (!this.realtimeSession?.realtimeModel.capabilities.perResponseToolChoice) {
+      try {
+        this.realtimeSession?.updateOptions({ toolChoice: this.toolChoice });
+      } catch (error) {
+        this.logger.error({ error }, 'failed to reset tool_choice');
+      }
+    }
   }
 
   // recognition hooks
@@ -5297,8 +5345,50 @@ export class AgentActivity implements RecognitionHooks {
       this.agentSession._toolItemsAdded([f]);
     };
 
+    const eagerOutputs =
+      realtimeModel.capabilities.eagerToolOutputs === true &&
+      realtimeModel.capabilities.autoToolReplyGeneration;
+    const sentCallIds = new Set<string>();
+    const sendTasks: Promise<void>[] = [];
+    let playoutDone = false;
+    let eagerReplyFut: Future<void, never> | undefined;
+
+    const sendToolOutput = async (out: ToolExecutionOutput) => {
+      this.agent._chatCtx.insert(out.toolCallOutput);
+      this.agentSession._toolItemsAdded([out.toolCallOutput]);
+      const event = createFunctionToolsExecutedEvent({
+        functionCalls: [out.toolCall],
+        functionCallOutputs: [out.toolCallOutput],
+      });
+      this.agentSession.emit(AgentSessionEventTypes.FunctionToolsExecuted, event);
+      this.restoreRealtimeToolChoice();
+      if (out.toolCallOutput.replyRequired && (!eagerReplyFut || eagerReplyFut.done)) {
+        eagerReplyFut = this.expectAutoToolReply(speechHandle.waitForPlayout());
+      }
+
+      const unlock = await (this.realtimeChatCtxLock ??= new Mutex()).lock();
+      try {
+        const chatCtx = realtimeSession.chatCtx.copy();
+        chatCtx.items.push(out.toolCallOutput);
+        await realtimeSession.updateChatCtx(chatCtx);
+      } catch (error) {
+        this.logger.warn({ error }, 'failed to send the tool result');
+      } finally {
+        unlock();
+      }
+    };
+
     const onToolExecutionCompleted = (out: ToolExecutionOutput) => {
       speechHandle._itemAdded([out.toolCallOutput]);
+      if (
+        eagerOutputs &&
+        out.agentTask === undefined &&
+        !speechHandle.interrupted &&
+        !playoutDone
+      ) {
+        sentCallIds.add(out.toolCall.callId);
+        sendTasks.push(sendToolOutput(out));
+      }
     };
 
     const [executeToolsTask, toolOutput] = performToolExecutions({
@@ -5314,6 +5404,7 @@ export class AgentActivity implements RecognitionHooks {
     });
 
     await speechHandle.waitIfNotInterrupted(tasks.map((task) => task.result));
+    playoutDone = true;
 
     if (speechHandle.interrupted) {
       recordInterruption(speechHandle);
@@ -5327,6 +5418,7 @@ export class AgentActivity implements RecognitionHooks {
 
       const anySkipped = messageOutputs.some((output) => output.played === 'skipped');
       if (anySkipped && realtimeModel.capabilities.midSessionChatCtxUpdate) {
+        const unlock = await (this.realtimeChatCtxLock ??= new Mutex()).lock();
         try {
           await realtimeSession.updateChatCtx(this.agent._chatCtx);
         } catch (error) {
@@ -5334,6 +5426,8 @@ export class AgentActivity implements RecognitionHooks {
             { error },
             'failed to sync chat context to remove never-played messages',
           );
+        } finally {
+          unlock();
         }
       }
 
@@ -5343,19 +5437,31 @@ export class AgentActivity implements RecognitionHooks {
       speechHandle._markGenerationDone();
       await this.cancelToolExecutions(executeToolsTask, speechHandle, toolOutput);
 
-      const interruptedOutputs = this._commitInterruptedToolOutputs(toolOutput, speechHandle);
+      const interruptedOutput: ToolOutput = {
+        ...toolOutput,
+        output: toolOutput.output.filter((out) => !sentCallIds.has(out.toolCall.callId)),
+      };
+      const interruptedOutputs = this._commitInterruptedToolOutputs(
+        interruptedOutput,
+        speechHandle,
+      );
       if (interruptedOutputs.length > 0) {
-        const chatCtx = realtimeSession.chatCtx.copy();
-        chatCtx.items.push(...interruptedOutputs);
+        const unlock = await (this.realtimeChatCtxLock ??= new Mutex()).lock();
         try {
+          const chatCtx = realtimeSession.chatCtx.copy();
+          chatCtx.items.push(...interruptedOutputs);
           await realtimeSession.updateChatCtx(chatCtx);
         } catch (error) {
           this.logger.warn(
             { error },
             'failed to sync the tool results of an interrupted generation',
           );
+        } finally {
+          unlock();
         }
       }
+
+      await Promise.all(sendTasks);
 
       // TODO(brian): close tees
       return;
@@ -5387,6 +5493,7 @@ export class AgentActivity implements RecognitionHooks {
     this._backgroundSpeeches.add(speechHandle);
     try {
       await executeToolsTask.result;
+      await Promise.all(sendTasks);
     } finally {
       this._backgroundSpeeches.delete(speechHandle);
     }
@@ -5416,15 +5523,21 @@ export class AgentActivity implements RecognitionHooks {
     const maxStepsReached = speechHandle.numSteps >= maxToolSteps + 1;
     speechHandle._numSteps += 1;
 
+    const batchedToolOutput: ToolOutput = {
+      ...toolOutput,
+      output: toolOutput.output.filter((out) => !sentCallIds.has(out.toolCall.callId)),
+    };
     const { functionToolsExecutedEvent, newAgentTask } = this.summarizeToolExecutionOutput(
-      toolOutput,
+      batchedToolOutput,
       speechHandle,
     );
 
-    this.agentSession.emit(
-      AgentSessionEventTypes.FunctionToolsExecuted,
-      functionToolsExecutedEvent,
-    );
+    if (functionToolsExecutedEvent.functionCalls.length > 0) {
+      this.agentSession.emit(
+        AgentSessionEventTypes.FunctionToolsExecuted,
+        functionToolsExecutedEvent,
+      );
+    }
 
     let schedulingPaused = this.schedulingPaused;
     if (functionToolsExecutedEvent._handoffRequired && newAgentTask !== null) {
@@ -5447,9 +5560,6 @@ export class AgentActivity implements RecognitionHooks {
           await new ThrowsPromise<void, never>((resolve) => setImmediate(resolve));
         }
       }
-      const chatCtx = realtimeSession.chatCtx.copy();
-      chatCtx.items.push(...functionToolsExecutedEvent.functionCallOutputs);
-
       // Also commit the outputs to the agent's own chat context. The FunctionCall items were
       // added by onToolExecutionStarted, so without this the agent ctx keeps dangling calls with
       // no results — breaking history summarization (which distills tool results) and agent
@@ -5459,46 +5569,24 @@ export class AgentActivity implements RecognitionHooks {
       this.agent._chatCtx.insert(toolCallOutputs);
       this.agentSession._toolItemsAdded(toolCallOutputs);
 
-      // If the realtime model auto-generates the tool reply, install a
-      // placeholder so the active RunResult waits for that reply.
+      // If the realtime model auto-generates the tool reply, install a placeholder so the active
+      // RunResult waits for that reply. A batch may be what lets it answer earlier eager outputs.
       let fut: Future<void, never> | undefined;
       if (
         realtimeModel.capabilities.autoToolReplyGeneration &&
-        functionToolsExecutedEvent.hasToolReply &&
-        this.pendingAutoToolReplyFut === undefined
+        functionToolsExecutedEvent.hasToolReply
       ) {
-        const runState = this.agentSession._globalRunState;
-        if (runState && !runState.done()) {
-          fut = new Future();
-          this.pendingAutoToolReplyFut = fut;
-          const llmLabel = realtimeModel.label();
-          const waitTask = Task.from(
-            async () => {
-              try {
-                await waitUntilTimeout(fut!.await, 5000);
-              } catch (error) {
-                if (error instanceof IdleTimeoutError) {
-                  this.logger.warn(
-                    { llm: llmLabel },
-                    'timed out waiting for realtime auto tool reply',
-                  );
-                  return;
-                }
-                throw error;
-              } finally {
-                if (this.pendingAutoToolReplyFut === fut) {
-                  this.pendingAutoToolReplyFut = undefined;
-                }
-              }
-            },
-            undefined,
-            'AgentActivity.waitForAutoToolReply',
-          );
-          runState._watchHandle(waitTask);
+        if (eagerReplyFut && this.pendingAutoToolReplyFut === eagerReplyFut) {
+          this.pendingAutoToolReplyFut = undefined;
+          if (!eagerReplyFut.done) eagerReplyFut.resolve();
         }
+        fut = this.expectAutoToolReply();
       }
 
+      const unlock = await (this.realtimeChatCtxLock ??= new Mutex()).lock();
       try {
+        const chatCtx = realtimeSession.chatCtx.copy();
+        chatCtx.items.push(...functionToolsExecutedEvent.functionCallOutputs);
         await realtimeSession.updateChatCtx(chatCtx);
       } catch (error) {
         this.logger.warn(
@@ -5511,14 +5599,19 @@ export class AgentActivity implements RecognitionHooks {
           }
           fut.resolve();
         }
+      } finally {
+        unlock();
       }
     }
 
     if (!functionToolsExecutedEvent.hasToolReply) {
       // no reply follows, so nothing else clears the "thinking" the tool asserted
-      const noPendingSpeech =
-        !this.speechQueue.peek() && (!this._currentSpeech || this._currentSpeech.done());
-      if (noPendingSpeech && this._backgroundSpeeches.size === 0) {
+      const noOtherSpeech =
+        [...this.speechQueue.clone()].every(([, , speech]) => speech.done()) &&
+        (!this._currentSpeech ||
+          this._currentSpeech === speechHandle ||
+          this._currentSpeech.done());
+      if (noOtherSpeech && this._backgroundSpeeches.size === 0) {
         this.releaseAgentStateLease(stateLease, 'thinking');
       }
       return;
@@ -5728,12 +5821,14 @@ export class AgentActivity implements RecognitionHooks {
     }
 
     if (userInput) {
-      const chatCtx = this.realtimeSession.chatCtx.copy();
-      const message = chatCtx.addMessage({
-        role: 'user',
-        content: userInput,
-      });
+      const unlock = await (this.realtimeChatCtxLock ??= new Mutex()).lock();
+      let message!: ChatMessage;
       try {
+        const chatCtx = this.realtimeSession.chatCtx.copy();
+        message = chatCtx.addMessage({
+          role: 'user',
+          content: userInput,
+        });
         await this.realtimeSession.updateChatCtx(chatCtx);
       } catch (error) {
         if (error instanceof RealtimeError) {
@@ -5749,6 +5844,8 @@ export class AgentActivity implements RecognitionHooks {
           speechHandle._markDone(error);
           return;
         }
+      } finally {
+        unlock();
       }
       this.agent._chatCtx.insert(message);
       this.agentSession._conversationItemAdded(message);

@@ -145,6 +145,7 @@ export class GPTLiveModel extends llm.DuplexModel {
     super({
       userTranscription: true,
       autoToolReplyGeneration: true,
+      eagerToolOutputs: true,
       midSessionChatCtxUpdate: false,
       midSessionInstructionsUpdate: false,
       midSessionToolsUpdate: (options.delegation ?? 'responses') === 'responses',
