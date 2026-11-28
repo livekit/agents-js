@@ -4,7 +4,7 @@
 import { AudioFrame } from '@livekit/rtc-node';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, expectTypeOf, it, vi } from 'vitest';
 import { type WebSocket, WebSocketServer } from 'ws';
 import { APIError, Future, Task, llm, stream } from '../../index.js';
 import type * as api_proto from './api_proto.js';
@@ -1223,6 +1223,51 @@ describe('RealtimeSession initial session options', () => {
     return (session as unknown as { messageChannel: { items: api_proto.ClientEvent[] } })
       .messageChannel.items;
   }
+
+  async function sessionUpdateModel(model: RealtimeModel): Promise<string | undefined> {
+    const session = model.session();
+    const update = queuedEvents(session)[0] as api_proto.SessionUpdateEvent;
+    await session.close();
+    return update.session.model;
+  }
+
+  it('uses the current realtime model by default', async () => {
+    stubTaskRuntime();
+    const model = new RealtimeModel({ apiKey: 'test-key' });
+
+    expect(model.model).toBe('gpt-realtime-2.1');
+    await expect(sessionUpdateModel(model)).resolves.toBe('gpt-realtime-2.1');
+  });
+
+  it('preserves the existing Azure session label by default', async () => {
+    stubTaskRuntime();
+    const azureOptions = {
+      azureDeployment: 'my-deployment',
+      apiKey: 'test-key',
+      baseURL: 'https://example.openai.azure.com/openai',
+    };
+    const models = [
+      RealtimeModel.withAzure(azureOptions),
+      new RealtimeModel(azureOptions),
+      RealtimeModel.withAzure({ ...azureOptions, apiVersion: '2024-10-01-preview' }),
+    ];
+
+    for (const model of models) {
+      expect(model.model).toBe('gpt-realtime');
+      await expect(sessionUpdateModel(model)).resolves.toBe('gpt-realtime');
+    }
+  });
+
+  it('preserves an explicit model ID', () => {
+    expect(new RealtimeModel({ model: 'gpt-realtime', apiKey: 'test-key' }).model).toBe(
+      'gpt-realtime',
+    );
+  });
+
+  it('includes the current realtime model variants', () => {
+    expectTypeOf<'gpt-realtime-2.1'>().toMatchTypeOf<api_proto.RealtimeModels>();
+    expectTypeOf<'gpt-realtime-2.1-mini'>().toMatchTypeOf<api_proto.RealtimeModels>();
+  });
 
   it('queues the seeded instructions and tools before the socket connects', () => {
     stubTaskRuntime();

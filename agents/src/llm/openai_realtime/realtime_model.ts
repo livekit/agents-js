@@ -143,9 +143,12 @@ const AZURE_DEFAULT_TURN_DETECTION: api_proto.TurnDetectionType = {
 };
 
 const DEFAULT_MAX_SESSION_DURATION = 20 * 60 * 1000; // 20 minutes
+const DEFAULT_MODEL = 'gpt-realtime-2.1';
+// Azure selects the model by deployment, so preserve its existing session label.
+const AZURE_DEFAULT_MODEL = 'gpt-realtime';
 
 const DEFAULT_REALTIME_MODEL_OPTIONS = {
-  model: 'gpt-realtime',
+  model: DEFAULT_MODEL,
   voice: 'marin',
   inputAudioTranscription: DEFAULT_INPUT_AUDIO_TRANSCRIPTION,
   inputAudioNoiseReduction: undefined as api_proto.NoiseReduction | undefined,
@@ -185,7 +188,9 @@ export class RealtimeModel extends llm.RealtimeModel {
 
   constructor(
     options: {
+      /** Realtime model name. Defaults to "gpt-realtime-2.1" for OpenAI; Azure keeps "gpt-realtime" because the deployment selects the model. */
       model?: string;
+      /** Reasoning configuration for reasoning-capable models such as "gpt-realtime-2.1". */
       reasoning?: api_proto.Reasoning;
       voice?: string;
       /** @deprecated Unused in GA API (v1). Temperature is no longer supported. */
@@ -256,7 +261,7 @@ export class RealtimeModel extends llm.RealtimeModel {
       baseURL: options.baseURL || process.env.OPENAI_BASE_URL || BASE_URL,
       apiKey,
       isAzure,
-      model: options.model || DEFAULT_REALTIME_MODEL_OPTIONS.model,
+      model: options.model ?? (isAzure ? AZURE_DEFAULT_MODEL : DEFAULT_MODEL),
       modalities,
     };
   }
